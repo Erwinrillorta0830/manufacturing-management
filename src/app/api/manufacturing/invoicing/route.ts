@@ -76,7 +76,7 @@ export async function POST(request: Request) {
             if (orderResponse.status === 404) throw new ApiError(404, "Sales order not found.");
             if (!orderResponse.ok) throw new ApiError(503, "Unable to reload the sales order.");
             const order = (await orderResponse.json()).data as Row;
-            if (order.order_status !== "For Picking") throw new ApiError(409, "Sales order must be For Picking.");
+            if (order.order_status !== "For Invoicing") throw new ApiError(409, "Sales order must be For Invoicing.");
             const branchId = Number(order.branch_id);
             if (!Number.isSafeInteger(branchId) || branchId < 1) throw new ApiError(409, "Sales order has no valid branch.");
 
@@ -113,115 +113,6 @@ export async function POST(request: Request) {
             const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
             if (productIds.some((id) => !Number((productMap.get(id)?.unit_of_measurement as Row | undefined)?.unit_id))) {
                 throw new ApiError(409, "Every invoiced product must have an actual unit of measurement.");
-            }
-
-            const lotFilter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _in: productIds } },
-                    { branch_id: { _eq: branchId } },
-                    { qa_status: { _eq: "Passed" } },
-                    { source_type: { _in: ["manufacturing", "yield_ledger"] } },
-                ],
-            }));
-            const lotsResponse = await fetch(
-                `${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&fields=id,product_id,lot_id,source_type,source_reference&limit=-1`,
-                { headers, cache: "no-store" },
-            );
-            if (!lotsResponse.ok) throw new ApiError(503, "Unable to read eligible finished-goods lots.");
-            const lots = ((await lotsResponse.json()).data || []) as Row[];
-            const physicalLotIds = lots.map((lot) => Number(lot.lot_id)).filter(Boolean);
-            const inventoryLotIds = lots.map((lot) => Number(lot.id)).filter(Boolean);
-            const movements = physicalLotIds.length ? await directus("inventory_movements", new URLSearchParams({
-                "filter[branch_id][_eq]": String(branchId),
-                "filter[product_id][_in]": productIds.join(","),
-                "filter[lot_id][_in]": physicalLotIds.join(","),
-                fields: "product_id,version_id,lot_id,quantity",
-                limit: "-1",
-            })) as Row[] : [];
-            const jobNumbers = [...new Set(lots.map((lot) => String(lot.source_reference || "")).filter(Boolean))];
-            const jobs = jobNumbers.length ? await directus("manufacturing_job_orders", new URLSearchParams({
-                "filter[job_order_no][_in]": jobNumbers.join(","),
-                fields: "job_order_no,version_id",
-                limit: "-1",
-            })) as Row[] : [];
-            const jobVersions = new Map(jobs.map((job) => [String(job.job_order_no), Number(job.version_id)]));
-            const activeVersions = await directus("product_manufacturing_version", new URLSearchParams({
-                "filter[product_id][_in]": productIds.join(","),
-                fields: "product_id,version_id,version_name,status",
-                limit: "-1",
-            })) as Row[];
-            const activeVersionMap = new Map<number, number>();
-            for (const version of activeVersions) {
-                const productId = Number(version.product_id);
-                if (version.status === "Active" && !activeVersionMap.has(productId)) activeVersionMap.set(productId, Number(version.version_id));
-            }
-            const versionMap = new Map(activeVersions.map((version) => [Number(version.version_id), String(version.version_name || `Version ${version.version_id}`)]));
-            const lotVersions = new Map(lots.map((lot) => [
-                `${Number(lot.product_id)}:${Number(lot.lot_id)}`,
-                jobVersions.get(String(lot.source_reference || "")) || activeVersionMap.get(Number(lot.product_id)) || null,
-            ]));
-            const stock = new Map<string, number>();
-            const reservedByStockKey = new Map<string, number>();
-            for (const movement of movements) {
-                const versionId = Number(movement.version_id) || lotVersions.get(`${Number(movement.product_id)}:${Number(movement.lot_id)}`);
-                const key = `${Number(movement.product_id)}:${Number(movement.lot_id)}:${versionId || ""}`;
-                stock.set(key, (stock.get(key) || 0) + Number(movement.quantity || 0));
-            }
-            if (inventoryLotIds.length > 0) {
-                const reservationRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${inventoryLotIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id,quantity&limit=-1`,
-                    { headers, cache: "no-store" }
-                );
-                if (reservationRes.ok) {
-                    const reservationRows: { inventory_lot_id: number | { id?: number }; quantity: number }[] = (await reservationRes.json()).data || [];
-                    for (const reservation of reservationRows) {
-                        const invLotId = typeof reservation.inventory_lot_id === "object"
-                            ? Number(reservation.inventory_lot_id?.id || 0)
-                            : Number(reservation.inventory_lot_id || 0);
-                        const lot = lots.find((l) => Number(l.id) === invLotId);
-                        if (!lot) continue;
-                        const versionId = lotVersions.get(`${Number(lot.product_id)}:${Number(lot.lot_id)}`) || "";
-                        const key = `${Number(lot.product_id)}:${Number(lot.lot_id)}:${versionId}`;
-                        reservedByStockKey.set(key, (reservedByStockKey.get(key) || 0) + Number(reservation.quantity || 0));
-                    }
-                }
-            }
-            const availableByProductVersion = new Map<string, number>();
-            for (const [key, total] of stock) {
-                const reserved = reservedByStockKey.get(key) || 0;
-                const available = Math.max(0, total - reserved);
-                const parts = key.split(":");
-                const pvKey = `${parts[0]}:${parts[2] || ""}`;
-                availableByProductVersion.set(pvKey, (availableByProductVersion.get(pvKey) || 0) + available);
-            }
-            const demand = new Map<string, number>();
-            for (const detail of details) {
-                const versionId = Number(detail.bom_version_id);
-                if (!versionId) throw new ApiError(409, `Sales-order detail ${detail.detail_id} has no BOM version.`);
-                const key = `${Number(detail.product_id)}:${versionId}`;
-                demand.set(key, (demand.get(key) || 0) + Number(detail.ordered_quantity));
-            }
-            const shortages = [...demand]
-                .filter(([key, quantity]) => (availableByProductVersion.get(key) || 0) < quantity)
-                .map(([key, required]) => {
-                    const [productId, versionId] = key.split(":").map(Number);
-                    return {
-                        productId,
-                        productName: String(productMap.get(productId)?.product_name || `Product ${productId}`),
-                        versionId,
-                        versionName: versionMap.get(versionId) || `Version ${versionId}`,
-                        branchId,
-                        required,
-                        available: availableByProductVersion.get(key) || 0,
-                    };
-                });
-            if (shortages.length) {
-                const first = shortages[0];
-                throw new ApiError(
-                    409,
-                    `Insufficient ${first.productName} (${first.versionName}) stock in branch ${branchId}: ${first.required} required, ${first.available} available (after existing reservations).`,
-                    { shortages },
-                );
             }
 
             const discount = Number(order.discount_amount || 0);
@@ -290,6 +181,7 @@ export async function POST(request: Request) {
                 const allocation = await allocateInvoicesForConsolidation([invoiceId], userId);
                 reservationIds = allocation.createdReservationIds;
 
+                // Invoice creation leaves order at For Invoicing
                 const orderUpdate = await fetch(`${DIRECTUS_URL}/items/sales_order/${salesOrderId}`, {
                     method: "PATCH",
                     headers,

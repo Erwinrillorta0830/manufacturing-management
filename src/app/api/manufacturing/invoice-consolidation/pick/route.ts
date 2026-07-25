@@ -133,6 +133,38 @@ export async function POST(req: NextRequest) {
             if (!patchRes.ok) {
                 return NextResponse.json({ message: `Failed to update status (HTTP ${patchRes.status})` }, { status: patchRes.status });
             }
+
+            // Transition linked sales orders to For Picking
+            const invoiceLinksRes2 = await fetch(
+                `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&fields=invoice_id&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (invoiceLinksRes2.ok) {
+                const invoiceIds2: number[] = ((await invoiceLinksRes2.json()).data || [])
+                    .map((row: { invoice_id: number }) => Number(row.invoice_id))
+                    .filter(Boolean);
+                if (invoiceIds2.length > 0) {
+                    const siRes2 = await fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds2.join(",")}&fields=order_id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (siRes2.ok) {
+                        const invoices2: { order_id: number | null }[] = (await siRes2.json()).data || [];
+                        const orderIdsToPick = [...new Set(invoices2.map((inv) => Number(inv.order_id)).filter(Boolean))];
+                        if (orderIdsToPick.length > 0) {
+                            await fetch(`${DIRECTUS_URL}/items/sales_order`, {
+                                method: "PATCH",
+                                headers: directusHeaders,
+                                body: JSON.stringify({
+                                    query: { filter: { order_id: { _in: orderIdsToPick } } },
+                                    data: { order_status: "For Picking" },
+                                }),
+                            });
+                        }
+                    }
+                }
+            }
+
             return NextResponse.json({ success: true, message: "Batch moved to Picking", status: "Picking" });
         }
 

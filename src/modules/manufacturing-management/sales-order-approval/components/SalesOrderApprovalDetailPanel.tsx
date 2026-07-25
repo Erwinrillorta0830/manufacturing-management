@@ -54,7 +54,7 @@ export function SalesOrderApprovalDetailPanel({
                             {selectedOrder.order_no}
                         </h4>
                         <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider whitespace-nowrap ${
-                            selectedOrder.order_status === "For Picking"
+                            selectedOrder.order_status === "For Invoicing" || selectedOrder.order_status === "For Picking"
                                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                 : selectedOrder.order_status === "On Hold"
                                 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"

@@ -559,12 +559,11 @@ export async function POST(request: Request) {
                                                     return alloc >= ordered;
                                                 });
 
-                                                const newStatus = allFullyAllocated ? "For Invoicing" : "For Picking";
-                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${newStatus}`);
+                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to For Invoicing`);
                                                 await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
                                                     method: "PATCH",
                                                     headers,
-                                                    body: JSON.stringify({ order_status: newStatus })
+                                                    body: JSON.stringify({ order_status: "For Invoicing" })
                                                 });
                                             }
                                         }

@@ -6,6 +6,59 @@ import { getUserIdFromToken } from "../_auth";
 
 const TXN_TYPE_SALES_ISSUE = 4;
 
+async function transitionSalesOrderToForLoading(invoiceIds: number[]): Promise<{ updated: number; errors: string[] }> {
+    const errors: string[] = [];
+    const siRes = await fetch(
+        `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&fields=invoice_id,order_id,sales_order_id,isDispatched&limit=-1`,
+        { headers: directusHeaders, cache: "no-store" }
+    );
+    if (!siRes.ok) return { updated: 0, errors: [`Failed to fetch invoices: HTTP ${siRes.status}`] };
+    const invoices: { invoice_id: number; order_id: number | null; sales_order_id: number | null; isDispatched: boolean | null }[] = (await siRes.json()).data || [];
+
+    const orderIds = [...new Set(invoices.map((inv) => Number(inv.order_id || inv.sales_order_id || 0)).filter(Boolean))];
+    if (orderIds.length === 0) return { updated: 0, errors: [] };
+
+    let updated = 0;
+    for (const orderId of orderIds) {
+        const orderRes = await fetch(
+            `${DIRECTUS_URL}/items/sales_order/${orderId}?fields=order_id,order_status`,
+            { headers: directusHeaders, cache: "no-store" }
+        );
+        if (!orderRes.ok) {
+            errors.push(`Order ${orderId}: fetch failed HTTP ${orderRes.status}`);
+            continue;
+        }
+        const order: { order_id: number; order_status: string } = (await orderRes.json()).data;
+        if (order.order_status !== "For Picking") continue;
+
+        const allActive = await fetch(
+            `${DIRECTUS_URL}/items/sales_invoice?filter[_or][0][order_id][_eq]=${orderId}&filter[_or][1][sales_order_id][_eq]=${orderId}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id,isDispatched&limit=-1`,
+            { headers: directusHeaders, cache: "no-store" }
+        );
+        if (!allActive.ok) {
+            errors.push(`Order ${orderId}: active-invoice query failed HTTP ${allActive.status}`);
+            continue;
+        }
+        const activeInvoices: { invoice_id: number; isDispatched: boolean | null }[] = (await allActive.json()).data || [];
+        if (activeInvoices.length === 0) continue;
+        const allDispatched = activeInvoices.every((inv) => inv.isDispatched === true);
+
+        if (allDispatched) {
+            const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                method: "PATCH",
+                headers: directusHeaders,
+                body: JSON.stringify({ order_status: "For Loading" }),
+            });
+            if (patchRes.ok) {
+                updated++;
+            } else {
+                errors.push(`Order ${orderId}: status update failed HTTP ${patchRes.status}`);
+            }
+        }
+    }
+    return { updated, errors };
+}
+
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
@@ -34,7 +87,17 @@ export async function POST(req: NextRequest) {
 
         const consolidator = items[0];
         if (consolidator.status === "Audited") {
-            // Idempotent retry: if already audited, return success.
+            const junctionRes = await fetch(
+                `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&limit=-1&fields=invoice_id`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            const junctions: { invoice_id: number }[] = junctionRes.ok ? (await junctionRes.json()).data || [] : [];
+            if (junctions.length > 0) {
+                const result = await transitionSalesOrderToForLoading(junctions.map((j) => j.invoice_id));
+                if (result.errors.length > 0) {
+                    console.error("[audit retry] SO transition errors:", result.errors);
+                }
+            }
             return NextResponse.json({ success: true, message: "Batch is already audited" });
         }
         if (consolidator.status !== "Picked") {
@@ -140,7 +203,6 @@ export async function POST(req: NextRequest) {
                         headers: directusHeaders,
                         body: JSON.stringify({ status: "Released", updated_by: userId, updated_at: now }),
                     });
-                    // Idempotent: 204 or 200 on already-released rows is acceptable.
                     if (!releaseRes.ok) {
                         return NextResponse.json({ message: `Failed to release reservation ${reservation.id}` }, { status: 502 });
                     }
@@ -157,10 +219,23 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ message: `Failed to update batch status (HTTP ${patchRes.status})` }, { status: patchRes.status });
         }
 
+        // Transition linked sales orders from For Picking to For Loading
+        let transitionErrors: string[] = [];
+        if (junctions.length > 0) {
+            const result = await transitionSalesOrderToForLoading(junctions.map((j: { invoice_id: number }) => j.invoice_id));
+            transitionErrors = result.errors;
+            if (transitionErrors.length > 0) {
+                console.error("[audit] SO transition errors:", transitionErrors);
+            }
+        }
+
         return NextResponse.json({
-            success: true,
-            message: "Batch audited successfully",
+            success: transitionErrors.length === 0,
+            message: transitionErrors.length > 0
+                ? `Batch audited but ${transitionErrors.length} sales order(s) failed to transition: ${transitionErrors.join("; ")}`
+                : "Batch audited successfully",
             checkedBy: userId,
+            transitionErrors: transitionErrors.length > 0 ? transitionErrors : undefined,
         });
     } catch (e) {
         console.error("invoice-consolidation audit POST error:", e);

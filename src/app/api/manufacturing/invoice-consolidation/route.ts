@@ -258,13 +258,13 @@ export async function POST(req: NextRequest) {
         }
 
         const siRes = await fetch(
-            `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${uniqueIds.join(",")}&fields=invoice_id,invoice_no,invoice_date,branch_id,total_amount,customer_code,isDispatched,transaction_status&limit=-1`,
+            `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${uniqueIds.join(",")}&fields=invoice_id,invoice_no,invoice_date,branch_id,total_amount,customer_code,isDispatched,transaction_status,order_id&limit=-1`,
             { headers: directusHeaders, cache: "no-store" }
         );
         if (!siRes.ok) {
             return NextResponse.json({ message: `Failed to verify invoices (HTTP ${siRes.status})` }, { status: siRes.status });
         }
-        const siData: { invoice_id: number; invoice_no: string; invoice_date: string | null; branch_id: number; total_amount: number; customer_code: string; isDispatched: boolean | null; transaction_status: string }[] = (await siRes.json()).data || [];
+        const siData: { invoice_id: number; invoice_no: string; invoice_date: string | null; branch_id: number; total_amount: number; customer_code: string; isDispatched: boolean | null; transaction_status: string; order_id: number | null }[] = (await siRes.json()).data || [];
 
         if (siData.length !== uniqueIds.length) {
             const found = new Set(siData.map((s) => s.invoice_id));
@@ -324,12 +324,38 @@ export async function POST(req: NextRequest) {
             )
             .map((invoice) => invoice.invoice_id);
         let createdReservationIds: number[] = [];
-        try {
-            const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);
-            createdReservationIds = allocation.createdReservationIds;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to reserve invoice stock";
-            return NextResponse.json({ message }, { status: 422 });
+
+        // Check if invoices already have full reservations; skip allocation if yes.
+        const detailIds = detCheck.map((d) => d.detail_id);
+        const existingResFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { sales_invoice_detail_id: { _in: detailIds } },
+                { status: { _eq: "Reserved" } },
+            ],
+        }));
+        const existingResJson = await fetch(
+            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter=${existingResFilter}&fields=sales_invoice_detail_id,quantity&limit=-1`,
+            { headers: directusHeaders, cache: "no-store" }
+        );
+        if (!existingResJson.ok) {
+            return NextResponse.json({ message: "Failed to check existing reservations" }, { status: 502 });
+        }
+        const existingResData: { sales_invoice_detail_id: number; quantity: number }[] = (await existingResJson.json()).data || [];
+        const reservedByDetail = new Map<number, number>();
+        for (const row of existingResData) {
+            const sid = Number(row.sales_invoice_detail_id);
+            reservedByDetail.set(sid, (reservedByDetail.get(sid) || 0) + Number(row.quantity || 0));
+        }
+        const hasShortage = detCheck.some((d) => (reservedByDetail.get(d.detail_id) || 0) < Number(d.quantity || 0));
+
+        if (hasShortage) {
+            try {
+                const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);
+                createdReservationIds = allocation.createdReservationIds;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Failed to reserve invoice stock";
+                return NextResponse.json({ message }, { status: 422 });
+            }
         }
 
         const recheckRes = await fetch(
@@ -465,6 +491,20 @@ export async function POST(req: NextRequest) {
                     appliedQuantity: 0,
                 };
             });
+
+            // Transition linked sales orders to For Consolidation
+            const orderIdsToUpdate = [...new Set(siData.map((s) => Number(s.order_id)).filter(Boolean))];
+            if (orderIdsToUpdate.length > 0) {
+                const updateRes = await fetch(`${DIRECTUS_URL}/items/sales_order`, {
+                    method: "PATCH",
+                    headers: directusHeaders,
+                    body: JSON.stringify({
+                        query: { filter: { order_id: { _in: orderIdsToUpdate } } },
+                        data: { order_status: "For Consolidation" },
+                    }),
+                });
+                if (!updateRes.ok) throw new Error(`Failed to update order statuses: HTTP ${updateRes.status}`);
+            }
 
             const branchMap = await getBranchesMap();
             let postCustomerMap = new Map<string, string>();

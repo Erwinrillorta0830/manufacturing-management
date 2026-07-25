@@ -169,7 +169,7 @@ export function useSalesOrder() {
             toast.success("Sales Order approved! Ready for Operations scheduling.");
             loadSalesOrders(currentPage, searchQuery, statusFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
-                setSelectedOrderState(prev => prev ? { ...prev, order_status: "For Picking" } : null);
+                setSelectedOrderState(prev => prev ? { ...prev, order_status: "For Invoicing" } : null);
             }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {

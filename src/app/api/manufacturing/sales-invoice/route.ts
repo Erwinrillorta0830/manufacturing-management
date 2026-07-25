@@ -465,6 +465,11 @@ export async function POST() {
 
 export async function PATCH(request: Request) {
     try {
+        const userId = await getUserIdFromToken();
+        if (!userId) {
+            return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
+        }
+
         const body = await request.json();
         const { invoiceId, status, remarks, payment } = body;
 
@@ -472,7 +477,6 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "Missing invoiceId" }, { status: 400 });
         }
 
-        // Fetch current invoice state from Directus to calculate payment logs
         const getRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice/${invoiceId}`, { headers });
         if (!getRes.ok) {
             throw new Error(`Failed to load invoice to update: ${getRes.status}`);
@@ -484,10 +488,6 @@ export async function PATCH(request: Request) {
 
         const updatePayload: Record<string, unknown> = {};
         const cancelling = status === "Cancelled";
-        const userId = cancelling ? await getUserIdFromToken() : null;
-        if (cancelling && !userId) {
-            return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
-        }
 
         if (payment) {
             if (currentInvoice.transaction_status === "Cancelled") {
@@ -506,8 +506,15 @@ export async function PATCH(request: Request) {
                     history = [];
                 }
             }
+            const totalPaid = history.reduce((s, p) => s + Number(p.amount || 0), 0);
+            const netAmount = Number(currentInvoice.net_amount || 0);
+            if (totalPaid + amount > netAmount) {
+                return NextResponse.json({
+                    error: `Payment of ₱${amount.toLocaleString()} exceeds remaining balance of ₱${(netAmount - totalPaid).toLocaleString()}.`,
+                }, { status: 409 });
+            }
 
-            const newPayment = {
+            const newPayment: PaymentHistoryItem = {
                 amount,
                 method: payment.method || "Cash",
                 reference: payment.reference || "",
@@ -515,16 +522,13 @@ export async function PATCH(request: Request) {
             };
 
             history.push(newPayment);
-
             updatePayload.payment_status = JSON.stringify(history);
 
-            // Append payment record to remarks log
             const paymentLog = `[Collection] ₱${newPayment.amount.toLocaleString(undefined, {minimumFractionDigits: 2})} via ${newPayment.method} (Ref: ${newPayment.reference}) on ${new Date(newPayment.date).toLocaleDateString()}`;
-            updatePayload.remarks = currentInvoice.remarks 
+            updatePayload.remarks = currentInvoice.remarks
                 ? `${currentInvoice.remarks}\n${paymentLog}`
                 : paymentLog;
         } else {
-            // Direct status / remarks update (e.g. Cancelled)
             if (status) updatePayload.transaction_status = status;
             if (remarks !== undefined) updatePayload.remarks = remarks;
         }
@@ -539,7 +543,7 @@ export async function PATCH(request: Request) {
 
         if (cancelling) {
             try {
-                await releaseInvoiceReservations(Number(invoiceId), userId!);
+                await releaseInvoiceReservations(Number(invoiceId), userId);
             } catch (error) {
                 await fetch(`${DIRECTUS_URL}/items/sales_invoice/${invoiceId}`, {
                     method: "PATCH",
@@ -551,16 +555,29 @@ export async function PATCH(request: Request) {
             }
         }
 
-        // Return the order to the invoicing candidate queue after cancellation.
-        if ((status === "Cancelled" || updatePayload.transaction_status === "Cancelled") && currentInvoice.order_id) {
-            try {
-                await fetch(`${DIRECTUS_URL}/items/sales_order/${currentInvoice.order_id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ order_status: "For Picking" })
-                });
-            } catch (err) {
-                console.error("Failed to revert sales order status on invoice cancellation:", err);
+        if (cancelling && currentInvoice.order_id) {
+            const activeRes = await fetch(
+                `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_eq]=${currentInvoice.order_id}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id&limit=2`,
+                { headers, cache: "no-store" }
+            );
+            const otherActive: { invoice_id: number }[] = activeRes.ok ? (await activeRes.json()).data || [] : [];
+            const hasOtherActive = otherActive.some((inv) => Number(inv.invoice_id) !== Number(invoiceId));
+
+            if (!hasOtherActive) {
+                const orderRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order/${currentInvoice.order_id}?fields=order_id,order_status`,
+                    { headers, cache: "no-store" }
+                );
+                if (orderRes.ok) {
+                    const order: { order_id: number; order_status: string } = (await orderRes.json()).data;
+                    if (order.order_status === "For Invoicing" || order.order_status === "For Consolidation" || order.order_status === "For Picking") {
+                        await fetch(`${DIRECTUS_URL}/items/sales_order/${currentInvoice.order_id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ order_status: "For Invoicing" }),
+                        });
+                    }
+                }
             }
         }
 
