@@ -24,6 +24,12 @@ interface LotFormDialogProps {
         inventoryTypeId: number | "";
         maxBatchCapacity: string;
     };
+    formErrors?: {
+        lotName?: boolean;
+        inventoryTypeId?: boolean;
+        maxBatchCapacity?: boolean;
+    };
+    isDuplicateLotName?: boolean;
     onFormChange: (field: string, value: string | number) => void;
     inventoryTypes: InventoryType[];
     saving: boolean;
@@ -35,6 +41,8 @@ export default function LotFormDialog({
     onSubmit,
     editingLot,
     formData,
+    formErrors = {},
+    isDuplicateLotName = false,
     onFormChange,
     inventoryTypes,
     saving
@@ -76,9 +84,14 @@ export default function LotFormDialog({
                                 autoComplete="off"
                                 value={formData.lotName}
                                 onChange={(e) => onFormChange("lotName", e.target.value)}
-                                required
                                 disabled={saving}
+                                className={formErrors.lotName || isDuplicateLotName ? "border-destructive focus-visible:ring-destructive text-destructive" : ""}
                             />
+                            {isDuplicateLotName && (
+                                <p className="text-[11px] text-destructive font-medium mt-1">
+                                    A lot with the name &quot;{formData.lotName.trim()}&quot; already exists.
+                                </p>
+                            )}
                         </div>
 
                         {/* Inventory Type */}
@@ -92,7 +105,7 @@ export default function LotFormDialog({
                                 onValueChange={(val) => onFormChange("inventoryTypeId", Number(val))}
                                 placeholder="Select type..."
                                 disabled={saving}
-                                className="w-full text-left font-normal"
+                                className={`w-full text-left font-normal ${formErrors.inventoryTypeId ? "border-destructive focus-visible:ring-destructive" : ""}`}
                             />
                         </div>
 
@@ -120,8 +133,8 @@ export default function LotFormDialog({
                                         e.preventDefault();
                                     }
                                 }}
-                                required
                                 disabled={saving}
+                                className={formErrors.maxBatchCapacity ? "border-destructive focus-visible:ring-destructive text-destructive" : ""}
                             />
                         </div>
                     </div>

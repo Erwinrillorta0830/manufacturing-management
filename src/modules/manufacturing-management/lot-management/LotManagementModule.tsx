@@ -18,6 +18,8 @@ export default function LotManagementModule() {
         isFormOpen,
         editingLot,
         formData,
+        formErrors,
+        isDuplicateLotName,
         openCreateDialog,
         openEditDialog,
         closeDialog,
@@ -50,6 +52,8 @@ export default function LotManagementModule() {
                 onSubmit={editingLot ? handleUpdate : handleCreate}
                 editingLot={editingLot}
                 formData={formData}
+                formErrors={formErrors}
+                isDuplicateLotName={isDuplicateLotName}
                 onFormChange={handleFormChange}
                 inventoryTypes={inventoryTypes}
                 saving={saving}
