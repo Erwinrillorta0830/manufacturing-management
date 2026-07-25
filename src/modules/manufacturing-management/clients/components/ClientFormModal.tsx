@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { X, Save, User, MapPin, ChevronDown, Loader2, Search, Sliders, Building, Phone, Settings } from "lucide-react";
+import { X, Save, User, MapPin, ChevronDown, Loader2, Search, Sliders, Building, Phone, Settings, Eye } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -26,9 +26,13 @@ export interface ClientFormData {
     isActive: boolean;
 }
 
+export type ClientModalMode = "create" | "view" | "edit";
+
 interface ClientFormModalProps {
     isOpen: boolean;
     onClose: () => void;
+    mode?: ClientModalMode;
+    onEdit?: () => void;
     editingCustomer: Customer | null;
     formData: ClientFormData;
     setFormData: React.Dispatch<React.SetStateAction<ClientFormData>>;
@@ -49,7 +53,8 @@ interface ClientFormModalProps {
     products?: ClientProduct[];
     versionsMap?: Record<number, ClientProductVersion[]>;
     overrides?: Record<number, number>;
-    loadingOverrides?: boolean;
+    loadingBomSettings?: boolean;
+    bomSettingsError?: string | null;
     updateProductVersionOverride?: (productId: number, versionId: number | null) => Promise<void>;
 }
 
@@ -133,6 +138,8 @@ function SearchableSelect({
 export default function ClientFormModal({
     isOpen,
     onClose,
+    mode,
+    onEdit,
     editingCustomer,
     formData,
     setFormData,
@@ -151,9 +158,12 @@ export default function ClientFormModal({
     products = [],
     versionsMap = {},
     overrides = {},
-    loadingOverrides = false,
+    loadingBomSettings = false,
+    bomSettingsError = null,
     updateProductVersionOverride
 }: ClientFormModalProps) {
+    const resolvedMode = mode ?? (editingCustomer ? "edit" : "create");
+    const isViewMode = resolvedMode === "view";
     const [storeTypeQuery, setStoreTypeQuery] = useState("");
     const [isStoreTypeFocused, setIsStoreTypeFocused] = useState(false);
     const [isRegisteringStoreType, setIsRegisteringStoreType] = useState(false);
@@ -161,6 +171,7 @@ export default function ClientFormModal({
 
     const [activeTab, setActiveTab] = useState<"general" | "overrides">("general");
     const [productSearch, setProductSearch] = useState("");
+    const [savingOverrideIds, setSavingOverrideIds] = useState<Set<number>>(new Set());
 
     const filteredProducts = useMemo(() => {
         return products.filter(p =>
@@ -288,6 +299,29 @@ export default function ClientFormModal({
 
     const showOverridesTab = editingCustomer && !!updateProductVersionOverride;
 
+    const handleOverrideChange = async (productId: number, versionId: number | null) => {
+        if (isViewMode || !updateProductVersionOverride || savingOverrideIds.has(productId)) return;
+
+        setSavingOverrideIds((current) => new Set(current).add(productId));
+        try {
+            await updateProductVersionOverride(productId, versionId);
+        } finally {
+            setSavingOverrideIds((current) => {
+                const next = new Set(current);
+                next.delete(productId);
+                return next;
+            });
+        }
+    };
+
+    const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+        if (isViewMode) {
+            event.preventDefault();
+            return;
+        }
+        onSave(event);
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
             <div 
@@ -298,7 +332,7 @@ export default function ClientFormModal({
                 <div className="flex items-center justify-between border-b p-5 shrink-0">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
                         <User className="h-4.5 w-4.5 text-primary" />
-                        {editingCustomer ? "Edit Client Billing Profile" : "Register New Client Profile"}
+                        {isViewMode ? "Client Details" : editingCustomer ? "Edit Client Billing Profile" : "Register New Client Profile"}
                     </h3>
                     <button
                         onClick={onClose}
@@ -358,14 +392,20 @@ export default function ClientFormModal({
                                 placeholder="Search finished goods by name or SKU..."
                                 value={productSearch}
                                 onChange={(e) => setProductSearch(e.target.value)}
-                                className="w-full bg-background border rounded-xl pl-9 pr-4 py-2.5 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold transition-all shadow-sm"
+                                disabled={loadingBomSettings}
+                                className="w-full bg-background border rounded-xl pl-9 pr-4 py-2.5 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                             />
                         </div>
 
-                        {loadingOverrides ? (
+                        {loadingBomSettings ? (
                             <div className="flex flex-col items-center justify-center py-12 gap-2">
                                 <Loader2 className="h-6 w-6 text-primary animate-spin" />
-                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Loading settings...</span>
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest animate-pulse">Loading BOM settings...</span>
+                            </div>
+                        ) : bomSettingsError ? (
+                            <div role="alert" className="p-12 text-center text-xs text-destructive flex flex-col items-center gap-2">
+                                <span className="font-semibold">{bomSettingsError}</span>
+                                <span className="text-muted-foreground">Close and reopen this customer to retry.</span>
                             </div>
                         ) : (
                             <div className="border rounded-2xl divide-y bg-background overflow-hidden max-h-[45vh] overflow-y-auto shadow-sm">
@@ -386,13 +426,14 @@ export default function ClientFormModal({
                                                     <span className="text-[9px] font-mono text-muted-foreground/75 uppercase tracking-wider">{p.code}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 shrink-0">
-                                                    <select
+                        <select
+                                                        disabled={isViewMode || savingOverrideIds.has(p.id)}
                                                         value={selectedVer}
                                                         onChange={(e) => {
                                                             const val = e.target.value ? Number(e.target.value) : null;
-                                                            updateProductVersionOverride?.(p.id, val);
+                                                            void handleOverrideChange(p.id, val);
                                                         }}
-                                                        className="rounded-lg border bg-background text-foreground text-xs font-bold px-3 py-2 outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer transition-all hover:bg-muted/30"
+                                                        className="rounded-lg border bg-background text-foreground text-xs font-bold px-3 py-2 outline-none focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer transition-all hover:bg-muted/30 disabled:opacity-60 disabled:cursor-not-allowed"
                                                     >
                                                         <option value="">Default (Standard BOM Version 1)</option>
                                                          {productVersions.map((v) => (
@@ -401,6 +442,9 @@ export default function ClientFormModal({
                                                              </option>
                                                          ))}
                                                      </select>
+                                                     {savingOverrideIds.has(p.id) && (
+                                                         <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" aria-label="Saving BOM setting" />
+                                                     )}
                                                 </div>
                                             </div>
                                         );
@@ -410,7 +454,8 @@ export default function ClientFormModal({
                         )}
                     </div>
                 ) : (
-                    <form onSubmit={onSave} className="flex-1 overflow-y-auto p-6 space-y-6 bg-muted/10 scrollbar-thin">
+                    <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-6 bg-muted/10 scrollbar-thin">
+                        <fieldset disabled={isViewMode} className="border-0 p-0 m-0 min-w-0 space-y-6">
                     
                         {/* section 1: Identity */}
                         <div className="bg-card border rounded-2xl p-5 space-y-4 shadow-sm hover:shadow-md transition-shadow">
@@ -775,12 +820,13 @@ export default function ClientFormModal({
                                 </label>
                             </div>
                         </div>
+                        </fieldset>
                     </form>
                 )}
 
                 {/* Modal Footer */}
                 <div className="flex gap-3 justify-end p-5 border-t bg-muted/5 shrink-0">
-                    {activeTab === "overrides" ? (
+                    {activeTab === "overrides" && !isViewMode ? (
                         <button
                             type="button"
                             onClick={onClose}
@@ -788,6 +834,24 @@ export default function ClientFormModal({
                         >
                             Done / Close
                         </button>
+                    ) : isViewMode ? (
+                        <>
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="px-4 py-2 rounded-lg border text-xs font-semibold hover:bg-muted text-foreground transition-all cursor-pointer"
+                            >
+                                Close
+                            </button>
+                            <button
+                                type="button"
+                                onClick={onEdit}
+                                className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold hover:bg-primary/95 transition-all shadow-md cursor-pointer"
+                            >
+                                <Eye className="h-3.5 w-3.5" />
+                                Edit Details
+                            </button>
+                        </>
                     ) : (
                         <>
                             <button

@@ -1,19 +1,17 @@
 import React from "react";
-import { Edit2, Archive, ArchiveRestore, ShieldCheck, ShieldAlert, Mail, Phone, MapPin, EyeOff } from "lucide-react";
+import { Eye, Mail, Phone, MapPin, EyeOff } from "lucide-react";
 import { Customer } from "../types";
 
 interface ClientsTableProps {
     customers: Customer[];
     loading: boolean;
-    onEdit: (c: Customer) => void;
-    onToggleActive: (c: Customer) => void;
+    onView: (c: Customer) => void;
 }
 
 export default function ClientsTable({
     customers,
     loading,
-    onEdit,
-    onToggleActive
+    onView,
 }: ClientsTableProps) {
     if (loading) {
         return (
@@ -58,10 +56,10 @@ export default function ClientsTable({
                             // Parse Store Type string or object
                             let storeType = "N/A";
                             const rawStoreType = c.store_type || c.store_type_id;
-                            if (rawStoreType) {
-                                storeType = typeof rawStoreType === "object" 
-                                    ? rawStoreType.store_type 
-                                    : `ID: ${rawStoreType}`;
+                            if (typeof rawStoreType === "object") {
+                                storeType = rawStoreType.store_type;
+                            } else if (typeof c.store_type === "string" && c.store_type.trim()) {
+                                storeType = c.store_type;
                             }
 
                             // Full address builder
@@ -124,72 +122,33 @@ export default function ClientsTable({
                                                     {fullAddress}
                                                 </span>
                                             </div>
-                                            {c.latitude !== undefined && c.latitude !== null && c.longitude !== undefined && c.longitude !== null && (
-                                                <span className="text-[9px] text-muted-foreground font-mono font-bold pl-5 flex items-center gap-1">
-                                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                                    GPS: {Number(c.latitude).toFixed(6)}, {Number(c.longitude).toFixed(6)}
-                                                </span>
-                                            )}
                                         </div>
+                                    </td>
+
+                                    <td className="p-4 text-center">
+                                        <span className={`inline-flex items-center gap-0.5 px-2.5 py-1 rounded-full text-[9px] font-black border ${
+                                            activeBool
+                                                ? "bg-emerald-500/15 border-emerald-500/25 text-emerald-600"
+                                                : "bg-destructive/15 border-destructive/25 text-destructive"
+                                        }`}>
+                                            {activeBool ? (
+                                                "Active"
+                                            ) : (
+                                                "Inactive"
+                                            )}
+                                        </span>
                                     </td>
 
                                     <td className="p-4 text-center">
                                         <button
                                             type="button"
-                                            onClick={() => onToggleActive(c)}
-                                            className={`inline-flex items-center gap-0.5 px-2.5 py-1 rounded-full text-[9px] font-black border transition-all cursor-pointer ${
-                                                activeBool
-                                                    ? "bg-emerald-500/15 border-emerald-500/25 text-emerald-600 hover:bg-emerald-500/25"
-                                                    : "bg-destructive/15 border-destructive/25 text-destructive hover:bg-destructive/25"
-                                            }`}
-                                            title="Click to toggle status"
+                                            onClick={() => onView(c)}
+                                            className="text-primary hover:bg-primary/10 p-1.5 rounded-lg transition-colors cursor-pointer"
+                                            title="View client details"
+                                            aria-label="View client details"
                                         >
-                                            {activeBool ? (
-                                                <>
-                                                    <ShieldCheck className="h-2.5 w-2.5" />
-                                                    Active
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <ShieldAlert className="h-2.5 w-2.5" />
-                                                    Inactive
-                                                </>
-                                            )}
+                                            <Eye className="h-3.5 w-3.5" />
                                         </button>
-                                    </td>
-
-                                    <td className="p-4 text-center">
-                                        <div className="flex justify-center gap-1">
-                                            <button
-                                                onClick={() => onEdit(c)}
-                                                disabled={!activeBool}
-                                                className={`p-1.5 rounded-lg transition-colors ${
-                                                    activeBool 
-                                                        ? "text-primary hover:bg-primary/10 cursor-pointer" 
-                                                        : "text-muted-foreground/45 cursor-not-allowed"
-                                                }`}
-                                                title={activeBool ? "Edit billing profile" : "Cannot edit inactive profile"}
-                                            >
-                                                <Edit2 className="h-3.5 w-3.5" />
-                                            </button>
-                                            {activeBool ? (
-                                                <button
-                                                    onClick={() => onToggleActive(c)}
-                                                    className="text-amber-600 hover:bg-amber-500/10 p-1.5 rounded-lg transition-colors cursor-pointer"
-                                                    title="Archive client profile (deactivate)"
-                                                >
-                                                    <Archive className="h-3.5 w-3.5" />
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    onClick={() => onToggleActive(c)}
-                                                    className="text-emerald-600 hover:bg-emerald-500/10 p-1.5 rounded-lg transition-colors cursor-pointer"
-                                                    title="Restore client profile (activate)"
-                                                >
-                                                    <ArchiveRestore className="h-3.5 w-3.5" />
-                                                </button>
-                                            )}
-                                        </div>
                                     </td>
                                 </tr>
                             );

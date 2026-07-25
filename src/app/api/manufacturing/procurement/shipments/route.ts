@@ -20,6 +20,7 @@ import {
 } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { assertMrpProductJobOrderPairs, MrpPairValidationError } from "../../purchase-orders/_mrp-validation";
+import { compareDecimals, DecimalValue, normalizeDecimal } from "@/modules/manufacturing-management/decimal";
 
 class InvalidTransitionError extends Error {}
 
@@ -146,32 +147,32 @@ export async function PUT(request: Request) {
         if (submittedCurrency && submittedCurrency !== (currentOrder.currency_code || "PHP")) {
             return NextResponse.json({ error: "Currency is locked after purchase-order submission." }, { status: 409 });
         }
-        if (submittedCurrency && Math.abs(Number(shipmentData.exchange_rate) - Number(currentOrder.exchange_rate)) > 0.000001) {
+        if (submittedCurrency && compareDecimals(shipmentData.exchange_rate, currentOrder.exchange_rate || 1) !== 0) {
             return NextResponse.json({ error: "Exchange rate is locked after purchase-order submission." }, { status: 409 });
         }
 
         // Recompute total from the actual submitted line items (quantity_ordered is the correct field
         // from ManifestLineFormItem; shipmentData.total_php_value may be stale)
-        const exchangeRate = Number(shipmentData.exchange_rate) || 1;
+        const exchangeRate = DecimalValue.from(shipmentData.exchange_rate || 1).toFixed(6);
         const currencyCode = String((shipmentData as { currency_code?: string }).currency_code || "").toUpperCase();
         const isCanonicalPurchaseOrder = currencyCode === "PHP" || currencyCode === "USD";
         // The legacy shipment form submits a PHP unit cost even though it also
         // carries the site's forex rate. Canonical purchase orders submit the
         // transaction-currency unit cost and must be converted to PHP.
-        const calculationExchangeRate = isCanonicalPurchaseOrder ? exchangeRate : 1;
+        const calculationExchangeRate = isCanonicalPurchaseOrder ? exchangeRate : "1";
         const calculated = calculatePurchaseOrderTotals(lineItems.map(item => ({
             quantity: Number(item.quantity_ordered || 0),
-            unitPrice: Number(item.base_unit_cost_php || 0),
+            unitPrice: item.base_unit_cost_php || 0,
             discountPercent: Number((item as { discount_percent?: number }).discount_percent || 0),
             vatPercent: Number((item as { vat_percent?: number }).vat_percent || 0),
             withholdingPercent: Number((item as { withholding_percent?: number }).withholding_percent || 0)
         })), calculationExchangeRate);
         const totalPhp = isCanonicalPurchaseOrder
             ? calculated.netPhp
-            : Number(shipmentData.total_php_value || calculated.netPhp);
+            : normalizeDecimal(shipmentData.total_php_value || calculated.netPhp);
         const totalForeign = isCanonicalPurchaseOrder
             ? calculated.netForeign
-            : Number(shipmentData.total_foreign_currency || calculated.netForeign);
+            : normalizeDecimal(shipmentData.total_foreign_currency || calculated.netForeign);
 
         // 1. Update purchase_order header
         const poPayload = {
@@ -218,7 +219,7 @@ export async function PUT(request: Request) {
         for (let index = 0; index < lineItems.length; index += 1) {
             const item = lineItems[index];
             const qty = Number((item as { quantity_ordered?: number | string }).quantity_ordered || 0);
-            const price = Number(item.base_unit_cost_php || 0);
+            const price = item.base_unit_cost_php || 0;
             const amounts = calculated.lines[index];
 
             const createResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order_products`, {

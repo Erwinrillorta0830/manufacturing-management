@@ -89,6 +89,7 @@ export function useQAReceiving() {
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewAcknowledged, setPreviewAcknowledged] = useState(false);
     const [validatingInspection, setValidatingInspection] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
     const [postingInspection, setPostingInspection] = useState(false);
     const receivingPreview = receivingCommitContext?.preview ?? null;
     const receivingCommitReady = Boolean(receivingCommitContext?.preview.postingEnabled);
@@ -101,6 +102,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setValidatingInspection(false);
     }, []);
 
@@ -112,6 +114,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setValidatingInspection(false);
     }, []);
 
@@ -141,6 +144,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setValidatingInspection(false);
         setPostingInspection(false);
     }, []);
@@ -277,6 +281,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setLoadingLines(true);
         try {
             const lines = await fetchShipmentDetails(shipment.shipment_id, controller.signal);
@@ -417,6 +422,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -473,6 +479,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -496,6 +503,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -519,6 +527,7 @@ export function useQAReceiving() {
         setCommittedResult(null);
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
+        setPreviewError(null);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -727,6 +736,7 @@ export function useQAReceiving() {
         previewController.current?.abort();
         const controller = new AbortController();
         previewController.current = controller;
+        setPreviewError(null);
         setValidatingInspection(true);
         try {
             const evaluationLines = lineItems.map(line => {
@@ -793,11 +803,11 @@ export function useQAReceiving() {
                 return next;
             });
             toast.success("QA quantities and inventory routes were previewed. No inventory records were written.");
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            if (e.name === "AbortError") return;
-            console.error(e);
-            toast.error(e.message || "Failed to generate receiving preview.");
+        } catch (error) {
+            if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
+            const message = error instanceof Error ? error.message : "Failed to generate receiving preview.";
+            setPreviewError(message);
+            toast.error(message);
         } finally {
             if (!controller.signal.aborted) setValidatingInspection(false);
         }
@@ -977,6 +987,7 @@ export function useQAReceiving() {
         postingInspection,
         handleCommitReceiving,
         validatingInspection,
+        previewError,
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleSelectShipment,

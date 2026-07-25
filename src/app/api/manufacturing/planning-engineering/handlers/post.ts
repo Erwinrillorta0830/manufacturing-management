@@ -37,29 +37,37 @@ export async function handlePOST(request: Request) {
             // 3. For each material in the worksheet, try to reserve any remaining shortfall
             let allRequirementsMet = true;
             const shortfallsList = [];
+            const writePromises: Promise<any>[] = [];
 
-            for (const mat of mats) {
-                const compProductId = Number(mat.product_id);
-                const allocatedQty = Number(mat.allocated_quantity || 0);
-                const reservedQty = Number(mat.reserved_quantity || 0);
-                const needed = allocatedQty - reservedQty;
+            if (!joData.branch_id) {
+                return NextResponse.json({ error: "Job Order has no branch assigned" }, { status: 400 });
+            }
+            const branchId = Number(joData.branch_id);
 
-                if (needed <= 0) continue;
+            const shortfallMats = mats.filter((m: any) => Number(m.allocated_quantity || 0) > Number(m.reserved_quantity || 0));
+            const shortfallProductIds = shortfallMats.map((m: any) => Number(m.product_id));
 
-                // FIFO/FEFO Allocation directly from purchase_order_receiving
-                if (!joData.branch_id) {
-                    return NextResponse.json({ error: "Job Order has no branch assigned" }, { status: 400 });
-                }
-                const branchId = Number(joData.branch_id);
-                const branchFilter = `&filter[branch_id][_eq]=${branchId}`;
-                const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${compProductId}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0${branchFilter}&sort=expiry_date`;
-                
+            const receiptsByProduct = new Map<number, any[]>();
+            const physicalLotsByProduct = new Map<number, any[]>();
+            const movementStockMap = new Map<string, number>(); // "${productId}:${batchNo}" -> quantity
+            const reservationsMap = new Map<number, number>(); // recId -> quantity
+            const productNamesMap = new Map<number, string>();
+
+            if (shortfallProductIds.length > 0) {
+                // Fetch valid receipts
+                const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${shortfallProductIds.join(",")}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0&filter[branch_id][_eq]=${branchId}&sort=expiry_date&limit=-1`;
                 const receiptsRes = await fetch(receiptsUrl, { headers });
                 const validReceipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
-                
-                const receiptIds = validReceipts.map((r: any) => r.purchase_order_product_id).filter(Boolean);
-                const reservationsMap: Record<number, number> = {};
+                validReceipts.forEach((rec: any) => {
+                    const pId = Number(rec.product_id);
+                    if (!receiptsByProduct.has(pId)) {
+                        receiptsByProduct.set(pId, []);
+                    }
+                    receiptsByProduct.get(pId)!.push(rec);
+                });
 
+                // Fetch reservations
+                const receiptIds = validReceipts.map((r: any) => r.purchase_order_product_id).filter(Boolean);
                 if (receiptIds.length > 0) {
                     try {
                         const resFilter = encodeURIComponent(JSON.stringify({
@@ -74,7 +82,7 @@ export async function handlePOST(request: Request) {
                             reservationsData.forEach((r: any) => {
                                 const porId = Number(r.purchase_order_receiving_id);
                                 if (porId) {
-                                    reservationsMap[porId] = (reservationsMap[porId] || 0) + Number(r.reserved_quantity || 0);
+                                    reservationsMap.set(porId, (reservationsMap.get(porId) || 0) + Number(r.reserved_quantity || 0));
                                 }
                             });
                         }
@@ -86,29 +94,60 @@ export async function handlePOST(request: Request) {
                 // Fetch physical inventory lots
                 const lotQueryFilter = encodeURIComponent(JSON.stringify({
                     _and: [
-                        { product_id: { _eq: compProductId } },
+                        { product_id: { _in: shortfallProductIds } },
                         { branch_id: { _eq: branchId } },
                         { source_type: { _eq: "procurement" } }
                     ]
                 }));
-                const physicalLotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers });
+                const physicalLotsRes = await fetch(lotQueryFilter.startsWith("http") ? lotQueryFilter : `${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers });
                 const physicalLots = physicalLotsRes.ok ? (await physicalLotsRes.json()).data || [] : [];
+                physicalLots.forEach((lot: any) => {
+                    const pId = Number(lot.product_id);
+                    if (!physicalLotsByProduct.has(pId)) {
+                        physicalLotsByProduct.set(pId, []);
+                    }
+                    physicalLotsByProduct.get(pId)!.push(lot);
+                });
 
                 // Fetch inventory movements to calculate the true ledger stock
                 const movFilter = encodeURIComponent(JSON.stringify({
                     _and: [
-                        { product_id: { _eq: compProductId } },
+                        { product_id: { _in: shortfallProductIds } },
                         { branch_id: { _eq: branchId } }
                     ]
                 }));
                 const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
                 const movements = movRes.ok ? (await movRes.json()).data || [] : [];
-                const movementStockMap = new Map<string, number>();
                 movements.forEach((mov: any) => {
+                    const productId = Number(mov.product_id?.product_id || mov.product_id);
                     const batchNo = mov.batch_no || "LOT-N/A";
                     const qty = Number(mov.quantity || 0);
-                    movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
+                    const key = `${productId}:${batchNo}`;
+                    movementStockMap.set(key, (movementStockMap.get(key) || 0) + qty);
                 });
+
+                // Fetch product names for shortfall/error reporting
+                try {
+                    const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${shortfallProductIds.join(",")}&fields=product_id,product_name&limit=-1`, { headers });
+                    if (productsRes.ok) {
+                        const prods = (await productsRes.json()).data || [];
+                        prods.forEach((p: any) => productNamesMap.set(Number(p.product_id), p.product_name));
+                    }
+                } catch (err) {
+                    console.error("Error fetching product names:", err);
+                }
+            }
+
+            for (const mat of mats) {
+                const compProductId = Number(mat.product_id);
+                const allocatedQty = Number(mat.allocated_quantity || 0);
+                const reservedQty = Number(mat.reserved_quantity || 0);
+                const needed = allocatedQty - reservedQty;
+
+                if (needed <= 0) continue;
+
+                const validReceipts = receiptsByProduct.get(compProductId) || [];
+                const physicalLots = physicalLotsByProduct.get(compProductId) || [];
 
                 let newlyReservedQty = 0;
                 const newAllocations = [];
@@ -121,9 +160,9 @@ export async function handlePOST(request: Request) {
                         (l.lot_number === rec.lot_no || l.lot_number === rec.batch_no || (l.lot_number === "LOT-N/A" && !rec.lot_no && !rec.batch_no))
                     );
                     const lotNo = matchedLot ? (matchedLot.lot_number || "LOT-N/A") : (rec.lot_no || rec.batch_no || "LOT-N/A");
-                    const physicalQty = movementStockMap.get(lotNo) || 0;
+                    const physicalQty = movementStockMap.get(`${compProductId}:${lotNo}`) || 0;
                     const recId = Number(rec.purchase_order_product_id);
-                    const alreadyReserved = reservationsMap[recId] || 0;
+                    const alreadyReserved = reservationsMap.get(recId) || 0;
                     const netAvailable = Math.max(0, physicalQty - alreadyReserved);
 
                     if (netAvailable <= 0) continue;
@@ -151,33 +190,39 @@ export async function handlePOST(request: Request) {
                             actual_used_quantity: 0,
                             created_by: joData.created_by ? Number(joData.created_by) : null
                         };
-                        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
-                            method: "POST",
-                            headers,
-                            body: JSON.stringify(reservationPayload)
-                        }).catch(err => console.error("Error creating materials reservation row during draft release:", err));
+                        writePromises.push(
+                            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify(reservationPayload)
+                            }).catch(err => console.error("Error creating materials reservation row during draft release:", err))
+                        );
                     }
 
                     // Update parent requirements row's reserved_quantity
                     const updatedReservedQty = reservedQty + newlyReservedQty;
-                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${mat.jo_material_id || mat.id}`, {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({ reserved_quantity: updatedReservedQty })
-                    }).catch(err => console.error("Failed to update parent reserved quantity:", err));
+                    writePromises.push(
+                        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${mat.jo_material_id || mat.id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ reserved_quantity: updatedReservedQty })
+                        }).catch(err => console.error("Failed to update parent reserved quantity:", err))
+                    );
                 }
 
                 const finalReservedQty = reservedQty + newlyReservedQty;
                 if (finalReservedQty < allocatedQty) {
                     allRequirementsMet = false;
-                    // Fetch product name for detail report
-                    const productRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=product_name`, { headers });
-                    const prodName = productRes.ok ? (await productRes.json()).data?.product_name || `Product #${compProductId}` : `Product #${compProductId}`;
+                    const prodName = productNamesMap.get(compProductId) || `Product #${compProductId}`;
                     shortfallsList.push({
                         name: prodName,
                         shortage: allocatedQty - finalReservedQty
                     });
                 }
+            }
+
+            if (writePromises.length > 0) {
+                await Promise.all(writePromises);
             }
 
             if (allRequirementsMet || body.forceRelease === true) {

@@ -1,12 +1,15 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { User, Plus, Search } from "lucide-react";
 import { useClients } from "./hooks/useClients";
 import ClientsTable from "./components/ClientsTable";
 import ClientFormModal from "./components/ClientFormModal";
 
+type ClientModalMode = "create" | "view" | "edit";
+
 export default function ClientsModule() {
+    const [modalMode, setModalMode] = useState<ClientModalMode>("create");
     const {
         customers,
         storeTypes,
@@ -33,13 +36,23 @@ export default function ClientsModule() {
         openEditModal,
         handleCustomerNameChange,
         handleSaveCustomer,
-        handleToggleActive,
         products,
         versionsMap,
         overrides,
-        loadingOverrides,
+        loadingBomSettings,
+        bomSettingsError,
         updateProductVersionOverride
     } = useClients();
+
+    const handleCreate = () => {
+        setModalMode("create");
+        openCreateModal();
+    };
+
+    const handleView = (customer: Parameters<typeof openEditModal>[0]) => {
+        setModalMode("view");
+        void openEditModal(customer);
+    };
 
     return (
         <div className="space-y-6 max-w-6xl mx-auto p-1 sm:p-2 relative">
@@ -107,7 +120,7 @@ export default function ClientsModule() {
 
                     {/* Add Client Trigger */}
                     <button
-                        onClick={openCreateModal}
+                        onClick={handleCreate}
                         className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold hover:bg-primary/95 transition-all shadow-md cursor-pointer"
                     >
                         <Plus className="h-4 w-4" />
@@ -120,14 +133,15 @@ export default function ClientsModule() {
             <ClientsTable
                 customers={customers}
                 loading={loading}
-                onEdit={openEditModal}
-                onToggleActive={handleToggleActive}
+                onView={handleView}
             />
 
             {/* Modal Dialog Form Overlay */}
             <ClientFormModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
+                mode={modalMode}
+                onEdit={() => setModalMode("edit")}
                 editingCustomer={editingCustomer}
                 formData={formData}
                 setFormData={setFormData}
@@ -146,7 +160,8 @@ export default function ClientsModule() {
                 products={products}
                 versionsMap={versionsMap}
                 overrides={overrides}
-                loadingOverrides={loadingOverrides}
+                loadingBomSettings={loadingBomSettings}
+                bomSettingsError={bomSettingsError}
                 updateProductVersionOverride={updateProductVersionOverride}
             />
         </div>

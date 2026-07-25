@@ -485,47 +485,57 @@ export function JobOrderShiftLogModal({
 
                     <form onSubmit={handleShiftLogSubmit} className="p-4 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0 text-xs">
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 overflow-y-auto pr-1 min-h-0">
-                            <div className="lg:col-span-6 space-y-4">
-                                <div className="bg-muted/30 border border-border/80 rounded-xl p-3 sm:p-4 space-y-3 sm:space-y-4">
-                                    <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
-                                        Shift Yield Metrics
-                                    </h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="lg:col-span-6 space-y-5">
+                                <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+                                    <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+                                        <div className="p-1 bg-primary/10 rounded text-primary">
+                                            <Clock className="h-4 w-4" />
+                                        </div>
+                                        <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
+                                            Shift Yield Metrics
+                                        </h4>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                         <div className="space-y-1.5">
-                                            <Label htmlFor="productionDay" className="text-muted-foreground font-semibold">Production Day</Label>
-                                            <select
-                                                id="productionDay"
-                                                value={productionDay}
-                                                onChange={(e) => setProductionDay(e.target.value)}
-                                                className="flex h-9 w-full rounded-lg border border-input bg-background text-foreground px-3 py-1.5 text-xs font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200"
-                                            >
-                                                {Array.from({ length: estDays }).map((_, i) => (
-                                                    <option key={i + 1} value={i + 1}>Day {i + 1}</option>
-                                                ))}
-                                            </select>
+                                            <Label htmlFor="productionDay" className="text-muted-foreground font-medium text-[11px]">Production Day</Label>
+                                            <div className="relative">
+                                                <select
+                                                    id="productionDay"
+                                                    value={productionDay}
+                                                    onChange={(e) => setProductionDay(e.target.value)}
+                                                    className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 cursor-pointer appearance-none"
+                                                >
+                                                    {Array.from({ length: estDays }).map((_, i) => (
+                                                        <option key={i + 1} value={i + 1}>Day {i + 1}</option>
+                                                    ))}
+                                                </select>
+                                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground">
+                                                    <Layers className="h-3.5 w-3.5 text-muted-foreground/60" />
+                                                </div>
+                                            </div>
                                         </div>
 
                                         <div className="space-y-1.5">
-                                            <Label htmlFor="shiftName" className="text-muted-foreground font-semibold">Shift Name</Label>
+                                            <Label htmlFor="shiftName" className="text-muted-foreground font-medium text-[11px]">Shift Name</Label>
                                             <Input
                                                 id="shiftName"
                                                 type="text"
                                                 value={shiftName}
                                                 onChange={(e) => setShiftName(e.target.value)}
-                                                className="h-9 bg-background border-input text-foreground text-xs focus-visible:ring-primary transition-all duration-200"
+                                                className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-primary/20 focus-visible:border-primary transition-all duration-200"
                                                 placeholder="e.g. Shift A"
                                                 required
                                             />
                                         </div>
 
                                         <div className="space-y-1.5">
-                                            <Label htmlFor="shiftYield" className="text-muted-foreground font-semibold font-mono">Yield (pcs)</Label>
+                                            <Label htmlFor="shiftYield" className="text-muted-foreground font-medium text-[11px] font-mono">Yield (pcs)</Label>
                                             <Input
                                                 id="shiftYield"
                                                 type="number"
                                                 value={shiftYieldQty}
                                                 onChange={(e) => handleShiftYieldChange(e.target.value)}
-                                                className="h-9 bg-background border-input text-foreground text-xs font-bold font-mono focus-visible:ring-primary transition-all duration-200"
+                                                className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs font-bold font-mono focus-visible:ring-primary/20 focus-visible:border-primary transition-all duration-200"
                                                 placeholder="e.g. 15000"
                                                 required
                                             />
@@ -533,16 +543,21 @@ export function JobOrderShiftLogModal({
                                     </div>
 
                                     {/* Batch & Expiry Management */}
-                                    <div className="bg-emerald-50/10 dark:bg-emerald-950/5 border-l-4 border-emerald-500 border-t border-r border-b border-border/80 rounded-r-xl rounded-l-none p-3 sm:p-4 space-y-3 sm:space-y-4 mt-3 sm:mt-4 shadow-sm hover:shadow-md transition-all duration-300">
-                                        <div className="flex items-center gap-2 pb-1 border-b border-emerald-500/10">
-                                            <Layers className="h-4 w-4 text-emerald-500" />
-                                            <h4 className="font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider text-[11px]">
-                                                Batch & Lot Traceability Log (WIP Output)
-                                            </h4>
+                                    <div className="bg-emerald-500/[0.015] dark:bg-emerald-500/[0.005] border border-emerald-500/20 rounded-xl p-4 space-y-4 mt-4 shadow-sm hover:shadow-md transition-all duration-300">
+                                        <div className="flex items-center gap-2 pb-2 border-b border-emerald-500/10">
+                                            <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-600 dark:text-emerald-400">
+                                                <Layers className="h-4 w-4" />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[10px]">
+                                                    Batch & Lot Traceability Log (WIP Output)
+                                                </h4>
+                                                <p className="text-[9px] text-muted-foreground mt-0.5">Define tracking metadata for finished goods batch output</p>
+                                            </div>
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                             <div className="space-y-1.5">
-                                                <Label htmlFor="batchNo" className="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px]">
+                                                <Label htmlFor="batchNo" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                     <Tag className="h-3.5 w-3.5 text-emerald-500" /> Batch / Lot No
                                                 </Label>
                                                 <Input
@@ -550,34 +565,39 @@ export function JobOrderShiftLogModal({
                                                     type="text"
                                                     value={batchNo}
                                                     onChange={(e) => setBatchNo(e.target.value)}
-                                                    className="h-9 bg-background border-input text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500 focus-visible:border-emerald-500 transition-all duration-200"
+                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                     placeholder="e.g. BATCH-001"
                                                     required
                                                 />
                                             </div>
 
                                             <div className="space-y-1.5">
-                                                <Label htmlFor="targetLotSelect" className="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px]">
+                                                <Label htmlFor="targetLotSelect" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                     <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Warehouse Location
                                                 </Label>
-                                                <select
-                                                    id="targetLotSelect"
-                                                    value={selectedLotId}
-                                                    onChange={(e) => setSelectedLotId(e.target.value)}
-                                                    className="flex h-9 w-full rounded-lg border border-input bg-background text-foreground px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all duration-200 cursor-pointer"
-                                                    required
-                                                >
-                                                    <option value="" disabled>Select Location</option>
-                                                    {lots.map((l) => (
-                                                        <option key={l.lot_id} value={l.lot_id}>
-                                                            {l.lot_name}
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                <div className="relative">
+                                                    <select
+                                                        id="targetLotSelect"
+                                                        value={selectedLotId}
+                                                        onChange={(e) => setSelectedLotId(e.target.value)}
+                                                        className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all duration-200 cursor-pointer appearance-none"
+                                                        required
+                                                    >
+                                                        <option value="" disabled>Select Location</option>
+                                                        {lots.map((l) => (
+                                                            <option key={l.lot_id} value={l.lot_id}>
+                                                                {l.lot_name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground">
+                                                        <MapPin className="h-3.5 w-3.5 text-emerald-500/60" />
+                                                    </div>
+                                                </div>
                                             </div>
 
                                             <div className="space-y-1.5">
-                                                <Label htmlFor="mfgDate" className="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px]">
+                                                <Label htmlFor="mfgDate" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                     <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Mfg Date
                                                 </Label>
                                                 <Input
@@ -585,13 +605,13 @@ export function JobOrderShiftLogModal({
                                                     type="date"
                                                     value={manufacturingDate}
                                                     onChange={(e) => setManufacturingDate(e.target.value)}
-                                                    className="h-9 bg-background border-input text-foreground text-xs focus-visible:ring-emerald-500 transition-all duration-200"
+                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                     required
                                                 />
                                             </div>
 
                                             <div className="space-y-1.5">
-                                                <Label htmlFor="expDate" className="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px]">
+                                                <Label htmlFor="expDate" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
                                                     <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Expiry Date
                                                 </Label>
                                                 <Input
@@ -599,33 +619,36 @@ export function JobOrderShiftLogModal({
                                                     type="date"
                                                     value={expiryDate}
                                                     onChange={(e) => setExpiryDate(e.target.value)}
-                                                    className="h-9 bg-background border-input text-foreground text-xs focus-visible:ring-emerald-500 transition-all duration-200"
+                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                 />
                                             </div>
-
-                                            {/* QA Status selection removed, always defaults to Pending */}
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="bg-muted/30 border border-border/80 rounded-xl p-3 sm:p-4 space-y-3">
-                                    <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
-                                        Personnel Present for Shift (Whole Job Order)
-                                    </h4>
+                                <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-3 shadow-sm">
+                                    <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+                                        <div className="p-1 bg-primary/10 rounded text-primary">
+                                            <User className="h-4 w-4" />
+                                        </div>
+                                        <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
+                                            Personnel Present for Shift (Whole Job Order)
+                                        </h4>
+                                    </div>
                                     {groupedJobOperators.length === 0 ? (
-                                        <div className="p-3 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/50">
+                                        <div className="p-4 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40">
                                             No personnel logged on this shift.
                                         </div>
                                     ) : (
-                                        <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto pr-1">
+                                        <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto pr-1">
                                             {groupedJobOperators.map((op) => (
-                                                <div key={op.user_id} className="flex items-center gap-1.5 px-2.5 py-1 bg-background border border-border rounded-full shadow-sm">
-                                                    <div className="p-0.5 bg-primary/10 rounded-full text-primary shrink-0">
-                                                        <User className="h-3 w-3" />
+                                                <div key={op.user_id} className="flex items-center gap-1.5 px-3 py-1.5 bg-background border border-border/80 rounded-xl shadow-sm hover:border-primary/30 transition-all duration-200">
+                                                    <div className="p-1 bg-primary/10 rounded-full text-primary shrink-0">
+                                                        <User className="h-3.5 w-3.5" />
                                                     </div>
-                                                    <div className="flex items-center gap-1 min-w-0">
-                                                        <span className="font-bold text-foreground text-[10px] truncate">{getUserLabel(op.user_id)}</span>
-                                                        <span className="text-[9px] text-muted-foreground shrink-0">({op.user_position || "Tech"})</span>
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="font-bold text-foreground text-[11px] truncate leading-none">{getUserLabel(op.user_id)}</span>
+                                                        <span className="text-[9px] text-muted-foreground mt-0.5 font-medium">{op.user_position || "Tech"}</span>
                                                     </div>
                                                 </div>
                                             ))}
@@ -635,17 +658,25 @@ export function JobOrderShiftLogModal({
                             </div>
 
                             <div className="lg:col-span-6">
-                                <div className="bg-muted/30 border border-border/80 rounded-xl p-3 sm:p-4 space-y-3 sm:space-y-4 h-full flex flex-col">
-                                    <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
-                                        Raw Material Consumption Reconciliation
-                                    </h4>
+                                <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 h-full flex flex-col shadow-sm">
+                                    <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+                                        <div className="p-1 bg-primary/10 rounded text-primary">
+                                            <Layers className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
+                                                Raw Material Consumption Reconciliation
+                                            </h4>
+                                            <p className="text-[9px] text-muted-foreground mt-0.5">Reconcile theoretical allocation with actual quantities consumed</p>
+                                        </div>
+                                    </div>
 
                                     {shiftMaterials.length === 0 ? (
-                                        <div className="p-4 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/50 flex-1 flex items-center justify-center">
+                                        <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
                                             No raw materials pre-allocated for this workstation.
                                         </div>
                                     ) : (
-                                        <div className="space-y-2 flex-1 overflow-y-auto max-h-[420px] lg:max-h-[520px] pr-1">
+                                        <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] lg:max-h-[560px] pr-1">
                                             {shiftMaterials.map((m, index) => {
                                                 const stdQty = Number(m.allocated_quantity || 0) / (Number(selectedJobOrder.quantity) || 1);
                                                 const theoretical = stdQty * (Number(shiftYieldQty) || 0);
@@ -656,37 +687,32 @@ export function JobOrderShiftLogModal({
                                                 const isExceeded = actual > theoretical * 1.05;
                                                 const isInsufficient = actual > Number(m.available_stock || 0);
 
+                                                // Calculate progress bar values
+                                                const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
+                                                const barColor = isInsufficient 
+                                                    ? "bg-red-500" 
+                                                    : isExceeded 
+                                                    ? "bg-amber-500" 
+                                                    : "bg-emerald-500";
+
                                                 return (
-                                                    <div key={m.jo_material_id || m.id || index} className="p-2.5 bg-background rounded-xl border border-border/80 hover:border-border transition-all duration-200 space-y-2">
-                                                        {/* Row 1: Material Name, Lot, Stock & Status Badge */}
-                                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                                                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                                                <span className="font-bold text-foreground text-xs truncate" title={m.product_name}>
+                                                    <div key={m.jo_material_id || m.id || index} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
+                                                        {/* Header: Material details & Stock */}
+                                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                                                                <span className="font-bold text-foreground text-xs truncate max-w-[220px]" title={m.product_name}>
                                                                     {m.product_name}
                                                                 </span>
                                                                 {m.lot_no && (
-                                                                    <span className="font-mono bg-primary/5 text-primary text-[9px] px-1.5 py-0.5 rounded border border-primary/15 shrink-0">
+                                                                    <span className="font-mono bg-primary/5 text-primary text-[8px] px-1.5 py-0.5 rounded border border-primary/15 shrink-0">
                                                                         Lot: {m.lot_no}
                                                                     </span>
                                                                 )}
                                                             </div>
                                                             <div className="flex items-center gap-2 shrink-0">
-                                                                <span className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1.5 justify-end">
-                                                                    <span>Stock: <strong className={isInsufficient ? "text-red-500 font-bold" : "text-foreground font-mono font-semibold"}>{Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}</strong></span>
-                                                                    {Number(m.pending_qa_stock || 0) > 0 && (
-                                                                        <span className="text-[8px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-1 py-0.5 rounded font-black uppercase tracking-wider shrink-0">
-                                                                            {Number(m.pending_qa_stock).toLocaleString()} Pending QA
-                                                                        </span>
-                                                                    )}
-                                                                    {Number(m.qa_hold_stock || 0) > 0 && (
-                                                                        <span className="text-[8px] bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 px-1 py-0.5 rounded font-black uppercase tracking-wider shrink-0">
-                                                                            {Number(m.qa_hold_stock).toLocaleString()} QA Hold
-                                                                        </span>
-                                                                    )}
-                                                                </span>
                                                                 <Badge
                                                                     variant="outline"
-                                                                    className={`font-semibold text-[9px] px-1.5 py-0 shrink-0 border ${
+                                                                    className={`font-bold text-[8px] uppercase tracking-wider px-2 py-0.5 shrink-0 border ${
                                                                         isInsufficient
                                                                             ? "bg-red-500/10 text-red-600 border-red-500/20"
                                                                             : isExceeded 
@@ -699,46 +725,80 @@ export function JobOrderShiftLogModal({
                                                             </div>
                                                         </div>
 
-                                                        {/* Row 2: Quantities & Deviation */}
-                                                        <div className="flex items-center justify-between gap-4 pt-1 border-t border-border/40">
-                                                            <div className="flex items-baseline gap-1.5">
-                                                                <span className="text-muted-foreground text-[10px]">Std Allocation:</span>
-                                                                <span className="font-bold text-foreground/80 font-mono text-xs">
-                                                                    {theoretical.toFixed(2)} {m.unit_shortcut}
-                                                                </span>
+                                                        {/* Visual Progress / Deviation Bar */}
+                                                        {theoretical > 0 && (
+                                                            <div className="space-y-1">
+                                                                <div className="w-full bg-muted/80 h-1.5 rounded-full overflow-hidden">
+                                                                    <div 
+                                                                        className={`h-full rounded-full transition-all duration-300 ${barColor}`} 
+                                                                        style={{ width: `${Math.min(100, percentage)}%` }}
+                                                                    />
+                                                                </div>
+                                                                {percentage > 100 && (
+                                                                    <div className="w-full bg-muted/80 h-1 rounded-full overflow-hidden">
+                                                                        <div 
+                                                                            className="h-full rounded-full bg-rose-500 transition-all duration-300" 
+                                                                            style={{ width: `${Math.min(100, percentage - 100)}%` }}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Details and Inputs */}
+                                                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/40 text-[10px]">
+                                                            <div className="flex flex-col gap-1">
+                                                                <div className="flex items-center gap-1">
+                                                                    <span className="text-muted-foreground">Std Allocation:</span>
+                                                                    <span className="font-bold text-foreground/80 font-mono">
+                                                                        {theoretical.toFixed(2)} {m.unit_shortcut}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-muted-foreground">Available Stock:</span>
+                                                                    <span className={`font-mono font-bold ${isInsufficient ? "text-red-500" : "text-foreground/85"}`}>
+                                                                        {Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}
+                                                                    </span>
+                                                                    {Number(m.pending_qa_stock || 0) > 0 && (
+                                                                        <span className="text-[7.5px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/15 px-1 py-0.2 rounded font-black uppercase tracking-wider">
+                                                                            {Number(m.pending_qa_stock).toLocaleString()} QAPending
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                             </div>
 
-                                                            <div className="flex items-center gap-3">
-                                                                {/* Deviation Percent text */}
+                                                            <div className="flex items-center gap-2">
                                                                 {theoretical > 0 && (
-                                                                    <span className={`text-[10px] font-bold shrink-0 ${
+                                                                    <span className={`text-[10px] font-bold ${
                                                                         isInsufficient ? "text-red-500" : isExceeded ? "text-amber-600" : "text-emerald-600"
                                                                     }`}>
                                                                         {deviationPercent.toFixed(0)}% std
                                                                     </span>
                                                                 )}
                                                                 
-                                                                <div className="flex items-center gap-1.5">
-                                                                    <span className="text-muted-foreground text-[10px]">Actual:</span>
-                                                                    <Input
-                                                                        type="number"
-                                                                        step="0.01"
-                                                                        value={m.actual_qty}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            setShiftMaterials((prev) =>
-                                                                                prev.map((item, idx) => idx === index ? { ...item, actual_qty: val } : item)
-                                                                            );
-                                                                        }}
-                                                                        className={`h-7 w-24 text-right bg-background px-2 py-0.5 font-bold font-mono text-xs transition-all ${
-                                                                            isInsufficient 
-                                                                                ? "border-red-500 text-red-500 focus-visible:ring-red-500 bg-red-50/20 dark:bg-red-950/10" 
-                                                                                : isExceeded
-                                                                                ? "border-amber-500 text-amber-600 focus-visible:ring-amber-500 bg-amber-50/20 dark:bg-amber-950/10"
-                                                                                : "border-input text-foreground focus-visible:ring-primary"
-                                                                        }`}
-                                                                    />
-                                                                    <span className="text-muted-foreground text-[10px] font-semibold">{m.unit_shortcut}</span>
+                                                                <div className="flex items-center gap-1">
+                                                                    <span className="text-muted-foreground">Actual:</span>
+                                                                    <div className="relative flex items-center">
+                                                                        <Input
+                                                                            type="number"
+                                                                            step="0.01"
+                                                                            value={m.actual_qty}
+                                                                            onChange={(e) => {
+                                                                                const val = e.target.value;
+                                                                                setShiftMaterials((prev) =>
+                                                                                    prev.map((item, idx) => idx === index ? { ...item, actual_qty: val } : item)
+                                                                                );
+                                                                            }}
+                                                                            className={`h-8 w-28 text-right bg-background pr-6 pl-2 py-1.5 rounded-lg font-bold font-mono text-xs transition-all ${
+                                                                                isInsufficient 
+                                                                                    ? "border-red-500 text-red-500 focus-visible:ring-red-500 bg-red-50/20 dark:bg-red-950/10" 
+                                                                                    : isExceeded
+                                                                                    ? "border-amber-500 text-amber-600 focus-visible:ring-amber-500 bg-amber-50/20 dark:bg-amber-950/10"
+                                                                                    : "border-border/80 text-foreground focus-visible:ring-primary"
+                                                                            }`}
+                                                                        />
+                                                                        <span className="absolute right-2 text-[9px] text-muted-foreground font-semibold pointer-events-none">{m.unit_shortcut}</span>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         </div>

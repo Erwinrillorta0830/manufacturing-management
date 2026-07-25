@@ -10,58 +10,73 @@ export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
 export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
 export type QaParameterType = typeof QA_PARAMETER_TYPES[number];
 
+import { compareDecimals, DecimalValue, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+
 export type CurrencyCode = string;
 export type QaDisposition = "Passed" | "Partially Accepted" | "Rejected";
 export type DiscountKind = "Percentage" | "Fixed";
 
 export interface MoneySummary {
     currencyCode: CurrencyCode;
-    exchangeRate: number;
-    grossAmount: number;
-    discountAmount: number;
-    vatAmount: number;
-    withholdingAmount: number;
-    netAmount: number;
+    exchangeRate: string;
+    grossAmount: string;
+    discountAmount: string;
+    vatAmount: string;
+    withholdingAmount: string;
+    netAmount: string;
 }
 
-export function roundCurrency(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+export function roundCurrency(value: DecimalInput): string {
+    return DecimalValue.from(value).toFixed(2);
 }
 
 export interface PurchaseOrderMoneyLine {
-    quantity: number;
-    unitPrice: number;
-    discountPercent: number;
-    vatPercent: number;
-    withholdingPercent: number;
+    quantity: DecimalInput;
+    unitPrice: DecimalInput;
+    discountPercent: DecimalInput;
+    vatPercent: DecimalInput;
+    withholdingPercent: DecimalInput;
 }
 
-export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchangeRate: number) {
-    const grossForeign = roundCurrency(line.quantity * line.unitPrice);
-    const discountForeign = roundCurrency(grossForeign * line.discountPercent / 100);
-    const discountedSubtotalForeign = roundCurrency(grossForeign - discountForeign);
-    const vatForeign = roundCurrency(discountedSubtotalForeign * line.vatPercent / 100);
-    const withholdingForeign = roundCurrency(discountedSubtotalForeign * line.withholdingPercent / 100);
-    const netForeign = roundCurrency(discountedSubtotalForeign + vatForeign - withholdingForeign);
+export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchangeRate: DecimalInput) {
+    const grossForeign = DecimalValue.from(line.quantity).multiply(line.unitPrice).toFixed(2);
+    const discountForeign = DecimalValue.from(grossForeign)
+        .multiply(line.discountPercent)
+        .divideRounded(100, 2)
+        .toFixed(2);
+    const discountedSubtotalForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
+    const vatForeign = DecimalValue.from(discountedSubtotalForeign)
+        .multiply(line.vatPercent)
+        .divideRounded(100, 2)
+        .toFixed(2);
+    const withholdingForeign = DecimalValue.from(discountedSubtotalForeign)
+        .multiply(line.withholdingPercent)
+        .divideRounded(100, 2)
+        .toFixed(2);
+    const netForeign = DecimalValue.from(discountedSubtotalForeign)
+        .add(vatForeign)
+        .subtract(withholdingForeign)
+        .toFixed(2);
     return {
         grossForeign,
         discountForeign,
         vatForeign,
         withholdingForeign,
         netForeign,
-        grossPhp: roundCurrency(grossForeign * exchangeRate),
-        discountPhp: roundCurrency(discountForeign * exchangeRate),
-        vatPhp: roundCurrency(vatForeign * exchangeRate),
-        withholdingPhp: roundCurrency(withholdingForeign * exchangeRate),
-        netPhp: roundCurrency(netForeign * exchangeRate)
+        grossPhp: DecimalValue.from(grossForeign).multiply(exchangeRate).toFixed(2),
+        discountPhp: DecimalValue.from(discountForeign).multiply(exchangeRate).toFixed(2),
+        vatPhp: DecimalValue.from(vatForeign).multiply(exchangeRate).toFixed(2),
+        withholdingPhp: DecimalValue.from(withholdingForeign).multiply(exchangeRate).toFixed(2),
+        netPhp: DecimalValue.from(netForeign).multiply(exchangeRate).toFixed(2)
     };
 }
 
-export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyLine[], exchangeRate: number) {
+export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyLine[], exchangeRate: DecimalInput) {
     const calculatedLines = lines.map(line => calculatePurchaseOrderLine(line, exchangeRate));
-    const sum = (field: keyof typeof calculatedLines[number]) => roundCurrency(
-        calculatedLines.reduce((total, line) => total + line[field], 0)
-    );
+    const sum = (field: keyof typeof calculatedLines[number]) => calculatedLines.reduce(
+        (total, line) => total.add(line[field]),
+        DecimalValue.from(0)
+    ).toFixed(2);
     return {
         lines: calculatedLines,
         grossPhp: sum("grossPhp"),
@@ -76,7 +91,7 @@ export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyL
 export interface PurchaseOrderProductPayloadInput extends PurchaseOrderMoneyLine {
     purchaseOrderId: number;
     productId: number;
-    exchangeRate: number;
+    exchangeRate: DecimalInput;
     branchId?: number | null;
     purchaseIntent?: PurchaseIntent;
     jobOrderId?: number | null;
@@ -88,9 +103,12 @@ export function buildPurchaseOrderProductPayload(
     input: PurchaseOrderProductPayloadInput,
     amount: ReturnType<typeof calculatePurchaseOrderLine>
 ) {
-    const quantity = Number(input.quantity);
-    const unitPricePhp = roundCurrency(input.unitPrice * input.exchangeRate);
-    const discountedSubtotalPhp = roundCurrency(amount.grossPhp - amount.discountPhp);
+    const quantity = Number(DecimalValue.from(input.quantity).toFixed(0));
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error("Purchase-order quantity must be a positive whole number.");
+    }
+    const unitPricePhp = DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(UNIT_PRICE_DECIMAL_SCALE);
+    const discountedSubtotalPhp = DecimalValue.from(amount.grossPhp).subtract(amount.discountPhp).toFixed(2);
 
     return {
         purchase_order_id: input.purchaseOrderId,
@@ -100,7 +118,7 @@ export function buildPurchaseOrderProductPayload(
         approved_price: unitPricePhp,
         discount_type: input.discountType ?? null,
         gross_amount: amount.grossPhp,
-        discounted_price: roundCurrency(discountedSubtotalPhp / quantity),
+        discounted_price: DecimalValue.from(discountedSubtotalPhp).divideRounded(quantity, 2).toFixed(2),
         discounted_amount: amount.discountPhp,
         vat_amount: amount.vatPhp,
         withholding_amount: amount.withholdingPhp,
@@ -110,7 +128,7 @@ export function buildPurchaseOrderProductPayload(
         received: input.received ?? 0,
         purchase_intent: input.purchaseIntent || "Buffer_Stock",
         job_order_id: input.jobOrderId ?? null,
-        unit_price_foreign: roundCurrency(input.unitPrice),
+        unit_price_foreign: DecimalValue.from(input.unitPrice).toFixed(UNIT_PRICE_DECIMAL_SCALE),
         gross_amount_foreign: amount.grossForeign,
         net_amount_foreign: amount.netForeign,
         discount_percent: input.discountPercent,
@@ -146,8 +164,8 @@ export const PURCHASE_REJECTION_MOVEMENT = {
 export interface PurchaseOrderApprovalRule {
     ruleId: number;
     priority: number;
-    minimumTotalPhp: number;
-    maximumTotalPhp: number | null;
+    minimumTotalPhp: string;
+    maximumTotalPhp: string | null;
     currencyCode: string | null;
     importScope: "Any" | "Domestic" | "Import";
     productCategoryId: number | null;
@@ -159,7 +177,7 @@ export interface PurchaseOrderApprovalRule {
 }
 
 export interface PurchaseOrderApprovalContext {
-    totalPhp: number;
+    totalPhp: DecimalInput;
     currencyCode: string;
     isImport: boolean;
     productCategoryIds: readonly number[];
@@ -199,9 +217,13 @@ export function matchesPurchaseOrderApprovalRule(
     rule: PurchaseOrderApprovalRule,
     context: PurchaseOrderApprovalContext
 ): boolean {
-    if (!rule.isActive || !Number.isFinite(context.totalPhp) || context.totalPhp < 0) return false;
-    if (context.totalPhp < rule.minimumTotalPhp) return false;
-    if (rule.maximumTotalPhp !== null && context.totalPhp > rule.maximumTotalPhp) return false;
+    try {
+        if (!rule.isActive || compareDecimals(context.totalPhp, 0) < 0) return false;
+        if (compareDecimals(context.totalPhp, rule.minimumTotalPhp) < 0) return false;
+        if (rule.maximumTotalPhp !== null && compareDecimals(context.totalPhp, rule.maximumTotalPhp) > 0) return false;
+    } catch {
+        return false;
+    }
 
     const ruleCurrency = rule.currencyCode?.trim().toUpperCase();
     if (ruleCurrency && ruleCurrency !== context.currencyCode.trim().toUpperCase()) return false;
@@ -222,7 +244,7 @@ export function selectPurchaseOrderApprovalRule(
     const matches = rules.filter(rule => matchesPurchaseOrderApprovalRule(rule, context));
     matches.sort((left, right) =>
         right.priority - left.priority
-        || right.minimumTotalPhp - left.minimumTotalPhp
+        || compareDecimals(right.minimumTotalPhp, left.minimumTotalPhp)
         || left.ruleId - right.ruleId
     );
     return matches[0] || null;

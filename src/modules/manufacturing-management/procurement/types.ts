@@ -40,9 +40,9 @@ export interface IncomingShipment {
     supplier_id: number | Supplier | null;
     date_received: string | null;
     lead_time_receiving?: string | null;
-    total_foreign_currency: number;
-    exchange_rate: number;
-    total_php_value: number;
+    total_foreign_currency: number | string;
+    exchange_rate: number | string;
+    total_php_value: number | string;
     status: "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "En Route" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
@@ -77,10 +77,10 @@ export interface ShipmentLineItem {
     };
     quantity_ordered?: number;
     quantity_received?: number | null;
-    base_unit_cost_php: number;
+    base_unit_cost_php: number | string;
     unit_price_foreign?: number | null;
-    allocated_expense_php: number;
-    final_landed_unit_cost: number;
+    allocated_expense_php: number | string;
+    final_landed_unit_cost: number | string;
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
     discount_percent?: number;
@@ -93,7 +93,7 @@ export interface ShipmentExpense {
     shipment_id: number;
     expense_type?: string;
     overhead_id?: number;
-    amount_php: number;
+    amount_php: number | string;
     allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume";
 }
 
@@ -173,9 +173,9 @@ export interface DirectusShipment {
     supplier_id: number | Record<string, unknown>;
     date_received: string | null;
     lead_time_receiving?: string | null;
-    total_foreign_currency: number;
-    exchange_rate: number;
-    total_php_value: number;
+    total_foreign_currency: number | string;
+    exchange_rate: number | string;
+    total_php_value: number | string;
     status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "En Route" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
@@ -187,16 +187,16 @@ export interface DirectusShipmentLineItem {
     shipment_id: number;
     product_id: number | Record<string, unknown>;
     quantity_received: number;
-    base_unit_cost_php: number;
-    allocated_expense_php: number;
-    final_landed_unit_cost: number;
+    base_unit_cost_php: number | string;
+    allocated_expense_php: number | string;
+    final_landed_unit_cost: number | string;
 }
 
 export interface DirectusShipmentExpense {
     expense_id?: number;
     shipment_id: number;
     expense_type: string;
-    amount_php: number;
+    amount_php: number | string;
     allocation_method: "Value" | "Weight" | "Volume";
 }
 

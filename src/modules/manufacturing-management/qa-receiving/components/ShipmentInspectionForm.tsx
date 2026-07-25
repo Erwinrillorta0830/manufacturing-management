@@ -24,6 +24,7 @@ interface ShipmentInspectionFormProps {
     hasPreview: boolean;
     previewAcknowledged: boolean;
     validatingInspection: boolean;
+    previewError: string | null;
     qaSubmissionBlockReason: string | null;
     receivingValidationIssues: ReceivingValidationIssue[];
     loadingLines: boolean;
@@ -55,6 +56,7 @@ export default function ShipmentInspectionForm({
     hasPreview,
     previewAcknowledged,
     validatingInspection,
+    previewError,
     qaSubmissionBlockReason,
     receivingValidationIssues,
     loadingLines,
@@ -985,6 +987,14 @@ export default function ShipmentInspectionForm({
                     <div className="flex items-start gap-2 text-[10px] text-amber-700 max-w-xl" role="alert">
                         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>{qaSubmissionBlockReason}</span>
+                    </div>
+                ) : previewError ? (
+                    <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-[10px] text-red-700 max-w-xl" role="alert" aria-live="assertive">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                        <div>
+                            <strong>Preview could not be generated.</strong>
+                            <p className="mt-0.5">{previewError}</p>
+                        </div>
                     </div>
                 ) : receivingValidationIssues.length > 0 ? (
                     <div className="flex items-start gap-2 text-[10px] text-red-700 max-w-xl" role="alert" aria-live="polite">

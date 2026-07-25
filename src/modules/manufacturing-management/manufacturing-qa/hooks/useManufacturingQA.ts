@@ -18,6 +18,12 @@ import {
     postFinalQARelease
 } from "../services/qa-api";
 
+export interface PrintReceiptComponent {
+    product_name: string;
+    quantity: number;
+    unit?: string;
+}
+
 export interface PrintReceiptData {
     jo_no: string;
     branch_name: string;
@@ -29,6 +35,7 @@ export interface PrintReceiptData {
     manufacturing_date?: string;
     expiry_date: string;
     unit_cost: number;
+    components?: Array<PrintReceiptComponent>;
 }
 
 export const printYieldClosingReceipt = (data: PrintReceiptData) => {
@@ -217,6 +224,18 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
                     <span class="label">Expiration Date:</span>
                     <span class="value">${data.expiry_date || "N/A"}</span>
                 </div>
+
+                ${data.components && data.components.length > 0 ? `
+                    <div class="section-title">BOM Used (Components Consumed)</div>
+                    <div style="border-bottom: 1px dashed #cbd5e1; padding-bottom: 4px; margin-bottom: 4px;">
+                        ${data.components.map(c => `
+                            <div class="row" style="font-size: 7.5px; margin-bottom: 1.5px;">
+                                <span class="label" style="text-align: left; max-width: 65%; font-weight: normal; color: #334155;">${c.product_name}</span>
+                                <span class="value" style="font-family: monospace; font-weight: bold; color: #0f172a;">${Number(c.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${c.unit || 'units'}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
 
                 <div class="highlight-box">
                     <div class="row">
@@ -567,14 +586,25 @@ export function useManufacturingQA() {
     const handleOpenYieldDialog = (jo: JobOrder) => {
         setSelectedJO(jo);
         setYieldQty(String(jo.quantity));
-        setLotNumber(`MFG-${jo.jo_id}`);
-        setManufacturingDate("");
-        setExpiryDate("");
+        
+        // Find the first yield log to extract the lot number, mfg date, and expiry date if available
+        const firstLog = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
+        
+        if (firstLog) {
+            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || `MFG-${jo.jo_id}`);
+            setManufacturingDate(firstLog.manufacturing_date || firstLog.mfg_date || "");
+            setExpiryDate(firstLog.expiry_date || "");
+        } else {
+            setLotNumber(`MFG-${jo.jo_id}`);
+            setManufacturingDate("");
+            setExpiryDate("");
+        }
+        
         setUnitCost("0");
         setIsYieldDialogOpen(true);
     };
 
-    const handleReprintReceipt = (jo: JobOrder) => {
+    const handleReprintReceipt = async (jo: JobOrder) => {
         if (!jo) return;
         const log = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
         
@@ -587,6 +617,18 @@ export function useManufacturingQA() {
                             ? `Version #${jo.version_id || jo.versionId || jo.bom?.version_id}` 
                             : 'Active');
 
+        let components: Array<PrintReceiptComponent> = [];
+        try {
+            const materials = await fetchJobOrderMaterials(jo.jo_id);
+            components = materials.map((m: any) => ({
+                product_name: m.product_name || `Component #${m.product_id}`,
+                quantity: Number(m.actual_consumed_quantity || m.quantity_required || 0),
+                unit: m.unit_shortcut || "units"
+            }));
+        } catch (err) {
+            console.error("Failed to load materials for receipt reprint:", err);
+        }
+
         printYieldClosingReceipt({
             jo_no: jo.jo_id,
             product_code: jo.product_code || `PROD-${jo.product_id}`,
@@ -597,7 +639,8 @@ export function useManufacturingQA() {
             expiry_date: log ? (log.expiry_date || "N/A") : "N/A",
             manufacturing_date: log ? (log.manufacturing_date || "N/A") : "N/A",
             branch_name: branchName,
-            unit_cost: log ? Number(log.unit_cost || 0) : 0
+            unit_cost: log ? Number(log.unit_cost || 0) : 0,
+            components: components
         });
     };
 
@@ -680,7 +723,12 @@ export function useManufacturingQA() {
                     expiry_date: expiryDate || "N/A",
                     manufacturing_date: manufacturingDate || "N/A",
                     branch_name: branchName,
-                    unit_cost: Number(unitCost || 0)
+                    unit_cost: Number(unitCost || 0),
+                    components: componentsConsumed.map((c: any) => ({
+                        product_name: c.component_name,
+                        quantity: c.quantity,
+                        unit: "units"
+                    }))
                 });
             } catch (printErr) {
                 console.error("Auto print failed:", printErr);

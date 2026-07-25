@@ -52,7 +52,8 @@ export function useClients() {
     const [products, setProducts] = useState<ClientProduct[]>([]);
     const [versionsMap, setVersionsMap] = useState<Record<number, ClientProductVersion[]>>({});
     const [overrides, setOverrides] = useState<Record<number, number>>({});
-    const [loadingOverrides, setLoadingOverrides] = useState(false);
+    const [loadingBomSettings, setLoadingBomSettings] = useState(false);
+    const [bomSettingsError, setBomSettingsError] = useState<string | null>(null);
 
     // PSGC address data state
     const [provinces, setProvinces] = useState<{ code: string; name: string }[]>([]);
@@ -126,21 +127,42 @@ export function useClients() {
                 setBarangays([]);
                 return;
             }
+            setBarangays([]);
             try {
-                const res = await fetch(`/api/psgc/cities/${selectedCityCode}/barangays`);
-                if (res.ok) {
-                    const list: { code: string; name: string; cityCode: string }[] = await res.json();
-                    setBarangays(list);
-                    
-                    // If we are editing, map the barangay name string to the correct code
-                    if (editingCustomer && editingCustomer.brgy) {
-                        const matchedBrgy = list.find((b) => b.name.toLowerCase() === editingCustomer.brgy!.toLowerCase());
-                        if (matchedBrgy) {
-                            setFormData(prev => ({ ...prev, brgy: matchedBrgy.code }));
-                        }
+                const res = await fetch(`/api/psgc/cities-municipalities/${selectedCityCode}/barangays`);
+                if (!res.ok) {
+                    throw new Error(`Barangay lookup failed with status ${res.status}`);
+                }
+
+                const data: unknown = await res.json();
+                if (!Array.isArray(data)) {
+                    throw new Error("Barangay lookup returned an invalid response");
+                }
+
+                const list = data
+                    .filter((item): item is { code: string; name: string } => {
+                        return typeof item === "object" && item !== null
+                            && typeof (item as { code?: unknown }).code === "string"
+                            && typeof (item as { name?: unknown }).name === "string";
+                    })
+                    .map((item) => ({
+                        code: item.code,
+                        name: item.name,
+                        cityCode: selectedCityCode,
+                    }))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+
+                setBarangays(list);
+
+                // If we are editing, map the barangay name string to the correct code.
+                if (editingCustomer?.brgy) {
+                    const matchedBrgy = list.find((b) => b.name.toLowerCase() === editingCustomer.brgy!.toLowerCase());
+                    if (matchedBrgy) {
+                        setFormData(prev => ({ ...prev, brgy: matchedBrgy.code }));
                     }
                 }
             } catch (err) {
+                setBarangays([]);
                 console.error("Error loading barangays:", err);
             }
         };
@@ -174,6 +196,11 @@ export function useClients() {
 
     const openEditModal = async (c: Customer) => {
         setEditingCustomer(c);
+        setProducts([]);
+        setVersionsMap({});
+        setOverrides({});
+        setLoadingBomSettings(true);
+        setBomSettingsError(null);
         
         // Find matching province and city codes from strings to bind select menus
         const matchedProv = provinces.find(p => p.name.toLowerCase() === (c.province || "").toLowerCase());
@@ -218,10 +245,17 @@ export function useClients() {
         // Open modal first to ensure instant UI response
         setIsModalOpen(true);
 
-        // Load customer version overrides
-        setLoadingOverrides(true);
+        // Load customer version overrides, products, and BOM versions together so
+        // the settings tab never shows a partial or misleading empty state.
         try {
-            const overrideRes = await fetch(`/api/manufacturing/finished-goods/customer-product-version?customerId=${c.id}`);
+            const [overrideRes, resProds] = await Promise.all([
+                fetch(`/api/manufacturing/finished-goods/customer-product-version?customerId=${c.id}`),
+                fetch("/api/manufacturing/finished-goods/products?limit=250")
+            ]);
+
+            if (!overrideRes.ok) {
+                throw new Error("Failed to load customer BOM settings");
+            }
             if (overrideRes.ok) {
                 const overrideList = await overrideRes.json();
                 const map: Record<number, number> = {};
@@ -230,43 +264,39 @@ export function useClients() {
                 });
                 setOverrides(map);
             }
-        } catch (err) {
-            console.error("Failed to load customer version overrides:", err);
-        } finally {
-            setLoadingOverrides(false);
-        }
-
-        // Load products and versions if not loaded yet
-        try {
-            const resProds = await fetch("/api/manufacturing/finished-goods/products?limit=250");
-            if (resProds.ok) {
-                const prodsData = await resProds.json();
-                const finishedGoods = (prodsData || []).filter((p: { product_type?: number }) => Number(p.product_type) === 388);
-                const mappedProds = finishedGoods.map((p: { product_id: number; product_name: string; product_code?: string }) => ({
-                    id: p.product_id,
-                    name: p.product_name,
-                    code: p.product_code || `SKU-${p.product_id}`
-                }));
-                setProducts(mappedProds);
-
-                // Fetch versions in parallel
-                Promise.all(mappedProds.map(async (p: ClientProduct) => {
-                    const verRes = await fetch(`/api/manufacturing/finished-goods/versions?productId=${p.id}`);
-                    if (verRes.ok) {
-                        const verData = await verRes.json();
-                        return { productId: p.id, versions: verData as ClientProductVersion[] };
-                    }
-                    return { productId: p.id, versions: [] as ClientProductVersion[] };
-                })).then((results) => {
-                    const vMap: Record<number, ClientProductVersion[]> = {};
-                    results.forEach(r => {
-                        vMap[r.productId] = r.versions;
-                    });
-                    setVersionsMap(vMap);
-                });
+            if (!resProds.ok) {
+                throw new Error("Failed to load finished goods for BOM settings");
             }
+
+            const prodsData = await resProds.json();
+            const finishedGoods = (prodsData || []).filter((p: { product_type?: number }) => Number(p.product_type) === 388);
+            const mappedProds = finishedGoods.map((p: { product_id: number; product_name: string; product_code?: string }) => ({
+                id: p.product_id,
+                name: p.product_name,
+                code: p.product_code || `SKU-${p.product_id}`
+            }));
+            setProducts(mappedProds);
+
+            const results = await Promise.all(mappedProds.map(async (p: ClientProduct) => {
+                const verRes = await fetch(`/api/manufacturing/finished-goods/versions?productId=${p.id}`);
+                if (!verRes.ok) {
+                    throw new Error(`Failed to load BOM versions for ${p.name}`);
+                }
+                const verData = await verRes.json();
+                return { productId: p.id, versions: verData as ClientProductVersion[] };
+            }));
+
+            const vMap: Record<number, ClientProductVersion[]> = {};
+            results.forEach(r => {
+                vMap[r.productId] = r.versions;
+            });
+            setVersionsMap(vMap);
         } catch (err) {
             console.error("Failed to load products/versions for customer settings:", err);
+            setBomSettingsError(err instanceof Error ? err.message : "Failed to load BOM settings");
+            toast.error("Failed to load BOM settings. Close and reopen the customer to retry.");
+        } finally {
+            setLoadingBomSettings(false);
         }
     };
 
@@ -354,26 +384,6 @@ export function useClients() {
             console.error("Save client error:", err);
             const message = err instanceof Error ? err.message : "Failed to save client details";
             toast.error(message);
-        }
-    };
-
-    // Toggle active status directly
-    const handleToggleActive = async (c: Customer) => {
-        const nextActive = c.isActive === 1 || c.isActive === true ? 0 : 1;
-        try {
-            const res = await fetch(`/api/manufacturing/finished-goods/customers?id=${c.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ isActive: nextActive })
-            });
-            if (!res.ok) throw new Error();
-            
-            setCustomers(prev =>
-                prev.map(item => (item.id === c.id ? { ...item, isActive: nextActive } : item))
-            );
-            toast.success(`Client account ${nextActive ? "Activated" : "Deactivated"}`);
-        } catch {
-            toast.error("Failed to update status");
         }
     };
 
@@ -476,12 +486,12 @@ export function useClients() {
         openEditModal,
         handleCustomerNameChange,
         handleSaveCustomer,
-        handleToggleActive,
         handleDeleteCustomer,
         products,
         versionsMap,
         overrides,
-        loadingOverrides,
+        loadingBomSettings,
+        bomSettingsError,
         updateProductVersionOverride,
         refresh: loadData
     };

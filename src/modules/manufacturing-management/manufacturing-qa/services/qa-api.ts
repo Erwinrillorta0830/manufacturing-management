@@ -111,7 +111,7 @@ export async function fetchInventoryLotsData(): Promise<{ lots: any[]; products:
     if (!res.ok) throw new Error("Failed to load inventory lots");
     const json = await res.json();
     return {
-        lots: json.data || [],
+        lots: json.batches || [],
         products: json.products || []
     };
 }

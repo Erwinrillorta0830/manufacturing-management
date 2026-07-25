@@ -10,6 +10,7 @@ import type { z } from "zod";
 import type { purchaseOrderCancellationSchema, purchaseOrderRevisionSchema } from "./_schemas";
 import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
+import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
 type CancellationCommand = z.infer<typeof purchaseOrderCancellationSchema>;
@@ -75,8 +76,8 @@ function mapApprovalRule(row: Record<string, unknown>): PurchaseOrderApprovalRul
     return {
         ruleId: Number(row.rule_id),
         priority: Number(row.priority || 0),
-        minimumTotalPhp: Number(row.minimum_total_php || 0),
-        maximumTotalPhp: row.maximum_total_php == null ? null : Number(row.maximum_total_php),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0)),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php)),
         currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
         importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
         productCategoryId: relationId(row.product_category_id, "category_id"),
@@ -174,7 +175,7 @@ async function validateRevisionReferences(command: RevisionCommand) {
     await assertMrpProductJobOrderPairs(command.lineItems);
 }
 
-async function resolveApprovalRule(totalPhp: number, currencyCode: string, productIds: number[]) {
+async function resolveApprovalRule(totalPhp: DecimalInput, currencyCode: string, productIds: number[]) {
     const [categoryIds, rows] = await Promise.all([
         loadCategoryIds(productIds),
         directusData<Record<string, unknown>[]>(
@@ -193,10 +194,10 @@ async function resolveApprovalRule(totalPhp: number, currencyCode: string, produ
     return selected;
 }
 
-function legacyLineAmounts(line: RevisionCommand["lineItems"][number], exchangeRate: number) {
+function legacyLineAmounts(line: RevisionCommand["lineItems"][number], exchangeRate: DecimalInput) {
     return {
         quantity: Number(line.quantity_ordered),
-        unitPrice: Number(line.base_unit_cost_php),
+        unitPrice: line.base_unit_cost_php,
         discountPercent: Number(line.discount_percent || 0),
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
@@ -208,13 +209,13 @@ function linePayload(
     purchaseOrderId: number,
     line: RevisionCommand["lineItems"][number],
     amount: ReturnType<typeof calculatePurchaseOrderTotals>["lines"][number],
-    exchangeRate: number
+    exchangeRate: DecimalInput
 ) {
     return buildPurchaseOrderProductPayload({
         purchaseOrderId,
         productId: Number(line.product_id),
         quantity: Number(line.quantity_ordered),
-        unitPrice: Number(line.base_unit_cost_php),
+        unitPrice: line.base_unit_cost_php,
         discountPercent: Number(line.discount_percent || 0),
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
@@ -347,14 +348,14 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         throw new PurchaseOrderLifecycleError("This purchase order changed. Reload it before revising it.", 409);
     }
 
-    const exchangeRate = Number(command.shipmentData.exchange_rate) || 1;
+    const exchangeRate = command.shipmentData.exchange_rate;
     const currencyCode = String(command.shipmentData.currency_code || "PHP").toUpperCase();
     if (currencyCode !== "PHP" && currencyCode !== "USD") {
         throw new PurchaseOrderLifecycleError("Currency must be PHP or USD.", 400);
     }
     const currentCurrencyCode = String(order.currency_code || "PHP").toUpperCase();
-    const currentExchangeRate = Number(order.exchange_rate || 1);
-    if (currencyCode !== currentCurrencyCode || Math.abs(exchangeRate - currentExchangeRate) > 0.000001) {
+    const currentExchangeRate = order.exchange_rate || 1;
+    if (currencyCode !== currentCurrencyCode || compareDecimals(exchangeRate, currentExchangeRate) !== 0) {
         throw new PurchaseOrderLifecycleError("Currency and exchange rate are locked after purchase-order submission.", 409);
     }
     await validateRevisionReferences(command);

@@ -9,22 +9,21 @@ interface UOMOption {
     unit_of_measurement_count?: number;
 }
 
-function formatMoney(value: number | string | null | undefined, currency = "PHP") {
-    const amount = Number(value || 0);
-    return new Intl.NumberFormat("en-PH", {
-        style: "currency",
-        currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }).format(Number.isFinite(amount) ? amount : 0);
+function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = CURRENCY_DECIMAL_SCALE) {
+    const symbol = currency === "USD" ? "$" : currency === "PHP" ? "₱" : `${currency} `;
+    try {
+        return `${symbol}${formatDecimal(value ?? 0, decimalPlaces)}`;
+    } catch {
+        return `${symbol}${formatDecimal(0, decimalPlaces)}`;
+    }
 }
 
 function formatAmount(value: number | string | null | undefined) {
-    const amount = Number(value || 0);
-    return new Intl.NumberFormat("en-PH", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }).format(Number.isFinite(amount) ? amount : 0);
+    try {
+        return formatDecimal(value ?? 0);
+    } catch {
+        return "0.00";
+    }
 }
 
 function MaterialTypeBadge({ typeId, short = false }: { typeId?: number | string | null; short?: boolean }) {
@@ -52,6 +51,13 @@ import { toast } from "sonner";
 import { BOMMaterialSelect } from "@/modules/manufacturing-management/finished-goods/components/BOMMaterialSelect";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "@/app/api/manufacturing/procurement/_domain";
+import {
+    CURRENCY_DECIMAL_SCALE,
+    DecimalValue,
+    formatDecimal,
+    isNonNegativeDecimal,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export interface ManifestLineFormItem {
     product_id: string;
@@ -568,7 +574,7 @@ export default function IncomingShipments({
         console.debug("[EditPO] freshLines from API:", freshLines);
 
         const currencyCode = (activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP";
-        const exchangeRate = Number(activeShipment.exchange_rate) || 1;
+        const exchangeRate = DecimalValue.from(activeShipment.exchange_rate || 1);
         setLinesForm(freshLines.map((l: ShipmentLineItem) => ({
             product_id: String(typeof l.product_id === "object" ? l.product_id.product_id : l.product_id),
             product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
@@ -577,8 +583,8 @@ export default function IncomingShipments({
             // The form edits the transaction-currency price. The API keeps the
             // PHP base cost separately in base_unit_cost_php.
             base_unit_cost_php: String(l.unit_price_foreign ?? (currencyCode === "USD"
-                ? Number(l.base_unit_cost_php) / exchangeRate
-                : Number(l.base_unit_cost_php))),
+                ? DecimalValue.from(l.base_unit_cost_php || 0).divideRounded(exchangeRate, 4).toFixed(4)
+                : l.base_unit_cost_php)),
             parent_product_id: "",
             selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
             uom_options: []
@@ -805,37 +811,38 @@ export default function IncomingShipments({
 
     const totalPhpValue = React.useMemo(() => {
         return linesForm.reduce((acc, curr) => {
-            const qty = parseFloat(curr.quantity_ordered) || 0;
-            const cost = parseFloat(curr.base_unit_cost_php) || 0;
-            return acc + (qty * cost);
-        }, 0);
+            return acc.add(DecimalValue.from(curr.quantity_ordered || 0).multiply(curr.base_unit_cost_php || 0));
+        }, DecimalValue.from(0)).toFixed(2);
     }, [linesForm]);
 
     const totalUsdValue = React.useMemo(() => {
-        const rate = parseFloat(String(shipmentForm.exchange_rate));
-        if (isNaN(rate) || rate <= 0) return 0;
-        return totalPhpValue / rate;
+        try {
+            const rate = DecimalValue.from(shipmentForm.exchange_rate || 0);
+            if (rate.compare(0) <= 0) return "0.00";
+            return DecimalValue.from(totalPhpValue).divideRounded(rate, 2).toFixed(2);
+        } catch {
+            return "0.00";
+        }
     }, [totalPhpValue, shipmentForm.exchange_rate]);
 
     const draftSummary = React.useMemo(() => {
-        const exchangeRate = Number(shipmentForm.exchange_rate) || 0;
-        const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+        const exchangeRate = DecimalValue.from(shipmentForm.exchange_rate || 0);
         return linesForm.reduce((summary, line) => {
-            const grossForeign = round((Number(line.quantity_ordered) || 0) * (Number(line.base_unit_cost_php) || 0));
-            const discountForeign = round(grossForeign * (Number(line.discount_percent) || 0) / 100);
-            const subtotalForeign = round(grossForeign - discountForeign);
-            const vatForeign = round(subtotalForeign * (Number(line.vat_percent) || 0) / 100);
-            const withholdingForeign = round(subtotalForeign * (Number(line.withholding_percent) || 0) / 100);
-            const netForeign = round(subtotalForeign + vatForeign - withholdingForeign);
+            const grossForeign = DecimalValue.from(line.quantity_ordered || 0).multiply(line.base_unit_cost_php || 0).toFixed(2);
+            const discountForeign = DecimalValue.from(grossForeign).multiply(line.discount_percent || 0).divideRounded(100, 2).toFixed(2);
+            const subtotalForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
+            const vatForeign = DecimalValue.from(subtotalForeign).multiply(line.vat_percent || 0).divideRounded(100, 2).toFixed(2);
+            const withholdingForeign = DecimalValue.from(subtotalForeign).multiply(line.withholding_percent || 0).divideRounded(100, 2).toFixed(2);
+            const netForeign = DecimalValue.from(subtotalForeign).add(vatForeign).subtract(withholdingForeign).toFixed(2);
             return {
-                grossPhp: round(summary.grossPhp + grossForeign * exchangeRate),
-                discountPhp: round(summary.discountPhp + discountForeign * exchangeRate),
-                vatPhp: round(summary.vatPhp + vatForeign * exchangeRate),
-                withholdingPhp: round(summary.withholdingPhp + withholdingForeign * exchangeRate),
-                netPhp: round(summary.netPhp + netForeign * exchangeRate),
-                netForeign: round(summary.netForeign + netForeign)
+                grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(2),
+                discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(2),
+                vatPhp: DecimalValue.from(summary.vatPhp).add(DecimalValue.from(vatForeign).multiply(exchangeRate)).toFixed(2),
+                withholdingPhp: DecimalValue.from(summary.withholdingPhp).add(DecimalValue.from(withholdingForeign).multiply(exchangeRate)).toFixed(2),
+                netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(2),
+                netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(2)
             };
-        }, { grossPhp: 0, discountPhp: 0, vatPhp: 0, withholdingPhp: 0, netPhp: 0, netForeign: 0 });
+        }, { grossPhp: "0.00", discountPhp: "0.00", vatPhp: "0.00", withholdingPhp: "0.00", netPhp: "0.00", netForeign: "0.00" });
     }, [linesForm, shipmentForm.exchange_rate]);
 
     const handleAddLineForm = () => {
@@ -864,14 +871,14 @@ export default function IncomingShipments({
     const getLineErrors = (line: ManifestLineFormItem) => {
         const errors: string[] = [];
         const quantity = Number(line.quantity_ordered);
-        const unitPrice = Number(line.base_unit_cost_php);
+        const unitPrice = line.base_unit_cost_php;
         const discount = Number(line.discount_percent || 0);
         const vat = Number(line.vat_percent || 0);
         const withholding = Number(line.withholding_percent || 0);
 
         if (!line.product_id) errors.push("Raw Product Name is required");
         if (!Number.isInteger(quantity) || quantity <= 0) errors.push("Quantity must be a positive whole number");
-        if (line.base_unit_cost_php === "" || !Number.isFinite(unitPrice) || unitPrice < 0) errors.push("FOB Unit Cost must be a non-negative number");
+        if (line.base_unit_cost_php === "" || !isNonNegativeDecimal(unitPrice)) errors.push("FOB Unit Cost must be a non-negative number");
         if (!Number.isFinite(discount) || discount < 0 || discount > 100) errors.push("Discount must be between 0 and 100");
         if (!Number.isFinite(vat) || vat < 0 || vat > 100) errors.push("VAT must be between 0 and 100");
         if (!Number.isFinite(withholding) || withholding < 0 || withholding > 100) errors.push("Withholding must be between 0 and 100");
@@ -1400,7 +1407,7 @@ export default function IncomingShipments({
                                                             </div>
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-[11px]">
-                                                            {formatMoney(line.base_unit_cost_php)}
+                                                            {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-[11px] text-muted-foreground">
                                                             +{formatMoney(line.allocated_expense_php || 0)}
@@ -1952,16 +1959,16 @@ export default function IncomingShipments({
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Live Totals Preview</div>
                                     {canonicalDrafting ? (
                                         <>
-                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
-                                                <span>Gross <strong className="block font-mono text-foreground">{formatMoney(draftSummary.grossPhp)}</strong></span>
-                                                <span>Discount <strong className="block font-mono text-foreground">{formatMoney(draftSummary.discountPhp)}</strong></span>
-                                                <span>VAT <strong className="block font-mono text-foreground">{formatMoney(draftSummary.vatPhp)}</strong></span>
-                                                <span>Withholding <strong className="block font-mono text-foreground">{formatMoney(draftSummary.withholdingPhp)}</strong></span>
-                                                <span>Net <strong className="block font-mono text-foreground">{formatMoney(draftSummary.netPhp)}</strong></span>
+                                            <div className="grid min-w-0 grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-5">
+                                                <span className="min-w-0">Gross <strong className="block min-w-0 font-mono leading-tight text-foreground [overflow-wrap:anywhere]">{formatMoney(draftSummary.grossPhp)}</strong></span>
+                                                <span className="min-w-0">Discount <strong className="block min-w-0 font-mono leading-tight text-foreground [overflow-wrap:anywhere]">{formatMoney(draftSummary.discountPhp)}</strong></span>
+                                                <span className="min-w-0">VAT <strong className="block min-w-0 font-mono leading-tight text-foreground [overflow-wrap:anywhere]">{formatMoney(draftSummary.vatPhp)}</strong></span>
+                                                <span className="min-w-0">Withholding <strong className="block min-w-0 font-mono leading-tight text-foreground [overflow-wrap:anywhere]">{formatMoney(draftSummary.withholdingPhp)}</strong></span>
+                                                <span className="min-w-0">Net <strong className="block min-w-0 font-mono leading-tight text-foreground [overflow-wrap:anywhere]">{formatMoney(draftSummary.netPhp)}</strong></span>
                                             </div>
-                                            <div className="flex justify-between border-t pt-2 text-xs font-bold">
-                                                <span>Locked {shipmentForm.currency_code || "PHP"} total</span>
-                                                <span className="font-mono">{formatMoney(draftSummary.netForeign, shipmentForm.currency_code || "PHP")}</span>
+                                            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t pt-2 text-xs font-bold">
+                                                <span className="min-w-0">Locked {shipmentForm.currency_code || "PHP"} total</span>
+                                                <span className="min-w-0 text-right font-mono [overflow-wrap:anywhere]">{formatMoney(draftSummary.netForeign, shipmentForm.currency_code || "PHP")}</span>
                                             </div>
                                         </>
                                     ) : (

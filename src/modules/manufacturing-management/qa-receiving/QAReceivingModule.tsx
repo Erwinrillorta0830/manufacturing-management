@@ -40,6 +40,7 @@ export default function QAReceivingModule() {
         handleCommitReceiving,
         handleFinishCommitted,
         validatingInspection,
+        previewError,
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleSelectShipment,
@@ -167,6 +168,7 @@ export default function QAReceivingModule() {
                                 hasPreview={Boolean(receivingPreview)}
                                 previewAcknowledged={previewAcknowledged}
                                 validatingInspection={validatingInspection}
+                                previewError={previewError}
                                 qaSubmissionBlockReason={qaSubmissionBlockReason}
                                 receivingValidationIssues={receivingValidationIssues}
                                 loadingLines={loadingLines}

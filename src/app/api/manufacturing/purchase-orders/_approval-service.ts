@@ -10,6 +10,7 @@ import type { ApprovalStage } from "./_domain";
 import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import type { z } from "zod";
 import type { purchaseOrderApprovalSchema } from "./_schemas";
+import { normalizeDecimal } from "@/modules/manufacturing-management/decimal";
 
 type ApprovalCommand = z.infer<typeof purchaseOrderApprovalSchema>;
 
@@ -107,8 +108,8 @@ function mapRule(row: Record<string, unknown>): PurchaseOrderApprovalRule & { ru
         ruleId: Number(row.rule_id),
         ruleName: String(row.rule_name || `Rule ${row.rule_id}`),
         priority: Number(row.priority || 0),
-        minimumTotalPhp: Number(row.minimum_total_php || 0),
-        maximumTotalPhp: row.maximum_total_php == null ? null : Number(row.maximum_total_php),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0)),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php)),
         currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
         importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
         productCategoryId: relationId(row.product_category_id, "category_id"),
@@ -161,7 +162,7 @@ async function resolveRule(order: ApprovalOrder, categoryIds: number[]) {
         throw new PurchaseOrderApprovalError("The purchase order references an unavailable approval rule.", 409);
     }
     const selected = selectPurchaseOrderApprovalRule(rules, {
-        totalPhp: Number(order.total_amount || order.gross_amount || 0),
+        totalPhp: normalizeDecimal(order.total_amount || order.gross_amount || 0),
         currencyCode: order.currency_code || "PHP",
         isImport: asBoolean(order.is_import) || (order.currency_code || "PHP") !== "PHP",
         productCategoryIds: categoryIds,

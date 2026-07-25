@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compareDecimals, DecimalValue, isWithinDecimalCapacity } from "@/modules/manufacturing-management/decimal";
 
 const MODULE_PATHS = {
     procurement: "/mm/incoming-shipments",
@@ -8,7 +9,18 @@ const MODULE_PATHS = {
 } as const;
 
 const positiveId = z.coerce.number().int().positive();
-const nonNegativeMoney = z.coerce.number().finite().nonnegative();
+const decimalValue = z.union([z.string().trim().min(1), z.number().finite()]).transform(value => String(value)).refine(value => {
+    try {
+        DecimalValue.from(value);
+        return true;
+    } catch {
+        return false;
+    }
+}, "Must be a valid decimal value.");
+const nonNegativeMoney = decimalValue
+    .refine(value => DecimalValue.from(value).compare(0) >= 0, "Must be a non-negative amount.")
+    .refine(value => isWithinDecimalCapacity(value), "Amount exceeds the supported 65-digit currency range.");
+const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).compare(0) > 0, "Must be greater than zero.");
 const percentage = z.coerce.number().finite().min(0).max(100);
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -42,7 +54,7 @@ export const legacyPurchaseOrderCreateSchema = z.object({
     shipmentData: z.object({
         reference_number: z.string().trim().min(1).max(255),
         supplier_id: positiveId,
-        exchange_rate: z.coerce.number().finite().positive(),
+        exchange_rate: positiveDecimal,
         total_foreign_currency: nonNegativeMoney,
         total_php_value: nonNegativeMoney,
         status: initialPurchaseOrderStatusSchema.default("Ordered"),
@@ -103,11 +115,11 @@ export const purchaseOrderCreateSchema = z.object({
     paymentTypeId: positiveId,
     priceType: z.string().trim().min(1).max(50),
     currencyCode: z.enum(["PHP", "USD"]),
-    exchangeRate: z.coerce.number().finite().positive(),
+    exchangeRate: positiveDecimal,
     expectedTotals: purchaseOrderExpectedTotalsSchema,
     lines: z.array(purchaseOrderDraftLineSchema).min(1)
 }).superRefine((order, context) => {
-    if (order.currencyCode === "PHP" && order.exchangeRate !== 1) {
+    if (order.currencyCode === "PHP" && compareDecimals(order.exchangeRate, 1) !== 0) {
         context.addIssue({ code: "custom", path: ["exchangeRate"], message: "PHP orders must use an exchange rate of 1." });
     }
     const productIds = order.lines.map(line => line.productId);

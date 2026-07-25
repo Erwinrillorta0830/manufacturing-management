@@ -99,10 +99,6 @@ export async function POST(request: Request) {
 
                 if (consumedQty <= 0) continue;
 
-                const lotsUrl = `${DIRECTUS_URL}/items/inventory_lots?filter[product_id][_eq]=${rawProductId}&filter[qa_status][_in]=Passed,Partially Accepted&filter[branch_id][_eq]=${branchId}&sort=-id&limit=-1`;
-                const lotsRes = await fetch(lotsUrl, { headers, cache: "no-store" });
-                const lots = lotsRes.ok ? (await lotsRes.json()).data || [] : [];
-                
                 // Fetch inventory movements to calculate the true ledger stock
                 const movFilter = encodeURIComponent(JSON.stringify({
                     _and: [
@@ -114,14 +110,53 @@ export async function POST(request: Request) {
                 const movements = movRes.ok ? (await movRes.json()).data || [] : [];
                 const movementStockMap = sumMovementQuantitiesByStock(movements);
 
-                // Map lots and enrich them with correct ledger quantity
-                const lotsEnriched = uniqueRowsByMovementStockKey(lots).map((lot: any) => {
-                    const ledgerQty = movementStockMap.get(movementStockKey(lot)) || 0;
-                    return {
-                        ...lot,
-                        quantity: ledgerQty
-                    };
-                }).filter((lot: any) => lot.quantity > 0);
+                // Fetch document statuses for this product to determine QA status
+                const batchStatusMap = new Map<string, string>();
+                
+                try {
+                    // 1. PO Receivings
+                    const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${rawProductId}&limit=-1`, { headers, cache: "no-store" });
+                    if (recRes.ok) {
+                        const receipts = (await recRes.json()).data || [];
+                        receipts.forEach((rec: any) => {
+                            const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim();
+                            batchStatusMap.set(batchNo, rec.qa_status || "Passed");
+                        });
+                    }
+                } catch (err) {}
+
+                try {
+                    // 2. Yield Ledger
+                    const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${rawProductId}&fields=*,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+                    if (yieldRes.ok) {
+                        const yields = (await yieldRes.json()).data || [];
+                        yields.forEach((yl: any) => {
+                            const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim();
+                            batchStatusMap.set(batchNo, yl.qa_status || "Pending");
+                        });
+                    }
+                } catch (err) {}
+
+                // Compile active passed batches from movementStockMap
+                const lotsEnriched: any[] = [];
+                movementStockMap.forEach((qty, key) => {
+                    if (qty > 0) {
+                        const parts = key.split(":");
+                        const prodId = Number(parts[0]);
+                        const bNo = parts[3] || "LOT-N/A";
+                        if (prodId === rawProductId) {
+                            const status = batchStatusMap.get(bNo) || "Passed"; // default to Passed for legacy/unknown lots
+                            if (status === "Passed" || status === "Partially Accepted") {
+                                lotsEnriched.push({
+                                    lot_id: parts[2] === "null" ? 0 : Number(parts[2]),
+                                    lot_number: bNo,
+                                    batch_no: bNo,
+                                    quantity: qty
+                                });
+                            }
+                        }
+                    }
+                });
 
                 lotsCache[rawProductId] = lotsEnriched;
 
@@ -443,6 +478,7 @@ export async function POST(request: Request) {
 
         // 6. Record Yield: Insert new inventory lot for the produced product
         const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${new Date().toISOString().split("T")[0].replace(/-/g, "")}`;
+        const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
         const newLotPayload = {
             product_id: producedProductId,
             branch_id: branchId,
@@ -451,6 +487,7 @@ export async function POST(request: Request) {
             source_type: "yield_ledger",
             source_reference: String(ledgerId),
             lot_number: finalBatchNo,
+            lot_id: finishedLotId,
             expiry_date: expiryDate || null,
             created_on: manufacturingDate || null,
             remarks: `Yield from Job Order ${jobOrderNo} | Shift: ${shiftName}`
@@ -467,7 +504,6 @@ export async function POST(request: Request) {
         }
 
         // 7. Log finished yield movement in inventory_movements ledger
-        const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
         const finishedMovementPayload = {
             product_id: producedProductId,
             lot_id: finishedLotId,

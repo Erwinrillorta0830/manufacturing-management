@@ -9,6 +9,7 @@ import {
 import type { z } from "zod";
 import type { purchaseOrderCreateSchema } from "./_schemas";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
+import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
 
@@ -43,8 +44,8 @@ function approvalRule(row: Record<string, unknown>): PurchaseOrderApprovalRule {
     return {
         ruleId: Number(row.rule_id),
         priority: Number(row.priority || 0),
-        minimumTotalPhp: Number(row.minimum_total_php || 0),
-        maximumTotalPhp: row.maximum_total_php == null ? null : Number(row.maximum_total_php),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0)),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php)),
         currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
         importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
         productCategoryId: row.product_category_id == null
@@ -77,7 +78,7 @@ function assertExpectedTotals(order: PurchaseOrderDraft, totals: ReturnType<type
         netForeign: totals.netForeign
     };
     const mismatches = Object.entries(actual).filter(([field, value]) =>
-        Math.abs(value - expected[field as keyof typeof expected]) > 0.01
+        compareDecimals(value, expected[field as keyof typeof expected]) !== 0
     );
     if (mismatches.length) {
         throw new PurchaseOrderDraftError("Purchase-order totals changed during validation. Review the calculated totals and submit again.", 409, actual);
@@ -142,7 +143,7 @@ async function validateDraft(order: PurchaseOrderDraft) {
     }))];
 }
 
-async function selectRuleForDraft(order: PurchaseOrderDraft, totalPhp: number, productCategoryIds: number[]) {
+async function selectRuleForDraft(order: PurchaseOrderDraft, totalPhp: DecimalInput, productCategoryIds: number[]) {
     const rows = await directusData<Record<string, unknown>[]>(
         "/items/purchase_order_approval_rules?filter[is_active][_eq]=1&fields=*&sort=-priority&limit=-1",
         "Unable to load purchase-order approval rules."

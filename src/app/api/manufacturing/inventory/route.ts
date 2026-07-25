@@ -43,6 +43,25 @@ interface DirectusMovementRaw {
     version_id?: number | { version_id?: number } | null;
 }
 
+interface DirectusReceiptRaw {
+    product_id: number | { product_id?: number | null } | null;
+    batch_no?: string | null;
+    lot_no?: string | null;
+    qa_status?: string | null;
+    expiry_date?: string | null;
+    received_date?: string | null;
+}
+
+interface DirectusYieldRaw {
+    job_order_id?: {
+        product_id?: number | null;
+        job_order_no?: string | null;
+    } | null;
+    lot_number?: string | null;
+    qa_status?: string | null;
+    logged_at?: string | null;
+}
+
 export async function GET() {
     try {
         const [ledgerRes, batchesRes, productsRes, branchesRes] = await Promise.all([
@@ -148,6 +167,53 @@ export async function GET() {
             }
         }
 
+        // Fetch document-based QA statuses, expiry dates, and created_on timestamps directly from sources
+        const pIds = Array.from(new Set(uniqueBatches.map(b => Number(b.product_id)).filter(Boolean)));
+        const batchStatusMap = new Map<string, string>();
+        const batchExpiryMap = new Map<string, string>();
+        const batchCreatedMap = new Map<string, string>();
+
+        if (pIds.length > 0) {
+            try {
+                const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${pIds.join(",")}&limit=-1`, { headers, cache: "no-store" });
+                if (recRes.ok) {
+                    const receipts: DirectusReceiptRaw[] = (await recRes.json()).data || [];
+                    receipts.forEach((rec) => {
+                        const productIdVal = rec.product_id;
+                        const productId = Number(
+                            productIdVal && typeof productIdVal === "object"
+                                ? productIdVal.product_id
+                                : productIdVal
+                        );
+                        const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                        const key = `${productId}:${batchNo}`;
+                        batchStatusMap.set(key, rec.qa_status || "Passed");
+                        if (rec.expiry_date) batchExpiryMap.set(key, rec.expiry_date);
+                        if (rec.received_date) batchCreatedMap.set(key, rec.received_date);
+                    });
+                }
+            } catch (err) {
+                console.error("Error loading PO receipts for inventory status:", err);
+            }
+
+            try {
+                const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_in]=${pIds.join(",")}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+                if (yieldRes.ok) {
+                    const yields: DirectusYieldRaw[] = (await yieldRes.json()).data || [];
+                    yields.forEach((yl) => {
+                        const productId = Number(yl.job_order_id?.product_id);
+                        if (!productId) return;
+                        const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                        const key = `${productId}:${batchNo}`;
+                        batchStatusMap.set(key, yl.qa_status || "Pending");
+                        if (yl.logged_at) batchCreatedMap.set(key, yl.logged_at);
+                    });
+                }
+            } catch (err) {
+                console.error("Error loading yield ledger for inventory status:", err);
+            }
+        }
+
         // Map inventory lots to the Batch format expected by the frontend
         const batches = uniqueBatches.map((b: InventoryLot) => {
             const batchNo = canonicalBatchNumber(b.batch_no, b.lot_number);
@@ -176,6 +242,11 @@ export async function GET() {
             const reserved = Math.min(onHand, reservedByStockKey.get(key) || 0);
             const available = Math.max(0, onHand - reserved);
 
+            const lookupKey = `${b.product_id}:${batchNo}`;
+            const resolvedQaStatus = batchStatusMap.get(lookupKey) || b.qa_status || "Passed";
+            const resolvedExpiryDate = batchExpiryMap.get(lookupKey) || b.expiry_date || null;
+            const resolvedCreatedOn = batchCreatedMap.get(lookupKey) || b.created_on || null;
+
             return {
                 line_id: b.id,
                 product_id: b.product_id,
@@ -186,7 +257,7 @@ export async function GET() {
                 lot_id: lotId,
                 lot_name: lotName,
                 storage_assignment_state: lotId ? "assigned" : "legacy_unassigned",
-                expiration_date: b.expiry_date || null,
+                expiration_date: resolvedExpiryDate,
                 quantity_received: available,
                 on_hand_quantity: onHand,
                 reserved_quantity: reserved,
@@ -194,9 +265,9 @@ export async function GET() {
                 base_unit_cost_php: Number(b.unit_cost || 0),
                 allocated_expense_php: 0,
                 final_landed_unit_cost: Number(b.unit_cost || 0),
-                qa_status: b.qa_status || "Passed",
+                qa_status: resolvedQaStatus,
                 rejection_reason: b.rejection_reason || null,
-                created_on: b.created_on || null,
+                created_on: resolvedCreatedOn,
                 source_reference: b.source_reference || null,
                 source_type: b.source_type || null,
                 remarks: resolvedRemarks,
