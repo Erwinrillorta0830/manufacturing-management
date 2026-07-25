@@ -48,8 +48,3 @@ export const LEGACY_STATUS_MAP: Record<string, SalesOrderStatus> = {
 export function mapStatus(raw: string): SalesOrderStatus {
     return LEGACY_STATUS_MAP[raw] ?? (raw as SalesOrderStatus);
 }
-
-export function isValidTransition(from: SalesOrderStatus, to: SalesOrderStatus): boolean {
-    const allowed = SALES_ORDER_TRANSITIONS[from] ?? [];
-    return allowed.includes(to);
-}

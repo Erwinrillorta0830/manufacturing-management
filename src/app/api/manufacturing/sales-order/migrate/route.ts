@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
 import { cookies } from "next/headers";
-import { LEGACY_STATUS_MAP } from "@/types/sales-order-status";
+import { LEGACY_STATUS_MAP } from "../_status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
