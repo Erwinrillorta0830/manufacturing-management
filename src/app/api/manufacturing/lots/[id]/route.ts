@@ -53,14 +53,20 @@ export async function PATCH(
                 );
             }
 
-            // Check for duplicate lot name
+            // Check for duplicate lot name (case-insensitive, excluding current lot)
             const duplicateCheckRes = await fetch(
-                `${DIRECTUS_URL}/items/lots?filter[lot_name][_eq]=${encodeURIComponent(lot_name.trim())}&filter[lot_id][_neq]=${id}&limit=1&fields=lot_id`,
+                `${DIRECTUS_URL}/items/lots?limit=-1&fields=lot_id,lot_name`,
                 { headers, cache: "no-store" }
             );
             if (duplicateCheckRes.ok) {
                 const duplicateJson = await duplicateCheckRes.json();
-                if (duplicateJson.data && duplicateJson.data.length > 0) {
+                const existingLots = duplicateJson.data || [];
+                const isDuplicate = existingLots.some(
+                    (l: { lot_id: number; lot_name?: string }) =>
+                        Number(l.lot_id) !== Number(id) &&
+                        l.lot_name?.trim().toLowerCase() === lot_name.trim().toLowerCase()
+                );
+                if (isDuplicate) {
                     return NextResponse.json(
                         { error: `A lot with the name "${lot_name.trim()}" already exists` },
                         { status: 409 }

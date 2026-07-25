@@ -34,6 +34,12 @@ export function useLotManagement() {
         maxBatchCapacity: ""
     });
 
+    const [formErrors, setFormErrors] = useState<{
+        lotName?: boolean;
+        inventoryTypeId?: boolean;
+        maxBatchCapacity?: boolean;
+    }>({});
+
     const loadLots = async () => {
         setLoading(true);
         try {
@@ -61,6 +67,7 @@ export function useLotManagement() {
             inventoryTypeId: "",
             maxBatchCapacity: ""
         });
+        setFormErrors({});
         setEditingLot(null);
         setIsFormOpen(true);
     };
@@ -71,6 +78,7 @@ export function useLotManagement() {
             inventoryTypeId: lot.inventoryTypeId,
             maxBatchCapacity: String(lot.maxBatchCapacity)
         });
+        setFormErrors({});
         setEditingLot(lot);
         setIsFormOpen(true);
     };
@@ -81,6 +89,7 @@ export function useLotManagement() {
             inventoryTypeId: "",
             maxBatchCapacity: ""
         });
+        setFormErrors({});
         setEditingLot(null);
         setIsFormOpen(false);
     };
@@ -94,19 +103,48 @@ export function useLotManagement() {
             ...prev,
             [field]: value
         }));
+        setFormErrors((prev) => ({
+            ...prev,
+            [field]: false
+        }));
     };
 
+    const isDuplicateLotName = useMemo(() => {
+        const trimmed = formData.lotName.trim().toLowerCase();
+        if (!trimmed) return false;
+        return lots.some(
+            (l) =>
+                l.lotName.trim().toLowerCase() === trimmed &&
+                (!editingLot || l.lotId !== editingLot.lotId)
+        );
+    }, [formData.lotName, lots, editingLot]);
+
     const validateForm = (): boolean => {
-        if (!formData.lotName.trim()) {
+        const isNameEmpty = !formData.lotName.trim();
+        const isTypeEmpty = formData.inventoryTypeId === "";
+        const capacityNum = Number(formData.maxBatchCapacity);
+        const isCapacityInvalid = isNaN(capacityNum) || capacityNum <= 0;
+
+        const newErrors = {
+            lotName: isNameEmpty || isDuplicateLotName,
+            inventoryTypeId: isTypeEmpty,
+            maxBatchCapacity: isCapacityInvalid
+        };
+        setFormErrors(newErrors);
+
+        if (isNameEmpty) {
             toast.error("Lot Name is required");
             return false;
         }
-        if (formData.inventoryTypeId === "") {
+        if (isDuplicateLotName) {
+            toast.error(`A lot with the name "${formData.lotName.trim()}" already exists`);
+            return false;
+        }
+        if (isTypeEmpty) {
             toast.error("Inventory Type is required");
             return false;
         }
-        const capacityNum = Number(formData.maxBatchCapacity);
-        if (isNaN(capacityNum) || capacityNum <= 0) {
+        if (isCapacityInvalid) {
             toast.error("Max Batch Capacity must be a positive number greater than 0");
             return false;
         }
@@ -204,6 +242,8 @@ export function useLotManagement() {
         isFormOpen,
         editingLot,
         formData,
+        formErrors,
+        isDuplicateLotName,
         openCreateDialog,
         openEditDialog,
         closeDialog,
