@@ -68,7 +68,7 @@ export async function updateSalesOrderDetails(orderId: number, details: { detail
 }
 
 export async function approveSalesOrder(orderId: number): Promise<{ success: boolean }> {
-    return updateSalesOrderStatus(orderId, "For Picking");
+    return updateSalesOrderStatus(orderId, "For Invoicing");
 }
 
 export async function holdSalesOrder(orderId: number): Promise<{ success: boolean }> {

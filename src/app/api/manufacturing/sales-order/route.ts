@@ -14,6 +14,11 @@ import {
     validationIssues
 } from "./_validation";
 import { selectPreferredActiveVersion } from "../finished-goods/versions/versions-helper";
+import {
+    SALES_ORDER_TRANSITIONS,
+    LEGACY_STATUS_MAP,
+    mapStatus,
+} from "@/types/sales-order-status";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -1071,25 +1076,20 @@ export async function PATCH(request: Request) {
                 return NextResponse.json({ success: true, order_status: currentStatus });
             }
 
-            const allowedTransitions: Record<string, string[]> = {
-                Draft: ["Pending", "For Approval", "On Hold", "Cancelled"],
-                Pending: ["For Approval", "On Hold", "Cancelled"],
-                "For Approval": ["Draft", "For Picking", "On Hold", "Cancelled"],
-                "For Picking": ["For Invoicing", "Draft", "On Hold", "Cancelled"],
-                "On Hold": ["For Approval", "Draft", "For Picking", "Cancelled"],
-                Cancelled: []
-            };
-            if (!allowedTransitions[currentStatus]?.includes(targetStatus)) {
-                throw new ApiError(409, `Cannot transition sales order from ${currentStatus || "unknown"} to ${targetStatus}.`);
+            const current = mapStatus(currentStatus);
+            const target = mapStatus(targetStatus);
+
+            if (!SALES_ORDER_TRANSITIONS[current]?.includes(target)) {
+                throw new ApiError(409, `Cannot transition sales order from ${current} to ${target}.`);
             }
 
-            const isApprovalDecision = (currentStatus === "For Approval" || currentStatus === "On Hold")
-                && (targetStatus === "For Picking" || targetStatus === "Draft" || targetStatus === "On Hold" || targetStatus === "Cancelled");
+            const isApprovalDecision = (current === "For Approval" || current === "On Hold")
+                && (target === "For Invoicing" || target === "Draft" || target === "On Hold" || target === "Cancelled");
             if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
                 throw new ApiError(403, "Sales-order approval access is required for this transition.");
             }
 
-            if (targetStatus === "For Picking") {
+            if (target === "For Invoicing") {
                 if (allDetails.length === 0) {
                     throw new ApiError(400, "Approval blocked: Sales Order has no item details.");
                 }
@@ -1110,7 +1110,7 @@ export async function PATCH(request: Request) {
             let creditLimitExceeded = false;
             let warningString = "";
 
-            if (targetStatus === "For Approval") {
+            if (target === "For Approval") {
                 if (allDetails.length === 0) throw new ApiError(409, "A sales order without details cannot be submitted for approval.");
                 const total = allDetails.reduce((sum: number, detail: any) => {
                     const quantity = Number(detail.ordered_quantity);
@@ -1123,7 +1123,6 @@ export async function PATCH(request: Request) {
                 if (discount > total) throw new ApiError(409, "The sales-order discount exceeds its total amount.");
                 const orderNetAmount = total - discount;
 
-                // Credit Limit check
                 try {
                     const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_eq]=${order.customer_code}&fields=id,credit_limit,customer_name`, { headers, cache: "no-store" });
                     if (custRes.ok) {
@@ -1132,16 +1131,23 @@ export async function PATCH(request: Request) {
                             const customerRecord = custData[0];
                             const creditLimit = Number(customerRecord.credit_limit || 0);
                             if (creditLimit > 0) {
-                                // Fetch outstanding invoices for customer
-                                const invoiceParams = new URLSearchParams({
-                                    "filter[customer_code][_eq]": order.customer_code,
-                                    "filter[payment_status][_neq]": "Paid",
-                                    fields: "net_amount",
-                                    limit: "-1"
-                                });
-                                const invoiceRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?${invoiceParams.toString()}`, { headers, cache: "no-store" });
-                                const invoices = invoiceRes.ok ? (await invoiceRes.json()).data || [] : [];
-                                const outstandingBalance = invoices.reduce((sum: number, inv: any) => sum + Number(inv.net_amount || 0), 0);
+                                const invoiceRes = await fetch(
+                                    `${DIRECTUS_URL}/items/sales_invoice?filter[customer_code][_eq]=${order.customer_code}&filter[transaction_status][_neq]=Cancelled&fields=net_amount,payment_status&limit=-1`,
+                                    { headers, cache: "no-store" }
+                                );
+                                const invoices: { net_amount: number; payment_status?: string }[] = invoiceRes.ok ? (await invoiceRes.json()).data || [] : [];
+                                let outstandingBalance = 0;
+                                for (const inv of invoices) {
+                                    let paid = 0;
+                                    if (inv.payment_status) {
+                                        try {
+                                            const payments = JSON.parse(inv.payment_status);
+                                            if (Array.isArray(payments)) paid = payments.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+                                        } catch { /* string status - compute from value */ }
+                                    }
+                                    const net = Number(inv.net_amount || 0);
+                                    outstandingBalance += Math.max(0, net - paid);
+                                }
 
                                 if (outstandingBalance + orderNetAmount > creditLimit) {
                                     creditLimitExceeded = true;
@@ -1155,7 +1161,7 @@ export async function PATCH(request: Request) {
                 }
             }
 
-            const updatePayload: Record<string, any> = { order_status: targetStatus };
+            const updatePayload: Record<string, any> = { order_status: target };
             if (creditLimitExceeded && warningString) {
                 // If warning is not already in the remarks, append it
                 const currentRemarks = order.remarks || "";
@@ -1172,10 +1178,10 @@ export async function PATCH(request: Request) {
                 body: JSON.stringify(updatePayload)
             });
             if (!updateRes.ok) throw new ApiError(503, "Failed to update the sales-order status.");
-            return NextResponse.json({ success: true, order_status: targetStatus });
+            return NextResponse.json({ success: true, order_status: target });
         }
 
-        if (currentStatus !== "Draft" && currentStatus !== "Pending") {
+        if (mapStatus(currentStatus) !== "Draft") {
             throw new ApiError(409, `Quantities cannot be changed while the sales order is ${currentStatus || "in an unknown status"}.`);
         }
 
@@ -1197,7 +1203,7 @@ export async function PATCH(request: Request) {
         }, 0);
         if (discount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
 
-        const nextStatus = currentStatus === "Draft" ? "Pending" : currentStatus;
+        const nextStatus = "Draft";
         const detailsById = new Map<number, any>(allDetails.map((detail: any) => [Number(detail.detail_id), detail]));
         const attemptedMutations: DetailQuantityMutation[] = [];
         let headerMutation: HeaderQuantityMutation | null = null;

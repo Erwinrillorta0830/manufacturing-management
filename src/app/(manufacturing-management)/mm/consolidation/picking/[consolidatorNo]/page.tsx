@@ -75,7 +75,7 @@ export default async function PickingWorkspacePage(props: { params: Promise<{ co
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="shrink-0">
                                     <BreadcrumbLink href="/mm/consolidation/picking">
-                                        Consolidation / Picking
+                                        Batch Picking
                                     </BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="shrink-0" />

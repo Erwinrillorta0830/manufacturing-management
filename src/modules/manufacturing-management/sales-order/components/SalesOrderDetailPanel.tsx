@@ -410,7 +410,7 @@ export function SalesOrderDetailPanel({
                 )}
 
 
-                {selectedOrder && selectedOrder.order_status === "For Picking" && (
+                {selectedOrder && (selectedOrder.order_status === "For Invoicing" || selectedOrder.order_status === "For Picking") && (
                     <button
                         type="button"
                         onClick={() => setIsAllocationModalOpen(true)}
@@ -739,5 +739,5 @@ function FIFOAllocationModal({ isOpen, onClose, selectedOrder, orderDetails }: F
 }
 
 function isEditableState(status: string) {
-    return status === "For Picking";
+    return status === "For Invoicing" || status === "For Picking";
 }

@@ -696,16 +696,13 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                 })
                             }).catch(err => console.error("Error creating manufacturing_job_order_allocations link:", err));
 
-                            // Automatically update the sales order status to 'For Picking'
-                            console.log(`[Manufacturing Directus API] Updating sales order status for details ${det.detail_id} to For Picking`);
+                            // Automatically update the sales order status to 'For Invoicing'
+                            console.log(`[Manufacturing Directus API] Updating sales order status for details ${det.detail_id} to For Invoicing`);
                             try {
                                 await fetch(`${DIRECTUS_URL}/items/sales_order/${soId}`, {
                                     method: "PATCH",
                                     headers,
-                                    body: JSON.stringify({
-                                        order_status: "For Picking",
-                                        for_picking_at: new Date().toISOString()
-                                    })
+                                    body: JSON.stringify({ order_status: "For Invoicing" })
                                 });
                             } catch (err) {
                                 console.error("Failed to update parent sales order status:", err);

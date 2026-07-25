@@ -75,7 +75,7 @@ export default async function AuditWorkspacePage(props: { params: Promise<{ cons
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="shrink-0">
                                     <BreadcrumbLink href="/mm/consolidation/auditing">
-                                        Consolidation / Auditing
+                                        Batch Approval
                                     </BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="shrink-0" />

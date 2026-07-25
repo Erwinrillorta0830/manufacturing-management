@@ -472,20 +472,14 @@ export async function handlePOST(request: Request) {
                         console.log(`[Diagnostic] Detail ID: ${detailIdVal}, isBeingAllocated: ${isBeingAllocated}, ordered: ${ordered}, alloc: ${alloc}, line result: ${result}`);
                         return result;
                     });
-                    console.log(`[Diagnostic] final allFullyAllocated: ${allFullyAllocated}`);
-
-                    const newStatus = allFullyAllocated ? "For Invoicing" : "For Picking";
-                    console.log(`[BFF Direct Allocate] Transitioning SO ${parentOrderId} to status: ${newStatus}`);
+                    console.log(`[BFF Direct Allocate] Transitioning SO ${parentOrderId} to status: For Invoicing`);
                     const updateStatusRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
                         method: "PATCH",
                         headers,
-                        body: JSON.stringify({ 
-                            order_status: newStatus,
-                            for_invoicing_at: newStatus === "For Invoicing" ? new Date().toISOString() : undefined
-                        })
+                        body: JSON.stringify({ order_status: "For Invoicing" })
                     });
                     if (!updateStatusRes.ok) {
-                        console.error(`Failed to update parent Sales Order ${parentOrderId} status to ${newStatus}:`, await updateStatusRes.text());
+                        console.error(`Failed to update parent Sales Order ${parentOrderId} status to For Invoicing:`, await updateStatusRes.text());
                     }
                 }
             }

@@ -197,7 +197,7 @@ export function SalesOrderApprovalTable({
                             >
                                 <option value="All Status">All Statuses</option>
                                 <option value="For Approval">For Approval</option>
-                                <option value="For Picking">For Picking (Approved)</option>
+                                <option value="For Invoicing">For Invoicing</option>
                                 <option value="On Hold">On Hold</option>
                                 <option value="Draft">Draft</option>
                                 <option value="Cancelled">Cancelled</option>
@@ -275,7 +275,7 @@ export function SalesOrderApprovalTable({
                                             {formatCurrency(so.total_amount)}
                                         </td>
                                         <td className="p-4 text-center">
-                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap uppercase tracking-wider ${so.order_status === "For Picking"
+                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap uppercase tracking-wider ${so.order_status === "For Invoicing" || so.order_status === "For Picking"
                                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
                                                 : so.order_status === "On Hold"
                                                     ? "bg-amber-50 text-amber-800 border border-amber-300/60"
