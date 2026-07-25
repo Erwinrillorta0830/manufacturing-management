@@ -2,6 +2,8 @@ export type DecimalInput = string | number | bigint | DecimalValue;
 
 export const CURRENCY_DECIMAL_TOTAL_DIGITS = 65;
 export const CURRENCY_DECIMAL_SCALE = 2;
+export const UNIT_PRICE_DECIMAL_SCALE = 4;
+export const EXCHANGE_RATE_DECIMAL_SCALE = 6;
 
 const DECIMAL_PATTERN = /^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i;
 

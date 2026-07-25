@@ -10,7 +10,7 @@ export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
 export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
 export type QaParameterType = typeof QA_PARAMETER_TYPES[number];
 
-import { compareDecimals, DecimalValue, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import { compareDecimals, DecimalValue, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 export type CurrencyCode = string;
 export type QaDisposition = "Passed" | "Partially Accepted" | "Rejected";
@@ -103,8 +103,11 @@ export function buildPurchaseOrderProductPayload(
     input: PurchaseOrderProductPayloadInput,
     amount: ReturnType<typeof calculatePurchaseOrderLine>
 ) {
-    const quantity = DecimalValue.from(input.quantity).toFixed(0);
-    const unitPricePhp = DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(2);
+    const quantity = Number(DecimalValue.from(input.quantity).toFixed(0));
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error("Purchase-order quantity must be a positive whole number.");
+    }
+    const unitPricePhp = DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(UNIT_PRICE_DECIMAL_SCALE);
     const discountedSubtotalPhp = DecimalValue.from(amount.grossPhp).subtract(amount.discountPhp).toFixed(2);
 
     return {
@@ -125,7 +128,7 @@ export function buildPurchaseOrderProductPayload(
         received: input.received ?? 0,
         purchase_intent: input.purchaseIntent || "Buffer_Stock",
         job_order_id: input.jobOrderId ?? null,
-        unit_price_foreign: roundCurrency(input.unitPrice),
+        unit_price_foreign: DecimalValue.from(input.unitPrice).toFixed(UNIT_PRICE_DECIMAL_SCALE),
         gross_amount_foreign: amount.grossForeign,
         net_amount_foreign: amount.netForeign,
         discount_percent: input.discountPercent,

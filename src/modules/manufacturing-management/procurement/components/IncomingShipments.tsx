@@ -9,12 +9,12 @@ interface UOMOption {
     unit_of_measurement_count?: number;
 }
 
-function formatMoney(value: number | string | null | undefined, currency = "PHP") {
+function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = CURRENCY_DECIMAL_SCALE) {
     const symbol = currency === "USD" ? "$" : currency === "PHP" ? "₱" : `${currency} `;
     try {
-        return `${symbol}${formatDecimal(value ?? 0)}`;
+        return `${symbol}${formatDecimal(value ?? 0, decimalPlaces)}`;
     } catch {
-        return `${symbol}0.00`;
+        return `${symbol}${formatDecimal(0, decimalPlaces)}`;
     }
 }
 
@@ -51,7 +51,13 @@ import { toast } from "sonner";
 import { BOMMaterialSelect } from "@/modules/manufacturing-management/finished-goods/components/BOMMaterialSelect";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "@/app/api/manufacturing/procurement/_domain";
-import { DecimalValue, formatDecimal, isNonNegativeDecimal } from "@/modules/manufacturing-management/decimal";
+import {
+    CURRENCY_DECIMAL_SCALE,
+    DecimalValue,
+    formatDecimal,
+    isNonNegativeDecimal,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export interface ManifestLineFormItem {
     product_id: string;
@@ -1401,7 +1407,7 @@ export default function IncomingShipments({
                                                             </div>
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-[11px]">
-                                                            {formatMoney(line.base_unit_cost_php)}
+                                                            {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-[11px] text-muted-foreground">
                                                             +{formatMoney(line.allocated_expense_php || 0)}

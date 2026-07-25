@@ -6,7 +6,51 @@ import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderLine } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
-import { DecimalValue, normalizeDecimal } from "@/modules/manufacturing-management/decimal";
+import {
+    CURRENCY_DECIMAL_SCALE,
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeDecimal,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
+
+const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
+
+function normalizeLegacyDecimal(value: unknown, fallback: string, decimalPlaces: number, label: string): string {
+    const raw = value == null ? "" : String(value).trim();
+    if (!raw) return fallback;
+    try {
+        return DecimalValue.from(raw).toFixed(decimalPlaces);
+    } catch (error) {
+        console.warn(`[Manufacturing Directus API] Invalid decimal in ${label}; using ${fallback}.`, error);
+        return fallback;
+    }
+}
+
+function normalizeLegacyDecimalOrNull(value: unknown, decimalPlaces: number, label: string): string | null {
+    const raw = value == null ? "" : String(value).trim();
+    if (!raw) return null;
+    try {
+        return DecimalValue.from(raw).toFixed(decimalPlaces);
+    } catch (error) {
+        console.warn(`[Manufacturing Directus API] Invalid decimal in ${label}; using a derived value.`, error);
+        return null;
+    }
+}
+
+function normalizeLegacyExchangeRate(value: unknown, label: string): string {
+    const raw = value == null ? "" : String(value).trim();
+    if (!raw) return LEGACY_DEFAULT_EXCHANGE_RATE;
+    try {
+        const rate = DecimalValue.from(raw);
+        if (rate.compare(0) > 0) return rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
+    } catch (error) {
+        console.warn(`[Manufacturing Directus API] Invalid exchange rate in ${label}; using ${LEGACY_DEFAULT_EXCHANGE_RATE}.`, error);
+        return LEGACY_DEFAULT_EXCHANGE_RATE;
+    }
+    console.warn(`[Manufacturing Directus API] Non-positive exchange rate in ${label}; using ${LEGACY_DEFAULT_EXCHANGE_RATE}.`);
+    return LEGACY_DEFAULT_EXCHANGE_RATE;
+}
 
 interface DirectusPO {
     purchase_order_id: number;
@@ -206,11 +250,19 @@ function supplierId(value: DirectusPO["supplier_name"]): number | null {
 }
 
 function mapPurchaseOrder(po: DirectusPO, suppliers: ReadonlyMap<number, DirectusSupplier>, canonicalStatus = false) {
-    const rate = DecimalValue.from(po.exchange_rate ?? 58).toFixed(6);
-    const totalPhp = normalizeDecimal(String(po.total_amount ?? po.gross_amount ?? 0));
-    const foreignCurrency = po.total_foreign_currency != null
-        ? normalizeDecimal(String(po.total_foreign_currency))
-        : DecimalValue.from(totalPhp).divideRounded(rate, 2).toFixed(2);
+    const poLabel = `purchase_order/${po.purchase_order_id}`;
+    const rate = normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
+    const totalPhp = normalizeLegacyDecimal(
+        po.total_amount ?? po.gross_amount,
+        "0.00",
+        CURRENCY_DECIMAL_SCALE,
+        `${poLabel}.total_amount`
+    );
+    const foreignCurrency = normalizeLegacyDecimalOrNull(
+        po.total_foreign_currency,
+        CURRENCY_DECIMAL_SCALE,
+        `${poLabel}.total_foreign_currency`
+    ) || DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE);
     const storedSupplierId = supplierId(po.supplier_name);
     const supplier = storedSupplierId ? suppliers.get(storedSupplierId) || storedSupplierId : null;
     const status = canonicalStatus
@@ -576,10 +628,25 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 qa_status: activeLot ? activeLot.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;
                 // unit_price_foreign is the submitted transaction-currency price.
-                base_unit_cost_php: normalizeDecimal(String(pop.unit_price ?? 0)),
-                unit_price_foreign: normalizeDecimal(String(pop.unit_price_foreign ?? pop.unit_price ?? 0)),
+                base_unit_cost_php: normalizeLegacyDecimal(
+                    pop.unit_price,
+                    "0.0000",
+                    UNIT_PRICE_DECIMAL_SCALE,
+                    `purchase_order_products/${pop.purchase_order_product_id}.unit_price`
+                ),
+                unit_price_foreign: normalizeLegacyDecimal(
+                    pop.unit_price_foreign ?? pop.unit_price,
+                    "0.0000",
+                    UNIT_PRICE_DECIMAL_SCALE,
+                    `purchase_order_products/${pop.purchase_order_product_id}.unit_price_foreign`
+                ),
                 allocated_expense_php: "0.00",
-                final_landed_unit_cost: normalizeDecimal(String(activeLot?.unit_cost ?? pop.unit_price ?? 0)),
+                final_landed_unit_cost: normalizeLegacyDecimal(
+                    activeLot?.unit_cost ?? pop.unit_price,
+                    "0.0000",
+                    UNIT_PRICE_DECIMAL_SCALE,
+                    `purchase_order_products/${pop.purchase_order_product_id}.final_landed_unit_cost`
+                ),
                 batch_no: activeLot ? canonicalBatchNumber(activeLot.batch_no, activeLot.lot_number) || "" : "",
                 lot_number: activeLot ? canonicalBatchNumber(activeLot.batch_no, activeLot.lot_number) || "" : "",
                 lot_id: resolveInventoryLotId(activeLot?.lot_id),
