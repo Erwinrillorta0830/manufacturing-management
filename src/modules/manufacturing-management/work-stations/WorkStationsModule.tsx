@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Plus, Search, Edit, DollarSign, Activity, Settings, Check, LayoutGrid, Image as ImageIcon, ChevronsLeft, ChevronsRight, RefreshCw, Info, Calendar, User, X, ChevronDown } from "lucide-react";
+import { Plus, Search, Edit, DollarSign, Activity, Settings, Check, LayoutGrid, Image as ImageIcon, ChevronsLeft, ChevronsRight, RefreshCw, Info, Calendar, User, X, ChevronDown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
 import { 
@@ -226,6 +226,12 @@ export default function WorkStationsModule() {
             return;
         }
 
+        const selectedAsset = assets.find(a => a.id === selectedAssetId);
+        if (selectedAsset && selectedAsset.is_active === false && selectedAssetId !== editingWorkCenter?.asset_id) {
+            toast.error("The selected Asset / Equipment is inactive and cannot be assigned to a work station.");
+            return;
+        }
+
         if (!selectedDeptId) {
             toast.error("Owner Department is required.");
             return;
@@ -288,17 +294,23 @@ export default function WorkStationsModule() {
         }
     };
 
-    // Auto-filter asset matches
+    // Auto-filter asset matches (excluding inactive assets)
     const filteredAssets = useMemo(() => {
-        if (!assetSearch.trim()) return assets;
+        const selectableAssets = assets.filter(a => {
+            const isActive = a.is_active !== false;
+            const isCurrentlyAssigned = selectedAssetId !== null && a.id === selectedAssetId;
+            return isActive || isCurrentlyAssigned;
+        });
+
+        if (!assetSearch.trim()) return selectableAssets;
         const search = assetSearch.toLowerCase();
-        return assets.filter(a => {
+        return selectableAssets.filter(a => {
             const assetName = typeof a.item_id === 'object' ? a.item_id?.item_name || "" : "";
             return assetName.toLowerCase().includes(search) ||
                 (a.rfid_code || "").toLowerCase().includes(search) ||
                 (a.barcode || "").toLowerCase().includes(search);
         });
-    }, [assets, assetSearch]);
+    }, [assets, assetSearch, selectedAssetId]);
 
 
 
@@ -494,6 +506,8 @@ export default function WorkStationsModule() {
                                             const condition = linkedAsset.condition || matchedCatalogAsset?.condition || "Good";
                                             const itemImage = linkedAsset.item_image || matchedCatalogAsset?.item_image || null;
 
+                                            const isAssetInactive = (matchedCatalogAsset?.is_active === false || linkedAsset?.is_active === false);
+
                                             return (
                                                 <div className="flex items-center gap-3">
                                                     {itemImage ? (
@@ -520,6 +534,12 @@ export default function WorkStationsModule() {
                                                             <span className="text-[10px] text-muted-foreground">RFID: {rfidCode}</span>
                                                         )}
                                                         <span className="text-[10px] text-muted-foreground">Cond: {condition}</span>
+                                                        {isAssetInactive && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded mt-0.5 w-fit">
+                                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                Asset Inactive
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
@@ -822,6 +842,18 @@ export default function WorkStationsModule() {
                                         </div>
                                     </>
                                 )}
+                                {selectedAssetId && (() => {
+                                    const selectedAsset = assets.find(a => a.id === selectedAssetId);
+                                    if (selectedAsset && selectedAsset.is_active === false) {
+                                        return (
+                                            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-1.5 mt-1.5">
+                                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                                <span>Warning: The assigned asset is currently set to INACTIVE in Asset Management.</span>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })()}
                             </div>
 
                             {/* Owner Department */}
@@ -979,8 +1011,17 @@ export default function WorkStationsModule() {
                                     const condition = linkedAsset.condition || matchedCatalogAsset?.condition || "Good";
                                     const itemImage = linkedAsset.item_image || matchedCatalogAsset?.item_image || null;
 
+                                    const isAssetInactive = (matchedCatalogAsset?.is_active === false || linkedAsset?.is_active === false);
+
                                     return (
-                                        <div className="border border-border/60 rounded-xl p-4 flex flex-col md:flex-row gap-4 bg-background">
+                                        <div className="space-y-2">
+                                            {isAssetInactive && (
+                                                <div className="flex items-center gap-2 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5">
+                                                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                                                    <span>Warning: The assigned equipment asset is currently set as <strong>INACTIVE</strong> in Asset Management.</span>
+                                                </div>
+                                            )}
+                                            <div className="border border-border/60 rounded-xl p-4 flex flex-col md:flex-row gap-4 bg-background">
                                             {/* Left: Image Container */}
                                             <div className="w-full md:w-1/3 shrink-0">
                                                 {itemImage ? (
@@ -1020,7 +1061,8 @@ export default function WorkStationsModule() {
                                                 </div>
                                             </div>
                                         </div>
-                                    );
+                                    </div>
+                                );
                                 })()}
                             </div>
 
