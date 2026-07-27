@@ -9,7 +9,6 @@ import {
     ProductClass,
     ProductSegment,
     ProductSection,
-    WorkCenter,
     QATemplate,
     QAParameter,
     RouteStep,
@@ -325,33 +324,6 @@ export async function activateVersion(productId: number, versionId?: number, dea
         } catch { }
         throw new Error(msg);
     }
-    return res.json();
-}
-
-// ─── Work Centers API Helpers ────────────────────────────────────────────────
-export async function fetchWorkCenters(): Promise<WorkCenter[]> {
-    const res = await fetch("/api/manufacturing/finished-goods/work-centers", { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to fetch work centers from BFF");
-    return res.json();
-}
-
-export async function createWorkCenter(workCenter: Omit<WorkCenter, "work_center_id">): Promise<{ success: boolean; workCenter: WorkCenter }> {
-    const res = await fetch("/api/manufacturing/finished-goods/work-centers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(workCenter)
-    });
-    if (!res.ok) throw new Error("Failed to create work center via BFF");
-    return res.json();
-}
-
-export async function saveWorkCenter(workCenterId: number, workCenter: Partial<WorkCenter>): Promise<{ success: boolean; workCenter: WorkCenter }> {
-    const res = await fetch(`/api/manufacturing/finished-goods/work-centers/${workCenterId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(workCenter)
-    });
-    if (!res.ok) throw new Error("Failed to update work center via BFF");
     return res.json();
 }
 

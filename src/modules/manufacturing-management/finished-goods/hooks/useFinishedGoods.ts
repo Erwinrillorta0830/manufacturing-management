@@ -41,13 +41,11 @@ import {
     createClass,
     createSection,
     activateVersion,
-    fetchWorkCenters,
-    createWorkCenter,
-    saveWorkCenter,
     fetchQATemplates,
     createQATemplate,
     saveQATemplate
 } from "../services/finished-goods-api";
+import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
     getProductEditValidationErrors,
     getProductRegistrationValidationErrors,
@@ -187,7 +185,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         loadForexRate();
     }, []);
 
-    // Fetch Metadata and new WorkCenters/QATemplates on Mount
+    // Fetch metadata and read-only workstation lookup data on mount.
     useEffect(() => {
         async function loadMetadata() {
             setLoadingProducts(true);
@@ -1119,37 +1117,6 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
     };
 
-    // Work Centers CRUD Handlers
-    const handleAddWorkCenter = async (workCenter: Omit<WorkCenter, "work_center_id">) => {
-        try {
-            const res = await createWorkCenter(workCenter);
-            if (res.success && res.workCenter) {
-                toast.success(`Work center "${workCenter.work_center_name}" created successfully!`);
-                setWorkCenters(prev => [...prev, res.workCenter].sort((a, b) => a.work_center_name.localeCompare(b.work_center_name)));
-                return res.workCenter;
-            }
-        } catch (e) {
-            console.error("Failed to create work center:", e);
-            const error = e instanceof Error ? e : new Error(String(e));
-            toast.error(error.message || "Failed to create work center");
-        }
-    };
-
-    const handleSaveWorkCenter = async (workCenterId: number, workCenter: Partial<WorkCenter>) => {
-        try {
-            const res = await saveWorkCenter(workCenterId, workCenter);
-            if (res.success && res.workCenter) {
-                toast.success(`Work center updated successfully!`);
-                setWorkCenters(prev => prev.map(w => w.work_center_id === workCenterId ? res.workCenter : w));
-                return res.workCenter;
-            }
-        } catch (e) {
-            console.error("Failed to update work center:", e);
-            const error = e instanceof Error ? e : new Error(String(e));
-            toast.error(error.message || "Failed to update work center");
-        }
-    };
-
     // QA Templates CRUD Handlers
     const handleAddQATemplate = async (template: Omit<QATemplate, "template_id">) => {
         try {
@@ -1258,8 +1225,6 @@ export function useFinishedGoods(initialTab: string = "details") {
         handleRegisterNewVersion,
         handleSave,
         handleActivateVersion,
-        handleAddWorkCenter,
-        handleSaveWorkCenter,
         handleAddQATemplate,
         handleSaveQATemplate
     };
