@@ -132,7 +132,6 @@ export async function processShipmentLandedCosts(
     const previousExpenses = await fetchShipmentExpenses(shipmentId);
     const deletedExpenses: StoredExpense[] = [];
     const createdExpenseIds: number[] = [];
-    const updatedInventoryCosts: Array<{ id: number; unit_cost: unknown }> = [];
     const updatedProductCosts = new Map<number, { cost_per_unit: unknown; estimated_unit_cost: unknown }>();
 
     try {
@@ -170,6 +169,33 @@ export async function processShipmentLandedCosts(
             };
         });
         const allocations = calculateLandedCostAllocations(inputs, totalExpensesPhp, allocationMethod);
+        // Resolve inventory movements to check if receiving records exist
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id&limit=-1`;
+        const receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
+        const receivingData = receivingRes.ok ? (await receivingRes.json()).data || [] : [];
+        
+        interface ProcurementReceivingRow {
+            purchase_order_product_id?: number | { purchase_order_product_id?: number } | null;
+            product_id?: number | null;
+        }
+
+        // Map receiving record IDs
+        const receivingIds = receivingData
+            .map((row: ProcurementReceivingRow) => {
+                const poProd = row.purchase_order_product_id;
+                return typeof poProd === "object" && poProd ? poProd.purchase_order_product_id : poProd;
+            })
+            .filter(Boolean);
+
+        let movements: Record<string, unknown>[] = [];
+        if (receivingIds.length > 0) {
+            const movementUrl = `${DIRECTUS_URL}/items/inventory_movements?filter[source_document_id][_in]=${receivingIds.join(",")}&limit=-1`;
+            const movementRes = await fetch(movementUrl, { headers, cache: "no-store" });
+            if (movementRes.ok) {
+                movements = (await movementRes.json()).data || [];
+            }
+        }
+
         let deferredInventoryUpdates = 0;
 
         for (const line of lines) {
@@ -177,32 +203,10 @@ export async function processShipmentLandedCosts(
             const allocation = allocations.get(line.line_id);
             if (!allocation) continue;
 
-            const filter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { source_type: { _eq: "procurement" } },
-                    { source_reference: { _eq: String(shipmentId) } },
-                    { product_id: { _eq: productId } },
-                    { batch_no: { _nnull: true } },
-                    { lot_id: { _nnull: true } }
-                ]
-            }));
-            const lotResponse = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${filter}&fields=id,unit_cost&limit=-1`, { headers });
-            if (!lotResponse.ok) throw new Error(`Failed to load inventory lots for product ${productId}.`);
-            const inventoryLots = (await lotResponse.json()).data || [];
-
-            if (inventoryLots.length === 0) {
+            const hasMovements = movements.some(m => Number(m.product_id) === productId);
+            if (!hasMovements) {
                 deferredInventoryUpdates += 1;
                 continue;
-            }
-
-            for (const inventoryLot of inventoryLots) {
-                updatedInventoryCosts.push({ id: Number(inventoryLot.id), unit_cost: inventoryLot.unit_cost });
-                const updateResponse = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${inventoryLot.id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ unit_cost: allocation.finalLandedUnitCost })
-                });
-                if (!updateResponse.ok) throw new Error(`Failed to update landed cost for inventory lot ${inventoryLot.id}.`);
             }
 
             if (!updatedProductCosts.has(productId)) {
@@ -231,12 +235,6 @@ export async function processShipmentLandedCosts(
         for (const [productId, previous] of [...updatedProductCosts.entries()].reverse()) {
             const response = await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
                 method: "PATCH", headers, body: JSON.stringify(previous)
-            }).catch(() => null);
-            if (!response?.ok) rollbackFailed = true;
-        }
-        for (const inventoryLot of updatedInventoryCosts.reverse()) {
-            const response = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${inventoryLot.id}`, {
-                method: "PATCH", headers, body: JSON.stringify({ unit_cost: inventoryLot.unit_cost })
             }).catch(() => null);
             if (!response?.ok) rollbackFailed = true;
         }

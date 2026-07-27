@@ -1,9 +1,12 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrderIds?: number[]): Promise<{ jo_id?: string | null }> {
     try {
+        const todayStr = await getTodayDateString();
         let productsList = joData.products || [];
         if (productsList.length === 0 && joData.product_id) {
             productsList = [{
@@ -167,20 +170,10 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                             }
                         }
 
-                        // Fetch physical inventory lots
                         if (!joData.branch_id) {
                             throw new Error("Cannot verify stock: Job Order is missing branch_id");
                         }
                         const branchId = Number(joData.branch_id);
-                        const lotQueryFilter = encodeURIComponent(JSON.stringify({
-                            _and: [
-                                { product_id: { _eq: compProductId } },
-                                { branch_id: { _eq: branchId } },
-                                { source_type: { _eq: "procurement" } }
-                            ]
-                        }));
-                        const physicalLotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers, cache: "no-store" });
-                        const physicalLots = physicalLotsRes.ok ? (await physicalLotsRes.json()).data || [] : [];
 
                         // Fetch inventory movements to calculate the true ledger stock
                         const movFilter = encodeURIComponent(JSON.stringify({
@@ -200,11 +193,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
 
                         let netAvailable = 0;
                         for (const rec of validReceipts) {
-                            const matchedLot = physicalLots.find((l: any) => 
-                                String(l.source_reference) === String(rec.purchase_order_id) && 
-                                (l.lot_number === rec.lot_no || l.lot_number === rec.batch_no || (l.lot_number === "LOT-N/A" && !rec.lot_no && !rec.batch_no))
-                            );
-                            const lotNo = matchedLot ? (matchedLot.lot_number || "LOT-N/A") : (rec.lot_no || rec.batch_no || "LOT-N/A");
+                            const lotNo = rec.lot_no || rec.batch_no || "LOT-N/A";
                             const physicalQty = movementStockMap.get(lotNo) || 0;
                             const recId = Number(rec.purchase_order_product_id);
                             const alreadyReserved = reservationsMap[recId] || 0;
@@ -257,7 +246,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
             version_id: versionId || null,
             target_quantity: Number(totalMergedQuantity),
             actual_quantity_produced: 0,
-            start_date: new Date().toISOString().split("T")[0],
+            start_date: todayStr,
             end_date: joData.due_date || null,
             status: initialStatus,
             shift_option: joData.shift_option || "8",
@@ -379,42 +368,45 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                              const allocations: { purchase_order_product_id: number; allocated: number }[] = [];
 
                              if (isSubAssembly) {
-                                 // Fetch Passed inventory lots (which could be manufactured/seeded/procured)
-                                 if (!joData.branch_id) {
-                                     throw new Error("Cannot allocate sub-assembly: Job Order is missing branch_id");
-                                 }
-                                 const branchId = Number(joData.branch_id);
-                                 const lotQueryFilter = encodeURIComponent(JSON.stringify({
-                                     _and: [
-                                         { product_id: { _eq: compProductId } },
-                                         { branch_id: { _eq: branchId } },
-                                         { qa_status: { _eq: "Passed" } }
-                                     ]
-                                 }));
-                                 const physicalLotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers });
-                                 const physicalLots = physicalLotsRes.ok ? (await physicalLotsRes.json()).data || [] : [];
+                                  if (!joData.branch_id) {
+                                      throw new Error("Cannot allocate sub-assembly: Job Order is missing branch_id");
+                                  }
+                                  const branchId = Number(joData.branch_id);
 
-                                 // Fetch inventory movements to calculate the true ledger stock
-                                 const movFilter = encodeURIComponent(JSON.stringify({
-                                     _and: [
-                                         { product_id: { _eq: compProductId } },
-                                         { branch_id: { _eq: branchId } }
-                                     ]
-                                 }));
-                                 const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                                 const movements = movRes.ok ? (await movRes.json()).data || [] : [];
-                                 const movementStockMap = new Map<string, number>();
-                                 movements.forEach((mov: any) => {
-                                     const batchNo = mov.batch_no || "LOT-N/A";
-                                     const qty = Number(mov.quantity || 0);
-                                     movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
-                                 });
+                                  // Fetch manufacturing yield ledger for this product to resolve QA status
+                                  const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${compProductId}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+                                  const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+                                  const batchStatusMap = new Map<string, string>();
+                                  yields.forEach((yl: any) => {
+                                      const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                                      batchStatusMap.set(batchNo, yl.qa_status || "Pending");
+                                  });
 
-                                 const totalAvailableStock = physicalLots.reduce((sum: number, l: any) => {
-                                     const lotNum = l.lot_number || "LOT-N/A";
-                                     const ledgerQty = movementStockMap.get(lotNum) || 0;
-                                     return sum + ledgerQty;
-                                 }, 0);
+                                  // Fetch inventory movements to calculate the true ledger stock
+                                  const movFilter = encodeURIComponent(JSON.stringify({
+                                      _and: [
+                                          { product_id: { _eq: compProductId } },
+                                          { branch_id: { _eq: branchId } }
+                                      ]
+                                  }));
+                                  const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
+                                  const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                                  const movementStockMap = new Map<string, number>();
+                                  movements.forEach((mov: any) => {
+                                      const batchNo = mov.batch_no || "LOT-N/A";
+                                      const qty = Number(mov.quantity || 0);
+                                      movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
+                                  });
+
+                                  let totalAvailableStock = 0;
+                                  movementStockMap.forEach((qty, lotNum) => {
+                                      if (qty > 0) {
+                                          const status = batchStatusMap.get(lotNum) || "Passed"; // Default to Passed for legacy stock
+                                          if (status === "Passed" || status === "Partially Accepted") {
+                                              totalAvailableStock += qty;
+                                          }
+                                      }
+                                  });
 
                                  // Calculate active reservations by other JOs on this sub-assembly
                                  const activeReservedFilter = encodeURIComponent(JSON.stringify({
@@ -463,22 +455,11 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                      }
                                  }
 
-                                 // Fetch physical inventory lots
+                                 // Fetch inventory movements to calculate the true ledger stock
                                  if (!joData.branch_id) {
                                      throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                                  }
                                  const branchId = Number(joData.branch_id);
-                                 const lotQueryFilter = encodeURIComponent(JSON.stringify({
-                                     _and: [
-                                         { product_id: { _eq: compProductId } },
-                                         { branch_id: { _eq: branchId } },
-                                         { source_type: { _eq: "procurement" } }
-                                     ]
-                                 }));
-                                 const physicalLotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers, cache: 'no-store' });
-                                 const physicalLots = physicalLotsRes.ok ? (await physicalLotsRes.json()).data || [] : [];
-
-                                 // Fetch inventory movements to calculate the true ledger stock
                                  const movFilter = encodeURIComponent(JSON.stringify({
                                      _and: [
                                          { product_id: { _eq: compProductId } },
@@ -497,11 +478,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                  for (const rec of validReceipts) {
                                      if (allocatedQty >= quantityRequired) break;
 
-                                     const matchedLot = physicalLots.find((l: any) => 
-                                         String(l.source_reference) === String(rec.purchase_order_id) && 
-                                         (l.lot_number === rec.lot_no || l.lot_number === rec.batch_no || (l.lot_number === "LOT-N/A" && !rec.lot_no && !rec.batch_no))
-                                     );
-                                     const lotNo = matchedLot ? (matchedLot.lot_number || "LOT-N/A") : (rec.lot_no || rec.batch_no || "LOT-N/A");
+                                     const lotNo = rec.lot_no || rec.batch_no || "LOT-N/A";
                                      const physicalQty = movementStockMap.get(lotNo) || 0;
                                      const recId = Number(rec.purchase_order_product_id);
                                      const alreadyReserved = reservationsMap[recId] || 0;
@@ -622,7 +599,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
         const baseQtyPerDay = Math.floor(totalMergedQuantity / numDays);
         const remainder = totalMergedQuantity % numDays;
 
-        const startDateStr = headerPayload.start_date || new Date().toISOString().split("T")[0];
+        const startDateStr = headerPayload.start_date || todayStr;
         const startDateParts = startDateStr.split("-");
         const startYear = parseInt(startDateParts[0], 10);
         const startMonth = parseInt(startDateParts[1], 10) - 1;
@@ -719,3 +696,4 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
         throw e;
     }
 }
+

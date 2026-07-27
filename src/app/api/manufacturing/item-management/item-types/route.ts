@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         }
 
         const userId = await getUserIdFromToken();
-        const manilaTime = getManilaTimeString();
+        const manilaTime = await getManilaTimeString();
         const res = await fetch(`${DIRECTUS_URL}/items/item_type`, {
             method: "POST",
             headers,
@@ -163,7 +163,7 @@ export async function PATCH(request: Request) {
         }
 
         const userId = await getUserIdFromToken();
-        const manilaTime = getManilaTimeString();
+        const manilaTime = await getManilaTimeString();
         const res = await fetch(`${DIRECTUS_URL}/items/item_type/${id}`, {
             method: "PATCH",
             headers,

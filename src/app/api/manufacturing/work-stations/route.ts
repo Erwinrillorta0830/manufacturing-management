@@ -8,6 +8,7 @@ import {
     WorkCenterValidationError,
     validateWorkCenterPayload
 } from "./_validation";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 interface UserRecord {
     user_id: number;
@@ -97,9 +98,7 @@ export async function POST(request: Request) {
             console.error("Error parsing user token in POST work station route:", err);
         }
 
-        const now = new Date();
-        const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        const manilaIsoString = manilaTime.toISOString().replace("Z", "");
+        const manilaIsoString = await getISOStringInConfiguredTimezone();
         const directusPayload = {
             ...payload,
             created_by: userId ? Number(userId) : 24,
@@ -130,3 +129,4 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create work station" }, { status: 500 });
     }
 }
+

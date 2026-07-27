@@ -1,5 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, getJobOrderIdByNo } from "./shared";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 export async function updateJobOrder(joId: string, patchData: Record<string, any>): Promise<{ success: boolean }> {
     return modifyJobOrder(joId, patchData);
@@ -7,6 +9,7 @@ export async function updateJobOrder(joId: string, patchData: Record<string, any
 
 export async function modifyJobOrder(joId: string, patchData: Record<string, any>): Promise<{ success: boolean }> {
     try {
+        const todayStr = await getTodayDateString();
         const joInfo = await getJobOrderIdByNo(joId);
         if (!joInfo) throw new Error(`Job Order not found: ${joId}`);
         const joIdInt = joInfo.id;
@@ -57,50 +60,59 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
                             const bId = joData.branch_id ? Number(joData.branch_id) : null;
                             const qty = Number(joData.target_quantity || 0);
                             const lotNo = `MFG-${joId}`;
-                            const expDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                            const expDate = await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
                             
-                            // 1. Create inventory_lots record with snapshot qty at 0
-                            const lotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
+                            const resolveMasterLotId = async (name: string, typeId: number) => {
+                                let lotId = 49;
+                                const mappedTypeId = typeId === 1 ? 390 : 389;
+                                try {
+                                    const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
+                                    const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
+                                    const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
+                                    if (lotLookup.length > 0) {
+                                        lotId = lotLookup[0].lot_id;
+                                    } else {
+                                        const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                                            method: "POST",
+                                            headers,
+                                            body: JSON.stringify({
+                                                lot_name: name,
+                                                inventory_type_id: mappedTypeId,
+                                                max_batch_capacity: 100000,
+                                                created_by: 24
+                                            })
+                                        });
+                                        if (createLotRes.ok) {
+                                            lotId = (await createLotRes.json()).data.lot_id;
+                                        } else {
+                                            console.error(`Failed to create master lot ${name}:`, await createLotRes.text());
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.error(`Error resolving master lot ID for ${name}:`, err);
+                                }
+                                return lotId;
+                            };
+
+                            const finishedLotId = await resolveMasterLotId(lotNo, 2); // 2 = Finished Goods
+
+                            // 2. Create a positive entry in inventory_movements (ledger)
+                            await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
                                 method: "POST",
                                 headers,
                                 body: JSON.stringify({
                                     product_id: joData.product_id,
+                                    lot_id: finishedLotId,
                                     branch_id: bId,
-                                    lot_number: lotNo,
+                                    transaction_type_id: 2, // Finished Goods Yield Receive
+                                    source_document_no: joId,
+                                    batch_no: lotNo,
                                     expiry_date: expDate,
-                                    quantity: 0,
-                                    unit_cost: 0,
-                                    qa_status: "Passed",
-                                    source_type: "manufacturing",
-                                    source_reference: joId,
-                                    created_on: new Date().toISOString()
+                                    quantity: qty,
+                                    created_by: 24,
+                                    remarks: `Auto-pass yield for JO: ${joId}`
                                 })
-                             });
-
-                            if (!lotRes.ok) {
-                                console.error("[Manufacturing Directus API] Failed to create inventory lot record:", await lotRes.text());
-                            } else {
-                                const lotObj = await lotRes.json();
-                                const lotId = lotObj.data?.id || lotObj.data?.lot_id || 0;
-
-                                // 2. Create a positive entry in inventory_movements (ledger)
-                                await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify({
-                                        product_id: joData.product_id,
-                                        lot_id: lotId,
-                                        branch_id: bId,
-                                        transaction_type_id: 2, // Finished Goods Yield Receive
-                                        source_document_no: joId,
-                                        batch_no: lotNo,
-                                        expiry_date: expDate,
-                                        quantity: qty,
-                                        created_by: 24,
-                                        remarks: `Auto-pass yield for JO: ${joId}`
-                                    })
-                                }).catch(err => console.error("[Manufacturing Directus API] Failed to log positive movement:", err));
-                            }
+                            }).catch(err => console.error("[Manufacturing Directus API] Failed to log positive movement:", err));
                             
                             // 3. Create a product_ledger entry
                             await fetch(`${DIRECTUS_URL}/items/product_ledger`, {
@@ -113,7 +125,7 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
                                     documentType: "QA Receive",
                                     documentNo: joId,
                                     documentDescription: `MFG Run: ${lotNo}`,
-                                    documentDate: new Date().toISOString().split('T')[0]
+                                    documentDate: todayStr
                                 })
                             });
                         }
@@ -130,3 +142,4 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
         throw e;
     }
 }
+

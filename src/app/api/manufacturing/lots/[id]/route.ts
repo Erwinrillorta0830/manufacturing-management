@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,10 +35,7 @@ export async function PATCH(
             console.error("Error parsing user token in PATCH lot route:", err);
         }
 
-        // Generate current Manila time (UTC+8) to save in Directus
-        const now = new Date();
-        const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        const manilaIsoString = manilaTime.toISOString();
+        const manilaIsoString = await getISOStringInConfiguredTimezone();
 
         const updatePayload: Record<string, unknown> = {
             updated_at: manilaIsoString

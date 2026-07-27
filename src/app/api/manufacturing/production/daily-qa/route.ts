@@ -249,67 +249,7 @@ export async function POST(request: Request) {
             body: JSON.stringify({ qa_status: finalLedgerStatus })
         }).catch(err => console.error("Failed to patch yield ledger status:", err));
 
-        // Sync inventory lot status as well
-        try {
-            // Robust lot resolver:
-            // First get ledger details
-            const ledgerFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, { headers, cache: "no-store" });
-            if (ledgerFetch.ok) {
-                const ledgerEntry = (await ledgerFetch.json()).data;
-                if (ledgerEntry) {
-                    const shiftName = ledgerEntry.shift_name;
-                    const joId = ledgerEntry.job_order_id;
-                    
-                    // Get job order details
-                    const joFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, { headers, cache: "no-store" });
-                    if (joFetch.ok) {
-                        const joData = (await joFetch.json()).data;
-                        if (joData) {
-                            const jobOrderNo = joData.job_order_no;
-                            const producedProductId = joData.product_id;
-                            if (!joData.branch_id) {
-                                return NextResponse.json({ error: `Job Order ${jobOrderNo} has no branch_id` }, { status: 400 });
-                            }
-                            const branchId = joData.branch_id;
-
-                            // Find matching lots using source_type/source_reference OR remarks/product/branch
-                            const lotFilter = encodeURIComponent(JSON.stringify({
-                                _or: [
-                                    {
-                                        _and: [
-                                            { source_type: { _eq: "yield_ledger" } },
-                                            { source_reference: { _eq: String(ledgerId) } }
-                                        ]
-                                    },
-                                    {
-                                        _and: [
-                                            { product_id: { _eq: producedProductId } },
-                                            { branch_id: { _eq: branchId } },
-                                            { remarks: { _contains: `Yield from Job Order ${jobOrderNo}` } },
-                                            { remarks: { _contains: `Shift: ${shiftName}` } }
-                                        ]
-                                    }
-                                ]
-                            }));
-
-                            const lotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}`, { headers, cache: "no-store" });
-                            if (lotRes.ok) {
-                                const lots = (await lotRes.json()).data || [];
-                                for (const lot of lots) {
-                                    await fetch(`${DIRECTUS_URL}/items/inventory_lots/${lot.id}`, {
-                                        method: "PATCH",
-                                        headers,
-                                        body: JSON.stringify({ qa_status: finalLedgerStatus === "Passed" ? "Passed" : (finalLedgerStatus === "QA Hold" ? "QA Hold" : "Pending") })
-                                    }).catch(err => console.error(`Failed to patch inventory lot ${lot.id} status:`, err));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (lotErr) {
-            console.error("Failed to sync status with inventory lots:", lotErr);
-        }
+        // Sync inventory lot status as well - removed since inventory_lots is deprecated
 
         return NextResponse.json({ success: true, message: "Daily yield QA inspection logged successfully." });
     } catch (e) {

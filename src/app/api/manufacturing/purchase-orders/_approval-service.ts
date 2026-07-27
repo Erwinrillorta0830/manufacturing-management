@@ -1,4 +1,6 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 import {
     derivePurchaseOrderWorkflowStage,
     pendingPurchaseOrderApprovalStages,
@@ -166,7 +168,7 @@ async function resolveRule(order: ApprovalOrder, categoryIds: number[]) {
         currencyCode: order.currency_code || "PHP",
         isImport: asBoolean(order.is_import) || (order.currency_code || "PHP") !== "PHP",
         productCategoryIds: categoryIds,
-        businessDate: new Date().toISOString().slice(0, 10)
+        businessDate: await getTodayDateString()
     });
     if (!selected) throw new PurchaseOrderApprovalError("No active approval rule matches this purchase order.", 409);
     return { ...rules.find(rule => rule.ruleId === selected.ruleId)!, snapshot: false };
@@ -396,3 +398,4 @@ export async function submitPurchaseOrderApproval(
 ) {
     return withApprovalLock(id, () => submitPurchaseOrderApprovalUnlocked(id, command, actor, requestedStage));
 }
+

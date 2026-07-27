@@ -2,6 +2,8 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { 
     DirectusProductPerSupplier 
 } from "@/modules/manufacturing-management/procurement/types";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 interface DirectusRepresentative {
     id: number;
@@ -86,7 +88,7 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
         const payload = {
             ...details,
             supplier_type: "TRADE",
-            date_added: new Date().toISOString().split('T')[0],
+            date_added: await getTodayDateString(),
             isActive: 1
         };
 
@@ -225,5 +227,6 @@ export async function fetchProductsBySupplier(supplierId: number): Promise<Direc
         return [];
     }
 }
+
 
 

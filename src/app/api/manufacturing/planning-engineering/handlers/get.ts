@@ -39,20 +39,6 @@ export async function handleGET(request: Request) {
                 return NextResponse.json({ error: "Missing productId or branchId" }, { status: 400 });
             }
 
-            // Fetch Passed inventory lots (which could be manufactured/seeded/procured)
-            const lotFilter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _eq: prodId } },
-                    { branch_id: { _eq: branchId } },
-                    { qa_status: { _eq: "Passed" } }
-                ]
-            }));
-            const lotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&limit=-1`, { headers, cache: "no-store" });
-            if (!lotsRes.ok) {
-                return NextResponse.json({});
-            }
-            const lots = (await lotsRes.json()).data || [];
-
             // Fetch inventory movements to calculate the true ledger stock
             const movFilter = encodeURIComponent(JSON.stringify({
                 _and: [
@@ -69,15 +55,47 @@ export async function handleGET(request: Request) {
                 movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
             });
 
-            // Map lots and enrich them with correct ledger quantity
-            const lotsEnriched = lots.map((lot: any) => {
-                const lotNum = lot.lot_number || "LOT-N/A";
-                const ledgerQty = movementStockMap.get(lotNum) || 0;
-                return {
-                    ...lot,
-                    quantity: ledgerQty
-                };
-            }).filter((lot: any) => lot.quantity > 0);
+            // Fetch QA status and Expiry from PO Receiving and Job Order Yield logs
+            // 1. PO Receivings
+            const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${prodId}&filter[branch_id][_eq]=${branchId}&limit=-1`, { headers, cache: "no-store" });
+            const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
+            const batchStatusMap = new Map<string, string>();
+            const batchExpiryMap = new Map<string, string>();
+            
+            receipts.forEach((rec: any) => {
+                const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                batchStatusMap.set(batchNo, rec.qa_status || "Passed");
+                if (rec.expiry_date) batchExpiryMap.set(batchNo, rec.expiry_date);
+            });
+
+            // 2. Yield Ledger
+            const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${prodId}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+            const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+            yields.forEach((yl: any) => {
+                const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                batchStatusMap.set(batchNo, yl.qa_status || "Pending");
+                if (yl.expiry_date) batchExpiryMap.set(batchNo, yl.expiry_date);
+            });
+
+            // Map and enrich with correct ledger quantity, filter for Passed qa_status and quantity > 0
+            const lotsEnriched: any[] = [];
+            movementStockMap.forEach((qty, lotNum) => {
+                if (qty > 0) {
+                    const status = batchStatusMap.get(lotNum) || "Passed"; // Default to Passed for legacy / unclassified
+                    if (status === "Passed" || status === "Partially Accepted") {
+                        const matchedYield = yields.find((yl: any) => String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() === lotNum);
+                        const source_type = matchedYield ? "manufacturing" : "procurement";
+                        const source_reference = matchedYield ? (matchedYield.job_order_id?.job_order_no || `MFG-${matchedYield.job_order_id?.job_order_no}`) : "";
+                        lotsEnriched.push({
+                            lot_number: lotNum,
+                            quantity: qty,
+                            source_type,
+                            source_reference,
+                            expiry_date: batchExpiryMap.get(lotNum) || null
+                        });
+                    }
+                }
+            });
 
             // Trace lot's recipe version
             const mfgLots = lotsEnriched.filter((lot: any) => lot.source_type === "manufacturing" && lot.source_reference);

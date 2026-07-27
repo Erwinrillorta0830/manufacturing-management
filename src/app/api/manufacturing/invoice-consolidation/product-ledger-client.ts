@@ -1,4 +1,6 @@
 import { DIRECTUS_URL, headers } from "../directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 const DOCUMENT_TYPE = "Sales Invoice Issue";
 const EPSILON = 0.000001;
@@ -40,6 +42,7 @@ export async function syncProductLedgerToTarget(params: {
     targetByProduct: Map<number, number>;
     description: string;
 }) {
+    const todayStr = await getTodayDateString();
     const current = await fetchProductLedgerNet(params.documentNo);
     const productIds = new Set([...current.keys(), ...params.targetByProduct.keys()]);
     const entries = [...productIds].flatMap((productId) => {
@@ -52,7 +55,7 @@ export async function syncProductLedgerToTarget(params: {
             documentType: DOCUMENT_TYPE,
             documentNo: params.documentNo,
             documentDescription: params.description,
-            documentDate: new Date().toISOString().slice(0, 10),
+            documentDate: todayStr,
         }];
     });
     if (entries.length === 0) return 0;
@@ -79,3 +82,4 @@ export async function productLedgerMatchesQuantities(
         Math.abs((current.get(productId) || 0) - (expectedByProduct.get(productId) || 0)) < EPSILON
     );
 }
+
