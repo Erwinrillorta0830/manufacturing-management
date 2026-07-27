@@ -224,7 +224,7 @@ export async function GET(request: Request) {
         }
 
         const invoiceIds = invoices.map((inv) => Number(inv.invoice_id)).filter(Boolean);
-        let invoiceDetails: DirectusInvoiceDetail[] = [];
+        const invoiceDetails: DirectusInvoiceDetail[] = [];
         if (includeDetails && invoiceIds.length > 0) {
             const chunkSize = 50;
             for (let i = 0; i < invoiceIds.length; i += chunkSize) {
@@ -244,7 +244,7 @@ export async function GET(request: Request) {
         const returns: DirectusReturn[] = returnsJson.data || [];
 
         const returnNumbers = returns.map((ret) => ret.return_number).filter(Boolean);
-        let returnDetails: DirectusReturnDetail[] = [];
+        const returnDetails: DirectusReturnDetail[] = [];
         if (includeDetails && returnNumbers.length > 0) {
             const chunkSize = 50;
             for (let i = 0; i < returnNumbers.length; i += chunkSize) {
