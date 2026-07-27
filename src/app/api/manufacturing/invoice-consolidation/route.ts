@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import {
     allocateInvoicesForConsolidation,
     releaseReservationIds,
@@ -34,7 +35,8 @@ async function getBranchesMap(): Promise<Map<number, { branchName: string; branc
 }
 
 async function generateConsolidatorNo(): Promise<string> {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const todayStr = await getTodayDateString();
+    const today = todayStr.replace(/-/g, "");
     const prefix = `CLINV-${today}-`;
     const res = await fetch(
         `${DIRECTUS_URL}/items/consolidator?filter[consolidator_no][_starts_with]=${prefix}&filter[is_delete][_eq]=0&sort=-consolidator_no&limit=1&fields=consolidator_no`,
@@ -580,3 +582,4 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: "BFF Network Error" }, { status: 502 });
     }
 }
+

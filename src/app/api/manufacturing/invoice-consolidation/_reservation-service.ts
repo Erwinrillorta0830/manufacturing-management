@@ -82,52 +82,164 @@ function fefoCompare(a: InventoryLotRow, b: InventoryLotRow): number {
         || a.id - b.id;
 }
 
+interface POReceivingRow {
+    product_id?: number | { product_id?: number } | null;
+    batch_no?: string | null;
+    lot_no?: string | null;
+    qa_status?: string | null;
+    expiry_date?: string | null;
+    received_date?: string | null;
+}
+
+interface YieldLedgerRow {
+    job_order_id?: {
+        product_id?: number | null;
+        job_order_no?: string | null;
+    } | null;
+    lot_number?: string | null;
+    qa_status?: string | null;
+    expiry_date?: string | null;
+    logged_at?: string | null;
+}
+
+async function resolveLotsMetadata(productIds: number[], branchId?: number): Promise<{
+    batchStatusMap: Map<string, string>;
+    batchExpiryMap: Map<string, string>;
+    batchCreatedMap: Map<string, string>;
+}> {
+    const batchStatusMap = new Map<string, string>();
+    const batchExpiryMap = new Map<string, string>();
+    const batchCreatedMap = new Map<string, string>();
+
+    if (productIds.length > 0) {
+        try {
+            // 1. PO Receivings
+            const branchFilter = branchId ? `&filter[branch_id][_eq]=${branchId}` : "";
+            const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${productIds.join(",")}${branchFilter}&limit=-1`, { headers: directusHeaders, cache: "no-store" });
+            if (recRes.ok) {
+                const receipts: POReceivingRow[] = (await recRes.json()).data || [];
+                receipts.forEach((rec) => {
+                    const prodId = typeof rec.product_id === "object" ? rec.product_id?.product_id : rec.product_id;
+                    const productId = Number(prodId);
+                    const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                    const key = `${productId}:${batchNo}`;
+                    batchStatusMap.set(key, rec.qa_status || "Passed");
+                    if (rec.expiry_date) batchExpiryMap.set(key, rec.expiry_date);
+                    if (rec.received_date) batchCreatedMap.set(key, rec.received_date);
+                });
+            }
+        } catch (err) {
+            console.error("Error loading PO receipts for stock check:", err);
+        }
+
+        try {
+            // 2. Yield Ledger
+            const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_in]=${productIds.join(",")}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers: directusHeaders, cache: "no-store" });
+            if (yieldRes.ok) {
+                const yields: YieldLedgerRow[] = (await yieldRes.json()).data || [];
+                yields.forEach((yl) => {
+                    const productId = Number(yl.job_order_id?.product_id);
+                    if (!productId) return;
+                    const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                    const key = `${productId}:${batchNo}`;
+                    batchStatusMap.set(key, yl.qa_status || "Pending");
+                    if (yl.expiry_date) batchExpiryMap.set(key, yl.expiry_date);
+                    if (yl.logged_at) batchCreatedMap.set(key, yl.logged_at);
+                });
+            }
+        } catch (err) {
+            console.error("Error loading yield ledger for stock check:", err);
+        }
+    }
+
+    return { batchStatusMap, batchExpiryMap, batchCreatedMap };
+}
+
 function canonicalStockLots(
     metadata: InventoryLotRow[],
     movements: MovementRow[],
     jobVersionMap: Map<string, number>,
     activeVersionMap: Map<number, number>,
+    batchStatusMap: Map<string, string>,
+    batchExpiryMap: Map<string, string>,
+    batchCreatedMap: Map<string, string>,
 ): { lots: StockLot[]; keyByLotId: Map<number, string> } {
-    const sortedMetadata = [...metadata].sort(fefoCompare);
-    const metadataByBaseKey = new Map<string, InventoryLotRow>();
-    for (const lot of sortedMetadata) {
-        const physicalLotId = numericId(lot.lot_id, ["lot_id"]);
-        if (!physicalLotId) continue;
-        const key = `${Number(lot.product_id)}:${Number(lot.branch_id)}:${physicalLotId}:${batchNumber(lot.batch_no, lot.lot_number)}`;
-        if (!metadataByBaseKey.has(key)) metadataByBaseKey.set(key, lot);
-    }
-
+    // 1. Group movements and sum quantity by composite key: productId:branchId:physicalLotId:batchNo:versionId
     const quantityByKey = new Map<string, number>();
+
     for (const movement of movements) {
-        const baseKey = `${Number(movement.product_id)}:${Number(movement.branch_id)}:${Number(movement.lot_id)}:${batchNumber(movement.batch_no)}`;
-        const lot = metadataByBaseKey.get(baseKey);
-        if (!lot) continue;
-        const fallbackVersion = (lot.source_reference && jobVersionMap.get(lot.source_reference))
-            || activeVersionMap.get(Number(lot.product_id)) || 0;
+        const physicalLotId = Number(movement.lot_id);
+        const productId = Number(movement.product_id);
+        const branchId = Number(movement.branch_id);
+        const batchNo = batchNumber(movement.batch_no);
+
+        // Find the lot record matching this movement to resolve version
+        const lot = metadata.find(l => 
+            Number(l.product_id) === productId && 
+            Number(l.branch_id) === branchId && 
+            numericId(l.lot_id, ["lot_id"]) === physicalLotId && 
+            batchNumber(l.batch_no, l.lot_number) === batchNo
+        );
+
+        const fallbackVersion = (lot?.source_reference && jobVersionMap.get(lot.source_reference))
+            || activeVersionMap.get(productId) || 0;
         const versionId = Number(movement.version_id) || fallbackVersion;
-        const key = stockKey(Number(lot.product_id), Number(lot.branch_id), Number(movement.lot_id), batchNumber(movement.batch_no), versionId);
+
+        const key = stockKey(productId, branchId, physicalLotId, batchNo, versionId);
         quantityByKey.set(key, (quantityByKey.get(key) || 0) + Number(movement.quantity || 0));
     }
 
+    // 2. Build the StockLot array
     const lotsByKey = new Map<string, StockLot>();
     const keyByLotId = new Map<number, string>();
+
+    // Sort metadata by resolved expiry date and created_on using batchStatusMap/batchExpiryMap
+    const sortedMetadata = [...metadata].map(lot => {
+        const productId = Number(lot.product_id);
+        const batchNo = batchNumber(lot.batch_no, lot.lot_number);
+        const metaKey = `${productId}:${batchNo}`;
+        
+        return {
+            ...lot,
+            qa_status: batchStatusMap.get(metaKey) || lot.qa_status || "Pending",
+            expiry_date: batchExpiryMap.get(metaKey) || lot.expiry_date || null,
+            created_on: batchCreatedMap.get(metaKey) || lot.created_on || null
+        };
+    }).sort(fefoCompare);
+
     for (const lot of sortedMetadata) {
         const physicalLotId = numericId(lot.lot_id, ["lot_id"]);
         if (!physicalLotId) continue;
+
+        const productId = Number(lot.product_id);
+        const branchId = Number(lot.branch_id);
+        const batchNo = batchNumber(lot.batch_no, lot.lot_number);
+
         const fallbackVersion = (lot.source_reference && jobVersionMap.get(lot.source_reference))
-            || activeVersionMap.get(Number(lot.product_id)) || 0;
+            || activeVersionMap.get(productId) || 0;
+
         const matchingVersions = [...quantityByKey.keys()].filter((key) => key.startsWith(
-            `${Number(lot.product_id)}:${Number(lot.branch_id)}:${physicalLotId}:${batchNumber(lot.batch_no, lot.lot_number)}:`
+            `${productId}:${branchId}:${physicalLotId}:${batchNo}:`
         ));
-        for (const key of matchingVersions.length > 0 ? matchingVersions : [stockKey(Number(lot.product_id), Number(lot.branch_id), physicalLotId, batchNumber(lot.batch_no, lot.lot_number), fallbackVersion)]) {
+
+        for (const key of matchingVersions.length > 0 ? matchingVersions : [stockKey(productId, branchId, physicalLotId, batchNo, fallbackVersion)]) {
             keyByLotId.set(lot.id, key);
-            if (!lotsByKey.has(key)) {
+            
+            // Only include in lots if it has a positive quantity
+            const qty = quantityByKey.get(key) || 0;
+            if (qty > 0 && !lotsByKey.has(key)) {
                 const versionId = Number(key.slice(key.lastIndexOf(":") + 1));
-                lotsByKey.set(key, { ...lot, quantity: quantityByKey.get(key) || 0, stockKey: key, versionId });
+                lotsByKey.set(key, { 
+                    ...lot, 
+                    quantity: qty, 
+                    stockKey: key, 
+                    versionId 
+                });
             }
         }
     }
-    return { lots: [...lotsByKey.values()].filter((lot) => lot.quantity > 0), keyByLotId };
+
+    return { lots: [...lotsByKey.values()], keyByLotId };
 }
 
 async function directusJson(url: string, init?: RequestInit) {
@@ -345,7 +457,15 @@ async function reconcileInventoryLots(inventoryLotIds: number[], userId: number)
         const productId = Number(row.product_id);
         if (!activeVersionMap.has(productId)) activeVersionMap.set(productId, Number(row.version_id));
     }
-    const { lots, keyByLotId } = canonicalStockLots(inventoryLots, movements, jobVersionMap, activeVersionMap);
+    const { lots, keyByLotId } = canonicalStockLots(
+        inventoryLots,
+        movements,
+        jobVersionMap,
+        activeVersionMap,
+        (await resolveLotsMetadata(productIds, branchIds.length === 1 ? branchIds[0] : undefined)).batchStatusMap,
+        (await resolveLotsMetadata(productIds, branchIds.length === 1 ? branchIds[0] : undefined)).batchExpiryMap,
+        (await resolveLotsMetadata(productIds, branchIds.length === 1 ? branchIds[0] : undefined)).batchCreatedMap
+    );
     const capacityByKey = new Map(lots.map((lot) => [lot.stockKey, Number(lot.quantity)]));
     const allLotIds = inventoryLots.map((lot) => lot.id);
 
@@ -487,7 +607,8 @@ export async function allocateInvoice(invoiceId: number, userId: number) {
         if (!activeVersionMap.has(productId)) activeVersionMap.set(productId, Number(version.version_id));
     }
 
-    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap);
+    const metaRes = await resolveLotsMetadata(productIds, branchId);
+    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap, metaRes.batchStatusMap, metaRes.batchExpiryMap, metaRes.batchCreatedMap);
 
     const lotIds = unfilteredLots.map((lot) => lot.id);
     const reservedByStock = new Map<string, number>();
@@ -724,7 +845,8 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
         if (!activeVersionMap.has(productId)) activeVersionMap.set(productId, Number(version.version_id));
     }
 
-    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap);
+    const metaRes = await resolveLotsMetadata(productIds, branchId);
+    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap, metaRes.batchStatusMap, metaRes.batchExpiryMap, metaRes.batchCreatedMap);
 
     const detailIds = details.map((detail) => detail.detail_id);
     const lotIds = unfilteredLots.map((lot) => lot.id);
@@ -909,7 +1031,8 @@ export async function calculateSalesOrderAvailability(salesOrderId: number) {
         if (!activeVersionMap.has(pid)) activeVersionMap.set(pid, Number(version.version_id));
     }
 
-    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap);
+    const metaRes = await resolveLotsMetadata(productIds, branchId);
+    const { lots, keyByLotId } = canonicalStockLots(unfilteredLots, movements, jobVersionMap, activeVersionMap, metaRes.batchStatusMap, metaRes.batchExpiryMap, metaRes.batchCreatedMap);
 
     const lotIds = unfilteredLots.map((lot) => lot.id);
     const reservedByStock = new Map<string, number>();

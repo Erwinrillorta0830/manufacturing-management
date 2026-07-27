@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, fetchJobOrders } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 interface PickItem {
     productId: number;
@@ -104,39 +106,22 @@ export async function POST(request: Request) {
                 );
             }
 
-            // A. Deduct from inventory_lots
-            const filterQuery = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _eq: pId } },
-                    { branch_id: { _eq: bId } },
-                    { lot_number: { _eq: lotNo } }
-                ]
-            }));
-
-            const lotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${filterQuery}&limit=1`, {
-                headers,
-                cache: "no-store"
-            });
-
-            if (lotRes.ok) {
-                const lots = (await lotRes.json()).data || [];
-                if (lots.length > 0) {
-                    const lot = lots[0];
-                    const currentQty = Number(lot.quantity || 0);
-                    const newQty = Math.max(0, currentQty - qty);
-
-                    const updateRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${lot.id}`, {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({ quantity: newQty })
-                    });
-
-                    if (!updateRes.ok) {
-                        console.error(`[Picking API] Failed to deduct quantity from lot ID ${lot.id}:`, await updateRes.text());
+            // A. Resolve lot_id from existing movements
+            let resolvedLotId = 1; // Fallback default
+            try {
+                const checkMovRes = await fetch(
+                    `${DIRECTUS_URL}/items/inventory_movements?filter[product_id][_eq]=${pId}&filter[branch_id][_eq]=${bId}&filter[batch_no][_eq]=${encodeURIComponent(lotNo)}&fields=lot_id&limit=1`,
+                    { headers, cache: "no-store" }
+                );
+                if (checkMovRes.ok) {
+                    const checkMovData = (await checkMovRes.json()).data || [];
+                    if (checkMovData.length > 0) {
+                        const m = checkMovData[0];
+                        resolvedLotId = typeof m.lot_id === "object" ? Number(m.lot_id?.lot_id || 1) : Number(m.lot_id || 1);
                     }
-                } else {
-                    console.warn(`[Picking API] Lot ${lotNo} not found for product ${pId} in branch ${bId}. Proceeding with ledger issue.`);
                 }
+            } catch (err) {
+                console.error("[Picking API] Error resolving lot_id:", err);
             }
 
             // B. Create negative product_ledger entry (WIP Issue)
@@ -150,7 +135,7 @@ export async function POST(request: Request) {
                     documentType: "WIP Issue",
                     documentNo: joId,
                     documentDescription: `Picked Lot: ${lotNo}`,
-                    documentDate: new Date().toISOString().split("T")[0]
+                    documentDate: await getTodayDateString()
                 })
             });
 
@@ -166,6 +151,7 @@ export async function POST(request: Request) {
                 body: JSON.stringify({
                     branch_id: bId,
                     product_id: pId,
+                    lot_id: resolvedLotId,
                     transaction_type_id: 1, // Job Order Consumage / WIP Issue
                     source_document_no: joId,
                     batch_no: lotNo,
@@ -209,3 +195,4 @@ export async function POST(request: Request) {
         );
     }
 }
+

@@ -13,18 +13,34 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1${prodFilter}&fields=product_id,product_name,product_code,maintaining_quantity`, { headers, cache: "no-store" });
         const products = prodRes.ok ? (await prodRes.json()).data || [] : [];
 
-        // 1. Fetch passed inventory lots to resolve QA status metadata
-        const lotFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                ...(productIds.length > 0 ? [{ product_id: { _in: productIds } }] : []),
-                { branch_id: { _eq: bId } },
-                { qa_status: { _in: ["Passed", "Partially Accepted"] } }
-            ]
-        }));
-        const lotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&limit=-1`, { headers, cache: "no-store" });
-        const lots = lotsRes.ok ? (await lotsRes.json()).data || [] : [];
+        // 1. Fetch PO Receivings to resolve QA status for raw materials
+        const recFilter = productIds.length > 0 ? `filter[product_id][_in]=${productIds.join(",")}&` : "";
+        const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" });
+        const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
+        const batchStatusMap = new Map<string, string>();
+        const batchExpiryMap = new Map<string, string>();
+        receipts.forEach((rec: any) => {
+            const pId = Number(rec.product_id?.product_id || rec.product_id);
+            const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+            const key = `${pId}:${batchNo}`;
+            batchStatusMap.set(key, rec.qa_status || "Passed");
+            if (rec.expiry_date) batchExpiryMap.set(key, rec.expiry_date);
+        });
 
-        // 2. Fetch inventory movements to calculate the true ledger stock
+        // 2. Fetch Yield Ledger logs to resolve QA status for finished goods
+        const yieldFilter = productIds.length > 0 ? `filter[job_order_id][product_id][_in]=${productIds.join(",")}&` : "";
+        const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+        const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+        yields.forEach((yl: any) => {
+            const pId = Number(yl.job_order_id?.product_id);
+            if (!pId) return;
+            const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+            const key = `${pId}:${batchNo}`;
+            batchStatusMap.set(key, yl.qa_status || "Pending");
+            if (yl.expiry_date) batchExpiryMap.set(key, yl.expiry_date);
+        });
+
+        // 3. Fetch inventory movements to calculate the true ledger stock
         const movFilter = encodeURIComponent(JSON.stringify({
             _and: [
                 ...(productIds.length > 0 ? [{ product_id: { _in: productIds } }] : []),
@@ -33,9 +49,8 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         }));
         const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
         const movements = movRes.ok ? (await movRes.json()).data || [] : [];
-        const movementStock = sumMovementQuantitiesByStock(movements);
-
-        const movementStockMap = new Map<string, number>(); // "product_id:batch_no" -> sum of quantity
+        
+        const movementStockMap = new Map<string, number>(); // "productId:batchNo" -> sum of quantity
         movements.forEach((mov: any) => {
             const pId = Number(mov.product_id?.product_id || mov.product_id);
             const batchNo = mov.batch_no || "LOT-N/A";
@@ -47,13 +62,17 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             }
         });
 
-        // Compute onHand stock per product (summing only Passed lots using ledger quantities)
+        // Compute onHand stock per product (summing only Passed / Partially Accepted batches using ledger quantities)
         const onHandMap: Record<number, number> = {};
-        uniqueRowsByMovementStockKey(lots).forEach((lot: any) => {
-            const pId = Number(lot.product_id?.product_id || lot.product_id);
-            const ledgerQty = movementStock.get(movementStockKey(lot)) || 0;
-            if (pId && ledgerQty > 0) {
-                onHandMap[pId] = (onHandMap[pId] || 0) + ledgerQty;
+        movementStockMap.forEach((qty, key) => {
+            if (qty > 0) {
+                const parts = key.split(":");
+                const pId = Number(parts[0]);
+                const batchNo = parts[1];
+                const status = batchStatusMap.get(`${pId}:${batchNo}`) || "Passed"; // Default to Passed for legacy stock
+                if (status === "Passed" || status === "Partially Accepted") {
+                    onHandMap[pId] = (onHandMap[pId] || 0) + qty;
+                }
             }
         });
 
@@ -117,16 +136,19 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                     }
                 });
             } else {
-                // If it is a sub-assembly, we can recommend its manufactured batches directly from lots using ledger quantity!
-                lots.forEach((lot: any) => {
-                    const keyPId = Number(lot.product_id?.product_id || lot.product_id);
-                    const lotNum = lot.lot_number || "LOT-N/A";
-                    const ledgerQty = movementStockMap.get(`${pId}:${lotNum}`) || 0;
+                // If it is a sub-assembly, we can recommend its manufactured batches directly from movementStockMap
+                movementStockMap.forEach((ledgerQty, key) => {
+                    const parts = key.split(":");
+                    const keyPId = Number(parts[0]);
+                    const lotNum = parts[1] || "LOT-N/A";
                     if (keyPId === pId && ledgerQty > 0) {
-                        recommendedLots.push({
-                            lot_no: lotNum,
-                            available: ledgerQty
-                        });
+                        const status = batchStatusMap.get(`${pId}:${lotNum}`) || "Passed";
+                        if (status === "Passed" || status === "Partially Accepted") {
+                            recommendedLots.push({
+                                lot_no: lotNum,
+                                available: ledgerQty
+                            });
+                        }
                     }
                 });
             }

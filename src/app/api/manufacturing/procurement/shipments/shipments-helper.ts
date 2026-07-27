@@ -1,6 +1,8 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers } from "../_directus";
 import { canonicalBatchNumber, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 import { DirectusShipment } from "@/modules/manufacturing-management/procurement/types";
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderLine } from "../../purchase-orders/_domain";
@@ -481,16 +483,12 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         if (!popRes.ok) return [];
         const popData = (await popRes.json()).data as DirectusPOProduct[] || [];
 
-        // Fetch inventory_lots for this procurement PO
-        const filterQuery = encodeURIComponent(JSON.stringify({
-            _and: [
-                { source_type: { _eq: "procurement" } },
-                { source_reference: { _eq: String(shipmentId) } }
-            ]
-        }));
-        const porUrl = `${DIRECTUS_URL}/items/inventory_lots?filter=${filterQuery}&fields=*,lot_id.lot_id,lot_id.lot_name&limit=-1`;
-        const porRes = await fetch(porUrl, { headers, cache: "no-store" });
-        const porData = (porRes.ok ? (await porRes.json()).data || [] : []) as DirectusInventoryLot[];
+        // Fetch purchase_order_expenses for this procurement PO to calculate landed costs dynamically
+        const expensesUrl = `${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&limit=-1`;
+        const expensesRes = await fetch(expensesUrl, { headers, cache: "no-store" });
+        const expenses = expensesRes.ok ? (await expensesRes.json()).data || [] : [];
+        const totalExpensesPhp = expenses.reduce((sum: number, exp: any) => sum + Number(exp.amount_php || 0), 0);
+        const allocationMethod = expenses[0]?.allocation_method?.replace("By ", "") || "Value";
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
@@ -522,12 +520,50 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         const productIds = popData.map((p) => typeof p.product_id === "object" && p.product_id ? p.product_id.product_id : p.product_id).filter(Boolean);
         let products: ProductMin[] = [];
         if (productIds.length > 0) {
-            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,parent_id.unit_of_measurement.unit_shortcut&limit=-1`;
+            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,cbm_height,cbm_width,cbm_length&limit=-1`;
             const prodRes = await fetch(prodUrl, { headers, cache: "no-store" });
             if (prodRes.ok) {
                 products = (await prodRes.json()).data as ProductMin[] || [];
             }
         }
+
+        // Calculate allocations dynamically
+        const inputs = popData.map(line => {
+            const rawProdId = typeof line.product_id === "object" && line.product_id ? line.product_id.product_id : line.product_id;
+            const product = products.find(p => Number(p.product_id) === Number(rawProdId));
+            const lineId = Number(line.purchase_order_product_id);
+            const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0 };
+            const qty = Math.max(0, history.received || Number(line.ordered_quantity || 0));
+            return {
+                key: lineId,
+                quantity: qty,
+                baseUnitCost: Number(line.unit_price || 0),
+                weight: Number((product as any)?.weight || (product as any)?.product_weight || 0),
+                volume: Number((product as any)?.cbm_height || 0) * Number((product as any)?.cbm_width || 0) * Number((product as any)?.cbm_length || 0)
+            };
+        });
+
+        const totalValue = inputs.reduce((sum, line) => sum + line.quantity * line.baseUnitCost, 0);
+        const totalWeight = inputs.reduce((sum, line) => sum + line.quantity * Number(line.weight || 0), 0);
+        const totalVolume = inputs.reduce((sum, line) => sum + line.quantity * Number(line.volume || 0), 0);
+
+        const allocations = new Map(inputs.map(line => {
+            let ratio: number;
+            if (allocationMethod === "Weight" && totalWeight > 0) {
+                ratio = line.quantity * Number(line.weight || 0) / totalWeight;
+            } else if (allocationMethod === "Volume" && totalVolume > 0) {
+                ratio = line.quantity * Number(line.volume || 0) / totalVolume;
+            } else if (totalValue > 0) {
+                ratio = line.quantity * line.baseUnitCost / totalValue;
+            } else {
+                ratio = inputs.length > 0 ? 1 / inputs.length : 0;
+            }
+            const allocatedExpense = Math.round((ratio * totalExpensesPhp + Number.EPSILON) * 100) / 100;
+            const finalLandedUnitCost = Math.round(
+                (line.baseUnitCost + (line.quantity > 0 ? allocatedExpense / line.quantity : 0) + Number.EPSILON) * 100
+            ) / 100;
+            return [line.key, { allocatedExpense, finalLandedUnitCost }];
+        }));
 
         // Merge them
         return popData.map((pop) => {
@@ -537,9 +573,6 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 product_name: `Product ID: ${rawProdId}`,
                 product_code: `ID-${rawProdId}`
             };
-            const matchingLots = porData.filter((r) => Number(r.product_id) === Number(rawProdId));
-            const acceptedLot = matchingLots.find(lot => Number(lot.branch_id) !== 182);
-            const activeLot = acceptedLot || matchingLots[0];
             const receivingIdsForProduct = receivingData
                 .filter(row => relationId(row.product_id, "product_id") === Number(rawProdId))
                 .map(row => receivingRecordId(row.purchase_order_product_id));
@@ -603,15 +636,10 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 }
                 : null;
             const movementForProduct = movementData.filter(row => receivingIdsForProduct.includes(relationId(row.source_document_id, "purchase_order_product_id") || 0));
-            const activeLotId = resolveInventoryLotId(activeLot?.lot_id);
-            const activeBatch = activeLot ? canonicalBatchNumber(activeLot.batch_no, activeLot.lot_number) : null;
-            const matchingMovement = movementForProduct.find(row => {
-                const movementLotId = relationId(row.lot_id, "lot_id");
-                const movementBatch = canonicalBatchNumber(row.batch_no, null);
-                return (!activeLotId || movementLotId === activeLotId)
-                    && (!activeBatch || movementBatch === activeBatch)
-                    && Boolean(row.manufacturing_date);
-            }) || movementForProduct.find(row => Boolean(row.manufacturing_date));
+            const matchingMovement = movementForProduct.find(row => Boolean(row.manufacturing_date));
+
+            const allocation = allocations.get(lineId);
+            const finalLandedUnitCost = allocation ? allocation.finalLandedUnitCost : Number(pop.unit_price || 0);
 
             return {
                 line_id: pop.purchase_order_product_id, // map line_id to pop.purchase_order_product_id so QA receiving can update it
@@ -625,7 +653,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 remaining_quantity: remainingQuantity,
                 latest_receipt: latestSnapshot,
                 rejection_reason: latestSnapshot?.rejection_reason || "",
-                qa_status: activeLot ? activeLot.qa_status || "Pending" : "Pending",
+                qa_status: latestReceipt ? latestReceipt.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;
                 // unit_price_foreign is the submitted transaction-currency price.
                 base_unit_cost_php: normalizeLegacyDecimal(
@@ -642,16 +670,16 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 ),
                 allocated_expense_php: "0.00",
                 final_landed_unit_cost: normalizeLegacyDecimal(
-                    activeLot?.unit_cost ?? pop.unit_price,
+                    finalLandedUnitCost,
                     "0.0000",
                     UNIT_PRICE_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.final_landed_unit_cost`
                 ),
-                batch_no: activeLot ? canonicalBatchNumber(activeLot.batch_no, activeLot.lot_number) || "" : "",
-                lot_number: activeLot ? canonicalBatchNumber(activeLot.batch_no, activeLot.lot_number) || "" : "",
-                lot_id: resolveInventoryLotId(activeLot?.lot_id),
+                batch_no: latestReceipt ? latestReceipt.batch_no || "" : "",
+                lot_number: latestReceipt ? latestReceipt.batch_no || "" : "",
+                lot_id: latestReceipt ? resolveInventoryLotId(latestReceipt.lot_id) : null,
                 manufacturing_date: latestSnapshot?.manufacturing_date || matchingMovement?.manufacturing_date || null,
-                expiration_date: latestSnapshot?.expiration_date || (activeLot ? activeLot.expiry_date || "" : ""),
+                expiration_date: latestSnapshot?.expiration_date || (latestReceipt ? latestReceipt.expiry_date || "" : ""),
                 purchase_intent: pop.purchase_intent || "Buffer_Stock",
                 job_order_id: pop.job_order_id || null,
                 discount_percent: Number(pop.discount_percent || 0),
@@ -690,7 +718,7 @@ export async function createIncomingShipment(
             payment_type: 1,
             price_type: "Internal",
             date_encoded: new Date().toISOString(),
-            date: new Date().toISOString().split("T")[0],
+            date: await getTodayDateString(),
             time: new Date().toTimeString().split(" ")[0],
             datetime: new Date().toISOString().replace("Z", "").replace("T", " "),
             gross_amount: totalPhp,
@@ -815,7 +843,7 @@ export async function updateIncomingShipmentStatus(
             inventory_status: shipmentStatusToInventoryStatus(status)
         };
         if (status === "Received" || status === "Receiving (QA)") {
-            updatePayload.date_received = new Date().toISOString().split('T')[0];
+            updatePayload.date_received = await getTodayDateString();
             updatePayload.receiver_id = userId || null;
         }
         if (status === "Approved") {
@@ -915,5 +943,6 @@ export async function receiveIncomingShipment(
         throw e;
     }
 }
+
 
 

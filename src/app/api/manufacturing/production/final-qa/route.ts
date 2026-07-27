@@ -71,23 +71,7 @@ export async function POST(request: Request) {
             throw new Error("Failed to write final QA release: " + await res.text());
         }
 
-        // Sync WMS Inventory Lot status
-        let lotStatus = "QA Hold";
-        if (overallDisposition === "Approved") {
-            lotStatus = "Passed";
-        } else if (overallDisposition === "Rejected") {
-            lotStatus = "Failed";
-        }
-
-        const lotPatchRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots/${lotId}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ qa_status: lotStatus })
-        });
-
-        if (!lotPatchRes.ok) {
-            console.error("Failed to patch inventory lot status:", await lotPatchRes.text());
-        }
+        // Sync WMS Inventory Lot status - removed since inventory_lots is deprecated
 
         return NextResponse.json({ success: true, message: "Final lot QA release logged successfully and WMS inventory lot updated." });
     } catch (e) {
