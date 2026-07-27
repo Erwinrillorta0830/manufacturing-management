@@ -2,6 +2,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -40,6 +42,7 @@ export async function GET(request: Request) {
 // POST handler: Logs the shift yield, updates inventory (FIFO), and inserts a ledger record
 export async function POST(request: Request) {
     try {
+        const todayStr = await getTodayDateString();
         const body = await request.json();
         const { 
             taskId, 
@@ -477,7 +480,7 @@ export async function POST(request: Request) {
         }
 
         // 6. Record Yield: Insert new inventory lot for the produced product
-        const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${new Date().toISOString().split("T")[0].replace(/-/g, "")}`;
+        const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
         const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
         const newLotPayload = {
             product_id: producedProductId,
@@ -530,3 +533,4 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (e as Error).message || "Failed to log shift progress" }, { status: 500 });
     }
 }
+

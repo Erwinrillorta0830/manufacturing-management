@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "../_directus";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 export async function GET(request: Request) {
     try {
@@ -64,6 +66,8 @@ export async function POST(request: Request) {
             }
         }
 
+        const todayStr = await getTodayDateString();
+
         // Create Raw Material / Packaging Product with explicit null overrides for foreign keys to bypass invalid database defaults
         const productPayload = {
             ...productDetails,
@@ -75,7 +79,7 @@ export async function POST(request: Request) {
             isActive: 1,
             status: "Approved",
             item_type: "regular", // Must be regular due to DB enum constraint
-            date_added: productDetails.date_added || new Date().toISOString().split("T")[0],
+            date_added: productDetails.date_added || todayStr,
             created_by: userId ? Number(userId) : null
         };
 
@@ -125,7 +129,7 @@ export async function POST(request: Request) {
                         isActive: 1,
                         status: "Approved",
                         item_type: "regular",
-                        date_added: new Date().toISOString().split("T")[0],
+                        date_added: todayStr,
                         created_by: userId ? Number(userId) : null
                     };
 
@@ -244,7 +248,7 @@ export async function PATCH(request: Request) {
                         isActive: 1,
                         status: "Approved",
                         item_type: "regular",
-                        date_added: new Date().toISOString().split("T")[0]
+                        date_added: await getTodayDateString()
                     };
 
                     const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -283,5 +287,6 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update raw material" }, { status: 500 });
     }
 }
+
 
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 export async function GET() {
     // Elegant Auto-Registration side-effect
@@ -79,21 +80,20 @@ export async function GET() {
     }
 }
 
-function getManilaTimeString(dateString?: string | null): string | null {
+async function getFormattedAssetDate(dateString?: string | null): Promise<string | null> {
     if (dateString === null) return null;
-    const now = new Date();
-    const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const timePart = manilaTime.toISOString().substring(11, 19);
-
     if (!dateString) {
-        const datePart = manilaTime.toISOString().substring(0, 10);
-        return `${datePart}T${timePart}.000Z`;
+        return await getISOStringInConfiguredTimezone();
     }
-
     const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!match) return dateString;
+    if (!match) {
+        return await getISOStringInConfiguredTimezone();
+    }
     const [, year, month, day] = match;
-    return `${year}-${month}-${day}T${timePart}.000Z`;
+    const now = new Date();
+    const d = new Date(now);
+    d.setFullYear(parseInt(year), parseInt(month) - 1, parseInt(day));
+    return await getISOStringInConfiguredTimezone(d);
 }
 
 export async function POST(request: Request) {
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
 
         // Clean payload fields (registration of one asset at a time)
         const costVal = payload.cost_per_item !== undefined ? Number(payload.cost_per_item) : 0;
-        const manilaNow = getManilaTimeString()!;
+        const manilaNow = (await getFormattedAssetDate())!;
 
         const formattedPayload = {
             item_image: payload.item_image || null,
@@ -162,7 +162,7 @@ export async function POST(request: Request) {
             life_span: payload.life_span !== undefined ? Number(payload.life_span) : null,
             is_active_warning: payload.is_active_warning !== undefined ? !!payload.is_active_warning : false,
             is_active: payload.is_active !== undefined ? !!payload.is_active : true,
-            date_acquired: payload.date_acquired ? getManilaTimeString(payload.date_acquired) : manilaNow,
+            date_acquired: payload.date_acquired ? await getFormattedAssetDate(payload.date_acquired) : manilaNow,
             date_created: manilaNow,
             created_at: manilaNow,
             updated_at: manilaNow,
@@ -192,3 +192,4 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create asset" }, { status: 500 });
     }
 }
+

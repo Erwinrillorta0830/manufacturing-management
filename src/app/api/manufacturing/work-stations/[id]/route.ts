@@ -7,6 +7,7 @@ import {
     WorkCenterValidationError,
     validateWorkCenterPayload
 } from "../_validation";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 export async function PATCH(
     request: Request,
@@ -21,9 +22,7 @@ export async function PATCH(
         const payload = validateWorkCenterPayload(body, { partial: true });
         if (payload.work_center_name !== undefined) await assertUniqueWorkCenterName(String(payload.work_center_name), workCenterId);
 
-        const now = new Date();
-        const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        const manilaIsoString = manilaTime.toISOString().replace("Z", "");
+        const manilaIsoString = await getISOStringInConfiguredTimezone();
         const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers/${workCenterId}`, {
             method: "PATCH",
             headers,
