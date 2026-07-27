@@ -12,6 +12,7 @@ import {
     ProductRequiredFieldsError,
     validateProductRegistration
 } from "@/modules/manufacturing-management/finished-goods/product-validation";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 
 interface DirectusProductCurrencyProfile {
     id: number;
@@ -135,6 +136,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const todayStr = await getTodayDateString();
         const body = await request.json();
         const { productDetails, versionName, supplierIds, expectedYield } = body || {};
 
@@ -199,7 +201,7 @@ export async function POST(request: Request) {
             status: "Approved",
             item_type: "regular",
             product_type: 388,
-            date_added: productDetails.date_added || new Date().toISOString().split("T")[0],
+            date_added: productDetails.date_added || todayStr,
             created_by: userId ? Number(userId) : null
         };
 
@@ -242,7 +244,7 @@ export async function POST(request: Request) {
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
             status: "Active",
-            valid_from: new Date().toISOString().split("T")[0]
+            valid_from: todayStr
         };
 
         const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
@@ -318,3 +320,4 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update product" }, { status: 500 });
     }
 }
+

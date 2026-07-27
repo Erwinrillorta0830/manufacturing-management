@@ -102,27 +102,88 @@ export async function GET(request: Request) {
             }));
         }
 
-        // Action: Fetch FIFO Inventory for a product across all branches
-        if (parsedProductId !== null) {
-            const res = await fetch(
-                `${DIRECTUS_URL}/items/inventory_lots?filter[product_id][_eq]=${parsedProductId}&fields=*,lot_id.lot_id,lot_id.lot_name&limit=150`,
-                { headers }
-            );
-            if (!res.ok) throw new Error(`Directus error loading product receiving logs: ${res.status}`);
-            const json = await res.json();
-
+        const getMovementsAndResolveMetadata = async (filterKey: "product_id" | "branch_id", filterVal: number) => {
             const movementRes = await fetch(
-                `${DIRECTUS_URL}/items/inventory_movements?filter[product_id][_eq]=${parsedProductId}&fields=product_id,branch_id,lot_id,batch_no,quantity&limit=-1`,
+                `${DIRECTUS_URL}/items/inventory_movements?filter[${filterKey}][_eq]=${filterVal}&fields=*,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`,
                 { headers, cache: "no-store" }
             );
-            if (!movementRes.ok) throw new Error(`Directus error loading product movement stock: ${movementRes.status}`);
-            const movementStock = sumMovementQuantitiesByStock(((await movementRes.json()).data || []) as Array<Record<string, unknown>>);
-            const rawLogs = uniqueRowsByMovementStockKey(
-                (json.data || []) as Array<DirectusLotLog & Record<string, unknown>>
-            )
-                .map(log => ({ ...log, quantity: movementStock.get(movementStockKey(log as unknown as Record<string, unknown>)) || 0 }))
-                .filter(log => log.quantity > 0);
-            const productIds = rawLogs.map((r) => typeof r.product_id === "object" && r.product_id ? r.product_id.product_id : r.product_id).filter(Boolean);
+            if (!movementRes.ok) throw new Error(`Directus error loading movement stock: ${movementRes.status}`);
+            const movements = (await movementRes.json()).data || [];
+
+            const movementsByKey = new Map<string, any[]>();
+            movements.forEach((m: any) => {
+                const key = movementStockKey(m);
+                const list = movementsByKey.get(key) || [];
+                list.push(m);
+                movementsByKey.set(key, list);
+            });
+
+            const productIds = Array.from(new Set(movements.map((m: any) => Number(m.product_id)).filter(Boolean)));
+
+            let receipts: any[] = [];
+            let yields: any[] = [];
+            if (productIds.length > 0) {
+                try {
+                    const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${productIds.join(",")}&limit=-1`, { headers, cache: "no-store" });
+                    if (recRes.ok) receipts = (await recRes.json()).data || [];
+                } catch (err) {
+                    console.error("Error loading PO receipts:", err);
+                }
+                try {
+                    const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_in]=${productIds.join(",")}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+                    if (yieldRes.ok) yields = (await yieldRes.json()).data || [];
+                } catch (err) {
+                    console.error("Error loading yield ledger:", err);
+                }
+            }
+
+            const rawLogs: any[] = [];
+            for (const [key, list] of movementsByKey.entries()) {
+                const totalQty = list.reduce((sum: number, m: any) => sum + Number(m.quantity || 0), 0);
+                if (totalQty <= 0) continue;
+
+                const firstM = list.find((m: any) => Number(m.quantity) > 0) || list[0];
+                const lotIdObj = firstM.lot_id;
+                const productId = Number(firstM.product_id);
+                const batchNo = String(firstM.batch_no || "LOT-N/A").trim() || "LOT-N/A";
+
+                const matchedReceipt = receipts.find((r: any) => {
+                    const rProdId = typeof r.product_id === "object" ? r.product_id?.product_id : r.product_id;
+                    const rBatch = String(r.batch_no || r.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                    return Number(rProdId) === productId && rBatch === batchNo;
+                });
+                const matchedYield = yields.find((y: any) => {
+                    const yProdId = y.job_order_id?.product_id;
+                    const yBatch = String(y.lot_number || `MFG-${y.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                    return Number(yProdId) === productId && yBatch === batchNo;
+                });
+
+                const qaStatus = matchedReceipt?.qa_status || matchedYield?.qa_status || "Passed";
+                const expiryDate = matchedReceipt?.expiry_date || firstM.expiry_date || null;
+                const unitCost = matchedReceipt?.final_landed_unit_cost || matchedReceipt?.unit_price || null;
+
+                rawLogs.push({
+                    id: firstM.movement_id,
+                    product_id: productId,
+                    branch_id: Number(firstM.branch_id),
+                    lot_number: batchNo,
+                    batch_no: batchNo,
+                    lot_id: lotIdObj,
+                    expiry_date: expiryDate,
+                    created_on: firstM.created_at,
+                    qa_status: qaStatus,
+                    unit_cost: unitCost,
+                    quantity: totalQty,
+                    source_type: matchedReceipt ? "procurement" : matchedYield ? "manufacturing" : "legacy",
+                    source_reference: matchedReceipt ? String(matchedReceipt.purchase_order_id) : matchedYield ? String(matchedYield.job_order_id?.job_order_no) : null
+                });
+            }
+            return { rawLogs, productIds };
+        };
+
+        // Action: Fetch FIFO Inventory for a product across all branches
+        if (parsedProductId !== null) {
+            const { rawLogs, productIds } = await getMovementsAndResolveMetadata("product_id", parsedProductId);
             let products: DirectusProductMin[] = [];
             if (productIds.length > 0) {
                 const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&limit=-1`;
@@ -202,23 +263,7 @@ export async function GET(request: Request) {
 
         // Action: Fetch FIFO Inventory for a branch
         if (branchId) {
-            const res = await fetch(
-                `${DIRECTUS_URL}/items/inventory_lots?filter[branch_id][_eq]=${branchId}&fields=*,lot_id.lot_id,lot_id.lot_name&limit=150`,
-                { headers }
-            );
-            if (!res.ok) throw new Error(`Directus error loading branch receiving logs: ${res.status}`);
-            const json = await res.json();
-
-            const movementRes = await fetch(
-                `${DIRECTUS_URL}/items/inventory_movements?filter[branch_id][_eq]=${branchId}&fields=product_id,branch_id,lot_id,batch_no,quantity&limit=-1`,
-                { headers, cache: "no-store" }
-            );
-            if (!movementRes.ok) throw new Error(`Directus error loading branch movement stock: ${movementRes.status}`);
-            const movementStock = sumMovementQuantitiesByStock(((await movementRes.json()).data || []) as Array<Record<string, unknown>>);
-            const rawLogs = ((json.data || []) as DirectusLotLog[])
-                .map(log => ({ ...log, quantity: movementStock.get(movementStockKey(log as unknown as Record<string, unknown>)) || 0 }))
-                .filter(log => log.quantity > 0);
-            const productIds = rawLogs.map((r) => typeof r.product_id === "object" && r.product_id ? r.product_id.product_id : r.product_id).filter(Boolean);
+            const { rawLogs, productIds } = await getMovementsAndResolveMetadata("branch_id", Number(branchId));
             let products: DirectusProductMin[] = [];
             if (productIds.length > 0) {
                 const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&limit=-1`;

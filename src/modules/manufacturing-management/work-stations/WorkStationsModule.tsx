@@ -7,10 +7,9 @@ import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturi
 import { 
     fetchWorkCenters, 
     createWorkCenter, 
-    saveWorkCenter, 
-    fetchAssets, 
-    fetchDepartments 
-} from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
+    saveWorkCenter
+} from "./services/work-stations-api";
+import { fetchAssets, fetchDepartments } from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
 import { Button } from "@/components/ui/button";
 import {
     Select,

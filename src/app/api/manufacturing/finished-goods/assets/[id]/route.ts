@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
-function getManilaTimeString(dateString?: string | null): string | null {
+async function getFormattedAssetDate(dateString?: string | null): Promise<string | null> {
     if (dateString === null) return null;
-    const now = new Date();
-    const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const timePart = manilaTime.toISOString().substring(11, 19);
-
     if (!dateString) {
-        const datePart = manilaTime.toISOString().substring(0, 10);
-        return `${datePart}T${timePart}.000Z`;
+        return await getISOStringInConfiguredTimezone();
     }
-
     const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!match) return dateString;
+    if (!match) {
+        return await getISOStringInConfiguredTimezone();
+    }
     const [, year, month, day] = match;
-    return `${year}-${month}-${day}T${timePart}.000Z`;
+    const now = new Date();
+    const d = new Date(now);
+    d.setFullYear(parseInt(year), parseInt(month) - 1, parseInt(day));
+    return await getISOStringInConfiguredTimezone(d);
 }
 
 export async function PATCH(
@@ -55,7 +55,7 @@ export async function PATCH(
         }
 
         // Map payload fields cleanly
-        const manilaNow = getManilaTimeString()!;
+        const manilaNow = (await getFormattedAssetDate())!;
         const formattedPayload: Record<string, unknown> = { quantity: 1, updated_at: manilaNow };
         if (payload.item_image !== undefined) formattedPayload.item_image = payload.item_image;
         if (payload.item_id !== undefined) formattedPayload.item_id = payload.item_id;
@@ -74,7 +74,7 @@ export async function PATCH(
         if (payload.is_active_warning !== undefined) formattedPayload.is_active_warning = !!payload.is_active_warning;
         if (payload.is_active !== undefined) formattedPayload.is_active = !!payload.is_active;
         if (payload.date_acquired !== undefined) {
-            formattedPayload.date_acquired = payload.date_acquired ? getManilaTimeString(payload.date_acquired) : null;
+            formattedPayload.date_acquired = payload.date_acquired ? await getFormattedAssetDate(payload.date_acquired) : null;
         }
 
         const res = await fetch(`${DIRECTUS_URL}/items/assets_and_equipment/${assetId}`, {

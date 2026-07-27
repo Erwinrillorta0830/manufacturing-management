@@ -615,42 +615,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
                 commitPhase = "inventory";
                 const saveInventory = async (targetBranchId: number, storageLotId: number, quantity: number, qaStatus: string, reason: string | null): Promise<number | null> => {
+                    void targetBranchId;
+                    void qaStatus;
+                    void reason;
                     if (quantity <= 0) return null;
-                    const filter = encodeURIComponent(JSON.stringify({ _and: [
-                        { source_type: { _eq: "procurement" } }, { source_reference: { _eq: String(shipmentId) } },
-                        { product_id: { _eq: line.productId } }, { branch_id: { _eq: targetBranchId } },
-                        { batch_no: { _eq: line.item.batch_no } }, { lot_id: { _eq: storageLotId } }
-                    ] }));
-                    const existingRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${filter}&fields=*&limit=1`, { headers });
-                    if (!existingRes.ok) throw new Error(`Failed to load inventory for product ${line.productId}.`);
-                    const existing = ((await existingRes.json()).data || [])[0] as Record<string, unknown> | undefined;
-                    const payload = {
-                        source_type: "procurement", source_reference: String(shipmentId), product_id: line.productId,
-                        batch_no: line.item.batch_no, lot_id: storageLotId, expiry_date: line.item.expiration_date || null,
-                        // Physical quantity is maintained by inventory_movements. Keep the
-                        // legacy field at zero for Directus schemas that require it.
-                        quantity: existing ? existing.quantity : 0, unit_cost: allocation.finalLandedUnitCost,
-                        branch_id: targetBranchId, qa_status: qaStatus, rejection_reason: reason
-                    };
-                    if (existing) {
-                        inventoryChanges.push({ id: Number(existing.id), created: false, previous: {
-                            source_type: existing.source_type, source_reference: existing.source_reference,
-                            product_id: relationId(existing.product_id, "product_id"), batch_no: existing.batch_no,
-                            lot_id: relationId(existing.lot_id, "lot_id") || null, expiry_date: existing.expiry_date,
-                            unit_cost: existing.unit_cost, branch_id: relationId(existing.branch_id, "id"),
-                            qa_status: existing.qa_status, rejection_reason: existing.rejection_reason
-                        } });
-                        const updateRes = await mutate("inventory_lots", Number(existing.id), "PATCH", payload);
-                        if (!updateRes.ok) throw new Error(`Failed to update inventory lot ${existing.id}.`);
-                        return Number(existing.id);
-                    } else {
-                        const createRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, { method: "POST", headers, body: JSON.stringify({ ...payload, created_on: new Date().toISOString() }) });
-                        if (!createRes.ok) throw new Error(`Failed to create inventory lot for product ${line.productId}.`);
-                        const inventoryId = Number((await createRes.json()).data.id);
-                        if (!inventoryId) throw new Error("Directus did not return the created inventory-lot ID.");
-                        inventoryChanges.push({ id: inventoryId, created: true });
-                        return inventoryId;
-                    }
+                    return storageLotId;
                 };
 
                 const receiptNo = receiptNumberForLine(referenceNumber, line.item.line_id);

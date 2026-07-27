@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 
 export async function GET(request: Request) {
     try {
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Base quantity must be greater than 0." }, { status: 400 });
         }
         const uId = uomId ? Number(uomId) : null;
-        const today = new Date().toISOString().split("T")[0];
+        const today = await getTodayDateString();
 
         let createdVersionId: number | null = null;
         const createdRoutes: number[] = [];
@@ -209,7 +210,7 @@ export async function PATCH(request: Request) {
         }
 
         const numericProductId = parseInt(productId);
-        const today = new Date().toISOString().split("T")[0];
+        const today = await getTodayDateString();
 
         // Fetch all versions for this product
         const getVersionsUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${numericProductId}&limit=-1&fields=version_id`;
@@ -260,3 +261,4 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to activate version" }, { status: 500 });
     }
 }
+

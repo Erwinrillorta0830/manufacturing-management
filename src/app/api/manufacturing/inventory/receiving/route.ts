@@ -1,6 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, fetchJobOrders } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 interface ComponentVarianceDetail {
     productId: number;
@@ -150,7 +152,7 @@ export async function POST(request: Request) {
         const pId = Number(productId);
         const uCost = Number(unitCost || 0);
         const finalLotNo = lotNumber || `MFG-${joId}`;
-        const finalExpDate = expirationDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+        const finalExpDate = expirationDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
 
         // 1. Fetch the target Job Order
         const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joId)}&limit=1`, {
@@ -204,20 +206,20 @@ export async function POST(request: Request) {
 
             let lotUnitCost = 0;
             if (lotNo !== "LOT-N/A") {
-                const lotQuery = encodeURIComponent(JSON.stringify({
+                const recQuery = encodeURIComponent(JSON.stringify({
                     _and: [
                         { product_id: { _eq: compId } },
-                        { lot_number: { _eq: lotNo } }
+                        { batch_no: { _eq: lotNo } }
                     ]
                 }));
-                const lotCostRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQuery}&limit=1`, {
+                const recCostRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter=${recQuery}&limit=1`, {
                     headers,
                     cache: "no-store"
                 });
-                if (lotCostRes.ok) {
-                    const lotDetails = (await lotCostRes.json()).data || [];
-                    if (lotDetails.length > 0) {
-                        lotUnitCost = Number(lotDetails[0].unit_cost || 0);
+                if (recCostRes.ok) {
+                    const recDetails = (await recCostRes.json()).data || [];
+                    if (recDetails.length > 0) {
+                        lotUnitCost = Number(recDetails[0].final_landed_unit_cost || recDetails[0].unit_price || 0);
                     }
                 }
             }
@@ -441,29 +443,31 @@ export async function POST(request: Request) {
             }
         }
 
-        // 5. Register Finished Goods into inventory_lots
-        const lotPayload = {
-            product_id: pId,
-            branch_id: bId,
-            lot_number: finalLotNo,
-            expiry_date: finalExpDate,
-            quantity: qty,
-            unit_cost: uCost || (matchedProduct as any)?.cost_per_unit || 0,
-            qa_status: "Passed",
-            source_type: "manufacturing",
-            source_reference: joId,
-            created_on: new Date().toISOString()
-        };
-
-        const registerLotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(lotPayload)
-        });
-
-        if (!registerLotRes.ok) {
-            const errTxt = await registerLotRes.text();
-            throw new Error(`Failed to create inventory lot for yield: ${registerLotRes.status} - ${errTxt}`);
+        // Resolve or create master lot in the lots table
+        let finishedLotId = 49; // Default fallback to a valid existing lot ID
+        try {
+            const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: finalLotNo } }));
+            const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
+            const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
+            if (lotLookup.length > 0) {
+                finishedLotId = lotLookup[0].lot_id;
+            } else {
+                const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({
+                        lot_name: finalLotNo,
+                        inventory_type_id: 389, // Finished Goods
+                        max_batch_capacity: 100000,
+                        created_by: 24
+                    })
+                });
+                if (createLotRes.ok) {
+                    finishedLotId = (await createLotRes.json()).data.lot_id;
+                }
+            }
+        } catch (err) {
+            console.error(`Error resolving master lot ID for ${finalLotNo}:`, err);
         }
 
         // 6. Write a positive entry to product_ledger (Yield Receive)
@@ -477,7 +481,7 @@ export async function POST(request: Request) {
                 documentType: "QA Receive",
                 documentNo: joId,
                 documentDescription: `MFG Run: ${finalLotNo}`,
-                documentDate: new Date().toISOString().split("T")[0]
+                documentDate: await getTodayDateString()
             })
         });
         if (!ledgerPosRes.ok) {
@@ -490,10 +494,12 @@ export async function POST(request: Request) {
             headers,
             body: JSON.stringify({
                 product_id: pId,
+                lot_id: finishedLotId,
                 branch_id: bId,
                 transaction_type_id: 2, // Job Order Finished Goods / Yield Receive
                 source_document_no: joId,
                 batch_no: finalLotNo,
+                expiry_date: finalExpDate,
                 quantity: qty,
                 created_by: 24,
                 remarks: `MFG Run: ${finalLotNo}`
@@ -533,3 +539,4 @@ export async function POST(request: Request) {
         );
     }
 }
+

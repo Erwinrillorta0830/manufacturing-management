@@ -1,5 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 interface LedgerEntry {
     id: number;
@@ -59,6 +61,7 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function GET(request: Request) {
     try {
+        const todayStr = await getTodayDateString();
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
 
@@ -74,14 +77,14 @@ export async function GET(request: Request) {
         }
         const ledgerEntries = (await ledgerRes.json()).data || [];
 
-        // Fetch products and inventory lots to resolve names, lot number details and unit cost
-        const [productsRes, porRes] = await Promise.all([
+        // Fetch products and job order yield ledger to resolve names, lot number details, QA status and expiry date
+        const [productsRes, yieldRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,cost_per_unit`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1`, { headers, cache: "no-store" })
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers, cache: "no-store" })
         ]);
 
         const products: Product[] = productsRes.ok ? (await productsRes.json()).data || [] : [];
-        const porData: InventoryLot[] = porRes.ok ? (await porRes.json()).data || [] : [];
+        const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
 
         const data = ledgerEntries.map((entry: LedgerEntry) => {
             const lotNumber = entry.documentDescription?.startsWith("MFG Run: ")
@@ -89,10 +92,10 @@ export async function GET(request: Request) {
                 : (entry.documentDescription || `MFG-${entry.documentNo}`);
 
             const matchedProduct = products.find((p: Product) => Number(p.product_id) === Number(entry.productId));
-            const matchedPOR = porData.find((p: InventoryLot) => p.lot_number === lotNumber);
+            const matchedYield = yields.find((y: any) => String(y.lot_number) === String(lotNumber));
 
             return {
-                id: matchedPOR?.id || entry.id,
+                id: matchedYield?.id || entry.id,
                 jo_id: entry.documentNo,
                 product_id: Number(entry.productId),
                 product_name: matchedProduct?.product_name || "Manufactured Good",
@@ -100,9 +103,9 @@ export async function GET(request: Request) {
                 quantity: Number(entry.quantity),
                 branch_id: Number(entry.branchId),
                 lot_number: lotNumber,
-                qa_status: matchedPOR?.qa_status || "Pending",
-                expiration_date: matchedPOR?.expiry_date || entry.documentDate || new Date().toISOString().split('T')[0],
-                unit_cost: Number(matchedPOR?.unit_cost || matchedProduct?.cost_per_unit || 0),
+                qa_status: matchedYield?.qa_status || "Pending",
+                expiration_date: matchedYield?.expiry_date || entry.documentDate || todayStr,
+                unit_cost: Number(matchedProduct?.cost_per_unit || 0),
                 date_received: entry.documentDate ? `${entry.documentDate}T12:00:00.000Z` : new Date().toISOString()
             };
         });
@@ -116,6 +119,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const todayStr = await getTodayDateString();
         const body = await request.json();
         const { joId, productId, productName, quantityProduced, branchId, lotNumber, expirationDate, manufacturingDate, unitCost, componentsConsumed, completeJobOrder = true } = body;
 
@@ -160,7 +164,7 @@ export async function POST(request: Request) {
         const bId = Number(branchId);
         const pId = Number(productId);
         const finalLotNo = lotNumber || `MFG-${joId}`;
-        const finalExpDate = expirationDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const finalExpDate = expirationDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
 
         // Fetch planned quantity to scale raw material consumption dynamically based on actual yield vs planned yield
         let scaleFactor = 1;
@@ -264,62 +268,25 @@ export async function POST(request: Request) {
             date_received: new Date().toISOString()
         };
 
-        // 1. Automatically register finished goods into the decoupled inventory_lots collection
-        let insertedLotId = 0;
+        // 1. Automatically register finished goods into the decoupled inventory system
         let skipStockOperations = false;
         try {
-            // Check if there is an existing lot and movement already registered for this JO yield (e.g. from shift run logs)
-            const existingLotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter[_and][0][product_id][_eq]=${pId}&filter[_and][1][lot_number][_eq]=${encodeURIComponent(finalLotNo)}&filter[_and][2][branch_id][_eq]=${bId}&limit=1`, { headers, cache: "no-store" });
-            if (existingLotsRes.ok) {
-                const existingLots = (await existingLotsRes.json()).data || [];
-                if (existingLots.length > 0) {
-                    insertedLotId = existingLots[0].id;
-                    
-                    // Check if there is already a positive finished goods movement for this lot and job order
-                    const existingMvtRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[_and][0][product_id][_eq]=${pId}&filter[_and][1][batch_no][_eq]=${encodeURIComponent(finalLotNo)}&filter[_and][2][source_document_no][_eq]=${encodeURIComponent(joId)}&filter[_and][3][transaction_type_id][_eq]=2&limit=1`, { headers, cache: "no-store" });
-                    if (existingMvtRes.ok) {
-                        const existingMvts = (await existingMvtRes.json()).data || [];
-                        if (existingMvts.length > 0) {
-                            skipStockOperations = true;
-                            console.log(`[BFF Finished Goods] Prior yield lot and movement found for JO ${joId} and Lot ${finalLotNo}. Skipping stock operations to prevent duplicates.`);
-                        }
-                    }
+            // Check if there is already a positive finished goods movement for this lot and job order in inventory_movements
+            const existingMvtRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[_and][0][product_id][_eq]=${pId}&filter[_and][1][batch_no][_eq]=${encodeURIComponent(finalLotNo)}&filter[_and][2][source_document_no][_eq]=${encodeURIComponent(joId)}&filter[_and][3][transaction_type_id][_eq]=2&limit=1`, { headers, cache: "no-store" });
+            if (existingMvtRes.ok) {
+                const existingMvts = (await existingMvtRes.json()).data || [];
+                if (existingMvts.length > 0) {
+                    skipStockOperations = true;
+                    console.log(`[BFF Finished Goods] Prior yield movement found for JO ${joId} and Lot ${finalLotNo}. Skipping stock operations to prevent duplicates.`);
                 }
             }
         } catch (checkErr) {
-            console.error("[BFF Finished Goods] Error checking for prior yield logs/movements:", checkErr);
+            console.error("[BFF Finished Goods] Error checking for prior yield movements:", checkErr);
         }
 
         if (!skipStockOperations) {
             try {
                 const finishedLotId = await resolveMasterLotId(finalLotNo, 2); // 2 = Finished Goods
-                const lotPayload = {
-                    product_id: pId,
-                    branch_id: bId,
-                    lot_number: finalLotNo,
-                    lot_id: finishedLotId,
-                    expiry_date: finalExpDate,
-                    quantity: 0,
-                    unit_cost: Number(unitCost || 0),
-                    qa_status: "Pending",
-                    source_type: "manufacturing",
-                    source_reference: joId,
-                    created_on: manufacturingDate ? new Date(manufacturingDate).toISOString() : new Date().toISOString()
-                };
-
-                const lotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(lotPayload)
-                });
-
-                if (!lotRes.ok) {
-                    const errTxt = await lotRes.text();
-                    console.error("[BFF Finished Goods] Failed to create cloud inventory lot record:", errTxt);
-                    return NextResponse.json({ error: `Failed to register lot in cloud: ${lotRes.status} - ${errTxt}` }, { status: 500 });
-                }
-                const lotObj = await lotRes.json();
-                insertedLotId = Number(lotObj.data?.id || lotObj.data?.lot_id || 0);
 
                 // 1b. Log finished yield movement in inventory_movements ledger
                 const finishedMovementPayload = {
@@ -327,11 +294,10 @@ export async function POST(request: Request) {
                     lot_id: finishedLotId,
                     branch_id: bId,
                     transaction_type_id: 2, // Job Order Finished Goods
-                    source_document_id: insertedLotId,
                     source_document_no: joId,
                     batch_no: finalLotNo,
                     expiry_date: finalExpDate,
-                    manufacturing_date: manufacturingDate || new Date().toISOString().split('T')[0],
+                    manufacturing_date: manufacturingDate || todayStr,
                     quantity: qty,
                     created_by: 24,
                     remarks: `Finished yield output from Job Order ${joId}`
@@ -361,7 +327,7 @@ export async function POST(request: Request) {
                 documentType: "Job Order Receipt",
                 documentNo: joId,
                 documentDescription: `MFG Run: ${finalLotNo}`,
-                documentDate: new Date().toISOString().split('T')[0]
+                documentDate: todayStr
             })
         });
         if (!ledgerPosRes.ok) {
@@ -387,106 +353,112 @@ export async function POST(request: Request) {
                             documentType: "Job Order Issue",
                             documentNo: joId,
                             documentDescription: `Consumed to produce: ${productName || "Finished Goods"}`,
-                            documentDate: new Date().toISOString().split('T')[0]
+                            documentDate: todayStr
                         })
                     });
                     if (!ledgerNegRes.ok) {
                         console.error(`[BFF Finished Goods] Failed to create deduction product ledger record for product ${compId}:`, await ledgerNegRes.text());
                     }
 
-                    // Deduct from FIFO inventory lots ONLY IF we are not skipping stock operations
+                    // Deduct from FIFO inventory movements ONLY IF we are not skipping stock operations
                     if (!skipStockOperations) {
                         try {
-                            const filterQuery = encodeURIComponent(JSON.stringify({
+                            // Fetch PO receivings to resolve batch metadata (qa_status, expiry, created_on)
+                            const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${compId}&filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" });
+                            const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
+                            
+                            const batchStatusMap = new Map<string, string>();
+                            const batchExpiryMap = new Map<string, string>();
+                            const batchCreatedMap = new Map<string, string>();
+                            
+                            receipts.forEach((rec: any) => {
+                                const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                                batchStatusMap.set(batchNo, rec.qa_status || "Passed");
+                                if (rec.expiry_date) batchExpiryMap.set(batchNo, rec.expiry_date);
+                                if (rec.received_date || rec.created_on) batchCreatedMap.set(batchNo, rec.received_date || rec.created_on);
+                            });
+
+                            // Fetch inventory movements to calculate the true ledger stock
+                            const movFilter = encodeURIComponent(JSON.stringify({
                                 _and: [
                                     { product_id: { _eq: compId } },
-                                    { branch_id: { _eq: bId } },
-                                    { qa_status: { _eq: "Passed" } }
+                                    { branch_id: { _eq: bId } }
                                 ]
                             }));
-                            const lotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${filterQuery}&sort=expiry_date,created_on&limit=-1`, { headers });
-                            if (lotsRes.ok) {
-                                const activeLots = (await lotsRes.json()).data || [];
-                                
-                                // Fetch inventory movements to calculate the true ledger stock
-                                const movFilter = encodeURIComponent(JSON.stringify({
-                                    _and: [
-                                        { product_id: { _eq: compId } },
-                                        { branch_id: { _eq: bId } }
-                                    ]
-                                }));
-                                const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                                const movements = movRes.ok ? (await movRes.json()).data || [] : [];
-                                const movementStockMap = new Map<string, number>();
-                                movements.forEach((mov: any) => {
-                                    const batchNo = mov.batch_no || "LOT-N/A";
-                                    const qty = Number(mov.quantity || 0);
-                                    movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
-                                });
+                            const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
+                            const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                            const movementStockMap = new Map<string, number>();
+                            movements.forEach((mov: any) => {
+                                const batchNo = mov.batch_no || "LOT-N/A";
+                                const qty = Number(mov.quantity || 0);
+                                movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
+                            });
 
-                                // Map lots and enrich them with correct ledger quantity
-                                const activeLotsEnriched = activeLots.map((lot: any) => {
-                                    const lotNum = lot.lot_number || "LOT-N/A";
-                                    const ledgerQty = movementStockMap.get(lotNum) || 0;
-                                    return {
-                                        ...lot,
-                                        quantity: ledgerQty
-                                    };
-                                }).filter((lot: any) => lot.quantity > 0);
-
-                                // Sort in JS to guarantee FIFO/FEFO
-                                activeLotsEnriched.sort((a: any, b: any) => {
-                                    if (a.expiry_date && b.expiry_date) {
-                                        return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
+                            // Construct active lots enriched
+                            const activeLotsEnriched: any[] = [];
+                            movementStockMap.forEach((qty, lotNum) => {
+                                if (qty > 0) {
+                                    const status = batchStatusMap.get(lotNum) || "Passed"; // Default to Passed for legacy stock
+                                    if (status === "Passed" || status === "Partially Accepted") {
+                                        activeLotsEnriched.push({
+                                            lot_number: lotNum,
+                                            quantity: qty,
+                                            expiry_date: batchExpiryMap.get(lotNum) || null,
+                                            created_on: batchCreatedMap.get(lotNum) || null
+                                        });
                                     }
-                                    if (a.expiry_date) return -1;
-                                    if (b.expiry_date) return 1;
-                                    return new Date(a.created_on || 0).getTime() - new Date(b.created_on || 0).getTime();
-                                });
+                                }
+                            });
 
-                                 let remainingToDeduct = compQtyRequired;
-                                 for (const lot of activeLotsEnriched) {
-                                     if (remainingToDeduct <= 0) break;
-                                     const available = Number(lot.quantity || 0);
-                                     const deduct = Math.min(available, remainingToDeduct);
-                                     remainingToDeduct -= deduct;
-                                     
-                                     console.log(`[BFF Finished Goods] Deducting ${deduct} units from lot ID ${lot.id} (lot number: ${lot.lot_number}).`);
-                                     
-                                     // Log negative ledger movement in inventory_movements
-                                     try {
-                                         const consumedLotId = await resolveMasterLotId(lot.lot_number || "LOT-N/A", 1); // 1 = Raw Materials
-                                         const componentMovementPayload = {
-                                             product_id: compId,
-                                             lot_id: consumedLotId,
-                                             branch_id: bId,
-                                             transaction_type_id: 1, // Job Order Consumage
-                                             source_document_id: lot.id,
-                                             source_document_no: joId,
-                                             batch_no: lot.lot_number || "LOT-N/A",
-                                             expiry_date: lot.expiry_date || null,
-                                             manufacturing_date: lot.created_on ? lot.created_on.split("T")[0] : null,
-                                             quantity: -deduct, // Negative for deduction
-                                             created_by: 24,
-                                             remarks: `Consumed from lot ${lot.lot_number || "N/A"} for JO yield`
-                                         };
-                                         const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
-                                             method: "POST",
-                                             headers,
-                                             body: JSON.stringify(componentMovementPayload)
-                                         });
-                                         if (!movRes.ok) {
-                                             console.error(`[BFF Finished Goods] Failed to create deduction movement record for product ${compId}:`, await movRes.text());
-                                         }
-                                     } catch (movErr) {
-                                         console.error(`[BFF Finished Goods] Error creating deduction movement record for product ${compId}:`, movErr);
-                                     }
-                                 }
-                            } else {
-                                console.error(`[BFF Finished Goods] Failed to fetch active inventory lots for component ${compId}:`, await lotsRes.text());
+                            // Sort in JS to guarantee FIFO/FEFO
+                            activeLotsEnriched.sort((a: any, b: any) => {
+                                if (a.expiry_date && b.expiry_date) {
+                                    return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
+                                }
+                                if (a.expiry_date) return -1;
+                                if (b.expiry_date) return 1;
+                                return new Date(a.created_on || 0).getTime() - new Date(b.created_on || 0).getTime();
+                            });
+
+                            let remainingToDeduct = compQtyRequired;
+                            for (const lot of activeLotsEnriched) {
+                                if (remainingToDeduct <= 0) break;
+                                const available = Number(lot.quantity || 0);
+                                const deduct = Math.min(available, remainingToDeduct);
+                                remainingToDeduct -= deduct;
+                                
+                                console.log(`[BFF Finished Goods] Deducting ${deduct} units from lot number: ${lot.lot_number}.`);
+                                
+                                // Log negative ledger movement in inventory_movements
+                                try {
+                                    const consumedLotId = await resolveMasterLotId(lot.lot_number || "LOT-N/A", 1); // 1 = Raw Materials
+                                    const componentMovementPayload = {
+                                        product_id: compId,
+                                        lot_id: consumedLotId,
+                                        branch_id: bId,
+                                        transaction_type_id: 1, // Job Order Consumage
+                                        source_document_no: joId,
+                                        batch_no: lot.lot_number || "LOT-N/A",
+                                        expiry_date: lot.expiry_date || null,
+                                        manufacturing_date: lot.created_on ? lot.created_on.split("T")[0] : null,
+                                        quantity: -deduct, // Negative for deduction
+                                        created_by: 24,
+                                        remarks: `Consumed from lot ${lot.lot_number || "N/A"} for JO yield`
+                                    };
+                                    const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
+                                        method: "POST",
+                                        headers,
+                                        body: JSON.stringify(componentMovementPayload)
+                                    });
+                                    if (!movRes.ok) {
+                                        console.error(`[BFF Finished Goods] Failed to create deduction movement record for product ${compId}:`, await movRes.text());
+                                    }
+                                } catch (movErr) {
+                                    console.error(`[BFF Finished Goods] Error creating deduction movement record for product ${compId}:`, movErr);
+                                }
                             }
                         } catch (lotDeductErr) {
-                            console.error(`[BFF Finished Goods] Error during inventory lots deduction for component ${compId}:`, lotDeductErr);
+                            console.error(`[BFF Finished Goods] Error during inventory movements deduction for component ${compId}:`, lotDeductErr);
                         }
                     }
                 }
@@ -586,3 +558,4 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create finished goods receipt" }, { status: 500 });
     }
 }
+

@@ -381,10 +381,10 @@ export default function InventoryModule() {
                         if (msg.type === "auth" && msg.status === "ok") {
                             console.log("[Directus Realtime] Authenticated successfully");
 
-                            // Subscribe to inventory_lots
+                            // Subscribe to inventory_movements
                             ws?.send(JSON.stringify({
                                 type: "subscribe",
-                                collection: "inventory_lots",
+                                collection: "inventory_movements",
                                 query: { fields: ["*"] }
                             }));
 
