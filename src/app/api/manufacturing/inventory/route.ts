@@ -225,30 +225,47 @@ export async function GET() {
         const uniqueBatches = uniqueRowsByMovementStockKey(
             porData as Array<InventoryLot & Record<string, unknown>>
         );
-        const inventoryLotIds = porData.map((batch: InventoryLot) => Number(batch.id)).filter(Boolean);
-        const stockKeyByInventoryLot = new Map<number, string>(porData.map((batch: InventoryLot) => [
-            Number(batch.id),
-            movementStockKey(batch as unknown as Record<string, unknown>),
-        ]));
         const reservedByStockKey = new Map<string, number>();
-        if (inventoryLotIds.length > 0) {
-            const reservationRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${inventoryLotIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id,quantity&limit=-1`,
-                { headers, cache: "no-store" }
+        const reservationRes = await fetch(
+            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[status][_eq]=Reserved&fields=id,quantity,inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.branch_id,inventory_lot_id.batch_no,inventory_lot_id.lot_number,inventory_lot_id.lot_id.lot_id,inventory_lot_id.lot_id&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!reservationRes.ok) throw new Error("Failed to fetch active invoice reservations from Directus");
+        interface DirectusReservationLotRaw {
+            product_id?: number;
+            branch_id?: number;
+            batch_no?: string | null;
+            lot_number?: string | null;
+            lot_id?: number | { lot_id?: number } | null;
+        }
+        interface DirectusReservationRaw {
+            id: number;
+            quantity: number | string;
+            inventory_lot_id?: number | DirectusReservationLotRaw | null;
+        }
+        const reservations: DirectusReservationRaw[] = (await reservationRes.json()).data || [];
+        for (const reservation of reservations) {
+            const lotObj = typeof reservation.inventory_lot_id === "object" ? reservation.inventory_lot_id : null;
+            if (!lotObj) continue;
+            const productId = Number(lotObj.product_id || 0);
+            const branchId = Number(lotObj.branch_id || 0);
+            if (!productId) continue;
+            const batchNo = String(lotObj.batch_no || lotObj.lot_number || "LOT-N/A").trim() || "LOT-N/A";
+            const lotIdVal = typeof lotObj.lot_id === "object"
+                ? Number(lotObj.lot_id?.lot_id || 0)
+                : Number(lotObj.lot_id || 0);
+
+            const key = movementStockKey({
+                product_id: productId,
+                branch_id: branchId,
+                batch_no: batchNo,
+                lot_id: lotIdVal || null
+            });
+
+            reservedByStockKey.set(
+                key,
+                (reservedByStockKey.get(key) || 0) + Number(reservation.quantity || 0)
             );
-            if (!reservationRes.ok) throw new Error("Failed to fetch active invoice reservations from Directus");
-            const reservations: { inventory_lot_id: number | { id?: number }; quantity: number | string }[] = (await reservationRes.json()).data || [];
-            for (const reservation of reservations) {
-                const inventoryLotId = typeof reservation.inventory_lot_id === "object"
-                    ? Number(reservation.inventory_lot_id?.id || 0)
-                    : Number(reservation.inventory_lot_id || 0);
-                const key = stockKeyByInventoryLot.get(inventoryLotId);
-                if (!key) continue;
-                reservedByStockKey.set(
-                    key,
-                    (reservedByStockKey.get(key) || 0) + Number(reservation.quantity || 0)
-                );
-            }
         }
 
         // Map virtual inventory lots to the Batch format expected by the frontend
