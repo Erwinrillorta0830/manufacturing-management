@@ -6,10 +6,21 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Row = Record<string, unknown>;
+const TEMPLATE_DIRECTUS_URL = (process.env.CRM_DIRECTUS_URL || "http://goatedcodoer:8056").replace(/\/$/, "");
+const TEMPLATE_DIRECTUS_TOKEN = process.env.CRM_DIRECTUS_STATIC_TOKEN || "";
 
 async function rows(collection: string, params: URLSearchParams): Promise<Row[]> {
     const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params}`, { headers, cache: "no-store" });
     if (!response.ok) throw new Error(`${collection} returned ${response.status}`);
+    return (await response.json()).data || [];
+}
+
+async function templateRows(params: URLSearchParams): Promise<Row[]> {
+    const response = await fetch(`${TEMPLATE_DIRECTUS_URL}/items/sales_invoice_template?${params}`, {
+        headers: TEMPLATE_DIRECTUS_TOKEN ? { Authorization: `Bearer ${TEMPLATE_DIRECTUS_TOKEN}` } : undefined,
+        cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`sales_invoice_template returned ${response.status}`);
     return (await response.json()).data || [];
 }
 
@@ -39,7 +50,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
             invoice.payment_terms ? rows("payment_terms", new URLSearchParams({ "filter[id][_eq]": String(invoice.payment_terms), fields: "id,payment_name,payment_days", limit: "1" })) : [],
             invoice.invoice_type ? rows("sales_invoice_type", new URLSearchParams({ "filter[id][_eq]": String(invoice.invoice_type), fields: "id,type,isOfficial,max_length", limit: "1" })) : [],
             productIds.length ? rows("products", new URLSearchParams({ "filter[product_id][_in]": productIds.join(","), fields: "product_id,product_code,product_name,unit_of_measurement.unit_shortcut", limit: "-1" })) : [],
-            invoice.invoice_type ? rows("sales_invoice_template", new URLSearchParams({ "filter[sales_invoice_type_id][_eq]": String(invoice.invoice_type), fields: "id,template_config", limit: "1" })) : [],
+            invoice.invoice_type ? templateRows(new URLSearchParams({ "filter[sales_invoice_type_id][_eq]": String(invoice.invoice_type), fields: "id,template_config", limit: "1" })) : [],
         ]);
         const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
         const customer = customers[0];

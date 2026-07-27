@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers } from "../../../directus-api";
 import { getUserIdFromToken } from "../../../invoice-consolidation/_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const TEMPLATE_DIRECTUS_URL = (process.env.CRM_DIRECTUS_URL || "http://goatedcodoer:8056").replace(/\/$/, "");
+const TEMPLATE_DIRECTUS_TOKEN = process.env.CRM_DIRECTUS_STATIC_TOKEN || "";
+const headers: Record<string, string> = { "Content-Type": "application/json" };
+if (TEMPLATE_DIRECTUS_TOKEN) headers.Authorization = `Bearer ${TEMPLATE_DIRECTUS_TOKEN}`;
 
 function validTemplate(value: unknown): value is Record<string, unknown> {
     if (!value || typeof value !== "object") return false;
@@ -46,7 +50,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rec
     const id = await receiptTypeId(params);
     if (!id) return NextResponse.json({ error: "Invalid receipt type ID." }, { status: 400 });
 
-    const response = await fetch(`${DIRECTUS_URL}/items/sales_invoice_template?filter[sales_invoice_type_id][_eq]=${id}&fields=id,template_config&limit=1`, { headers, cache: "no-store" });
+    const response = await fetch(`${TEMPLATE_DIRECTUS_URL}/items/sales_invoice_template?filter[sales_invoice_type_id][_eq]=${id}&fields=id,template_config&limit=1`, { headers, cache: "no-store" });
     if (!response.ok) return NextResponse.json({ error: "Unable to load receipt template." }, { status: 503 });
     const row = (await response.json()).data?.[0];
     return NextResponse.json({ id: row?.id ?? null, templateConfig: row?.template_config ?? null });
@@ -59,12 +63,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
     const body = await request.json().catch(() => null) as { templateConfig?: unknown } | null;
     if (!validTemplate(body?.templateConfig)) return NextResponse.json({ error: "Invalid receipt template." }, { status: 400 });
 
-    const existingResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice_template?filter[sales_invoice_type_id][_eq]=${id}&fields=id&limit=1`, { headers, cache: "no-store" });
+    const existingResponse = await fetch(`${TEMPLATE_DIRECTUS_URL}/items/sales_invoice_template?filter[sales_invoice_type_id][_eq]=${id}&fields=id&limit=1`, { headers, cache: "no-store" });
     if (!existingResponse.ok) return NextResponse.json({ error: "Unable to check receipt template." }, { status: 503 });
     const existingId = (await existingResponse.json()).data?.[0]?.id;
     const response = await fetch(existingId
-        ? `${DIRECTUS_URL}/items/sales_invoice_template/${existingId}`
-        : `${DIRECTUS_URL}/items/sales_invoice_template`, {
+        ? `${TEMPLATE_DIRECTUS_URL}/items/sales_invoice_template/${existingId}`
+        : `${TEMPLATE_DIRECTUS_URL}/items/sales_invoice_template`, {
         method: existingId ? "PATCH" : "POST",
         headers,
         body: JSON.stringify(existingId
