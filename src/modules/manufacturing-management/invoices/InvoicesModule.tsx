@@ -6,7 +6,7 @@ import { useInvoices } from "./hooks/useInvoices";
 import InvoiceDetailModal from "./components/InvoiceDetailModal";
 
 export default function InvoicesModule() {
-    const { invoices, detailsMap, loading, loadingDetails, loadInvoiceDetails, alignment, handleRecordPayment, handleCancelInvoice } = useInvoices();
+    const { invoices, detailsMap, loading, loadingDetails, loadInvoiceDetails, alignment, handleCancelInvoice } = useInvoices();
     const [search, setSearch] = useState("");
     const [status, setStatus] = useState("All");
     const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
@@ -44,7 +44,6 @@ export default function InvoicesModule() {
             invoiceDetails={detailsMap[selectedInvoice.invoice_id] || []}
             isOpen={true}
             onClose={() => setSelectedInvoiceId(null)}
-            onRecordPayment={handleRecordPayment}
             onCancelInvoice={handleCancelInvoice}
             alignment={alignment}
             loadingDetails={!!loadingDetails[selectedInvoice.invoice_id]}
