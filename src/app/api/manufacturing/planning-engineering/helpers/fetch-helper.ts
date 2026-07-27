@@ -42,7 +42,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -65,7 +65,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const materialsList = responses[5].ok ? (await responses[5].json()).data || [] : [];
         const mfgYieldLedger = responses[6].ok ? (await responses[6].json()).data || [] : [];
         const mfgVersions = responses[7].ok ? (await responses[7].json()).data || [] : [];
-        const invLots = responses[8].ok ? (await responses[8].json()).data || [] : [];
+        const invMovements = responses[8].ok ? (await responses[8].json()).data || [] : [];
 
         let mfgRoutings = [];
         let mfgBoms = [];
@@ -258,36 +258,38 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             const joYieldLogs = mfgYieldLedger
                 .filter((l: any) => getObjId(l.job_order_id) === joIdInt)
                 .map((l: any) => {
-                    const matchedLot = invLots.find((lot: any) => 
-                        lot.source_type === "yield_ledger" && 
-                        String(lot.source_reference) === String(l.ledger_id || l.id)
+                    const matchedMov = invMovements.find((mov: any) => 
+                        mov.transaction_type_id === 2 && 
+                        String(mov.source_document_no) === String(jo.job_order_no) &&
+                        String(mov.batch_no) === String(l.lot_number)
                     );
                     return {
                         ...l,
-                        lot_number: matchedLot?.lot_number || l.lot_number || `MFG-${jo.job_order_no}`,
-                        expiry_date: matchedLot?.expiry_date || null,
-                        manufacturing_date: matchedLot?.created_on ? matchedLot.created_on.split('T')[0] : null
+                        lot_number: l.lot_number || matchedMov?.batch_no || `MFG-${jo.job_order_no}`,
+                        expiry_date: matchedMov?.expiry_date || null,
+                        manufacturing_date: matchedMov?.manufacturing_date || (matchedMov?.created_on ? matchedMov.created_on.split('T')[0] : null)
                     };
                 });
 
-            // Also check if there is a final closed lot for this Job Order (source_type = "manufacturing")
-            const finalLots = invLots.filter((lot: any) => 
-                lot.source_type === "manufacturing" && 
-                lot.source_reference === jo.job_order_no
+            // Also check if there is a final closed movement for this Job Order (transaction_type_id = 2)
+            const finalMovements = invMovements.filter((mov: any) => 
+                mov.transaction_type_id === 2 && 
+                mov.source_document_no === jo.job_order_no
             );
-            finalLots.forEach((lot: any) => {
+            finalMovements.forEach((mov: any) => {
                 // Prevent duplicate logs if already present
-                if (!joYieldLogs.some((l: any) => String(l.lot_number) === String(lot.lot_number))) {
+                if (!joYieldLogs.some((l: any) => String(l.lot_number) === String(mov.batch_no))) {
+                    const yieldLog = mfgYieldLedger.find((y: any) => String(y.lot_number) === String(mov.batch_no));
                     joYieldLogs.push({
-                        ledger_id: `mfg-${lot.id}`,
+                        ledger_id: `mfg-${mov.id}`,
                         job_order_id: joIdInt,
                         shift_name: "Final Close",
-                        yield_quantity: String(lot.quantity),
-                        qa_status: lot.qa_status || "Passed",
-                        logged_at: lot.created_on,
-                        lot_number: lot.lot_number,
-                        expiry_date: lot.expiry_date || null,
-                        manufacturing_date: lot.created_on ? lot.created_on.split('T')[0] : null
+                        yield_quantity: String(mov.quantity),
+                        qa_status: yieldLog?.qa_status || "Passed",
+                        logged_at: mov.created_on,
+                        lot_number: mov.batch_no,
+                        expiry_date: mov.expiry_date || null,
+                        manufacturing_date: mov.manufacturing_date || (mov.created_on ? mov.created_on.split('T')[0] : null)
                     });
                 }
             });

@@ -1387,38 +1387,10 @@ export async function processShipmentLandedCosts(
     status: "Ordered" | "Approved" | "En Route" | "Receiving (QA)" | "Received",
     expenses: Array<Partial<DirectusShipmentExpense>>,
     allocationMethod: "Value" | "Weight" | "Volume",
-    lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
+    _lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
 ): Promise<unknown> {
     try {
-        // 0. Process any QA received quantity updates first
-        if (lineItemUpdates && lineItemUpdates.length > 0) {
-            for (const upd of lineItemUpdates) {
-                const popRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_products/${upd.line_id}`, { headers });
-                if (popRes.ok) {
-                    const pop = (await popRes.json()).data;
-                    const pId = pop.product_id;
-                    const poId = pop.purchase_order_id;
-                    const filterQuery = encodeURIComponent(JSON.stringify({
-                        _and: [
-                            { source_type: { _eq: "procurement" } },
-                            { source_reference: { _eq: String(poId) } },
-                            { product_id: { _eq: pId } }
-                        ]
-                    }));
-                    const porRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${filterQuery}&limit=1`, { headers });
-                    const porList = porRes.ok ? (await porRes.json()).data || [] : [];
-                    if (porList.length > 0) {
-                        const recId = porList[0].id;
-                        await fetch(`${DIRECTUS_URL}/items/inventory_lots/${recId}`, {
-                            method: "PATCH",
-                            headers,
-                            body: JSON.stringify({ quantity: upd.quantity_received })
-                        }).catch(err => console.error("Error updating inventory lot quantity:", err));
-                    }
-                }
-            }
-        }
-
+        void _lineItemUpdates;
         // 1. Delete existing expenses for this shipment
         const oldExpensesRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&limit=-1`, { headers });
         if (oldExpensesRes.ok) {

@@ -4,6 +4,8 @@ import { cookies } from "next/headers";
 import { createJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+
 
 export async function handlePOST(request: Request) {
     try {
@@ -91,24 +93,6 @@ export async function handlePOST(request: Request) {
                     }
                 }
 
-                // Fetch physical inventory lots
-                const lotQueryFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { product_id: { _in: shortfallProductIds } },
-                        { branch_id: { _eq: branchId } },
-                        { source_type: { _eq: "procurement" } }
-                    ]
-                }));
-                const physicalLotsRes = await fetch(lotQueryFilter.startsWith("http") ? lotQueryFilter : `${DIRECTUS_URL}/items/inventory_lots?filter=${lotQueryFilter}&limit=-1`, { headers });
-                const physicalLots = physicalLotsRes.ok ? (await physicalLotsRes.json()).data || [] : [];
-                physicalLots.forEach((lot: any) => {
-                    const pId = Number(lot.product_id);
-                    if (!physicalLotsByProduct.has(pId)) {
-                        physicalLotsByProduct.set(pId, []);
-                    }
-                    physicalLotsByProduct.get(pId)!.push(lot);
-                });
-
                 // Fetch inventory movements to calculate the true ledger stock
                 const movFilter = encodeURIComponent(JSON.stringify({
                     _and: [
@@ -147,7 +131,6 @@ export async function handlePOST(request: Request) {
                 if (needed <= 0) continue;
 
                 const validReceipts = receiptsByProduct.get(compProductId) || [];
-                const physicalLots = physicalLotsByProduct.get(compProductId) || [];
 
                 let newlyReservedQty = 0;
                 const newAllocations = [];
@@ -155,11 +138,7 @@ export async function handlePOST(request: Request) {
                 for (const rec of validReceipts) {
                     if (newlyReservedQty >= needed) break;
 
-                    const matchedLot = physicalLots.find((l: any) => 
-                        String(l.source_reference) === String(rec.purchase_order_id) && 
-                        (l.lot_number === rec.lot_no || l.lot_number === rec.batch_no || (l.lot_number === "LOT-N/A" && !rec.lot_no && !rec.batch_no))
-                    );
-                    const lotNo = matchedLot ? (matchedLot.lot_number || "LOT-N/A") : (rec.lot_no || rec.batch_no || "LOT-N/A");
+                    const lotNo = rec.lot_no || rec.batch_no || "LOT-N/A";
                     const physicalQty = movementStockMap.get(`${compProductId}:${lotNo}`) || 0;
                     const recId = Number(rec.purchase_order_product_id);
                     const alreadyReserved = reservationsMap.get(recId) || 0;
@@ -371,21 +350,6 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Missing required fields (branchId, productId, recipeVersionId, lines)" }, { status: 400 });
             }
 
-            // 1. Fetch Passed inventory lots
-            const lotFilter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _eq: Number(productId) } },
-                    { branch_id: { _eq: Number(branchId) } },
-                    { qa_status: { _eq: "Passed" } }
-                ]
-            }));
-            const lotsRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&limit=-1`, { headers, cache: "no-store" });
-            if (!lotsRes.ok) {
-                const errTxt = await lotsRes.text();
-                return NextResponse.json({ error: `Failed to fetch inventory lots: ${lotsRes.status} - ${errTxt}` }, { status: 500 });
-            }
-            const lots = (await lotsRes.json()).data || [];
-
             // Fetch inventory movements to calculate the true ledger stock
             const movFilter = encodeURIComponent(JSON.stringify({
                 _and: [
@@ -402,15 +366,51 @@ export async function handlePOST(request: Request) {
                 movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
             });
 
-            // Map lots and enrich them with correct ledger quantity
-            const lotsEnriched = lots.map((lot: any) => {
-                const lotNum = lot.lot_number || "LOT-N/A";
-                const ledgerQty = movementStockMap.get(lotNum) || 0;
-                return {
-                    ...lot,
-                    quantity: ledgerQty
-                };
-            }).filter((lot: any) => lot.quantity > 0);
+            // Fetch QA status and Expiry from PO Receiving and Job Order Yield logs
+            // 1. PO Receivings
+            const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${Number(productId)}&filter[branch_id][_eq]=${Number(branchId)}&limit=-1`, { headers, cache: "no-store" });
+            const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
+            const batchStatusMap = new Map<string, string>();
+            const batchExpiryMap = new Map<string, string>();
+            const batchCreatedMap = new Map<string, string>();
+            
+            receipts.forEach((rec: any) => {
+                const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
+                batchStatusMap.set(batchNo, rec.qa_status || "Passed");
+                if (rec.expiry_date) batchExpiryMap.set(batchNo, rec.expiry_date);
+                if (rec.received_date || rec.created_on) batchCreatedMap.set(batchNo, rec.received_date || rec.created_on);
+            });
+
+            // 2. Yield Ledger
+            const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${Number(productId)}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
+            const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+            yields.forEach((yl: any) => {
+                const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
+                batchStatusMap.set(batchNo, yl.qa_status || "Pending");
+                if (yl.expiry_date) batchExpiryMap.set(batchNo, yl.expiry_date);
+                if (yl.logged_at || yl.created_on) batchCreatedMap.set(batchNo, yl.logged_at || yl.created_on);
+            });
+
+            // Map and enrich with correct ledger quantity, filter for Passed qa_status and quantity > 0
+            const lotsEnriched: any[] = [];
+            movementStockMap.forEach((qty, lotNum) => {
+                if (qty > 0) {
+                    const status = batchStatusMap.get(lotNum) || "Passed";
+                    if (status === "Passed" || status === "Partially Accepted") {
+                        const matchedYield = yields.find((yl: any) => String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() === lotNum);
+                        const source_type = matchedYield ? "manufacturing" : "procurement";
+                        const source_reference = matchedYield ? (matchedYield.job_order_id?.job_order_no || `MFG-${matchedYield.job_order_id?.job_order_no}`) : "";
+                        lotsEnriched.push({
+                            lot_number: lotNum,
+                            quantity: qty,
+                            source_type,
+                            source_reference,
+                            expiry_date: batchExpiryMap.get(lotNum) || null,
+                            created_on: batchCreatedMap.get(lotNum) || null
+                        });
+                    }
+                }
+            });
 
             // 2. Trace lot's recipe version
             const mfgLots = lotsEnriched.filter((lot: any) => lot.source_type === "manufacturing" && lot.source_reference);
@@ -583,7 +583,7 @@ export async function handlePOST(request: Request) {
             branch_id: jo.branch_id || null,
             shift_option: jo.shiftOption || "8",
             daily_breakdown: jo.dailyBreakdown || null,
-            created_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, -1) + "+08:00",
+            created_at: await getISOStringInConfiguredTimezone(),
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
             assignments: jo.assignments || null,
@@ -606,3 +606,4 @@ export async function handlePOST(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create Job Order" }, { status: 500 });
     }
 }
+
