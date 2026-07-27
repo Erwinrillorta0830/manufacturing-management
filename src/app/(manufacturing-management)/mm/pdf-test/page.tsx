@@ -9,6 +9,8 @@ import { FileText, Printer, X, Layout } from "lucide-react";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 
+export const dynamic = "force-dynamic";
+
 const mockEmployees = [
     { id: "EMP-001", name: "John Doe", position: "Software Engineer", department: "IT", status: "Active" },
     { id: "EMP-002", name: "Jane Smith", position: "Product Manager", department: "Product", status: "Active" },
