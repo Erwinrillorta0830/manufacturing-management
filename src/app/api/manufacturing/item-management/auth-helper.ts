@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 export async function getUserIdFromToken(): Promise<number | null> {
     try {
@@ -22,8 +23,9 @@ export async function getUserIdFromToken(): Promise<number | null> {
     return null;
 }
 
-export function getManilaTimeString(): string {
-    const now = new Date();
-    const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    return manilaTime.toISOString().replace("Z", "");
+export async function getManilaTimeString(): Promise<string> {
+    const isoStr = await getISOStringInConfiguredTimezone();
+    return isoStr.slice(0, 23);
 }
+
+

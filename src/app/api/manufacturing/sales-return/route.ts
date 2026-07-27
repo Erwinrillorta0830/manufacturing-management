@@ -1,6 +1,8 @@
 // src/app/api/manufacturing/sales-return/route.ts
 
 import { NextResponse } from "next/server";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -114,6 +116,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const todayStr = await getTodayDateString();
         const body = await request.json();
         const {
             invoice_id,
@@ -135,7 +138,7 @@ export async function POST(request: Request) {
         // 1. Create Sales Return Header
         const returnPayload = {
             return_number: resolvedReturnNo,
-            return_date: return_date || new Date().toISOString().split("T")[0],
+            return_date: return_date || todayStr,
             created_at: new Date().toISOString(),
             customer_id: customer_id ? Number(customer_id) : null,
             invoice_id: Number(invoice_id),
@@ -229,3 +232,4 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create sales return" }, { status: 500 });
     }
 }
+

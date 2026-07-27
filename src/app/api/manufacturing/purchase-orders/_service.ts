@@ -1,5 +1,7 @@
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "../procurement/_domain";
 import { procurementDirectusFetch } from "../procurement/_directus";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+
 import {
     buildPurchaseOrderProductPayload,
     calculatePurchaseOrderTotals,
@@ -153,7 +155,7 @@ async function selectRuleForDraft(order: PurchaseOrderDraft, totalPhp: DecimalIn
         currencyCode: order.currencyCode,
         isImport: order.currencyCode !== "PHP",
         productCategoryIds,
-        businessDate: new Date().toISOString().slice(0, 10)
+        businessDate: await getTodayDateString()
     });
     if (!selected) throw new PurchaseOrderDraftError("No active approval rule matches this purchase order.", 409);
     return selected;
@@ -220,7 +222,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         payment_type: order.paymentTypeId,
         price_type: order.priceType,
         date_encoded: now.toISOString(),
-        date: now.toISOString().slice(0, 10),
+        date: await getTodayDateString(),
         time: now.toTimeString().split(" ")[0],
         datetime: now.toISOString().replace("Z", "").replace("T", " "),
         gross_amount: totals.grossPhp,
@@ -312,3 +314,4 @@ export async function fetchPurchaseOrderCatalog() {
     ];
     return { suppliers, branches, paymentTypes, jobOrders };
 }
+

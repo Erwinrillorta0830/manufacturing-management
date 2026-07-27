@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import {
     addSalesOrderFilters,
     enrichSalesOrderReadModel,
@@ -30,34 +31,8 @@ if (DIRECTUS_STATIC_TOKEN) {
     headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
 }
 
-function getPacificTimeISOString() {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/Los_Angeles",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false
-    });
-    
-    const parts = formatter.formatToParts(now);
-    const partMap = Object.fromEntries(parts.map(p => [p.type, p.value]));
-    
-    const tzString = now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
-    const localDate = new Date(tzString);
-    const utcString = now.toLocaleString("en-US", { timeZone: "UTC" });
-    const utcDate = new Date(utcString);
-    const diff = Math.round((localDate.getTime() - utcDate.getTime()) / 60000);
-    const sign = diff >= 0 ? "+" : "-";
-    const absDiff = Math.abs(diff);
-    const hours = String(Math.floor(absDiff / 60)).padStart(2, "0");
-    const minutes = String(absDiff % 60).padStart(2, "0");
-    
-    const ms = String(now.getMilliseconds()).padStart(3, "0");
-    return `${partMap.year}-${partMap.month}-${partMap.day}T${partMap.hour}:${partMap.minute}:${partMap.second}.${ms}${sign}${hours}:${minutes}`;
+async function getSystemTimeISOString() {
+    return await getISOStringInConfiguredTimezone();
 }
 
 class ApiError extends Error {
@@ -741,6 +716,7 @@ export async function POST(request: Request) {
         const body = parsed.data;
         const { quotationId, customerId, poNo, items, dueDate, deliveryDate, paymentTerms, remarks, discountAmount, salesmanId, branchId } = body;
         const encoderId = user.id;
+        const systemTimestamp = await getSystemTimeISOString();
 
         if (!quotationId) {
             const directItems = items!;
@@ -795,7 +771,7 @@ export async function POST(request: Request) {
                 method: "POST",
                 headers,
                 body: JSON.stringify({
-                    created_at: getPacificTimeISOString(),
+                    created_at: systemTimestamp,
                     created_by: encoderId
                 })
             });
@@ -832,7 +808,7 @@ export async function POST(request: Request) {
                 discount_amount: discountAmount,
                 net_amount: totalAmount - discountAmount,
                 remarks: remarks || `Directly Created Sales Order.`,
-                created_date: getPacificTimeISOString(),
+                created_date: systemTimestamp,
                 created_by: encoderId,
                 delivery_date: deliveryDate || null,
                 due_date: dueDate || null,
@@ -850,7 +826,7 @@ export async function POST(request: Request) {
                 allocated_amount: 0,
                 net_amount: item.unit_price * item.quantity,
                 gross_amount: item.unit_price * item.quantity,
-                created_date: getPacificTimeISOString()
+                created_date: systemTimestamp
             }));
             const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);
 
@@ -950,7 +926,7 @@ export async function POST(request: Request) {
             discount_amount: discountAmount,
             net_amount: quoteTotal - discountAmount,
             remarks: remarks || `Converted 1:1 from Quote ${quote.quote_number}.`,
-            created_date: getPacificTimeISOString(),
+            created_date: systemTimestamp,
             created_by: encoderId,
             delivery_date: deliveryDate || null,
             due_date: dueDate || null,
@@ -972,7 +948,7 @@ export async function POST(request: Request) {
                 allocated_amount: 0,
                 net_amount: unitPrice * quantity,
                 gross_amount: unitPrice * quantity,
-                created_date: getPacificTimeISOString()
+                created_date: systemTimestamp
             };
         });
         const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);
@@ -1275,3 +1251,4 @@ export async function PATCH(request: Request) {
         return mutationError(e, "Failed to update the sales order.");
     }
 }
+

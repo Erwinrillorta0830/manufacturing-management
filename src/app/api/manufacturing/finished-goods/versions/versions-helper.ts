@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead } from "@/modules/manufacturing-management/finished-goods/types";
 
 type DirectusOverheadRelation = {
@@ -289,6 +290,7 @@ export async function createProductVersion(
     uomId?: number | null
 ): Promise<number | null> {
     try {
+        const todayStr = await getTodayDateString();
         const url = `${DIRECTUS_URL}/items/product_manufacturing_version`;
         const payload = {
             product_id: productId,
@@ -297,7 +299,7 @@ export async function createProductVersion(
             base_quantity: baseQuantity,
             uom_id: uomId || null,
             status: "For Approval",
-            valid_from: new Date().toISOString().split("T")[0]
+            valid_from: todayStr
         };
         const res = await fetch(url, {
             method: "POST",
@@ -327,3 +329,4 @@ export async function updateProductStandardCost(productId: number, standardCost:
         return false;
     }
 }
+
