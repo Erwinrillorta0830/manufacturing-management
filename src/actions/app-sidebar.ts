@@ -135,12 +135,6 @@ export async function getSidebarNavigation(subsystemSlug: string): Promise<NavIt
 
         if (modulesToProcess.length === 0) return [];
 
-        // Exclude legacy invoice-consolidation from sidebar navigation
-        modulesToProcess = modulesToProcess.filter(
-            (m) => m.slug !== "invoice-consolidation" && m.url !== "/mm/invoice-consolidation"
-        );
-
-
         const modulesById: Record<number, TempNavItem> = {};
         const roots: TempNavItem[] = [];
 
