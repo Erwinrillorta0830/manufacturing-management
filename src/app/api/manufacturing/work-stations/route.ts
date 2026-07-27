@@ -32,7 +32,7 @@ export async function GET() {
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null)
         ]);
 
-        if (!res.ok) throw new Error(`Directus failed to fetch work centers: ${res.status}`);
+        if (!res.ok) throw new Error(`Directus failed to fetch work stations: ${res.status}`);
         const json = await res.json();
         const workCenters = (json.data || []) as DirectusWorkCenter[];
 
@@ -42,7 +42,7 @@ export async function GET() {
                 const usersJson = await usersRes.json();
                 usersList = (usersJson.data || []) as UserRecord[];
             } catch (err) {
-                console.error("Error parsing users in GET work centers:", err);
+                console.error("Error parsing users in GET work stations:", err);
             }
         }
 
@@ -51,10 +51,9 @@ export async function GET() {
             const department = wc.department_id && typeof wc.department_id === "object" ? wc.department_id : null;
 
             const matchedUser = usersList.find((u) => Number(u.user_id) === Number(wc.created_by));
-            let creatorName = "N/A";
-            if (matchedUser) {
-                creatorName = [matchedUser.user_fname, matchedUser.user_lname].filter(Boolean).join(" ") || "N/A";
-            }
+            const creatorName = matchedUser
+                ? [matchedUser.user_fname, matchedUser.user_lname].filter(Boolean).join(" ") || "N/A"
+                : "N/A";
 
             return {
                 ...wc,
@@ -69,8 +68,8 @@ export async function GET() {
 
         return NextResponse.json(mappedWorkCenters);
     } catch (e) {
-        console.error("API Error fetching work centers:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch work centers" }, { status: 500 });
+        console.error("API Error fetching work stations:", e);
+        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch work stations" }, { status: 500 });
     }
 }
 
@@ -80,7 +79,6 @@ export async function POST(request: Request) {
         const payload = validateWorkCenterPayload(body);
         await assertUniqueWorkCenterName(String(payload.work_center_name));
 
-        // Get logged in user ID from secure access token cookie
         let userId: number | null = null;
         try {
             const cookieStore = await cookies();
@@ -88,26 +86,23 @@ export async function POST(request: Request) {
             if (token) {
                 const parts = token.split(".");
                 if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+                    let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
                     while (base64.length % 4) base64 += "=";
                     const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    userId = payload?.id || payload?.user_id || payload?.sub || null;
+                    const tokenPayload = JSON.parse(jsonPayload);
+                    userId = tokenPayload?.id || tokenPayload?.user_id || tokenPayload?.sub || null;
                 }
             }
         } catch (err) {
-            console.error("Error parsing user token in POST work center route:", err);
+            console.error("Error parsing user token in POST work station route:", err);
         }
 
-        // Generate current Manila time (UTC+8) to save in Directus
         const now = new Date();
         const manilaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
         const manilaIsoString = manilaTime.toISOString().replace("Z", "");
-
         const directusPayload = {
             ...payload,
-            created_by: userId ? Number(userId) : 24, // Fallback to seed user ID 24 if no active token
+            created_by: userId ? Number(userId) : 24,
             created_at: manilaIsoString,
             updated_at: manilaIsoString
         };
@@ -120,7 +115,7 @@ export async function POST(request: Request) {
 
         if (!res.ok) {
             const errText = await res.text();
-            throw new Error(`Directus failed to create work center: ${res.status} - ${errText}`);
+            throw new Error(`Directus failed to create work station: ${res.status} - ${errText}`);
         }
 
         const json = await res.json();
@@ -128,16 +123,10 @@ export async function POST(request: Request) {
         if (newWc && newWc.is_active !== undefined) newWc.is_active = Boolean(Number(newWc.is_active));
         return NextResponse.json({ success: true, workCenter: newWc });
     } catch (e) {
-        if (e instanceof WorkCenterValidationError) {
-            return NextResponse.json({ error: e.message, field: e.field }, { status: 400 });
-        }
-        if (e instanceof WorkCenterConflictError) {
-            return NextResponse.json({ error: e.message }, { status: 409 });
-        }
-        if (e instanceof WorkCenterDependencyError) {
-            return NextResponse.json({ error: e.message }, { status: 503 });
-        }
-        console.error("API Error creating work center:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create work center" }, { status: 500 });
+        if (e instanceof WorkCenterValidationError) return NextResponse.json({ error: e.message, field: e.field }, { status: 400 });
+        if (e instanceof WorkCenterConflictError) return NextResponse.json({ error: e.message }, { status: 409 });
+        if (e instanceof WorkCenterDependencyError) return NextResponse.json({ error: e.message }, { status: 503 });
+        console.error("API Error creating work station:", e);
+        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create work station" }, { status: 500 });
     }
 }

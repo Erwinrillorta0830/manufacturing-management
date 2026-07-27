@@ -18,13 +18,11 @@ import {
     Image as ImageIcon,
     Package,
     Shield,
-    Settings
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
 import { RoutesBOMTab } from "./components/RoutesBOMTab";
 import { QATemplatesTab } from "./components/QATemplatesTab";
-import { WorkCentersTab } from "./components/WorkCentersTab";
 import { CostRollupTab } from "./components/CostRollupTab";
 import { ImportationTab } from "./components/ImportationTab";
 import { useFinishedGoods, type RegisterFormField } from "./hooks/useFinishedGoods";
@@ -35,6 +33,9 @@ import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummar
 export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
     const router = useRouter();
+    const requestedTab = searchParams.get("tab");
+    const validTabs = ["details", "routes_bom", "costing", "qa_templates", "importation"];
+    const initialTab = requestedTab && validTabs.includes(requestedTab) ? requestedTab : "details";
     const [uploadingRegImage, setUploadingRegImage] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -104,15 +105,13 @@ export default function FinishedGoodsModule() {
         handleRegisterNewVersion,
         handleSave,
         handleActivateVersion,
-        handleAddWorkCenter,
-        handleSaveWorkCenter,
         handleAddQATemplate,
         handleSaveQATemplate,
         editedVersionDetails,
         setEditedVersionDetails,
         handleCustomOverheadChange,
         allCatalogProducts
-    } = useFinishedGoods(searchParams.get("tab") || "details");
+    } = useFinishedGoods(initialTab);
 
     // Synchronize new editedRoutes state to legacy editedBOM and editedRoutings for costing simulation
     useEffect(() => {
@@ -180,10 +179,13 @@ export default function FinishedGoodsModule() {
     // Sync tab param on load
     useEffect(() => {
         const tab = searchParams.get("tab");
-        if (tab && ["details", "routes_bom", "costing", "qa_templates", "work_centers", "importation"].includes(tab)) {
+        if (tab && validTabs.includes(tab)) {
             setActiveTab(tab);
+        } else if (tab) {
+            setActiveTab("details");
+            router.replace("/mm/finished-goods?tab=details");
         }
-    }, [searchParams, setActiveTab]);
+    }, [searchParams, setActiveTab, router]);
 
     const handleTabChange = (tab: string) => {
         setActiveTab(tab);
@@ -944,7 +946,6 @@ export default function FinishedGoodsModule() {
                             { id: "routes_bom", label: "Routes & BOM", icon: Layers },
                             { id: "costing", label: "Live Costing & Simulator", icon: Sliders },
                             { id: "qa_templates", label: "QA Checklist Templates", icon: Shield },
-                            { id: "work_centers", label: "Work Stations / Centers", icon: Settings },
                             { id: "importation", label: "Importation & Landed Cost", icon: Briefcase }
                         ].map((t) => {
                             const Icon = t.icon;
@@ -1045,14 +1046,6 @@ export default function FinishedGoodsModule() {
                                                 units={units}
                                                 handleAddQATemplate={handleAddQATemplate}
                                                 handleSaveQATemplate={handleSaveQATemplate}
-                                            />
-                                        )}
-
-                                        {activeTab === "work_centers" && (
-                                            <WorkCentersTab
-                                                workCenters={workCenters}
-                                                handleAddWorkCenter={handleAddWorkCenter}
-                                                handleSaveWorkCenter={handleSaveWorkCenter}
                                             />
                                         )}
 
