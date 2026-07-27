@@ -2,15 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserIdFromToken } from "../invoice-consolidation/_auth";
 import { releaseInvoiceReservations } from "../invoice-consolidation/_reservation-service";
 
-const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
-const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
-
-const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-};
-if (DIRECTUS_STATIC_TOKEN) {
-    headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
-}
+import { DIRECTUS_URL, headers } from "../directus-api";
 
 interface DirectusInvoiceDetail {
     invoice_no: number | string;
@@ -182,37 +174,50 @@ export async function GET(request: Request) {
         const includeDetails = searchParams.get("includeDetails") === "true";
 
         // 1. Fetch Invoices and Invoices Details
-        const invoicesRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?limit=${limit}&sort=-created_date`, { headers, cache: "no-store" });
+        const invoicesRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?limit=${limit}&sort=-invoice_id`, { headers, cache: "no-store" });
         if (!invoicesRes.ok) throw new Error(`Failed to fetch sales invoices: ${invoicesRes.status}`);
         const invoicesJson = await invoicesRes.json();
         const invoices: SalesInvoiceHeader[] = invoicesJson.data || [];
 
-        // Fetch referenced sales orders to resolve order_no manually
+        // Fetch referenced sales orders to resolve order_no manually (chunked)
         const orderIds = [...new Set(invoices.map((inv) => inv.order_id).filter(Boolean))];
         let soMap = new Map<number, string>();
         if (orderIds.length > 0) {
             try {
-                const soRes = await fetch(`${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${orderIds.join(",")}&limit=-1&fields=order_id,order_no`, { headers });
-                if (soRes.ok) {
-                    const soData = (await soRes.json()).data || [];
-                    soMap = new Map(soData.map((s: SalesOrderHeader) => [Number(s.order_id), s.order_no]));
+                const chunkSize = 50;
+                const soDataList: SalesOrderHeader[] = [];
+                for (let i = 0; i < orderIds.length; i += chunkSize) {
+                    const chunk = orderIds.slice(i, i + chunkSize);
+                    const escChunk = chunk.map(id => encodeURIComponent(String(id))).join(",");
+                    const soRes = await fetch(`${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${escChunk}&limit=-1&fields=order_id,order_no`, { headers, cache: "no-store" });
+                    if (soRes.ok) {
+                        const data = (await soRes.json()).data || [];
+                        soDataList.push(...data);
+                    }
                 }
+                soMap = new Map(soDataList.map((s: SalesOrderHeader) => [Number(s.order_id), s.order_no]));
             } catch (err) {
                 console.error("Error fetching sales orders for invoice mapping:", err);
             }
         }
 
-        // Fetch customers to resolve customer_name manually
+        // Fetch customers to resolve customer_name manually (chunked)
         const customerCodes = [...new Set(invoices.map((inv) => inv.customer_code).filter((c): c is string => !!c))];
         let customerMap = new Map<string, DirectusCustomer>();
         if (customerCodes.length > 0) {
             try {
-                const escCodes = customerCodes.map(c => encodeURIComponent(c)).join(",");
-                const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${escCodes}&limit=-1&fields=customer_code,customer_name,customer_tin,brgy,city,province,latitude,longitude,location`, { headers });
-                if (custRes.ok) {
-                    const custData = (await custRes.json()).data || [];
-                    customerMap = new Map(custData.map((c: DirectusCustomer) => [c.customer_code, c]));
+                const chunkSize = 50;
+                const custDataList: DirectusCustomer[] = [];
+                for (let i = 0; i < customerCodes.length; i += chunkSize) {
+                    const chunk = customerCodes.slice(i, i + chunkSize);
+                    const escCodes = chunk.map(c => encodeURIComponent(c)).join(",");
+                    const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${escCodes}&limit=-1&fields=customer_code,customer_name,customer_tin,brgy,city,province,latitude,longitude,location`, { headers, cache: "no-store" });
+                    if (custRes.ok) {
+                        const data = (await custRes.json()).data || [];
+                        custDataList.push(...data);
+                    }
                 }
+                customerMap = new Map(custDataList.map((c: DirectusCustomer) => [c.customer_code, c]));
             } catch (err) {
                 console.error("Error fetching customers for invoice mapping:", err);
             }
@@ -221,10 +226,14 @@ export async function GET(request: Request) {
         const invoiceIds = invoices.map((inv) => Number(inv.invoice_id)).filter(Boolean);
         let invoiceDetails: DirectusInvoiceDetail[] = [];
         if (includeDetails && invoiceIds.length > 0) {
-            const invDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&limit=-1`, { headers, cache: "no-store" });
-            if (invDetailsRes.ok) {
-                const json = await invDetailsRes.json();
-                invoiceDetails = json.data || [];
+            const chunkSize = 50;
+            for (let i = 0; i < invoiceIds.length; i += chunkSize) {
+                const chunk = invoiceIds.slice(i, i + chunkSize);
+                const invDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${chunk.join(",")}&limit=-1`, { headers, cache: "no-store" });
+                if (invDetailsRes.ok) {
+                    const json = await invDetailsRes.json();
+                    invoiceDetails.push(...(json.data || []));
+                }
             }
         }
 
@@ -237,12 +246,15 @@ export async function GET(request: Request) {
         const returnNumbers = returns.map((ret) => ret.return_number).filter(Boolean);
         let returnDetails: DirectusReturnDetail[] = [];
         if (includeDetails && returnNumbers.length > 0) {
-            // Filter using string return_no
-            const escReturnNumbers = returnNumbers.map((no) => encodeURIComponent(no || "")).join(",");
-            const retDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_return_details?filter[return_no][_in]=${escReturnNumbers}&limit=-1`, { headers, cache: "no-store" });
-            if (retDetailsRes.ok) {
-                const json = await retDetailsRes.json();
-                returnDetails = json.data || [];
+            const chunkSize = 50;
+            for (let i = 0; i < returnNumbers.length; i += chunkSize) {
+                const chunk = returnNumbers.slice(i, i + chunkSize);
+                const escReturnNumbers = chunk.map((no) => encodeURIComponent(no || "")).join(",");
+                const retDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_return_details?filter[return_no][_in]=${escReturnNumbers}&limit=-1`, { headers, cache: "no-store" });
+                if (retDetailsRes.ok) {
+                    const json = await retDetailsRes.json();
+                    returnDetails.push(...(json.data || []));
+                }
             }
         }
 
