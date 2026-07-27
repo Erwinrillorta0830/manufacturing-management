@@ -50,6 +50,7 @@ async function handlePrint(c: InvoiceConsolidation) {
         createdAt: c.createdAt,
         details: c.details.map((d) => ({
             productId: d.productId,
+            productCode: d.productCode,
             productName: d.productName,
             brand: d.brand || "Unbranded",
             category: d.category || "Uncategorized",

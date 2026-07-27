@@ -14,7 +14,7 @@ function formatCurrency(amount: number) {
 }
 
 const FM = {
-    card: "rounded-xl border bg-card p-4 shadow-sm",
+    card: "rounded-xl border bg-card p-3 shadow-sm",
     input: "w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20",
     label: "text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground/70 flex items-center gap-1.5",
     badge: "rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-extrabold uppercase text-emerald-600",
@@ -49,8 +49,8 @@ export default function InvoicingModule() {
         applyFilters({ search: value });
     };
 
-    return <div className="flex min-h-0 min-w-0 flex-1 flex-col space-y-4 no-print">
-        <div className="flex flex-col justify-between gap-3 rounded-xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center">
+    return <div className="flex min-h-0 min-w-0 flex-1 flex-col space-y-3 no-print">
+        <div className="flex flex-col justify-between gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center">
             <div className="flex items-center gap-3">
                 <div className="rounded-xl border border-primary/20 bg-primary/10 p-2.5 text-primary"><FileCheck2 className="h-5 w-5" /></div>
                 <div><h2 className="text-sm font-black uppercase tracking-wide">Invoicing</h2><p className="text-[10px] text-muted-foreground">Convert approved sales orders to invoices</p></div>
@@ -69,7 +69,7 @@ export default function InvoicingModule() {
             </div>)}
         </div>
 
-        <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
+        <div className="rounded-xl border bg-card p-3 shadow-sm">
             <div className="flex flex-wrap items-end gap-3">
                 <div className="flex-1 min-w-[180px]">
                     <span className={FM.label}><Search size={12} />Search</span>
@@ -101,15 +101,16 @@ export default function InvoicingModule() {
             </div>
         </div>
 
-        <div className="relative min-h-48 flex-1 overflow-auto rounded-xl border bg-background p-4 shadow-sm md:p-6">
+        <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-4 lg:grid-cols-3">
+        <div className="relative min-h-48 overflow-auto rounded-xl border bg-background p-3 shadow-sm md:p-4 lg:col-span-2">
             {loading && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
             {!loading && groups.length === 0 ? <div className="py-16 text-center"><FileCheck2 className="mx-auto h-12 w-12 text-muted-foreground/20" /><h3 className="mt-3 text-xs font-bold uppercase">No Orders Found</h3><p className="mt-1 text-[10px] text-muted-foreground">No approved sales orders match the current filters.</p></div> : <>
                 <div className="mb-3 flex items-center justify-between">
                     <p className="text-[10px] text-muted-foreground">{orderCount} order{orderCount === 1 ? "" : "s"} across {customerCount} customer{customerCount === 1 ? "" : "s"}</p>
                     <button onClick={toggleAll} disabled={groups.length === 0} className="flex items-center gap-1 rounded-lg border px-3 py-1 text-[9px] font-extrabold uppercase tracking-wider hover:bg-muted disabled:opacity-30">{allExpanded ? "Close All" : "Open All"}<ChevronDown className={`h-3 w-3 transition-transform ${allExpanded ? "" : "-rotate-90"}`} /></button>
                 </div>
-                <div className="overflow-hidden rounded-xl border">
-                    <table className="w-full border-collapse text-left text-xs">
+                <div className="overflow-x-auto rounded-xl border">
+                    <table className="w-full min-w-[760px] border-collapse text-left text-xs">
                         <thead><tr className="border-b bg-muted/30"><th className="w-10 p-3"></th><th className="p-3 font-extrabold uppercase text-muted-foreground">Customer</th><th className="p-3 font-extrabold uppercase text-muted-foreground">Code</th><th className="p-3 text-center font-extrabold uppercase text-muted-foreground">Orders</th><th className="p-3 text-right font-extrabold uppercase text-muted-foreground">Total Amount</th></tr></thead>
                         <tbody className="divide-y">{groups.map(group => <React.Fragment key={group.customer_code}>
                             <tr className={`cursor-pointer transition-colors hover:bg-muted/20 ${expanded.has(group.customer_code) ? "bg-primary/5" : ""}`} onClick={() => toggleGroup(group.customer_code)}>
@@ -119,18 +120,18 @@ export default function InvoicingModule() {
                                 <td className="p-3 text-center"><span className="rounded-full border bg-muted/30 px-2.5 py-0.5 text-[10px] font-bold">{group.order_count}</span></td>
                                 <td className="p-3 text-right font-black text-primary">{formatCurrency(group.total_amount)}</td>
                             </tr>
-                            {expanded.has(group.customer_code) && <tr className="bg-muted/5"><td colSpan={5} className="p-0"><div className="p-3 sm:p-4">
+                            {expanded.has(group.customer_code) && <tr className="bg-muted/5"><td colSpan={5} className="p-0"><div className="p-2 sm:p-3">
                                 <div className="hidden sm:block">
-                                    <table className="w-full border-collapse text-left text-xs">
-                                        <thead><tr className="border-b border-dashed"><th className="p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Calendar size={10} className="mr-1 inline" />Date</th><th className="p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Hash size={10} className="mr-1 inline" />SO No.</th><th className="p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60">PO No.</th><th className="p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Building2 size={10} className="mr-1 inline" />Branch</th><th className="p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60">Items</th><th className="p-2 text-right text-[9px] font-extrabold uppercase text-muted-foreground/60">Amount</th><th className="p-2 text-center text-[9px] font-extrabold uppercase text-muted-foreground/60"></th></tr></thead>
+                                    <table className="w-full table-fixed border-collapse text-left text-xs">
+                                        <thead><tr className="border-b border-dashed"><th className="w-[12%] p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Calendar size={10} className="mr-1 inline" />Date</th><th className="w-[20%] p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Hash size={10} className="mr-1 inline" />SO No.</th><th className="w-[18%] p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60">PO No.</th><th className="w-[18%] p-2 text-[9px] font-extrabold uppercase text-muted-foreground/60"><Building2 size={10} className="mr-1 inline" />Branch</th><th className="w-[8%] p-2 text-center text-[9px] font-extrabold uppercase text-muted-foreground/60">Items</th><th className="w-[12%] p-2 text-right text-[9px] font-extrabold uppercase text-muted-foreground/60">Amount</th><th className="w-[12%] p-2 text-center text-[9px] font-extrabold uppercase text-muted-foreground/60">Action</th></tr></thead>
                                         <tbody>{group.orders.map(order => <tr key={order.order_id} className="border-b border-dashed last:border-0 hover:bg-muted/10">
-                                            <td className="p-2 text-muted-foreground">{new Date(order.order_date).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</td>
-                                            <td className="p-2 font-bold">{order.order_no}</td>
-                                            <td className="p-2 text-muted-foreground">{order.po_no || "—"}</td>
-                                            <td className="p-2 text-muted-foreground">{order.branch_name || `Branch #${order.branch_id}`}</td>
-                                            <td className="p-2">{order.details.length}</td>
-                                            <td className="p-2 text-right font-bold">{formatCurrency(Number(order.net_amount || order.total_amount || 0))}</td>
-                                            <td className="p-2 text-center"><button onClick={e => { e.stopPropagation(); setSelected(order); }} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-[9px] font-bold text-primary-foreground">Create<ArrowRight className="h-3 w-3" /></button></td>
+                                            <td className="truncate p-2 text-muted-foreground">{new Date(order.order_date).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</td>
+                                            <td className="truncate p-2 font-bold">{order.order_no}</td>
+                                            <td className="truncate p-2 text-muted-foreground">{order.po_no || "—"}</td>
+                                            <td className="truncate p-2 text-muted-foreground">{order.branch_name || `Branch #${order.branch_id}`}</td>
+                                            <td className="p-2 text-center">{order.details.length}</td>
+                                            <td className="whitespace-nowrap p-2 text-right font-bold">{formatCurrency(Number(order.net_amount || order.total_amount || 0))}</td>
+                                            <td className="p-2 text-center"><button onClick={e => { e.stopPropagation(); setSelected(order); }} className="mx-auto inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-primary px-3 py-1.5 text-[9px] font-bold text-primary-foreground">Create<ArrowRight className="h-3 w-3" /></button></td>
                                         </tr>)}</tbody>
                                     </table>
                                 </div>
@@ -152,6 +153,15 @@ export default function InvoicingModule() {
                 </div>
             </>}
         </div>
-        {selected && <CreateInvoiceModal candidate={selected} submitting={submitting} onClose={() => setSelected(null)} onSubmit={submit} />}
+        <div className="min-w-0 lg:sticky lg:top-4">
+            {selected
+                ? <CreateInvoiceModal candidate={selected} submitting={submitting} onClose={() => setSelected(null)} onSubmit={submit} />
+                : <div className="rounded-2xl border border-dashed bg-card/50 p-8 text-center text-xs text-muted-foreground shadow-sm">
+                    <FileCheck2 className="mx-auto mb-2 h-8 w-8 text-muted-foreground/30" />
+                    <p className="font-bold text-foreground">No sales order selected</p>
+                    <p className="mt-1 text-[10px]">Expand a customer and select Create to prepare an invoice.</p>
+                </div>}
+        </div>
+        </div>
     </div>;
 }

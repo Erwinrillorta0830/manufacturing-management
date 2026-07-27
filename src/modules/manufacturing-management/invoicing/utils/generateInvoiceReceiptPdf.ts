@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { PrintableInvoice, ORTemplate, ORFieldConfig } from "../types";
+import { receiptBackgroundUrl } from "../services/invoicing-api";
 
 const money = (value: number) => new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
@@ -120,11 +121,11 @@ function renderField(doc: jsPDF, key: string, value: string, defaultX: number, d
     }
 }
 
-export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice): Promise<jsPDF> {
+export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice, options: { includeBackground?: boolean } = {}): Promise<jsPDF> {
     const template = invoice.templateConfig;
 
     if (template) {
-        return generateOfficialReceipt(invoice, template as unknown as ORTemplate);
+        return generateOfficialReceipt(invoice, template as unknown as ORTemplate, options.includeBackground !== false);
     }
 
     return generateTableReceipt(invoice);
@@ -203,7 +204,19 @@ function generateTableReceipt(invoice: PrintableInvoice): jsPDF {
     return doc;
 }
 
-async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTemplate): Promise<jsPDF> {
+async function imageDataUrl(fileId: string) {
+    const response = await fetch(receiptBackgroundUrl(fileId), { cache: "no-store" });
+    if (!response.ok) throw new Error("Unable to load receipt background image");
+    const blob = await response.blob();
+    return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Unable to read receipt background image"));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTemplate, includeBackground: boolean): Promise<jsPDF> {
     const width = template?.width || 210;
     const height = template?.height || 265;
 
@@ -213,6 +226,10 @@ async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTe
     doc.setFont('courier', 'normal');
     doc.setFontSize(11);
 
+    if (includeBackground && template.backgroundImage) {
+        doc.addImage(await imageDataUrl(template.backgroundImage), 0, 0, width, height);
+    }
+
     const fieldValues: Record<string, string> = {
         customer_name: invoice.customerName.toUpperCase(),
         date: formatDate(invoice.invoiceDate),
@@ -220,8 +237,8 @@ async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTe
         payment_name: invoice.paymentTermName.toUpperCase(),
         customer_tin: invoice.customerTin || "N/A",
         address: invoice.customerAddress.toUpperCase(),
-        vatable_sales: money(invoice.totals.net / 1.12),
-        vat_amount: money(invoice.totals.net - (invoice.totals.net / 1.12)),
+        vatable_sales: money(invoice.totals.net - invoice.totals.vat),
+        vat_amount: money(invoice.totals.vat),
         gross_total: money(invoice.totals.gross),
         discount_total: money(invoice.totals.discount),
         net_total: money(invoice.totals.net),
