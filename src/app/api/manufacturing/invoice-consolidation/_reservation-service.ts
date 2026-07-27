@@ -422,7 +422,6 @@ async function reconcileInventoryLots(inventoryLotIds: number[], userId: number)
         { product_id: { _in: productIds } },
         { branch_id: { _in: branchIds } },
         { qa_status: { _eq: "Passed" } },
-        { source_type: { _in: ["manufacturing", "yield_ledger"] } },
     ] }));
     const metadataJson = await directusJson(
         `${DIRECTUS_URL}/items/inventory_lots?filter=${metadataFilter}&fields=id,product_id,branch_id,lot_id,lot_number,batch_no,expiry_date,created_on,quantity,qa_status,source_type,source_reference&limit=-1`
@@ -559,7 +558,6 @@ export async function allocateInvoice(invoiceId: number, userId: number) {
             { product_id: { _in: productIds } },
             { branch_id: { _eq: Number(invoice.branch_id) } },
             { qa_status: { _eq: "Passed" } },
-            { source_type: { _in: ["manufacturing", "yield_ledger"] } },
         ],
     }));
     const lotsJson = await directusJson(
@@ -800,7 +798,6 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
             { product_id: { _in: productIds } },
             { branch_id: { _eq: branchId } },
             { qa_status: { _eq: "Passed" } },
-            { source_type: { _in: ["manufacturing", "yield_ledger"] } },
         ],
     }));
     const lotsJson = await directusJson(
@@ -1002,7 +999,6 @@ export async function calculateSalesOrderAvailability(salesOrderId: number) {
             { product_id: { _in: productIds } },
             { branch_id: { _eq: branchId } },
             { qa_status: { _eq: "Passed" } },
-            { source_type: { _in: ["manufacturing", "yield_ledger"] } },
         ],
     }));
     const lotsJson = await directusJson(
