@@ -2,7 +2,9 @@
 
 import React, { useState, useMemo } from "react";
 import { Invoice, InvoiceLineItem, PrinterAlignmentSettings } from "../types";
-import { X, Printer, DollarSign, Loader2 } from "lucide-react";
+import { X, Printer, Loader2 } from "lucide-react";
+import { fetchPrintableInvoice } from "../../invoicing/services/invoicing-api";
+import { generateInvoiceReceiptPdf } from "../../invoicing/utils/generateInvoiceReceiptPdf";
 
 interface PaymentHistoryItem {
     amount: number;
@@ -16,7 +18,6 @@ interface InvoiceDetailModalProps {
     invoiceDetails: InvoiceLineItem[];
     isOpen: boolean;
     onClose: () => void;
-    onRecordPayment: (invoiceId: number, currentStatus: string, amount: number, paymentRef: string, paymentMethod: string) => Promise<boolean>;
     onCancelInvoice: (invoiceId: number) => Promise<boolean>;
     alignment: PrinterAlignmentSettings;
     loadingDetails?: boolean;
@@ -27,16 +28,35 @@ export default function InvoiceDetailModal({
     invoiceDetails,
     isOpen,
     onClose,
-    onRecordPayment,
     onCancelInvoice,
     alignment,
     loadingDetails = false
 }: InvoiceDetailModalProps) {
-    const [recordPaymentMode, setRecordPaymentMode] = useState(false);
-    const [paymentAmount, setPaymentAmount] = useState(0);
-    const [paymentRef, setPaymentRef] = useState("");
-    const [paymentMethod, setPaymentMethod] = useState("Bank Transfer");
-    const [submitting, setSubmitting] = useState(false);
+    const [printingReceipt, setPrintingReceipt] = useState(false);
+    const [receiptError, setReceiptError] = useState("");
+    const [cancelling, setCancelling] = useState(false);
+
+    const handlePrintReceipt = async () => {
+        setPrintingReceipt(true);
+        setReceiptError("");
+        try {
+            const printable = await fetchPrintableInvoice(invoice.invoice_id);
+            const doc = await generateInvoiceReceiptPdf(printable, { includeBackground: false });
+            const blob = doc.output("blob");
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${printable.invoiceNo || invoice.invoice_no}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            setReceiptError(err instanceof Error ? err.message : "Failed to generate receipt PDF");
+        } finally {
+            setPrintingReceipt(false);
+        }
+    };
 
     // Parse collection payments history
     const payments = useMemo<PaymentHistoryItem[]>(() => {
@@ -57,160 +77,7 @@ export default function InvoiceDetailModal({
 
     if (!isOpen || !invoice) return null;
 
-    // Trigger printed form layout calibration using an isolated hidden iframe
-    const handlePrint = () => {
-        if (typeof window === "undefined") return;
 
-        // Create a hidden iframe element to compile clean markup for printing
-        const iframe = document.createElement("iframe");
-        iframe.style.position = "absolute";
-        iframe.style.width = "0px";
-        iframe.style.height = "0px";
-        iframe.style.border = "none";
-        document.body.appendChild(iframe);
-
-        const doc = iframe.contentWindow?.document || iframe.contentDocument;
-        if (!doc) return;
-
-        // Construct HTML content containing only the monospace invoice form details
-        const html = `
-            <html>
-                <head>
-                    <title>Invoice Print - ${invoice.invoice_no}</title>
-                    <style>
-                        @page {
-                            size: letter;
-                            margin: 0 !important;
-                        }
-                        html, body {
-                            margin: 0 !important;
-                            padding: 0 !important;
-                            font-family: monospace;
-                            font-size: ${alignment.fontSize}pt;
-                            color: #000000;
-                            background: #ffffff;
-                        }
-                        .absolute {
-                            position: absolute;
-                        }
-                        .font-bold {
-                            font-weight: bold;
-                        }
-                        .font-extrabold {
-                            font-weight: 800;
-                        }
-                        .text-right {
-                            text-align: right;
-                        }
-                        .truncate {
-                            white-space: nowrap;
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <!-- 1. Invoice Date -->
-                    <div class="absolute font-bold" style="left: ${alignment.leftMargin + alignment.offsets.invoiceDate.x}mm; top: ${alignment.topMargin + alignment.offsets.invoiceDate.y}mm;">
-                        ${invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }) : "N/A"}
-                    </div>
-
-                    <!-- 2. Invoice Number -->
-                    <div class="absolute font-bold" style="left: ${alignment.leftMargin + alignment.offsets.invoiceNo.x}mm; top: ${alignment.topMargin + alignment.offsets.invoiceNo.y}mm;">
-                        ${invoice.invoice_no}
-                    </div>
-
-                    <!-- 3. Customer Name -->
-                    <div class="absolute font-bold" style="left: ${alignment.leftMargin + alignment.offsets.customerName.x}mm; top: ${alignment.topMargin + alignment.offsets.customerName.y}mm;">
-                        ${invoice.customer_name || "N/A"}
-                    </div>
-
-                    <!-- 3b. Customer Address -->
-                    <div class="absolute" style="left: ${alignment.leftMargin + alignment.offsets.customerAddress.x}mm; top: ${alignment.topMargin + alignment.offsets.customerAddress.y}mm;">
-                        ${invoice.customer_address || ""}
-                    </div>
-
-                    <!-- 3c. Customer TIN -->
-                    <div class="absolute" style="left: ${alignment.leftMargin + alignment.offsets.customerTin.x}mm; top: ${alignment.topMargin + alignment.offsets.customerTin.y}mm;">
-                        ${invoice.customer_tin || ""}
-                    </div>
-
-                    <!-- 4. Terms -->
-                    <div class="absolute" style="left: ${alignment.leftMargin + alignment.offsets.terms.x}mm; top: ${alignment.topMargin + alignment.offsets.terms.y}mm;">
-                        ${invoice.sales_order_no ? `SO: ${invoice.sales_order_no}` : "Cash on Delivery"}
-                    </div>
-
-                    <!-- 5. Invoiced Items Loop -->
-                    ${invoiceDetails.map((item, idx) => {
-                        const rowY = alignment.topMargin + alignment.offsets.tableStart.y + (idx * alignment.lineHeight);
-                        const pName = typeof item.product_id === "object" && item.product_id ? item.product_id.product_name : `Product #${item.product_id}`;
-                        const pUom = typeof item.product_id === "object" && item.product_id ? (item.product_id.uom || "PCS") : "PCS";
-                        return `
-                            <div class="absolute text-right" style="left: ${alignment.leftMargin + alignment.offsets.colQty.x}mm; top: ${rowY}mm; width: 12mm;">
-                                ${item.quantity}
-                            </div>
-                            <div class="absolute" style="left: ${alignment.leftMargin + alignment.offsets.colUnit.x}mm; top: ${rowY}mm;">
-                                ${pUom}
-                            </div>
-                            <div class="absolute truncate" style="left: ${alignment.leftMargin + alignment.offsets.colDescription.x}mm; top: ${rowY}mm; width: 75mm;">
-                                ${pName}
-                            </div>
-                            <div class="absolute text-right" style="left: ${alignment.leftMargin + alignment.offsets.colUnitPrice.x}mm; top: ${rowY}mm; width: 22mm;">
-                                ${Number(item.unit_price || 0).toFixed(2)}
-                            </div>
-                            <div class="absolute text-right" style="left: ${alignment.leftMargin + alignment.offsets.colAmount.x}mm; top: ${rowY}mm; width: 25mm;">
-                                ${Number(item.net_amount || 0).toFixed(2)}
-                            </div>
-                        `;
-                    }).join("")}
-
-                    <!-- 6. Total Amount -->
-                    <div class="absolute font-extrabold text-right" style="left: ${alignment.leftMargin + alignment.offsets.totalAmount.x}mm; top: ${alignment.topMargin + alignment.offsets.totalAmount.y}mm; width: 30mm;">
-                        ₱${invoice.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                </body>
-            </html>
-        `;
-
-        doc.open();
-        doc.write(html);
-        doc.close();
-
-        // Let layout settle, focus, and print
-        setTimeout(() => {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-            
-            // Cleanup iframe after printing dialog closes
-            setTimeout(() => {
-                document.body.removeChild(iframe);
-            }, 1000);
-        }, 300);
-    };
-
-    const handleSavePayment = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (paymentAmount <= 0) return;
-        if (paymentAmount > remainingBalance) {
-            alert("Payment amount cannot exceed the remaining balance.");
-            return;
-        }
-
-        setSubmitting(true);
-        const success = await onRecordPayment(
-            invoice.invoice_id,
-            invoice.status,
-            paymentAmount,
-            paymentRef,
-            paymentMethod
-        );
-        setSubmitting(false);
-        if (success) {
-            setRecordPaymentMode(false);
-        }
-    };
-
-    const isPaid = invoice.status === "Paid" || remainingBalance <= 0 || invoice.status === "Cancelled";
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
@@ -432,75 +299,7 @@ export default function InvoiceDetailModal({
                         </div>
                     )}
 
-                    {/* Ledger Payment Register Drawer */}
-                    {recordPaymentMode && (
-                        <form onSubmit={handleSavePayment} className="border border-primary/20 bg-primary/5 rounded-xl p-4 space-y-4">
-                            <div className="flex items-center justify-between border-b border-primary/10 pb-2">
-                                <span className="text-xs font-black uppercase text-primary flex items-center gap-1.5">
-                                    <DollarSign className="h-4 w-4" />
-                                    Register Payment Collection
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={() => setRecordPaymentMode(false)}
-                                    className="text-[10px] text-muted-foreground hover:text-foreground font-bold border-none bg-transparent cursor-pointer"
-                                >
-                                    Cancel
-                                </button>
-                            </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-bold text-muted-foreground uppercase block">Amount Paid (₱)</label>
-                                    <input
-                                        required
-                                        type="number"
-                                        min="1"
-                                        max={remainingBalance}
-                                        value={paymentAmount || ""}
-                                        onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                                        className="w-full bg-background border border-input rounded-lg px-2.5 py-1.5 text-xs text-right focus:ring-1 focus:ring-primary outline-none"
-                                    />
-                                </div>
-
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-bold text-muted-foreground uppercase block">Method</label>
-                                    <select
-                                        value={paymentMethod}
-                                        onChange={(e) => setPaymentMethod(e.target.value)}
-                                        className="w-full bg-background border border-input rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none h-[29px]"
-                                    >
-                                        <option value="Bank Transfer">Bank Transfer</option>
-                                        <option value="Check">Check</option>
-                                        <option value="Cash">Cash</option>
-                                        <option value="Credit Card">Credit Card</option>
-                                    </select>
-                                </div>
-
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-bold text-muted-foreground uppercase block">Reference / Check No</label>
-                                    <input
-                                        required
-                                        type="text"
-                                        placeholder="Reference check ID"
-                                        value={paymentRef}
-                                        onChange={(e) => setPaymentRef(e.target.value)}
-                                        className="w-full bg-background border border-input rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-primary outline-none"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end">
-                                <button
-                                    disabled={submitting}
-                                    type="submit"
-                                    className="bg-primary text-primary-foreground border-none px-4 py-1.5 rounded-lg text-xs font-black hover:shadow-md cursor-pointer transition-all"
-                                >
-                                    {submitting ? "Saving..." : "Apply Ledger Settlement"}
-                                </button>
-                            </div>
-                        </form>
-                    )}
                         </>
                     )}
                 </div>
@@ -511,43 +310,42 @@ export default function InvoiceDetailModal({
                         {invoice.status !== "Cancelled" && invoice.status !== "Paid" && (
                             <button
                                 type="button"
-                                disabled={submitting || loadingDetails}
+                                disabled={cancelling || loadingDetails}
                                 onClick={async () => {
                                     if (confirm("Are you sure you want to cancel this invoice? This will revert the Sales Order status to allow billing again.")) {
-                                        const success = await onCancelInvoice(invoice.invoice_id);
-                                        if (success) {
-                                            onClose();
+                                        setCancelling(true);
+                                        try {
+                                            const success = await onCancelInvoice(invoice.invoice_id);
+                                            if (success) {
+                                                onClose();
+                                            }
+                                        } finally {
+                                            setCancelling(false);
                                         }
                                     }
                                 }}
-                                className="bg-rose-55 hover:bg-rose-100 border border-rose-200 text-rose-600 hover:text-rose-700 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 hover:text-rose-700 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                Cancel Invoice
+                                {cancelling ? "Cancelling..." : "Cancel Invoice"}
                             </button>
                         )}
+                    </div>
+
+                    {receiptError && (
+                        <span className="text-xs font-bold text-rose-600 truncate max-w-xs">{receiptError}</span>
+                    )}
+
+                    <div className="flex items-center gap-2">
                         <button
-                            onClick={handlePrint}
-                            disabled={loadingDetails}
-                            className={`bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:border-slate-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer ${loadingDetails ? "opacity-50 cursor-not-allowed" : ""}`}
+                            type="button"
+                            onClick={handlePrintReceipt}
+                            disabled={loadingDetails || printingReceipt}
+                            className="bg-primary hover:bg-primary/90 text-primary-foreground border-none px-4 py-2 rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Printer className="h-4 w-4" />
-                            Print Continuous Invoice
+                            {printingReceipt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                            {printingReceipt ? "Generating Receipt..." : "Print Receipt"}
                         </button>
                     </div>
-                    
-                    {!isPaid && !recordPaymentMode && (
-                        <button
-                            onClick={() => {
-                                setPaymentAmount(remainingBalance);
-                                setRecordPaymentMode(true);
-                            }}
-                            disabled={loadingDetails}
-                            className={`bg-emerald-600 hover:bg-emerald-700 text-white border-none px-4 py-2 rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer ${loadingDetails ? "opacity-50 cursor-not-allowed" : ""}`}
-                        >
-                            <DollarSign className="h-4 w-4" />
-                            Record Collection
-                        </button>
-                    )}
                 </div>
             </div>
 

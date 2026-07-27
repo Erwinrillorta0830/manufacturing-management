@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Calendar, CheckCircle, FileText, Loader2, Printer, RefreshCw, Settings2, X } from "lucide-react";
+import { AlertTriangle, Calendar, CheckCircle, FileCheck2, FileText, Loader2, Printer, RefreshCw, Settings2, X } from "lucide-react";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
 import { AvailabilityLine, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, ORTemplate, PrintableInvoice, ReceiptType } from "../types";
 import { generateInvoiceReceiptPdf } from "../utils/generateInvoiceReceiptPdf";
@@ -39,6 +39,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [template, setTemplate] = useState<ORTemplate>(DEFAULT_RECEIPT_TEMPLATE);
     const [loadingTemplate, setLoadingTemplate] = useState(false);
     const [printingDirectly, setPrintingDirectly] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [confirmationNotes, setConfirmationNotes] = useState("");
     const pdfBlobRef = useRef<Blob | null>(null);
     const prevPreviewUrlRef = useRef("");
     const printingDirectlyRef = useRef(false);
@@ -159,14 +161,13 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
     const handleSubmit = (event: FormEvent) => {
         event.preventDefault();
-        if (!window.confirm(`Create invoice ${invoiceNo.trim()} and download its receipt?`)) return;
-        printingDirectlyRef.current = true;
-        setPrintingDirectly(true);
-        void create();
+        setConfirmationNotes(remarks);
+        setShowConfirmModal(true);
     };
 
-    const create = async () => {
-        const created = await onSubmit({ salesOrderId: candidate.order_id, invoiceTypeId, invoiceNo: invoiceNo.trim(), invoiceDate, dueDate, remarks: remarks.trim() || undefined });
+    const create = async (notesToUse?: string) => {
+        const finalRemarks = (notesToUse !== undefined ? notesToUse : remarks).trim();
+        const created = await onSubmit({ salesOrderId: candidate.order_id, invoiceTypeId, invoiceNo: invoiceNo.trim(), invoiceDate, dueDate, remarks: finalRemarks || undefined });
         if (!created) return;
         setPreviewingBeforeCreate(false);
         setCreatedResult(created);
@@ -304,6 +305,90 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 <div className="grid grid-cols-2 gap-3 border-t pt-3"><button type="button" disabled={!invoiceTypeId || loadingTemplate} onClick={() => setPreviewingBeforeCreate(true)} className="rounded-xl border px-4 py-2 text-xs font-bold disabled:opacity-50">Preview Receipt</button><button disabled={submitting || !invoiceTypeId || hasShortage || loadingAvailability || loadingTemplate} className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}{submitting ? "Preparing Receipt..." : loadingTemplate ? "Loading Layout..." : hasShortage ? "Insufficient Stock" : "Print Receipt"}</button></div>
             </form>}
         </div>
+        {showConfirmModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
+                <div className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border bg-card p-4 shadow-2xl space-y-3.5 sm:p-5">
+                    <div className="flex items-center justify-between border-b pb-3">
+                        <div className="flex items-center gap-2.5">
+                            <div className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary">
+                                <FileCheck2 className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-black uppercase tracking-wide">Confirm Invoice Creation</h3>
+                                <p className="text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name}</p>
+                            </div>
+                        </div>
+                        <button type="button" onClick={() => setShowConfirmModal(false)} aria-label="Close confirmation" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
+                            <X className="h-4 w-4" />
+                        </button>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                        <div className="grid grid-cols-2 gap-2.5 rounded-xl border bg-muted/20 p-3">
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Invoice No</span>
+                                <p className="font-bold text-foreground">{invoiceNo.trim()}</p>
+                            </div>
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Receipt Type</span>
+                                <p className="font-bold text-foreground">{selectedType?.type || "Sales Invoice"}</p>
+                            </div>
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Customer</span>
+                                <p className="truncate font-bold text-foreground">{candidate.customer_name}</p>
+                            </div>
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Amount</span>
+                                <p className="font-black text-primary">₱{net.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Invoice Date</span>
+                                <p className="font-bold text-foreground">{invoiceDate}</p>
+                            </div>
+                            <div>
+                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Due Date</span>
+                                <p className="font-bold text-foreground">{dueDate}</p>
+                            </div>
+                        </div>
+
+                        <label className="block space-y-1.5">
+                            <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Confirmation Notes / Remarks</span>
+                            <textarea
+                                rows={3}
+                                value={confirmationNotes}
+                                onChange={e => setConfirmationNotes(e.target.value)}
+                                placeholder="Add notes or remarks to include with this confirmation..."
+                                className="w-full resize-none rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                            />
+                        </label>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 border-t pt-3">
+                        <button
+                            type="button"
+                            onClick={() => setShowConfirmModal(false)}
+                            className="rounded-xl border px-4 py-2 text-xs font-bold hover:bg-muted"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowConfirmModal(false);
+                                setRemarks(confirmationNotes);
+                                printingDirectlyRef.current = true;
+                                setPrintingDirectly(true);
+                                void create(confirmationNotes);
+                            }}
+                            className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground hover:bg-primary/90"
+                        >
+                            <Printer className="h-4 w-4" />
+                            Confirm & Create Invoice
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
         {editingTemplate ? <ReceiptTemplateEditor receiptTypeId={invoiceTypeId} initialTemplate={template} onClose={() => setEditingTemplate(false)} onSave={saved => { setTemplate(saved); setEditingTemplate(false); }} /> : null}
     </div>;
 }
