@@ -1,4 +1,4 @@
-import { CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, InvoicingFilters, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
+import { CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, InvoicingFilters, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
 
 async function responseJson(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));
@@ -44,9 +44,36 @@ export async function fetchSalesOrderAvailability(salesOrderId: number): Promise
     );
 }
 
-export async function archiveInvoiceDocument(invoiceId: number, file: Blob, invoiceNo: string): Promise<void> {
+export async function archiveInvoiceDocument(invoiceId: number, file: Blob, invoiceNo: string, width: number, height: number): Promise<void> {
     const form = new FormData();
     form.set("file", file, `${invoiceNo}.pdf`);
     form.set("invoiceNo", invoiceNo);
+    form.set("width", String(width));
+    form.set("height", String(height));
     await responseJson(await fetch(`/api/manufacturing/invoicing/${invoiceId}/document`, { method: "POST", body: form }), "Failed to archive invoice PDF");
+}
+
+export async function fetchReceiptTemplate(receiptTypeId: number): Promise<ORTemplate | null> {
+    const body = await responseJson(await fetch(`/api/manufacturing/invoicing/templates/${receiptTypeId}`, { cache: "no-store" }), "Failed to load receipt template");
+    return body.templateConfig || null;
+}
+
+export async function saveReceiptTemplate(receiptTypeId: number, templateConfig: ORTemplate): Promise<ORTemplate> {
+    const body = await responseJson(await fetch(`/api/manufacturing/invoicing/templates/${receiptTypeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateConfig }),
+    }), "Failed to save receipt template");
+    return body.templateConfig;
+}
+
+export async function uploadReceiptBackground(file: File): Promise<string> {
+    const form = new FormData();
+    form.set("file", file);
+    const body = await responseJson(await fetch("/api/manufacturing/invoicing/template-background", { method: "POST", body: form }), "Failed to upload receipt background");
+    return body.id;
+}
+
+export function receiptBackgroundUrl(fileId: string) {
+    return `/api/manufacturing/invoicing/template-background?id=${encodeURIComponent(fileId)}`;
 }
