@@ -1,5 +1,19 @@
 import { SalesOrder, SalesOrderDetail, QuotationHeader, CreateSalesOrderPayload } from "../types";
 
+let refreshPromise: Promise<boolean> | null = null;
+
+async function fetchWithSessionRetry(input: RequestInfo | URL, init?: RequestInit) {
+    const response = await fetch(input, init);
+    if (response.status !== 401) return response;
+    if (!refreshPromise) {
+        refreshPromise = fetch("/api/auth/refresh", { method: "POST", cache: "no-store" })
+            .then(result => result.ok)
+            .catch(() => false)
+            .finally(() => { refreshPromise = null; });
+    }
+    return await refreshPromise ? fetch(input, init) : response;
+}
+
 async function handleResponse<T = unknown>(res: Response, fallbackMessage: string): Promise<T> {
     if (!res.ok) {
         let errMsg = fallbackMessage;
@@ -33,7 +47,7 @@ export async function fetchSalesOrders(
     if (params.selectedIds && params.selectedIds.length > 0) {
         query.append("selectedIds", params.selectedIds.join(","));
     }
-    const res = await fetch(`/api/manufacturing/sales-order?${query.toString()}`, {
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-order?${query.toString()}`, {
         signal: options.signal
     });
     return handleResponse(res, "Failed to load sales orders");
@@ -43,14 +57,14 @@ export async function fetchSalesOrderDetails(
     orderId: number,
     options: { signal?: AbortSignal } = {}
 ): Promise<SalesOrderDetail[]> {
-    const res = await fetch(`/api/manufacturing/sales-order?orderId=${orderId}`, {
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-order?orderId=${orderId}`, {
         signal: options.signal
     });
     return handleResponse(res, "Failed to load order details");
 }
 
 export async function updateSalesOrderStatus(orderId: number, orderStatus: string): Promise<{ success: boolean }> {
-    const res = await fetch("/api/manufacturing/sales-order", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId, orderStatus })
@@ -59,7 +73,7 @@ export async function updateSalesOrderStatus(orderId: number, orderStatus: strin
 }
 
 export async function updateSalesOrderDetails(orderId: number, details: { detail_id: number; ordered_quantity: number }[]): Promise<{ success: boolean }> {
-    const res = await fetch("/api/manufacturing/sales-order", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId, details })
@@ -80,7 +94,7 @@ export async function cancelSalesOrder(orderId: number): Promise<{ success: bool
 }
 
 export async function convertQuotationToSalesOrder(quotationId: number): Promise<{ success: boolean; data?: SalesOrder }> {
-    const res = await fetch("/api/manufacturing/sales-order", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quotationId })
@@ -89,7 +103,7 @@ export async function convertQuotationToSalesOrder(quotationId: number): Promise
 }
 
 export async function createSalesOrderDirect(payload: CreateSalesOrderPayload): Promise<{ success: boolean; data?: SalesOrder }> {
-    const res = await fetch("/api/manufacturing/sales-order", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -98,6 +112,6 @@ export async function createSalesOrderDirect(payload: CreateSalesOrderPayload): 
 }
 
 export async function fetchQuotationPipeline(): Promise<QuotationHeader[]> {
-    const res = await fetch("/api/manufacturing/finished-goods/quotes");
+    const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/quotes");
     return handleResponse(res, "Failed to load quotations");
 }

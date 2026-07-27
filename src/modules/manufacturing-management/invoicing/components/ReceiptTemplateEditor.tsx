@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, MouseEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { Loader2, Move, Save, Upload, X } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,12 @@ export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, 
     const canvas = useRef<HTMLDivElement>(null);
 
     useEffect(() => setTemplate(normalizeReceiptTemplate(initialTemplate)), [initialTemplate]);
+
+    useEffect(() => {
+        const previous = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => { document.body.style.overflow = previous; };
+    }, []);
 
     const updateField = (key: string, patch: Partial<ORFieldConfig>) => setTemplate(current => ({ ...current, fields: { ...current.fields, [key]: { ...current.fields[key], ...patch } } }));
 
@@ -66,7 +73,7 @@ export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, 
     };
 
     const active = template.fields[selected];
-    return <div className="fixed inset-0 z-[80] flex flex-col bg-background">
+    return createPortal(<div className="fixed inset-0 z-[9999] flex flex-col bg-background">
         <header className="flex items-center justify-between border-b px-5 py-3"><div><h2 className="text-sm font-black uppercase">Receipt Layout Editor</h2><p className="text-[10px] text-muted-foreground">Coordinates and dimensions are stored in millimetres.</p></div><div className="flex gap-2"><button onClick={() => setZoom(value => Math.max(0.3, value - 0.1))} className="rounded-lg border px-3 py-1 text-xs">-</button><span className="self-center text-xs font-bold">{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(value => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-1 text-xs">+</button><button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save</button><button onClick={onClose} aria-label="Close editor" className="rounded-lg border p-2"><X className="h-4 w-4" /></button></div></header>
         <div className="flex min-h-0 flex-1">
             <aside className="w-80 shrink-0 space-y-5 overflow-y-auto border-r p-4 text-xs">
@@ -77,7 +84,7 @@ export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, 
             </aside>
             <main className="flex-1 overflow-auto bg-muted/50 p-12"><div className="mx-auto origin-top" style={{ width: `${template.width * zoom}mm`, height: `${template.height * zoom}mm` }}><div ref={canvas} className="relative overflow-hidden bg-white text-black shadow-2xl" style={{ width: `${template.width}mm`, height: `${template.height}mm`, transform: `scale(${zoom})`, transformOrigin: "top left" }}>{template.backgroundImage ? <Image src={receiptBackgroundUrl(template.backgroundImage)} alt="Receipt form" fill unoptimized className="pointer-events-none object-fill opacity-70" /> : null}{Object.entries(template.fields).map(([key, field]) => field.hidden ? null : <button key={key} onMouseDown={event => drag(key, event)} className={`absolute cursor-move whitespace-nowrap border border-dashed px-0.5 font-mono ${selected === key ? "border-primary bg-primary/10" : "border-zinc-400 bg-white/70"}`} style={{ left: `${field.x}mm`, top: `${field.y}mm`, fontSize: `${field.fontSize || 10}pt` }}>{field.label || key}</button>)}<div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500" style={{ top: `${template.tableSettings.startY}mm` }}><span className="bg-red-500 px-1 text-[8px] text-white">TABLE START</span></div></div></div></main>
         </div>
-    </div>;
+    </div>, document.body);
 }
 
 function NumberInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {

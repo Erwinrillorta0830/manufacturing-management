@@ -38,8 +38,12 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [editingTemplate, setEditingTemplate] = useState(false);
     const [template, setTemplate] = useState<ORTemplate>(DEFAULT_RECEIPT_TEMPLATE);
     const [loadingTemplate, setLoadingTemplate] = useState(false);
+    const [printingDirectly, setPrintingDirectly] = useState(false);
     const pdfBlobRef = useRef<Blob | null>(null);
     const prevPreviewUrlRef = useRef("");
+    const printingDirectlyRef = useRef(false);
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
     const hasShortage = availability?.lines.some((l) => l.shortage > 0);
 
@@ -80,7 +84,19 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             archiveInvoiceDocument(printable.invoiceId, blob, printable.invoiceNo, printable.templateConfig?.width || 210, printable.templateConfig?.height || 265)
                 .then(() => setArchiveStatus("saved"))
                 .catch(() => setArchiveStatus("failed"))
-                .finally(() => setGeneratingPdf(false));
+                .finally(async () => {
+                    setGeneratingPdf(false);
+                    if (printingDirectlyRef.current) {
+                        try {
+                            await downloadReceipt(printable);
+                            onCloseRef.current();
+                        } catch (error) {
+                            printingDirectlyRef.current = false;
+                            setPrintingDirectly(false);
+                            setPdfError(error instanceof Error ? error.message : "Failed to download receipt");
+                        }
+                    }
+                });
         }).catch((err) => {
             if (cancelled) return;
             setPdfError(err instanceof Error ? err.message : "Failed to generate PDF");
@@ -143,7 +159,10 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
     const handleSubmit = (event: FormEvent) => {
         event.preventDefault();
-        setPreviewingBeforeCreate(true);
+        if (!window.confirm(`Create invoice ${invoiceNo.trim()} and download its receipt?`)) return;
+        printingDirectlyRef.current = true;
+        setPrintingDirectly(true);
+        void create();
     };
 
     const create = async () => {
@@ -154,20 +173,24 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         await loadInvoicePrint(created);
     };
 
+    const downloadReceipt = async (invoice: PrintableInvoice) => {
+        const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
+        const blob = doc.output("blob");
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `${invoice.invoiceNo}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     const print = async () => {
         if (!printable) return;
         setGeneratingPdf(true);
         try {
-            const doc = await generateInvoiceReceiptPdf(printable, { includeBackground: false });
-            const blob = doc.output("blob");
-            const a = document.createElement("a");
-            const url = URL.createObjectURL(blob);
-            a.href = url;
-            a.download = `${printable.invoiceNo}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            await downloadReceipt(printable);
             onClose();
         } catch (error) {
             setPdfError(error instanceof Error ? error.message : "Failed to prepare physical receipt");
@@ -201,16 +224,17 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         totals: { gross, discount: Math.max(0, gross - net), vat: 0, net },
         templateConfig: template,
     };
+    const showOverlay = previewingBeforeCreate || (!!createdResult && !printingDirectly) || (loadingPrint && !printingDirectly);
 
-    return <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
-        <div className={`flex max-h-[94vh] w-full ${printable ? "max-w-6xl" : "max-w-xl"} flex-col overflow-hidden rounded-2xl border bg-card shadow-xl`}>
-            <div className="flex items-center justify-between border-b px-6 py-4">
+    return <div className={showOverlay ? "fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-2 backdrop-blur-sm sm:p-4" : "min-w-0"}>
+        <div className={`flex w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm ${showOverlay ? `h-[94dvh] ${printable || previewingBeforeCreate ? "max-w-7xl" : "max-w-3xl"} shadow-xl sm:h-auto sm:max-h-[94dvh]` : "max-h-[78dvh]"}`}>
+            <div className="flex shrink-0 items-center justify-between border-b px-4 py-3 sm:px-5">
                 <div><h3 className="text-sm font-black uppercase tracking-wide">{printable ? `${printable.receiptType.type} Ready` : "Convert To Invoice"}</h3><p className="mt-0.5 text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name}</p></div>
                 <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
-            {loadingPrint ? <div className="flex min-h-72 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div> : previewingBeforeCreate ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
+            {printingDirectly && createdResult ? <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /><div><p className="text-xs font-black uppercase">Preparing Receipt</p><p className="mt-1 text-[10px] text-muted-foreground">The download will start automatically.</p></div></div> : loadingPrint ? <div className="flex min-h-72 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div> : previewingBeforeCreate ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
                 <div className="min-h-[65vh] flex-1 overflow-auto rounded-xl border bg-muted/50 p-6"><div className="mx-auto" style={{ width: `${template.width * 0.72}mm`, height: `${template.height * 0.72}mm` }}><ReceiptPreview invoice={provisional} template={template} scale={0.72} /></div></div>
-                <div className="w-full space-y-3 md:w-64"><div className="rounded-xl border bg-primary/5 p-4"><p className="text-[9px] font-black uppercase text-primary">Review Before Creation</p><p className="mt-1 font-black">{provisional.invoiceNo}</p><p className="mt-2 text-[10px] text-muted-foreground">The scanned background is for alignment. Print physical forms at 100% or Actual Size.</p></div><button type="button" onClick={() => setEditingTemplate(true)} className="flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black"><Settings2 className="h-4 w-4" />Configure Layout</button><button type="button" onClick={() => setPreviewingBeforeCreate(false)} className="w-full rounded-xl border px-4 py-2.5 text-xs font-bold">Back</button><button type="button" disabled={submitting} onClick={create} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}{submitting ? "Creating Invoice..." : "Confirm & Create Invoice"}</button></div>
+                <div className="w-full shrink-0 space-y-3 md:w-72 lg:w-80"><div className="rounded-xl border bg-primary/5 p-4"><p className="text-[9px] font-black uppercase text-primary">Receipt Preview</p><p className="mt-1 font-black">{provisional.invoiceNo}</p><p className="mt-2 text-[10px] text-muted-foreground">The scanned background is for alignment. Print physical forms at 100% or Actual Size.</p></div><button type="button" onClick={() => setEditingTemplate(true)} className="flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black"><Settings2 className="h-4 w-4" />Configure Layout</button><button type="button" onClick={() => setPreviewingBeforeCreate(false)} className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground">Close Preview</button></div>
             </div> : printable ? pdfError ? <div className="flex min-h-72 flex-col items-center justify-center gap-4 p-6">
                 <div className="rounded-xl border bg-emerald-500/5 p-4 text-center">
                     <p className="text-[9px] font-black uppercase text-emerald-600">Invoice Created</p>
@@ -244,16 +268,16 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                     {loadingPrint ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     Retry Load Receipt
                 </button>
-            </div> : <form onSubmit={handleSubmit} className="space-y-5 overflow-y-auto p-6">
-                <div className="rounded-xl border bg-muted/20 p-4 text-xs"><span className="font-bold">{candidate.po_no || "No PO number"}</span><span className="mx-2 text-muted-foreground">·</span>{candidate.branch_name || `Branch #${candidate.branch_id}`}</div>
+            </div> : <form onSubmit={handleSubmit} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+                <div className="rounded-xl border bg-muted/20 px-3 py-2.5 text-xs"><span className="font-bold">{candidate.po_no || "No PO number"}</span><span className="mx-2 text-muted-foreground">·</span>{candidate.branch_name || `Branch #${candidate.branch_id}`}</div>
 
                 <div className="overflow-hidden rounded-xl border">
                     <div className="border-b bg-muted/30 px-4 py-2 text-[9px] font-extrabold uppercase text-muted-foreground">Sales Order Items</div>
-                    <div className="max-h-44 divide-y overflow-y-auto">{candidate.details.map(line => {
+                    <div className="max-h-32 divide-y overflow-y-auto">{candidate.details.map(line => {
                         const product = typeof line.product_id === "object" ? line.product_id : null;
-                        return <div key={line.detail_id} className="flex items-center justify-between gap-4 px-4 py-2 text-xs"><div className="min-w-0"><p className="truncate font-bold">{product?.product_name || `Product #${line.product_id}`}</p><p className="text-[9px] text-muted-foreground">{product?.product_code || ""} · {line.bom_version_name || "No version"}</p></div><div className="shrink-0 text-right"><p className="font-bold">{line.ordered_quantity} {product?.uom || ""}</p><p className="text-[9px] text-muted-foreground">{line.net_amount != null ? `₱${Number(line.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : ""}</p></div></div>;
+                        return <div key={line.detail_id} className="flex items-center justify-between gap-4 px-4 py-1.5 text-xs"><div className="min-w-0"><p className="truncate font-bold">{product?.product_name || `Product #${line.product_id}`}</p><p className="text-[9px] text-muted-foreground">{product?.product_code || ""} · {line.bom_version_name || "No version"}</p></div><div className="shrink-0 text-right"><p className="font-bold">{line.ordered_quantity} {product?.uom || ""}</p><p className="text-[9px] text-muted-foreground">{line.net_amount != null ? `₱${Number(line.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : ""}</p></div></div>;
                     })}</div>
-                    <div className="flex justify-between border-t bg-muted/20 px-4 py-3 text-xs font-black"><span>Total</span><span>₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                    <div className="flex justify-between border-t bg-muted/20 px-4 py-2 text-xs font-black"><span>Total</span><span>₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                 </div>
 
                 {loadingAvailability ? <div className="flex items-center justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /><span className="ml-2 text-[10px] text-muted-foreground">Checking available FG stock...</span></div> : availability ? <div className={`overflow-hidden rounded-xl border ${hasShortage ? "border-amber-300" : "border-emerald-300"}`}>
@@ -265,7 +289,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                         const product = typeof candidate.details.find(d => d.detail_id === line.detailId)?.product_id === "object"
                             ? candidate.details.find(d => d.detail_id === line.detailId)!.product_id as { uom?: string }
                             : null;
-                        return <div key={line.detailId} className={`space-y-1 px-4 py-2 ${line.shortage > 0 ? "bg-amber-500/5" : ""}`}>
+                        return <div key={line.detailId} className={`space-y-0.5 px-4 py-1.5 ${line.shortage > 0 ? "bg-amber-500/5" : ""}`}>
                             <div className="flex items-center justify-between text-xs"><span className="truncate font-bold">{line.productName}</span><span className="shrink-0 font-bold">{line.required} {product?.uom || ""}</span></div>
                             <div className="flex gap-3 text-[9px] text-muted-foreground"><span>On Hand: {line.onHand}</span><span>Reserved: {line.reserved}</span><span>Available: {line.available}</span>{line.shortage > 0 ? <span className="font-bold text-amber-600">Shortage: {line.shortage}</span> : null}</div>
                         </div>;
@@ -276,8 +300,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Receipt Type</span><select required value={invoiceTypeId || ""} onChange={e => setInvoiceTypeId(Number(e.target.value))} className="w-full rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary"><option value="" disabled>Select receipt type</option>{receiptTypes.map(type => <option key={type.id} value={type.id}>{type.type}</option>)}</select></label>
                 <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Invoice / Receipt Number</span><div className="relative"><FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required maxLength={selectedType?.maxLength || undefined} value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} className="w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary" /></div></label>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{[{ label: "Invoice Date", value: invoiceDate, set: setInvoiceDate }, { label: "Payment Due Date", value: dueDate, set: setDueDate }].map(field => <label key={field.label} className="space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">{field.label}</span><div className="relative"><Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required type="date" value={field.value} onChange={e => field.set(e.target.value)} className="w-full rounded-xl border bg-muted/40 py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary" /></div></label>)}</div>
-                <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Remarks</span><textarea rows={3} value={remarks} onChange={e => setRemarks(e.target.value)} className="w-full resize-none rounded-xl border bg-muted/40 px-3.5 py-2 text-xs outline-none focus:border-primary" /></label>
-                <div className="flex justify-end gap-3 border-t pt-4"><button type="button" onClick={onClose} className="rounded-xl border px-4 py-2 text-xs font-bold">Cancel</button><button disabled={submitting || !invoiceTypeId || hasShortage || loadingAvailability || loadingTemplate} className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground disabled:opacity-50">{loadingTemplate ? "Loading Layout..." : hasShortage ? "Insufficient Stock" : "Preview Receipt"}</button></div>
+                <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Remarks</span><textarea rows={2} value={remarks} onChange={e => setRemarks(e.target.value)} className="w-full resize-none rounded-xl border bg-muted/40 px-3.5 py-2 text-xs outline-none focus:border-primary" /></label>
+                <div className="grid grid-cols-2 gap-3 border-t pt-3"><button type="button" disabled={!invoiceTypeId || loadingTemplate} onClick={() => setPreviewingBeforeCreate(true)} className="rounded-xl border px-4 py-2 text-xs font-bold disabled:opacity-50">Preview Receipt</button><button disabled={submitting || !invoiceTypeId || hasShortage || loadingAvailability || loadingTemplate} className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}{submitting ? "Preparing Receipt..." : loadingTemplate ? "Loading Layout..." : hasShortage ? "Insufficient Stock" : "Print Receipt"}</button></div>
             </form>}
         </div>
         {editingTemplate ? <ReceiptTemplateEditor receiptTypeId={invoiceTypeId} initialTemplate={template} onClose={() => setEditingTemplate(false)} onSave={saved => { setTemplate(saved); setEditingTemplate(false); }} /> : null}
