@@ -40,14 +40,14 @@ export async function getLatestLandedCost(
             ]
         }));
 
-        const url = `${DIRECTUS_URL}/items/inventory_lots?filter=${query}&fields=*&sort=-created_on&limit=1`;
+        const url = `${DIRECTUS_URL}/items/inventory_movements?filter=${query}&fields=*&sort=-movement_id&limit=1`;
         const res = await fetch(url, { headers, cache: "no-store" });
 
         if (res.ok) {
             const json = await res.json();
             const latest = json.data?.[0];
             if (latest) {
-                return Number(latest.unit_cost || 0);
+                return Number(latest.unit_cost || latest.cost_per_unit || 0);
             }
         }
 

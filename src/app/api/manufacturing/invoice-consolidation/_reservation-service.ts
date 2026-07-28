@@ -407,37 +407,109 @@ export async function getInvoiceReservationSummaries(branchId: number, search?: 
         : summaries;
 }
 
-async function reconcileInventoryLots(inventoryLotIds: number[], userId: number) {
-    if (inventoryLotIds.length === 0) return;
+interface MasterLotRow {
+    lot_id: number;
+    lot_name?: string | null;
+    batch_no?: string | null;
+    expiry_date?: string | null;
+    created_on?: string | null;
+}
 
-    // Resolve physical lots.lot_id from inventory_lots; query movements by physical lot + product
-    const inventoryLotsJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_lots?filter[id][_in]=${inventoryLotIds.join(",")}&fields=id,lot_id,product_id,branch_id&limit=-1`
-    );
-    const touchedLots: InventoryLotRow[] = inventoryLotsJson.data || [];
-    if (touchedLots.length === 0) return;
-    const productIds = [...new Set(touchedLots.map((lot) => Number(lot.product_id)).filter(Boolean))];
-    const branchIds = [...new Set(touchedLots.map((lot) => Number(lot.branch_id)).filter(Boolean))];
-    const metadataFilter = encodeURIComponent(JSON.stringify({ _and: [
-        { product_id: { _in: productIds } },
-        { branch_id: { _in: branchIds } },
-        { qa_status: { _eq: "Passed" } },
-    ] }));
-    const metadataJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_lots?filter=${metadataFilter}&fields=id,product_id,branch_id,lot_id,lot_number,batch_no,expiry_date,created_on,quantity,qa_status,source_type,source_reference&limit=-1`
-    );
-    const inventoryLots: InventoryLotRow[] = metadataJson.data || [];
+async function fetchLotsAndMovements(productIds: number[], branchId?: number): Promise<{
+    synthesizedLots: InventoryLotRow[];
+    movements: MovementRow[];
+}> {
+    if (productIds.length === 0) {
+        return { synthesizedLots: [], movements: [] };
+    }
 
-    const movFilter = encodeURIComponent(JSON.stringify({
+    const branchFilter = branchId ? { branch_id: { _eq: branchId } } : null;
+    const movFilterObj: Record<string, unknown> = {
         _and: [
             { product_id: { _in: productIds } },
-            { branch_id: { _in: branchIds } },
+            ...(branchFilter ? [branchFilter] : []),
         ],
-    }));
+    };
+
+    const movFilter = encodeURIComponent(JSON.stringify(movFilterObj));
     const movJson = await directusJson(
         `${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`
     );
     const movements: MovementRow[] = movJson.data || [];
+    if (movements.length === 0) {
+        return { synthesizedLots: [], movements: [] };
+    }
+
+    const lotIds = [...new Set(movements.map((m) => {
+        return typeof m.lot_id === "object"
+            ? Number((m.lot_id as { lot_id?: number })?.lot_id)
+            : Number(m.lot_id);
+    }).filter(Boolean))];
+
+    const masterLotMap = new Map<number, MasterLotRow>();
+    if (lotIds.length > 0) {
+        const lotJson = await directusJson(
+            `${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name,batch_no,expiry_date,created_on&limit=-1`
+        );
+        for (const lot of (lotJson.data || []) as MasterLotRow[]) {
+            masterLotMap.set(Number(lot.lot_id), lot);
+        }
+    }
+
+    const lotMap = new Map<string, InventoryLotRow>();
+
+    for (const m of movements) {
+        const productId = Number(typeof m.product_id === "object" ? (m.product_id as { product_id?: number })?.product_id : m.product_id);
+        const bId = Number(m.branch_id);
+        const physicalLotId = typeof m.lot_id === "object"
+            ? Number((m.lot_id as { lot_id?: number })?.lot_id)
+            : Number(m.lot_id);
+        if (!productId || !physicalLotId) continue;
+
+        const masterLot = masterLotMap.get(physicalLotId);
+        const batchNo = batchNumber(m.batch_no || masterLot?.batch_no);
+        const compositeKey = `${productId}:${bId}:${physicalLotId}:${batchNo}`;
+
+        if (!lotMap.has(compositeKey)) {
+            lotMap.set(compositeKey, {
+                id: physicalLotId,
+                product_id: productId,
+                branch_id: bId,
+                lot_id: masterLot ? { lot_id: masterLot.lot_id, lot_name: masterLot.lot_name } : physicalLotId,
+                lot_number: batchNo,
+                batch_no: batchNo,
+                expiry_date: m.expiry_date || masterLot?.expiry_date || null,
+                created_on: masterLot?.created_on || m.created_at || null,
+                quantity: 0,
+                qa_status: "Passed",
+                source_type: null,
+                source_reference: null,
+            });
+        }
+    }
+
+    return { synthesizedLots: [...lotMap.values()], movements };
+}
+
+async function reconcileInventoryLots(inventoryLotIds: number[], userId: number) {
+    if (inventoryLotIds.length === 0) return;
+
+    // Resolve physical lots from inventory_movements; query movements by physical lot + product
+    const touchedMovJson = await directusJson(
+        `${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${inventoryLotIds.join(",")}&fields=product_id,branch_id,lot_id&limit=-1`
+    );
+    const touchedMovs: MovementRow[] = touchedMovJson.data || [];
+    if (touchedMovs.length === 0) return;
+
+    const productIds = [...new Set(touchedMovs.map((m) => Number(typeof m.product_id === "object" ? (m.product_id as { product_id?: number })?.product_id : m.product_id)).filter(Boolean))];
+    const branchIds = [...new Set(touchedMovs.map((m) => Number(m.branch_id)).filter(Boolean))];
+    if (productIds.length === 0) return;
+
+    const { synthesizedLots: inventoryLots, movements } = await fetchLotsAndMovements(
+        productIds,
+        branchIds.length === 1 ? branchIds[0] : undefined
+    );
+    if (inventoryLots.length === 0) return;
 
     const jobOrderNumbers = [...new Set(inventoryLots.map((lot) => lot.source_reference).filter(Boolean))] as string[];
     const jobVersionMap = new Map<string, number>();
@@ -553,29 +625,8 @@ export async function allocateInvoice(invoiceId: number, userId: number) {
     }
 
     const productIds = [...new Set(details.map((detail) => Number(detail.product_id)))];
-    const lotFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _in: productIds } },
-            { branch_id: { _eq: Number(invoice.branch_id) } },
-            { qa_status: { _eq: "Passed" } },
-        ],
-    }));
-    const lotsJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&fields=id,product_id,branch_id,lot_id,lot_number,batch_no,expiry_date,created_on,quantity,qa_status,source_type,source_reference&limit=-1`
-    );
-    const unfilteredLots: InventoryLotRow[] = (lotsJson.data || []).filter((lot: InventoryLotRow) => numericId(lot.lot_id, ["lot_id"]) !== null);
-    // Fetch inventory movements to calculate the true ledger stock
     const branchId = Number(invoice.branch_id);
-    const movFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _in: productIds } },
-            { branch_id: { _eq: branchId } }
-        ]
-    }));
-    const movJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`
-    );
-    const movements: MovementRow[] = movJson.data || [];
+    const { synthesizedLots: unfilteredLots, movements } = await fetchLotsAndMovements(productIds, branchId);
     const jobOrderNumbers = [...new Set(unfilteredLots.map((lot) => lot.source_reference).filter(Boolean))] as string[];
     const jobVersionMap = new Map<string, number>();
     if (jobOrderNumbers.length > 0) {
@@ -793,28 +844,7 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
     const demandVersionMap = await resolveVersions(versionPairs);
 
     const productIds = [...new Set(details.map((detail) => Number(detail.product_id)))];
-    const lotFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _in: productIds } },
-            { branch_id: { _eq: branchId } },
-            { qa_status: { _eq: "Passed" } },
-        ],
-    }));
-    const lotsJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&fields=id,product_id,branch_id,lot_id.lot_id,lot_id.lot_name,lot_number,batch_no,expiry_date,created_on,quantity,qa_status,source_type,source_reference&limit=-1`
-    );
-    const unfilteredLots: InventoryLotRow[] = lotsJson.data || [];
-    // Fetch inventory movements to calculate the true ledger stock
-    const movFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _in: productIds } },
-            { branch_id: { _eq: branchId } }
-        ]
-    }));
-    const movJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`
-    );
-    const movements: MovementRow[] = movJson.data || [];
+    const { synthesizedLots: unfilteredLots, movements } = await fetchLotsAndMovements(productIds, branchId);
     const jobOrderNumbers = [...new Set(unfilteredLots.map((lot) => lot.source_reference).filter(Boolean))] as string[];
     const jobVersionMap = new Map<string, number>();
     if (jobOrderNumbers.length > 0) {
@@ -994,21 +1024,7 @@ export async function calculateSalesOrderAvailability(salesOrderId: number) {
     const pairs = details.map((d) => ({ customerId, productId: Number(d.product_id) }));
     const demandVersionMap = await resolveVersions(pairs);
 
-    const lotFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _in: productIds } },
-            { branch_id: { _eq: branchId } },
-            { qa_status: { _eq: "Passed" } },
-        ],
-    }));
-    const lotsJson = await directusJson(
-        `${DIRECTUS_URL}/items/inventory_lots?filter=${lotFilter}&fields=id,product_id,branch_id,lot_id,lot_number,batch_no,expiry_date,created_on,quantity,qa_status,source_type,source_reference&limit=-1`
-    );
-    const unfilteredLots: InventoryLotRow[] = (lotsJson.data || []).filter((lot: InventoryLotRow) => numericId(lot.lot_id, ["lot_id"]) !== null);
-
-    const movFilter = encodeURIComponent(JSON.stringify({ _and: [{ product_id: { _in: productIds } }, { branch_id: { _eq: branchId } }] }));
-    const movJson = await directusJson(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`);
-    const movements: MovementRow[] = movJson.data || [];
+    const { synthesizedLots: unfilteredLots, movements } = await fetchLotsAndMovements(productIds, branchId);
 
     const jobOrderNumbers = [...new Set(unfilteredLots.map((lot) => lot.source_reference).filter(Boolean))] as string[];
     const jobVersionMap = new Map<string, number>();

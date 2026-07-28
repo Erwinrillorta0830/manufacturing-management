@@ -380,41 +380,46 @@ export async function POST(request: Request) {
                                 })
                             }).catch(err => console.error(`Failed to update materials reservation row:`, err));
 
-                            // Deduct from physical inventory_lots
+                            // Deduct from inventory_movements ledger
                             if (porId && portion > 0) {
                                 try {
-                                    const porDetailRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${porId}?fields=purchase_order_id,lot_no,batch_no,expiry_date`, { headers, cache: "no-store" });
+                                    const porDetailRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${porId}?fields=purchase_order_id,lot_no,batch_no,expiry_date,receipt_no`, { headers, cache: "no-store" });
                                     if (porDetailRes.ok) {
                                         const porDetail = (await porDetailRes.json()).data;
                                         if (porDetail) {
                                             const poId = porDetail.purchase_order_id;
                                             const lotNo = porDetail.lot_no || porDetail.batch_no || "LOT-N/A";
+                                            const receiptNo = porDetail.receipt_no;
                                             
-                                            const lotQuery = encodeURIComponent(JSON.stringify({
+                                            const movQuery = encodeURIComponent(JSON.stringify({
                                                 _and: [
                                                     { product_id: { _eq: rawProductId } },
                                                     { branch_id: { _eq: branchId } },
-                                                    { source_type: { _eq: "procurement" } },
-                                                    { source_reference: { _eq: String(poId) } },
                                                     { _or: [
-                                                        { lot_number: { _eq: lotNo } },
-                                                        { batch_no: { _eq: lotNo } }
+                                                        { source_document_id: { _eq: Number(porId) } },
+                                                        { batch_no: { _eq: lotNo } },
+                                                        ...(poId ? [{ source_document_no: { _eq: String(poId) } }] : []),
+                                                        ...(receiptNo ? [{ source_document_no: { _eq: String(receiptNo) } }] : [])
                                                     ] }
                                                 ]
                                             }));
                                             
-                                            const lRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-                                             if (lRes.ok) {
-                                                 const lotList = (await lRes.json()).data || [];
-                                                 if (lotList.length > 0) {
-                                                      const lot = lotList[0];
-                                                      await logConsumageAndMovement(portion, lot);
-                                                 }
-                                             }
+                                            const mRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movQuery}&limit=1`, { headers, cache: "no-store" });
+                                            if (mRes.ok) {
+                                                const movList = (await mRes.json()).data || [];
+                                                if (movList.length > 0) {
+                                                    const lot = movList[0];
+                                                    await logConsumageAndMovement(portion, lot);
+                                                } else {
+                                                    await logConsumageAndMovement(portion, { batch_no: lotNo, expiry_date: porDetail.expiry_date });
+                                                }
+                                            } else {
+                                                await logConsumageAndMovement(portion, { batch_no: lotNo, expiry_date: porDetail.expiry_date });
+                                            }
                                         }
                                     }
                                 } catch (porErr) {
-                                    console.error(`Failed to deduct physical inventory lot for POR ID ${porId}:`, porErr);
+                                    console.error(`Failed to locate inventory movement for POR ID ${porId}:`, porErr);
                                 }
                             } else {
                                 // For sub-assembly direct reservations
@@ -479,34 +484,10 @@ export async function POST(request: Request) {
             }
         }
 
-        // 6. Record Yield: Insert new inventory lot for the produced product
+        // 6. Record Yield: Log finished yield movement in inventory_movements ledger (single source of truth)
         const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
         const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
-        const newLotPayload = {
-            product_id: producedProductId,
-            branch_id: branchId,
-            quantity: 0,
-            qa_status: qaStatus || "Pending",
-            source_type: "yield_ledger",
-            source_reference: String(ledgerId),
-            lot_number: finalBatchNo,
-            lot_id: finishedLotId,
-            expiry_date: expiryDate || null,
-            created_on: manufacturingDate || null,
-            remarks: `Yield from Job Order ${jobOrderNo} | Shift: ${shiftName}`
-        };
 
-        const lotRes = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(newLotPayload)
-        });
-
-        if (!lotRes.ok) {
-            console.error("Failed to insert new inventory lot:", await lotRes.text());
-        }
-
-        // 7. Log finished yield movement in inventory_movements ledger
         const finishedMovementPayload = {
             product_id: producedProductId,
             lot_id: finishedLotId,
@@ -519,7 +500,7 @@ export async function POST(request: Request) {
             manufacturing_date: manufacturingDate || null,
             quantity: Number(yieldQty),
             created_by: inspectorId ? Number(inspectorId) : 24,
-            remarks: `Finished yield output from Job Order ${jobOrderNo}`
+            remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName}`
         };
         await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
             method: "POST",

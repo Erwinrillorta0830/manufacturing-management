@@ -84,7 +84,7 @@ export async function GET(_request: Request, context: RouteParams) {
                 ? fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${Array.from(productIds).join(",")}&limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.*`, { headers, cache: "no-store" })
                 : Promise.resolve(null),
             lotIds.size > 0
-                ? fetch(`${DIRECTUS_URL}/items/inventory_lots?filter[id][_in]=${Array.from(lotIds).join(",")}&limit=-1`, { headers, cache: "no-store" })
+                ? fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${Array.from(lotIds).join(",")}&limit=-1&fields=*,lot_id.*`, { headers, cache: "no-store" })
                 : Promise.resolve(null),
             versionIds.size > 0
                 ? fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_id][_in]=${Array.from(versionIds).join(",")}&limit=-1`, { headers, cache: "no-store" })
