@@ -565,17 +565,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         let finalAllocations: FinalReceivingAllocation[] = [];
         let movementWriteAttempted = false;
         let commitPhase: "receiving" | "inventory" | "movements" | "allocations" | "status" = "receiving";
-        const inventoryChanges: Array<{ id: number; created: boolean; previous?: Record<string, unknown> }> = [];
         const lineChanges: Array<{ id: number; received: unknown }> = [];
         const productChanges = new Map<number, { cost_per_unit: unknown; estimated_unit_cost: unknown }>();
 
         const rollback = async () => {
-            for (const change of [...inventoryChanges].reverse()) {
-                const response = change.created
-                    ? await mutate("inventory_lots", change.id, "DELETE")
-                    : await mutate("inventory_lots", change.id, "PATCH", change.previous);
-                if (!response.ok) return false;
-            }
             for (const [productId, previous] of [...productChanges.entries()].reverse()) {
                 const response = await mutate("products", productId, "PATCH", previous);
                 if (!response.ok) return false;
