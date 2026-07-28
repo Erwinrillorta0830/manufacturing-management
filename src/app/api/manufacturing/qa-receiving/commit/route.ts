@@ -63,27 +63,19 @@ async function assertReceivingStatusOpen(shipmentId: number) {
 async function inventoryRowsForMovements(shipmentId: number, movementRows: Record<string, unknown>[]) {
     if (movementRows.length === 0) return [];
 
-    const productIds = [...new Set(movementRows
-        .map(row => relationId(row.product_id, "product_id"))
-        .filter(id => Number.isSafeInteger(id) && id > 0))];
-    const branchIds = [...new Set(movementRows
-        .map(row => relationId(row.branch_id, "id"))
-        .filter(id => Number.isSafeInteger(id) && id > 0))];
     const storageLotIds = [...new Set(movementRows
         .map(row => relationId(row.lot_id, "lot_id"))
         .filter(id => Number.isSafeInteger(id) && id > 0))];
 
-    if (productIds.length === 0 || branchIds.length === 0 || storageLotIds.length === 0) return [];
+    if (storageLotIds.length === 0) return [];
 
-    const inventoryParams = new URLSearchParams({
-        "filter[product_id][_in]": productIds.join(","),
-        "filter[branch_id][_in]": branchIds.join(","),
+    const lotParams = new URLSearchParams({
         "filter[lot_id][_in]": storageLotIds.join(","),
-        fields: "id,product_id,branch_id,lot_id,batch_no",
+        fields: "lot_id,lot_name",
         limit: "-1"
     });
     return directusRows(
-        `/items/inventory_lots?${inventoryParams.toString()}`,
+        `/items/lots?${lotParams.toString()}`,
         `Unable to verify the created inventory records for purchase order ${shipmentId}.`
     );
 }
@@ -299,10 +291,7 @@ async function persistedResult(
             const productId = relationId(movement.product_id, "product_id");
             const storageLotId = relationId(movement.lot_id, "lot_id");
             const inventoryMatches = inventoryRows.filter(row =>
-                relationId(row.product_id, "product_id") === productId
-                && relationId(row.branch_id, "id") === branchId
-                && relationId(row.lot_id, "lot_id") === storageLotId
-                && String(row.batch_no || "") === String(movement.batch_no || "")
+                relationId(row.lot_id || row.id, "lot_id") === storageLotId
             );
             if (inventoryMatches.length !== 1) {
                 throw new CommitError(409, `${route.kind} inventory lot for line ${line.lineId} could not be correlated uniquely.`);
@@ -312,7 +301,7 @@ async function persistedResult(
                 lineId: line.lineId,
                 kind: route.kind,
                 receivingLineId,
-                inventoryLotId: Number(inventoryMatches[0].id),
+                inventoryLotId: Number(inventoryMatches[0].lot_id || inventoryMatches[0].id),
                 productId,
                 storageLotId,
                 branchId,
