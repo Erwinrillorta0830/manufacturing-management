@@ -1730,28 +1730,24 @@ export default function FinishedGoodsModule() {
                                                 <span className="text-xs text-muted-foreground/60 italic self-center">No suppliers mapped to this product yet</span>
                                             )}
                                         </div>
-                                        <select
+                                        <CreatableSelect
+                                            options={suppliers
+                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
+                                                .map(s => ({
+                                                    value: String(s.id),
+                                                    label: s.supplier_name,
+                                                }))}
                                             value=""
-                                            onChange={e => {
-                                                const val = e.target.value;
-                                                if (val && !registerForm.supplierIds.includes(val)) {
+                                            onValueChange={(val) => {
+                                                if (!registerForm.supplierIds.includes(val)) {
                                                     setRegisterForm(prev => ({
                                                         ...prev,
                                                         supplierIds: [...prev.supplierIds, val]
                                                     }));
                                                 }
                                             }}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        >
-                                            <option value="">Choose Supplier to Add...</option>
-                                            {suppliers
-                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
-                                                .map(s => (
-                                                    <option key={s.id} value={String(s.id)}>
-                                                        {s.supplier_name}
-                                                    </option>
-                                                ))}
-                                        </select>
+                                            placeholder="Choose Supplier to Add..."
+                                        />
                                     </div>
                                 </div>
                             </div>

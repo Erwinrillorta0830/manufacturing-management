@@ -807,6 +807,10 @@ export function useFinishedGoods(initialTab: string = "details") {
         const matchedUnit = units.find(u => u.unit_shortcut === editedDetails.baseUom);
         const editValidationInput = {
             ...editedDetails,
+            productBrand: editedDetails.product_brand,
+            productCategory: editedDetails.product_category,
+            unitOfMeasurementCount: editedDetails.unit_of_measurement_count,
+            productShelfLife: editedDetails.product_shelf_life,
             unit_of_measurement: matchedUnit?.unit_id,
             expected_yield_percentage: editedDetails.expectedYieldPercent
         };
