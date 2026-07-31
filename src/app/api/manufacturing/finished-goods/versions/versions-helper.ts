@@ -166,14 +166,16 @@ export async function getBOMDetailsForVersion(
         };
 
         const routeIds = routes.map(r => getRouteId(r.route_id)).filter(Boolean);
-        const bomFilter = routeIds.length > 0
-            ? encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }))
-            : "";
-        const resBom = bomFilter
-            ? await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?filter=${bomFilter}&limit=-1`, { headers, cache: "no-store" })
-            : await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?limit=-1`, { headers, cache: "no-store" });
-        const bomJson = resBom.ok ? await resBom.json() : { data: [] };
-        const bomItems: RouteBOMItem[] = bomJson.data || [];
+        const bomItems: RouteBOMItem[] = [];
+        if (routeIds.length > 0) {
+            const bomFilter = encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }));
+            const resBom = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_routes_bom?filter=${bomFilter}&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            const bomJson = resBom.ok ? await resBom.json() : { data: [] };
+            bomItems.push(...((bomJson.data || []) as RouteBOMItem[]));
+        }
 
         bomItems.forEach(b => {
             b.product_id = getProductId(b.product_id);

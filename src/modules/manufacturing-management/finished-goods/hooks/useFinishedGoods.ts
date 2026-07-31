@@ -839,6 +839,18 @@ export function useFinishedGoods(initialTab: string = "details") {
 
         const validatedDetails = validateProductEditDetails(editValidationInput);
 
+        const normalizedSku = validatedDetails.sku.trim().toLowerCase();
+        const duplicateSku = allCatalogProducts.some(product =>
+            String(product.product_id) !== selectedProductId &&
+            String(product.product_code || "").trim().toLowerCase() === normalizedSku
+        );
+        if (duplicateSku) {
+            const message = "A product with this SKU already exists. Please choose a unique SKU.";
+            setEditFieldErrors({ sku: message });
+            toast.error(message);
+            return;
+        }
+
         const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
             routeId: route.route_id,
             rowNumber: index + 1,
@@ -1007,12 +1019,13 @@ export function useFinishedGoods(initialTab: string = "details") {
             clearInterval(interval);
             setSaveProgress(0);
             setSaveStatus("");
-            console.error("Save error:", err);
             const error = err as Error & { code?: string; fields?: Record<string, string> };
             if (error.fields && Object.keys(error.fields).length > 0) {
                 setEditFieldErrors(error.fields);
             } else if (error.code === "PRODUCT_SKU_CONFLICT") {
                 setEditFieldErrors({ sku: error.message });
+            } else {
+                console.error("Save error:", err);
             }
             toast.error(error.message || "Error saving configuration");
         } finally {
