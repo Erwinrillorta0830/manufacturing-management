@@ -55,38 +55,48 @@ export async function GET(request: Request) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }
 
-        const [prodRes, versionsRes, profilesRes, weightUnitsData] = await Promise.all([
+        const [prodResult, versionsResult, profilesResult, weightUnitsResult] = await Promise.allSettled([
             fetch(url, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,status,base_quantity,expected_yield_percentage`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/product_currency_profiles?limit=-1`, { headers, cache: "no-store" }),
             fetchAllWeightUnits()
         ]);
 
+        if (prodResult.status === "rejected") throw prodResult.reason;
+        const prodRes = prodResult.value;
         if (!prodRes.ok) throw new Error(`Directus failed to fetch products: ${prodRes.status}`);
         const prodJson = await prodRes.json();
         const products: DirectusProduct[] = prodJson.data || [];
 
         const versionProductIds = new Set<number>();
-        const versionsByProductMap = new Map<number, unknown[]>();
-        if (versionsRes.ok) {
-            const versionsJson = await versionsRes.json();
-            const versions = versionsJson.data || [];
-            versions.forEach((v: { version_id: number; product_id: number; version_name: string; status: string }) => {
-                if (v.product_id) {
-                    const pId = Number(v.product_id);
-                    versionProductIds.add(pId);
-                    if (!versionsByProductMap.has(pId)) versionsByProductMap.set(pId, []);
-                    versionsByProductMap.get(pId)!.push(v);
-                }
-            });
+        if (versionsResult.status === "fulfilled" && versionsResult.value.ok) {
+            try {
+                const versionsJson = await versionsResult.value.json();
+                const versions = versionsJson.data || [];
+                versions.forEach((v: { product_id: number }) => {
+                    if (v.product_id) {
+                        versionProductIds.add(Number(v.product_id));
+                    }
+                });
+            } catch (err) {
+                console.error("API Error parsing product version metadata:", err);
+            }
         }
 
-        const profiles = profilesRes.ok ? (await profilesRes.json()).data || [] : [];
+        let profiles: DirectusProductCurrencyProfile[] = [];
+        if (profilesResult.status === "fulfilled" && profilesResult.value.ok) {
+            try {
+                profiles = (await profilesResult.value.json()).data || [];
+            } catch (err) {
+                console.error("API Error parsing product currency profiles:", err);
+            }
+        }
         const profilesMap = new Map<number, DirectusProductCurrencyProfile>();
         profiles.forEach((p: DirectusProductCurrencyProfile) => {
             profilesMap.set(Number(p.product_id), p);
         });
 
+        const weightUnitsData = weightUnitsResult.status === "fulfilled" ? weightUnitsResult.value : [];
         const weightUnitsMap = new Map((weightUnitsData || []).map(w => [w.id, w]));
 
         // Create product lookup map
@@ -125,11 +135,13 @@ export async function GET(request: Request) {
             try {
                 // Get rolled up cost (COGS) using current active version routes & route-level BOM
                 const costRollup = await calculateRollupCost(p.product_id, new Set(), productsMap, 58.00, profilesMap);
-                if (costRollup && costRollup.bomId !== null) {
+                if (costRollup && costRollup.bomId !== null && costRollup.costTree.length > 0) {
                     productCopy.cost_per_unit = costRollup.unitCost;
                     productCopy.has_cogs = true;
                 } else {
-                    productCopy.cost_per_unit = 0;
+                    // Keep the persisted product cost when no rollup exists yet.
+                    // The value is still marked as non-COGS so callers can
+                    // distinguish it from a calculated active-version cost.
                     productCopy.has_cogs = false;
                 }
             } catch (err) {

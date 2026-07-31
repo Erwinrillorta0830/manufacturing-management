@@ -197,6 +197,14 @@ export async function calculateRollupCost(
     const { version, routes } = versionId
         ? await getBOMDetailsForVersion(productId, versionId)
         : await getActiveVersionForProduct(productId);
+
+    if (versionId !== undefined && version) {
+        const versionProductId = Number(version.product_id);
+        if (Number.isFinite(versionProductId) && versionProductId !== productId) {
+            return defaultResult(currentProduct.product_name, currentProduct.product_code);
+        }
+    }
+
     if (!version) {
         const landedCost = await getLatestLandedCost(productId, forexRate, profilesMap, productsMap);
         const leafBreakdown = calculateCostBreakdown({

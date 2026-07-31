@@ -16,7 +16,13 @@ export async function GET(request: Request) {
         }
 
         const url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
-        const res = await fetch(url, { headers, cache: "no-store" });
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            res = await fetch(url, { headers, cache: "no-store" });
+            if (res.ok || ![502, 503, 504].includes(res.status) || attempt === 1) break;
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        if (!res) throw new Error("Directus version request did not return a response");
         if (!res.ok) throw new Error(`Directus failed to fetch versions: ${res.status}`);
         const json = await res.json();
 

@@ -29,6 +29,7 @@ import { useFinishedGoods, type RegisterFormField } from "./hooks/useFinishedGoo
 import { Product, BOMItem, RoutingStep } from "./types";
 import { CreatableSelect } from "./components/CreatableSelect";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
+import { getProductImageUrl, uploadProductImage } from "./services/product-image";
 
 export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
@@ -37,6 +38,8 @@ export default function FinishedGoodsModule() {
     const validTabs = ["details", "routes_bom", "costing", "qa_templates", "importation"];
     const initialTab = requestedTab && validTabs.includes(requestedTab) ? requestedTab : "details";
     const [uploadingRegImage, setUploadingRegImage] = useState(false);
+    const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
+    const [registerImageError, setRegisterImageError] = useState<string | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     const {
@@ -112,6 +115,18 @@ export default function FinishedGoodsModule() {
         handleCustomOverheadChange,
         allCatalogProducts
     } = useFinishedGoods(initialTab);
+
+    useEffect(() => {
+        if (isRegisterModalOpen) return;
+        setRegisterImagePreview(null);
+        setRegisterImageError(null);
+    }, [isRegisterModalOpen]);
+
+    useEffect(() => {
+        return () => {
+            if (registerImagePreview) URL.revokeObjectURL(registerImagePreview);
+        };
+    }, [registerImagePreview]);
 
     // Synchronize new editedRoutes state to legacy editedBOM and editedRoutings for costing simulation
     useEffect(() => {
@@ -1655,6 +1670,8 @@ export default function FinishedGoodsModule() {
                                                         onClick={async () => {
                                                             const oldId = registerForm.productImage;
                                                             setRegisterForm(prev => ({ ...prev, productImage: "" }));
+                                                            setRegisterImagePreview(null);
+                                                            setRegisterImageError(null);
                                                             if (oldId && oldId.length > 10) {
                                                                 try {
                                                                     await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
@@ -1687,30 +1704,31 @@ export default function FinishedGoodsModule() {
                                                         onChange={async (e) => {
                                                             const file = e.target.files?.[0];
                                                             if (!file) return;
+                                                            const input = e.currentTarget;
                                                             setUploadingRegImage(true);
+                                                            setRegisterImageError(null);
                                                             try {
-                                                                const formData = new FormData();
-                                                                formData.append("file", file);
-                                                                const uploadRes = await fetch("/api/manufacturing/files", {
-                                                                    method: "POST",
-                                                                    body: formData
-                                                                });
-                                                                if (!uploadRes.ok) throw new Error("Upload failed");
-                                                                const json = await uploadRes.json();
-                                                                const newFileId = json?.data?.id;
-                                                                if (newFileId) {
-                                                                    setRegisterForm(prev => ({ ...prev, productImage: newFileId }));
-                                                                }
+                                                                const newFileId = await uploadProductImage(file);
+                                                                setRegisterForm(prev => ({ ...prev, productImage: newFileId }));
+                                                                setRegisterImagePreview(URL.createObjectURL(file));
+                                                                toast.success("Product image uploaded successfully.");
                                                             } catch (err) {
-                                                                console.error(err);
-                                                                alert("Failed to upload image");
+                                                                const message = err instanceof Error ? err.message : "Failed to upload product image.";
+                                                                setRegisterImageError(message);
+                                                                toast.error(message);
                                                             } finally {
                                                                 setUploadingRegImage(false);
+                                                                input.value = "";
                                                             }
                                                         }}
                                                         className="hidden"
                                                     />
                                                 </label>
+                                                {registerImageError && (
+                                                    <p className="text-[10px] text-destructive" role="alert">
+                                                        {registerImageError}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -1770,28 +1788,24 @@ export default function FinishedGoodsModule() {
                                                 <span className="text-xs text-muted-foreground/60 italic self-center">No suppliers mapped to this product yet</span>
                                             )}
                                         </div>
-                                        <select
+                                        <CreatableSelect
+                                            options={suppliers
+                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
+                                                .map(s => ({
+                                                    value: String(s.id),
+                                                    label: s.supplier_name,
+                                                }))}
                                             value=""
-                                            onChange={e => {
-                                                const val = e.target.value;
-                                                if (val && !registerForm.supplierIds.includes(val)) {
+                                            onValueChange={(val) => {
+                                                if (!registerForm.supplierIds.includes(val)) {
                                                     setRegisterForm(prev => ({
                                                         ...prev,
                                                         supplierIds: [...prev.supplierIds, val]
                                                     }));
                                                 }
                                             }}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        >
-                                            <option value="">Choose Supplier to Add...</option>
-                                            {suppliers
-                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
-                                                .map(s => (
-                                                    <option key={s.id} value={String(s.id)}>
-                                                        {s.supplier_name}
-                                                    </option>
-                                                ))}
-                                        </select>
+                                            placeholder="Choose Supplier to Add..."
+                                        />
                                     </div>
                                 </div>
                             </div>
