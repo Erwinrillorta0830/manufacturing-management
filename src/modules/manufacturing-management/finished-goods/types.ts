@@ -36,6 +36,13 @@ export interface Product {
     barcode: string;
     baseUom: string;
     expectedYieldPercent: number;
+    yield_factor?: number;
+    standard_scrap_rate?: number;
+    cutting_unit_weight_grams?: number;
+    pcs_per_bundle_case?: number;
+    bundles_cases_per_pallet?: number;
+    pcs_per_layer?: number;
+    layers_per_cage?: number;
     targetSellingPrice: number;
     parentProduct?: boolean;
     parent_id?: number | null;
@@ -172,8 +179,15 @@ export interface ProductVersion {
     base_quantity: number;
     uom_id?: number | null;
     expected_yield_percentage: number;
+    yield_factor?: number;
+    standard_scrap_rate?: number;
+    cutting_unit_weight_grams?: number;
+    pcs_per_bundle_case?: number;
+    bundles_cases_per_pallet?: number;
+    pcs_per_layer?: number;
+    layers_per_cage?: number;
     custom_overhead?: number | null;
-    status: 'For Approval' | 'Active' | 'Inactive';
+    status: string;
     valid_from?: string | null;
     valid_to?: string | null;
     is_active?: boolean; // legacy/compatibility

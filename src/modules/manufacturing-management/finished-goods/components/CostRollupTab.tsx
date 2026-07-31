@@ -244,7 +244,19 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         </div>
                         <div className="flex justify-between gap-2">
                             <span className="text-muted-foreground">Workstation duration</span>
-                            <span className="font-medium">{standardBreakdown.machineHours.toFixed(4)} hrs</span>
+                            <span className="font-medium font-mono">
+                                {(() => {
+                                    const hrs = standardBreakdown.machineHours;
+                                    if (hrs === null || hrs === undefined || isNaN(hrs)) return "00:00:00";
+                                    const totalSeconds = Math.round(Math.abs(hrs) * 3600);
+                                    const h = Math.floor(totalSeconds / 3600);
+                                    const m = Math.floor((totalSeconds % 3600) / 60);
+                                    const s = totalSeconds % 60;
+                                    const sign = hrs < 0 ? "-" : "";
+                                    const pad = (num: number) => String(num).padStart(2, "0");
+                                    return `${sign}${pad(h)}:${pad(m)}:${pad(s)}`;
+                                })()}
+                            </span>
                         </div>
                         <div className="flex justify-between gap-2">
                             <span className="text-muted-foreground">Total workstation cost</span>

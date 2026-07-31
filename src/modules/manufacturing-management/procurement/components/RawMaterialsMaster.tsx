@@ -1,5 +1,5 @@
 /* eslint-disable */
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { RawMaterial, Supplier, RegisterRawMaterialPayload, PackagingVariant } from "../types";
 import { Search, Layers, ChevronDown, ChevronUp, MapPin, Bookmark, AlertTriangle, Plus, X, Loader2, Info, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +44,7 @@ export default function RawMaterialsMaster({
     const [editingItem, setEditingItem] = useState<RawMaterial | null>(null); // null = Register, non-null = Edit
     const [saving, setSaving] = useState(false);
     const [units, setUnits] = useState<UnitOption[]>([]);
+    const [weightUnits, setWeightUnits] = useState<Array<{ id: number; code: string; name: string }>>([]);
     const [loadingUnits, setLoadingUnits] = useState(false);
     const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
     const [categoriesList, setCategoriesList] = useState<SelectOption[]>([]);
@@ -55,14 +56,50 @@ export default function RawMaterialsMaster({
     const [formDesc, setFormDesc] = useState("");
     const [formUom, setFormUom] = useState<number | "">("");
     const [formDensity, setFormDensity] = useState("1.000");
+    const [formWeight, setFormWeight] = useState("");
+    const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
     const [formProductType, setFormProductType] = useState<number>(389);
     const [formParentId, setFormParentId] = useState<string>("");
     const [formUomCount, setFormUomCount] = useState<string>("1");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
+    const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
     const [supplierSearch, setSupplierSearch] = useState("");
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(10);
+
+    // Reset pagination to page 1 on search or filter change
+    useEffect(() => {
+        setPage(1);
+    }, [search, typeFilter]);
     const [packagingVariants, setPackagingVariants] = useState<Array<{ uomId: number | ""; count: string; codeSuffix: string }>>([]);
+
+    const uomOptions = useMemo(() => {
+        return units.map(u => ({
+            value: String(u.unit_id),
+            label: `${u.unit_name} (${u.unit_shortcut})`
+        }));
+    }, [units]);
+
+    const weightUnitOptions = useMemo(() => {
+        return weightUnits.map(u => ({
+            value: String(u.id),
+            label: `${u.code} (${u.name})`
+        }));
+    }, [weightUnits]);
+
+    const parentProductOptions = useMemo(() => {
+        return rawMaterials
+            .filter(rm => {
+                if (editingItem && Number(rm.product_id) === Number(editingItem.product_id)) return false;
+                return !rm.parent_id;
+            })
+            .map(rm => ({
+                value: String(rm.product_id),
+                label: `${rm.product_name} (${rm.product_code || `ID-${rm.product_id}`})`
+            }));
+    }, [rawMaterials, editingItem]);
 
     const handleAddVariant = () => {
         setPackagingVariants([...packagingVariants, { uomId: formUom || "", count: "1", codeSuffix: "" }]);
@@ -86,13 +123,21 @@ export default function RawMaterialsMaster({
         Promise.all([
             fetch("/api/manufacturing/finished-goods/units").then(res => res.json()),
             fetch("/api/manufacturing/finished-goods/brands").then(res => res.json()),
-            fetch("/api/manufacturing/finished-goods/categories").then(res => res.json())
+            fetch("/api/manufacturing/finished-goods/categories").then(res => res.json()),
+            fetch("/api/manufacturing/finished-goods/weight-units").then(res => res.json())
         ])
-            .then(([unitsData, brandsData, categoriesData]) => {
+            .then(([unitsData, brandsData, categoriesData, weightUnitsData]) => {
                 setUnits(unitsData || []);
-                // Only auto-select UOM if in Register mode
-                if (!editingItem && unitsData && unitsData.length > 0) {
-                    setFormUom(unitsData[0].unit_id);
+                const wUnits = (weightUnitsData || []) as Array<{ id: number; code: string; name: string }>;
+                setWeightUnits(wUnits);
+
+                // Auto-select UOM and Weight Unit if in Register mode
+                if (!editingItem) {
+                    if (unitsData && unitsData.length > 0) setFormUom(unitsData[0].unit_id);
+                    if (wUnits && wUnits.length > 0) {
+                        const kgUnit = wUnits.find(u => u.code.toLowerCase() === "kg" || u.name.toLowerCase().includes("kilo"));
+                        setFormWeightUnitId(kgUnit ? kgUnit.id : wUnits[0].id);
+                    }
                 }
                 // disabled-lint-next-line @typescript-eslint/no-explicit-any
                 setBrandsList((brandsData || []).map((b: any) => ({ value: String(b.brand_id), label: b.brand_name })));
@@ -116,6 +161,8 @@ export default function RawMaterialsMaster({
             setFormCode("");
             setFormDesc("");
             setFormDensity("1.000");
+            setFormWeight("");
+            setFormWeightUnitId("");
             setFormBrand("");
             setFormCategory("");
             setFormProductType(389);
@@ -131,6 +178,11 @@ export default function RawMaterialsMaster({
             setFormDesc(editingItem.description || "");
             setFormUom(editingItem.unit_of_measurement?.unit_id || "");
             setFormDensity(String(editingItem.density_factor || "1.000"));
+            setFormWeight(editingItem.weight && Number(editingItem.weight) > 0 ? String(editingItem.weight) : "");
+            const existingWeightUnitId = editingItem.weight_unit_id
+                ? (typeof editingItem.weight_unit_id === "object" ? editingItem.weight_unit_id.unit_id : editingItem.weight_unit_id)
+                : "";
+            setFormWeightUnitId(existingWeightUnitId || "");
             setFormBrand(editingItem.product_brand ? String(editingItem.product_brand) : "");
             setFormCategory(editingItem.product_category ? String(editingItem.product_category) : "");
             setFormProductType(editingItem.product_type || 389);
@@ -283,11 +335,13 @@ export default function RawMaterialsMaster({
         const isUomEmpty = !formUom;
         const isCategoryEmpty = !formCategory;
         const isDensityInvalid = !formDensity || parseFloat(formDensity) <= 0;
+        const isWeightInvalid = !formWeight || parseFloat(formWeight) <= 0 || isNaN(parseFloat(formWeight));
+        const isWeightUnitInvalid = !formWeightUnitId;
         const isUomCountInvalid = !formUomCount || Number(formUomCount) <= 0;
 
-        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isUomCountInvalid) {
+        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isWeightUnitInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
-            toast.error("Please fill out all mandatory fields correctly marked in red outline.");
+            toast.error("Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit.");
             return;
         }
 
@@ -334,15 +388,21 @@ export default function RawMaterialsMaster({
         }
 
         const selectedUomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "pcs";
+        const parsedBaseWeight = parseFloat(formWeight) || 0;
+        const selectedWeightUnitIdNum = Number(formWeightUnitId);
+
         const variantsPayload = packagingVariants.map(v => {
             const vUomShortcut = units.find(u => u.unit_id === Number(v.uomId))?.unit_shortcut || "Unit";
             const cleanSuffix = v.codeSuffix.trim() || `${vUomShortcut.toUpperCase()}${v.count}`;
+            const variantCount = parseFloat(v.count) || 1.0;
             return {
                 product_name: `${formName.trim()} (${vUomShortcut} of ${v.count} ${selectedUomShortcut})`,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
-                unit_of_measurement_count: parseFloat(v.count) || 1.0,
+                unit_of_measurement_count: variantCount,
                 density_factor: parseFloat(formDensity) || 1.0,
+                weight: parsedBaseWeight * variantCount,
+                weight_unit_id: selectedWeightUnitIdNum,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
                 product_type: Number(formProductType),
@@ -365,6 +425,8 @@ export default function RawMaterialsMaster({
             description: formDesc.trim() || undefined,
             unit_of_measurement: Number(formUom),
             density_factor: parseFloat(formDensity) || 1.0,
+            weight: parsedBaseWeight,
+            weight_unit_id: selectedWeightUnitIdNum,
             product_brand: formBrand ? Number(formBrand) : undefined,
             product_category: formCategory ? Number(formCategory) : undefined,
             product_type: formProductType,
@@ -530,6 +592,7 @@ export default function RawMaterialsMaster({
                             <th className="p-3 font-semibold text-muted-foreground">Material Name</th>
                             <th className="p-3 font-semibold text-muted-foreground">Product Code</th>
                             <th className="p-3 font-semibold text-muted-foreground text-center">UOM</th>
+                            <th className="p-3 font-semibold text-muted-foreground text-right">Gross Weight</th>
                             <th className="p-3 font-semibold text-muted-foreground text-right">Density Factor</th>
                             <th className="p-3 font-semibold text-muted-foreground text-right font-bold text-foreground">Standard Landed Unit Cost (PHP)</th>
                             <th className="p-3 font-semibold text-muted-foreground text-right w-24">Actions</th>
@@ -538,7 +601,7 @@ export default function RawMaterialsMaster({
                     <tbody className="divide-y">
                         {loadingItems ? (
                             <tr>
-                                <td colSpan={7} className="p-12 text-center text-muted-foreground">
+                                <td colSpan={8} className="p-12 text-center text-muted-foreground">
                                     <div className="flex items-center justify-center gap-2">
                                         <Loader2 className="h-5 w-5 animate-spin text-primary" />
                                         <span>Loading items...</span>
@@ -547,12 +610,15 @@ export default function RawMaterialsMaster({
                             </tr>
                         ) : sortedFiltered.length === 0 ? (
                             <tr>
-                                <td colSpan={7} className="p-12 text-center text-muted-foreground">
+                                <td colSpan={8} className="p-12 text-center text-muted-foreground">
                                     No items found.
                                 </td>
                             </tr>
                         ) : (
-                            sortedFiltered.map(m => {
+                            (() => {
+                                const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
+                                const paginatedItems = sortedFiltered.slice((page - 1) * pageSize, page * pageSize);
+                                return paginatedItems.map(m => {
                                 const isExpanded = expandedProductId === m.product_id;
                                 const isPkg = isItemPkg(m);
                                 const isChild = !!m.parent_id;
@@ -618,6 +684,20 @@ export default function RawMaterialsMaster({
                                                 </span>
                                             </td>
                                             <td className="p-3 text-right font-mono font-medium">
+                                                {m.weight && Number(m.weight) > 0 ? (
+                                                    <span className="text-foreground font-bold">
+                                                        {Number(m.weight).toFixed(2)}{" "}
+                                                        {typeof m.weight_unit_id === "object" && m.weight_unit_id
+                                                            ? ((m.weight_unit_id as { code?: string; unit_shortcut?: string })?.code || (m.weight_unit_id as { code?: string; unit_shortcut?: string })?.unit_shortcut || "kg")
+                                                            : (weightUnits.find(u => u.id === Number(m.weight_unit_id))?.code || "kg")}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-red-500 font-bold text-[10px] bg-red-500/10 px-1.5 py-0.5 rounded">
+                                                        Missing Weight
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="p-3 text-right font-mono font-medium">
                                                 {m.density_factor ? m.density_factor.toFixed(3) : "1.000"} g/mL
                                             </td>
                                             <td className="p-3 text-right font-mono text-xs font-bold text-foreground bg-emerald-500/5">
@@ -637,7 +717,7 @@ export default function RawMaterialsMaster({
                                         {/* Expandable FIFO Stock Breakdown */}
                                         {isExpanded && (
                                             <tr>
-                                                <td colSpan={7} className="bg-muted/5 p-4 border-b">
+                                                <td colSpan={8} className="bg-muted/5 p-4 border-b">
                                                     <div className="space-y-4">
                                                         <h4 className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 border-b pb-1.5">
                                                             <MapPin className="h-3.5 w-3.5 text-primary" />
@@ -696,416 +776,513 @@ export default function RawMaterialsMaster({
                                         )}
                                     </React.Fragment>
                                 );
-                            })
+                            });
+                            })()
                         )}
                     </tbody>
                 </table>
+                {/* Table Pagination Controls Footer */}
+                {sortedFiltered.length > 0 && (() => {
+                    const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
+                    return (
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 border-t bg-muted/20 text-xs text-muted-foreground font-medium">
+                            <div className="flex items-center gap-2">
+                                <span>Show</span>
+                                <select
+                                    value={pageSize}
+                                    onChange={(e) => {
+                                        setPageSize(Number(e.target.value));
+                                        setPage(1);
+                                    }}
+                                    className="rounded border bg-background px-2 py-1 outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold cursor-pointer"
+                                >
+                                    <option value={10}>10 items</option>
+                                    <option value={20}>20 items</option>
+                                    <option value={50}>50 items</option>
+                                    <option value={100}>100 items</option>
+                                </select>
+                                <span>
+                                    Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, sortedFiltered.length)} of {sortedFiltered.length} items
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="font-semibold text-foreground">Page {page} of {totalPages}</span>
+                                <div className="inline-flex rounded-md shadow-sm">
+                                    <button
+                                        disabled={page <= 1}
+                                        onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                                        className="px-2.5 py-1 text-xs font-bold rounded-l-md border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                                    >
+                                        Previous
+                                    </button>
+                                    <button
+                                        disabled={page >= totalPages}
+                                        onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                                        className="px-2.5 py-1 text-xs font-bold rounded-r-md border-t border-b border-r bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
             </div>
 
-            {/* Registration / Edit Modal Overlay */}
+            {/* Registration / Edit Modal Overlay - Modern One-Pager Layout */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-2xl w-full max-w-xl flex flex-col max-h-[90vh] scale-in duration-200">
+                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-[1360px] h-[88vh] flex flex-col overflow-hidden scale-in duration-200">
 
                         {/* Header */}
-                        <div className="flex items-center justify-between border-b p-5 shrink-0">
-                            <h3 className="font-extrabold text-sm text-foreground flex items-center gap-2">
-                                <Layers className="h-5 w-5 text-primary" />
-                                {editingItem ? "Edit Raw Material / Packaging Item" : "Register Raw Material / Packaging Item"}
-                            </h3>
-                            <button
-                                onClick={() => setIsModalOpen(false)}
-                                className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/50 transition-all cursor-pointer"
-                            >
-                                <X className="h-5 w-5" />
-                            </button>
+                        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4 shrink-0 bg-muted/20">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                                    <Layers className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="font-extrabold text-sm text-foreground tracking-tight">
+                                        {editingItem ? "Edit Raw Material / Packaging Master" : "Register New Raw Material / Packaging Item"}
+                                    </h3>
+                                    <p className="text-[10px] text-muted-foreground font-medium">
+                                        Configure specifications, weight attributes, approved vendors, and purchase packages in one view.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${editingItem ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"}`}>
+                                    {editingItem ? `Editing ID: ${editingItem.product_id}` : "New Item Registration"}
+                                </span>
+                                <button
+                                    onClick={() => setIsModalOpen(false)}
+                                    className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
+                            </div>
                         </div>
 
-                        {/* Form */}
-                        <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2 space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        Material Name <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Soya Bean Oil (Pure Refined)"
-                                        value={formName}
-                                        onChange={e => {
-                                            setFormName(e.target.value);
-                                            // Auto-generate code in Register mode if empty or based on initials
-                                            if (!editingItem && !formCode) {
-                                                const words = e.target.value.split(/\s+/).filter(Boolean);
-                                                const initials = words.map(w => w[0]).join("").replace(/[^a-zA-Z]/g, "").toUpperCase();
-                                                if (initials) {
-                                                    setFormCode(`RM-${initials.substring(0, 5)}`);
-                                                }
-                                            }
-                                        }}
-                                        className={`w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none transition-all duration-200 font-semibold text-foreground ${showValidationErrors && !formName.trim()
-                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
-                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                            }`}
-                                    />
-                                </div>
+                        {/* Form Body - 3 Columns Non-Scrolling One-Pager */}
+                        <form onSubmit={handleFormSubmit} className="flex-1 overflow-hidden p-6 flex flex-col justify-between">
+                            <div className="grid grid-cols-12 gap-5 flex-1 min-h-0 overflow-hidden items-stretch">
+                                
+                                {/* COLUMN 1: Basic Specifications & Physical Properties (4 of 12 cols) */}
+                                <div className="col-span-4 bg-muted/10 p-4.5 rounded-xl border border-border/60 flex flex-col justify-between overflow-y-auto space-y-3">
+                                    <div>
+                                        <h4 className="text-[11px] font-extrabold text-foreground uppercase tracking-wider border-b border-border/60 pb-2 mb-3 flex items-center gap-2">
+                                            <Bookmark className="h-4 w-4 text-primary" />
+                                            1. Basic Specifications
+                                        </h4>
 
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        SKU / Product Code <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. RM-SOYA-01"
-                                        value={formCode}
-                                        onChange={e => setFormCode(e.target.value)}
-                                        className={`w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none transition-all duration-200 font-mono text-foreground font-bold ${showValidationErrors && !formCode.trim()
-                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
-                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                            }`}
-                                    />
-                                </div>
+                                        <div className="space-y-3">
+                                            {/* Material Name */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                    Material Name <span className="text-red-500">*</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. Soya Bean Oil (Pure Refined)"
+                                                    value={formName}
+                                                    onChange={e => {
+                                                        setFormName(e.target.value);
+                                                        if (!editingItem && !formCode) {
+                                                            const words = e.target.value.split(/\s+/).filter(Boolean);
+                                                            const initials = words.map(w => w[0]).join("").replace(/[^a-zA-Z]/g, "").toUpperCase();
+                                                            if (initials) {
+                                                                setFormCode(`RM-${initials.substring(0, 5)}`);
+                                                            }
+                                                        }
+                                                    }}
+                                                    className={`w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none transition-all duration-200 font-semibold text-foreground ${showValidationErrors && !formName.trim()
+                                                            ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+                                                            : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                        }`}
+                                                />
+                                            </div>
 
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        Item Classification <span className="text-red-500">*</span>
-                                    </label>
-                                    <select
-                                        value={formProductType}
-                                        onChange={e => setFormProductType(Number(e.target.value))}
-                                        className="w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-foreground font-semibold transition-all duration-200"
-                                    >
-                                        <option value={389}>Raw Materials</option>
-                                        <option value={390}>Packaging Items</option>
-                                    </select>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        Base UOM <span className="text-red-500">*</span>
-                                    </label>
-                                    {loadingUnits ? (
-                                        <div className="h-10 flex items-center justify-center border rounded-lg bg-background">
-                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                        </div>
-                                    ) : (
-                                        <select
-                                            value={formUom}
-                                            onChange={e => setFormUom(Number(e.target.value))}
-                                            className={`w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none transition-all duration-200 text-foreground font-semibold ${showValidationErrors && !formUom
-                                                    ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
-                                                    : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                                }`}
-                                        >
-                                            <option value="">-- Select UOM --</option>
-                                            {units.map(u => (
-                                                <option key={u.unit_id} value={u.unit_id}>
-                                                    {u.unit_name} ({u.unit_shortcut})
-                                                </option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        Category <span className="text-red-500">*</span>
-                                    </label>
-                                    <div className={showValidationErrors && !formCategory ? "ring-2 ring-red-500/25 rounded-lg border border-red-500" : ""}>
-                                        <CreatableSelect
-                                            options={categoriesList}
-                                            value={formCategory}
-                                            onValueChange={setFormCategory}
-                                            placeholder="Select Category..."
-                                            onCreateOption={handleCreateCategoryOnTheFly}
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Brand (Optional)</label>
-                                    <CreatableSelect
-                                        options={brandsList}
-                                        value={formBrand}
-                                        onValueChange={setFormBrand}
-                                        placeholder="Select Brand..."
-                                        onCreateOption={handleCreateBrandOnTheFly}
-                                    />
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                        Density Factor (g/mL) <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.001"
-                                        min="0.001"
-                                        value={formDensity}
-                                        onChange={e => setFormDensity(e.target.value)}
-                                        className={`w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none transition-all duration-200 font-mono font-bold text-foreground ${showValidationErrors && (!formDensity || parseFloat(formDensity) <= 0)
-                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
-                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                            }`}
-                                    />
-                                </div>
-
-                                {/* Parent Product Selection */}
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Parent Product (Optional)</label>
-                                    <select
-                                        value={formParentId}
-                                        onChange={e => {
-                                            setFormParentId(e.target.value);
-                                            if (!e.target.value) setFormUomCount("1");
-                                        }}
-                                        className="w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-foreground font-semibold transition-all duration-200"
-                                    >
-                                        <option value="">-- No Parent (Base Material) --</option>
-                                        {rawMaterials
-                                            .filter(rm => {
-                                                // Exclude self if editing
-                                                if (editingItem && Number(rm.product_id) === Number(editingItem.product_id)) return false;
-                                                // Only allow base items (items without parents themselves) to be parents
-                                                return !rm.parent_id;
-                                            })
-                                            .map(rm => (
-                                                <option key={rm.product_id} value={rm.product_id}>
-                                                    {rm.product_name} ({rm.product_code})
-                                                </option>
-                                            ))}
-                                    </select>
-                                </div>
-
-                                {/* UOM Count / Stock Conversion factor - UX Enhanced */}
-                                <div className="col-span-2 space-y-1.5 p-3.5 bg-primary/5 rounded-xl border border-primary/10">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-[10px] text-primary font-bold uppercase tracking-wider block">
-                                            UOM Count (Conversion Factor) <span className="text-red-500">*</span>
-                                        </label>
-                                        {formParentId && (
-                                            <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded">
-                                                Active Stock Conversion
-                                            </span>
-                                        )}
-                                    </div>
-                                    <input
-                                        type="number"
-                                        step="any"
-                                        min="0.0001"
-                                        value={formUomCount}
-                                        onChange={e => setFormUomCount(e.target.value)}
-                                        className={`w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none transition-all duration-200 font-semibold text-foreground ${showValidationErrors && (!formUomCount || Number(formUomCount) <= 0)
-                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
-                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                            }`}
-                                        placeholder="e.g. 1"
-                                    />
-
-                                    {/* Dynamic visual preview of the formula */}
-                                    <div className="mt-2.5 p-3 rounded-lg bg-muted/40 border border-border/60 flex items-center justify-between gap-2 text-xs">
-                                        <div className="flex flex-col items-center flex-1 bg-background p-1.5 rounded border border-border/50">
-                                            <span className="text-[9px] text-muted-foreground font-bold uppercase">1x Child Unit</span>
-                                            <span className="font-extrabold text-foreground mt-0.5">{selectedUomShortcut}</span>
-                                        </div>
-                                        <div className="text-primary font-extrabold select-none">➔</div>
-                                        <div className="flex flex-col items-center flex-1 bg-primary/5 p-1.5 rounded border border-primary/20">
-                                            <span className="text-[9px] text-primary font-bold uppercase">Converted Value</span>
-                                            <span className="font-black text-primary mt-0.5">
-                                                {formUomCount || "1.0"} × {formParentId ? (parentUomShortcut || "Base Unit") : selectedUomShortcut}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Read-Only Standard Landed Cost during editing */}
-                                {editingItem && (
-                                    <div className="col-span-2 space-y-1.5 opacity-85">
-                                        <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Standard Landed Unit Cost (PHP) [Read Only]</label>
-                                        <input
-                                            type="text"
-                                            readOnly
-                                            disabled
-                                            value={`₱${editingItem.cost_per_unit.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                                            className="w-full rounded-lg border bg-muted px-3.5 py-2.5 text-xs font-mono font-bold text-muted-foreground cursor-not-allowed select-none"
-                                        />
-                                        <p className="text-[9px] text-muted-foreground">Standard Landed Unit Cost is dynamically computed and updated by the Cargo Landed Cost Engine.</p>
-                                    </div>
-                                )}
-
-                                <div className="col-span-2 space-y-1.5">
-                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Description</label>
-                                    <textarea
-                                        rows={2}
-                                        placeholder="Add raw material specifications, quality requirements, notes..."
-                                        value={formDesc}
-                                        onChange={e => setFormDesc(e.target.value)}
-                                        className="w-full rounded-lg border bg-background px-3.5 py-2.5 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-medium text-foreground resize-none font-semibold transition-all duration-200"
-                                    />
-                                </div>
-
-                                <div className="col-span-2 space-y-1.5">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Link Approved Suppliers / Vendors</label>
-                                        <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded">
-                                            {selectedSupplierIds.length} Linked
-                                        </span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        placeholder="Filter suppliers list..."
-                                        value={supplierSearch}
-                                        onChange={e => setSupplierSearch(e.target.value)}
-                                        className="w-full rounded-lg border bg-background px-3.5 py-2 text-[11px] outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-medium mb-1.5 transition-all duration-200"
-                                    />
-                                    <div className="border rounded-lg bg-background p-2.5 max-h-[140px] overflow-y-auto divide-y divide-muted/30">
-                                        {filteredSuppliers.length === 0 ? (
-                                            <div className="text-center py-4 text-xs text-muted-foreground">No suppliers match search</div>
-                                        ) : (
-                                            filteredSuppliers.map(s => {
-                                                const isChecked = selectedSupplierIds.includes(s.id);
-                                                return (
-                                                    <label
-                                                        key={s.id}
-                                                        className="flex items-center gap-2 py-1.5 hover:bg-muted/10 cursor-pointer select-none text-xs font-semibold text-foreground"
-                                                    >
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isChecked}
-                                                            onChange={() => handleToggleSupplier(s.id)}
-                                                            className="rounded text-primary focus:ring-0 h-4 w-4 cursor-pointer"
-                                                        />
-                                                        <span>{s.supplier_name}</span>
-                                                        {s.supplier_shortcut && (
-                                                            <span className="text-[9px] text-muted-foreground font-mono">({s.supplier_shortcut})</span>
-                                                        )}
+                                            {/* SKU Code & Item Classification */}
+                                            <div className="grid grid-cols-2 gap-2.5">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                        Product Code <span className="text-red-500">*</span>
                                                     </label>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Define Packaging Variants builder */}
-                                {!formParentId && (
-                                    <div className="col-span-2 space-y-3 p-4 bg-muted/20 border border-dashed rounded-xl mt-2 animate-in slide-in-from-top-1 duration-200">
-                                        <div className="flex justify-between items-center border-b border-border/80 pb-2">
-                                            <h4 className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                                                <Layers className="h-3.5 w-3.5 text-primary" />
-                                                Define Purchase Packaging Variants (Children Units)
-                                            </h4>
-                                            <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded">
-                                                {packagingVariants.length} Added
-                                            </span>
-                                        </div>
-                                        <p className="text-[10px] text-muted-foreground leading-normal">
-                                            Quickly register packages you buy (e.g. 25kg Bag, 500g Box) of this base ingredient. Suffix codes append to the parent code (e.g., parent code <code>{formCode || "CODE"}</code> + Suffix <code>BAG25</code> = <code>{formCode || "CODE"}-BAG25</code>).
-                                        </p>
-
-                                        {packagingVariants.map((v, vIdx) => (
-                                            <div key={vIdx} className="grid grid-cols-12 gap-2 bg-background border p-2.5 rounded-lg relative items-end">
-                                                <div className="col-span-4 space-y-1">
-                                                    <label className="text-[8px] font-bold text-muted-foreground uppercase block">Packaging Unit (UOM)</label>
-                                                    <select
-                                                        value={v.uomId}
-                                                        onChange={e => handleUpdateVariant(vIdx, "uomId", e.target.value === "" ? "" : Number(e.target.value))}
-                                                        className="w-full rounded-md border bg-background px-2 py-1 text-[10px] outline-none h-8 font-semibold text-foreground"
-                                                    >
-                                                        <option value="">Select UOM...</option>
-                                                        {units.map(u => (
-                                                            <option key={u.unit_id} value={u.unit_id}>
-                                                                {u.unit_name} ({u.unit_shortcut})
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-
-                                                <div className="col-span-4 space-y-1">
-                                                    <label className="text-[8px] font-bold text-muted-foreground uppercase block">Conversion Count (Base Units)</label>
-                                                    <input
-                                                        type="number"
-                                                        step="any"
-                                                        min="0.0001"
-                                                        placeholder="e.g. 25"
-                                                        value={v.count}
-                                                        onChange={e => handleUpdateVariant(vIdx, "count", e.target.value)}
-                                                        className="w-full rounded-md border bg-background px-2 py-1 text-[10px] outline-none h-8 font-semibold text-foreground"
-                                                    />
-                                                </div>
-
-                                                <div className="col-span-3 space-y-1">
-                                                    <label className="text-[8px] font-bold text-muted-foreground uppercase block">Suffix (e.g. BAG25)</label>
                                                     <input
                                                         type="text"
-                                                        placeholder="BAG25"
-                                                        value={v.codeSuffix}
-                                                        onChange={e => handleUpdateVariant(vIdx, "codeSuffix", e.target.value.toUpperCase())}
-                                                        className="w-full rounded-md border bg-background px-2 py-1 text-[10px] outline-none h-8 font-mono font-bold text-foreground"
+                                                        placeholder="e.g. RM-SOYA-01"
+                                                        value={formCode}
+                                                        onChange={e => setFormCode(e.target.value)}
+                                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none transition-all duration-200 font-mono text-foreground font-bold ${showValidationErrors && !formCode.trim()
+                                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+                                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                            }`}
                                                     />
                                                 </div>
 
-                                                <div className="col-span-1 flex justify-center pb-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemoveVariant(vIdx)}
-                                                        className="text-muted-foreground hover:text-red-500 p-1 rounded hover:bg-muted/50 transition-colors"
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                        Classification <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <select
+                                                        value={formProductType}
+                                                        onChange={e => setFormProductType(Number(e.target.value))}
+                                                        className="w-full rounded-lg border bg-background px-2.5 py-2 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-foreground font-semibold transition-all duration-200 h-9"
                                                     >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </button>
+                                                        <option value={389}>Raw Materials</option>
+                                                        <option value={390}>Packaging Items</option>
+                                                    </select>
                                                 </div>
                                             </div>
-                                        ))}
 
-                                        {editingItem && (() => {
-                                            const existingChildren = rawMaterials.filter(rm => Number(rm.parent_id) === editingItem.product_id);
-                                            if (existingChildren.length === 0) return null;
-                                            return (
-                                                <div className="space-y-1.5 mt-2 bg-muted/10 p-2.5 rounded-lg border border-border/40">
-                                                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Registered Child Packaging Units</span>
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {existingChildren.map(c => (
-                                                            <span key={c.product_id} className="text-[9px] bg-primary/10 text-primary border border-primary/20 font-bold px-2 py-0.5 rounded-md flex items-center gap-1 select-none">
-                                                                ↳ {c.product_name} <span className="opacity-60 font-mono">({c.product_code})</span>
-                                                            </span>
-                                                        ))}
+                                            {/* Base UOM & Category */}
+                                            <div className="grid grid-cols-2 gap-2.5">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                        Base UOM <span className="text-red-500">*</span>
+                                                    </label>
+                                                    {loadingUnits ? (
+                                                        <div className="h-9 flex items-center justify-center border rounded-lg bg-background">
+                                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                                        </div>
+                                                    ) : (
+                                                        <div className={showValidationErrors && !formUom ? "ring-2 ring-red-500/25 rounded-lg border border-red-500" : ""}>
+                                                            <CreatableSelect
+                                                                options={uomOptions}
+                                                                value={formUom ? String(formUom) : ""}
+                                                                onValueChange={val => setFormUom(val ? Number(val) : "")}
+                                                                placeholder="Base UOM..."
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                        Category <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <div className={showValidationErrors && !formCategory ? "ring-2 ring-red-500/25 rounded-lg border border-red-500" : ""}>
+                                                        <CreatableSelect
+                                                            options={categoriesList}
+                                                            value={formCategory}
+                                                            onValueChange={setFormCategory}
+                                                            placeholder="Category..."
+                                                            onCreateOption={handleCreateCategoryOnTheFly}
+                                                        />
                                                     </div>
                                                 </div>
-                                            );
-                                        })()}
+                                            </div>
 
-                                        <button
-                                            type="button"
-                                            onClick={handleAddVariant}
-                                            className="w-full py-2 border border-dashed border-primary/30 rounded-lg text-[10px] font-bold text-primary hover:bg-primary/5 transition-colors cursor-pointer flex items-center justify-center gap-1"
-                                        >
-                                            <Plus className="h-3 w-3" />
-                                            Add Purchase Packaging Option
-                                        </button>
+                                            {/* Brand & Density Factor */}
+                                            <div className="grid grid-cols-2 gap-2.5">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Brand</label>
+                                                    <CreatableSelect
+                                                        options={brandsList}
+                                                        value={formBrand}
+                                                        onValueChange={setFormBrand}
+                                                        placeholder="Brand..."
+                                                        onCreateOption={handleCreateBrandOnTheFly}
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                        Density (g/mL) <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.001"
+                                                        min="0.001"
+                                                        value={formDensity}
+                                                        onChange={e => setFormDensity(e.target.value)}
+                                                        className={`w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none transition-all duration-200 font-mono font-bold text-foreground ${showValidationErrors && (!formDensity || parseFloat(formDensity) <= 0)
+                                                                ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+                                                                : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                            }`}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Gross Weight & Weight Unit */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                                                    Gross Weight & Unit <span className="text-red-500">*</span>
+                                                </label>
+                                                <div className="grid grid-cols-12 gap-2">
+                                                    <div className="col-span-7">
+                                                        <input
+                                                            type="number"
+                                                            step="0.001"
+                                                            min="0.001"
+                                                            placeholder="e.g. 2.50"
+                                                            value={formWeight}
+                                                            onChange={e => setFormWeight(e.target.value)}
+                                                            className={`w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none transition-all duration-200 font-mono font-bold text-foreground ${showValidationErrors && (!formWeight || parseFloat(formWeight) <= 0)
+                                                                    ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+                                                                    : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                                }`}
+                                                        />
+                                                    </div>
+                                                    <div className={`col-span-5 ${showValidationErrors && !formWeightUnitId ? "ring-2 ring-red-500/25 rounded-lg border border-red-500" : ""}`}>
+                                                        <CreatableSelect
+                                                            options={weightUnitOptions}
+                                                            value={formWeightUnitId ? String(formWeightUnitId) : ""}
+                                                            onValueChange={val => setFormWeightUnitId(val ? Number(val) : "")}
+                                                            placeholder="Unit..."
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                )}
+                                </div>
+
+                                {/* COLUMN 2: Stock Hierarchy, Conversion & Notes (4 of 12 cols) */}
+                                <div className="col-span-4 bg-muted/10 p-4.5 rounded-xl border border-border/60 flex flex-col justify-between overflow-y-auto space-y-3">
+                                    <div className="space-y-3">
+                                        <h4 className="text-[11px] font-extrabold text-foreground uppercase tracking-wider border-b border-border/60 pb-2 flex items-center gap-2">
+                                            <Layers className="h-4 w-4 text-primary" />
+                                            2. Stock Hierarchy & Formula
+                                        </h4>
+
+                                        {/* Parent Product Selection */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Parent Material (Optional)</label>
+                                            <CreatableSelect
+                                                options={parentProductOptions}
+                                                value={formParentId}
+                                                onValueChange={val => {
+                                                    setFormParentId(val);
+                                                    if (!val) setFormUomCount("1");
+                                                }}
+                                                placeholder="Search Parent Material..."
+                                            />
+                                        </div>
+
+                                        {/* UOM Count / Stock Conversion factor */}
+                                        <div className="space-y-2 p-3 bg-primary/5 rounded-xl border border-primary/15">
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-[10px] text-primary font-bold uppercase tracking-wider block">
+                                                    UOM Conversion Count <span className="text-red-500">*</span>
+                                                </label>
+                                                {formParentId && (
+                                                    <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded">
+                                                        Parent Active
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <input
+                                                type="number"
+                                                step="any"
+                                                min="0.0001"
+                                                value={formUomCount}
+                                                onChange={e => setFormUomCount(e.target.value)}
+                                                className={`w-full rounded-lg border bg-background px-3 py-1.5 text-xs outline-none transition-all duration-200 font-mono font-bold text-foreground ${showValidationErrors && (!formUomCount || Number(formUomCount) <= 0)
+                                                        ? "border-red-500 focus:ring-2 focus:ring-red-100 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+                                                        : "border-border focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                    }`}
+                                                placeholder="e.g. 1"
+                                            />
+
+                                            {/* Dynamic visual formula preview */}
+                                            <div className="p-2.5 rounded-lg bg-background border border-border/60 flex items-center justify-between gap-1.5 text-xs">
+                                                <div className="flex flex-col items-center flex-1 bg-muted/30 p-1 rounded border border-border/40">
+                                                    <span className="text-[8px] text-muted-foreground font-bold uppercase">Child Unit</span>
+                                                    <span className="font-extrabold text-foreground text-[11px] mt-0.5">{selectedUomShortcut}</span>
+                                                </div>
+                                                <div className="text-primary font-black text-xs select-none">➔</div>
+                                                <div className="flex flex-col items-center flex-1 bg-primary/10 p-1 rounded border border-primary/20">
+                                                    <span className="text-[8px] text-primary font-bold uppercase">Conversion</span>
+                                                    <span className="font-black text-primary text-[11px] mt-0.5">
+                                                        {formUomCount || "1.0"} × {formParentId ? (parentUomShortcut || "Base Unit") : selectedUomShortcut}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Description */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Description & Specs</label>
+                                            <textarea
+                                                rows={2}
+                                                placeholder="Material specifications, storage temperature, quality standards..."
+                                                value={formDesc}
+                                                onChange={e => setFormDesc(e.target.value)}
+                                                className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-medium text-foreground resize-none font-semibold transition-all duration-200"
+                                            />
+                                        </div>
+
+                                        {/* Read-Only Standard Landed Cost during editing */}
+                                        {editingItem && (
+                                            <div className="space-y-1 p-2.5 bg-muted/20 rounded-lg border border-border/50">
+                                                <label className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider block">Standard Landed Unit Cost (Read-Only)</label>
+                                                <div className="text-sm font-mono font-black text-foreground">
+                                                    ₱{editingItem.cost_per_unit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* COLUMN 3: Vendors & Purchase Packages (4 of 12 cols) */}
+                                <div className="col-span-4 space-y-4 flex flex-col h-full min-h-0 overflow-hidden">
+
+                                    {/* TOP HALF: Approved Vendors */}
+                                    <div className="bg-muted/10 p-4 rounded-xl border border-border/60 space-y-2.5 shrink-0">
+                                        <div className="flex justify-between items-center border-b border-border/60 pb-2">
+                                            <label className="text-[11px] font-extrabold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                                <MapPin className="h-3.5 w-3.5 text-primary" />
+                                                3. Linked Vendors
+                                            </label>
+                                            <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded-full border border-primary/20">
+                                                {selectedSupplierIds.length} Selected
+                                            </span>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter vendors..."
+                                            value={supplierSearch}
+                                            onChange={e => setSupplierSearch(e.target.value)}
+                                            className="w-full rounded-lg border bg-background px-3 py-1.5 text-[11px] outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-medium transition-all duration-200"
+                                        />
+                                        <div className="border rounded-lg bg-background p-2 max-h-[110px] overflow-y-auto divide-y divide-muted/30">
+                                            {filteredSuppliers.length === 0 ? (
+                                                <div className="text-center py-2 text-[11px] text-muted-foreground">No vendors match</div>
+                                            ) : (
+                                                filteredSuppliers.map(s => {
+                                                    const isChecked = selectedSupplierIds.includes(s.id);
+                                                    return (
+                                                        <label
+                                                            key={s.id}
+                                                            className="flex items-center gap-2 py-1 px-1 hover:bg-muted/20 rounded cursor-pointer select-none text-[11px] font-semibold text-foreground"
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isChecked}
+                                                                onChange={() => handleToggleSupplier(s.id)}
+                                                                className="rounded text-primary focus:ring-0 h-3.5 w-3.5 cursor-pointer"
+                                                            />
+                                                            <span className="truncate">{s.supplier_name}</span>
+                                                            {s.supplier_shortcut && (
+                                                                <span className="text-[9px] text-muted-foreground font-mono shrink-0">({s.supplier_shortcut})</span>
+                                                            )}
+                                                        </label>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* BOTTOM HALF: Purchase Packaging Variants */}
+                                    {!formParentId && (
+                                        <div className="bg-muted/20 border border-dashed rounded-xl p-4 flex-1 flex flex-col min-h-0 overflow-hidden space-y-2.5">
+                                            <div className="flex justify-between items-center border-b border-border/60 pb-2 shrink-0">
+                                                <h4 className="text-[11px] font-extrabold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                                    <Layers className="h-3.5 w-3.5 text-primary" />
+                                                    4. Purchase Packages
+                                                </h4>
+                                                <span className="text-[9px] bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded-full border border-primary/20">
+                                                    {packagingVariants.length} Added
+                                                </span>
+                                            </div>
+
+                                            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0">
+                                                {packagingVariants.map((v, vIdx) => (
+                                                    <div key={vIdx} className="grid grid-cols-12 gap-1.5 bg-background border p-2 rounded-lg relative items-end shadow-xs">
+                                                        <div className="col-span-5 space-y-0.5">
+                                                            <label className="text-[8px] font-bold text-muted-foreground uppercase block">Unit</label>
+                                                            <CreatableSelect
+                                                                options={uomOptions}
+                                                                value={v.uomId ? String(v.uomId) : ""}
+                                                                onValueChange={val => handleUpdateVariant(vIdx, "uomId", val ? Number(val) : "")}
+                                                                placeholder="UOM..."
+                                                            />
+                                                        </div>
+
+                                                        <div className="col-span-3 space-y-0.5">
+                                                            <label className="text-[8px] font-bold text-muted-foreground uppercase block">Count</label>
+                                                            <input
+                                                                type="number"
+                                                                step="any"
+                                                                min="0.0001"
+                                                                placeholder="25"
+                                                                value={v.count}
+                                                                onChange={e => handleUpdateVariant(vIdx, "count", e.target.value)}
+                                                                className="w-full rounded-md border bg-background px-2 py-1 text-[10px] outline-none h-8 font-semibold text-foreground"
+                                                            />
+                                                        </div>
+
+                                                        <div className="col-span-3 space-y-0.5">
+                                                            <label className="text-[8px] font-bold text-muted-foreground uppercase block">Suffix</label>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="BAG25"
+                                                                value={v.codeSuffix}
+                                                                onChange={e => handleUpdateVariant(vIdx, "codeSuffix", e.target.value.toUpperCase())}
+                                                                className="w-full rounded-md border bg-background px-1.5 py-1 text-[10px] outline-none h-8 font-mono font-bold text-foreground"
+                                                            />
+                                                        </div>
+
+                                                        <div className="col-span-1 flex justify-center pb-1">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveVariant(vIdx)}
+                                                                className="text-muted-foreground hover:text-red-500 p-1 rounded hover:bg-muted/50 transition-colors"
+                                                            >
+                                                                <Trash2 className="h-3.5 w-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+
+                                                {packagingVariants.length === 0 && (
+                                                    <div className="text-center py-4 text-[10px] text-muted-foreground italic border border-dashed rounded-lg">
+                                                        No purchase packaging variants added yet.
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={handleAddVariant}
+                                                className="w-full py-2 border border-dashed border-primary/40 rounded-lg text-xs font-bold text-primary hover:bg-primary/5 transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                                            >
+                                                <Plus className="h-3.5 w-3.5" />
+                                                Add Package Variant
+                                            </button>
+                                        </div>
+                                    )}
+
+                                </div>
                             </div>
 
-                            {/* Submit */}
-                            <div className="border-t pt-4 flex justify-end gap-3 shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsModalOpen(false)}
-                                    className="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground text-xs font-extrabold px-4 py-2.5 rounded-lg transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-extrabold px-5 py-2.5 rounded-lg transition-all shadow-md inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                                >
-                                    {saving ? (
-                                        <>
-                                            <Loader2 className="h-3 w-3 animate-spin" />
-                                            Saving Item...
-                                        </>
-                                    ) : editingItem ? "Update Material" : "Save Material"}
-                                </button>
+                            {/* Modal Footer */}
+                            <div className="border-t border-border/60 pt-4 flex items-center justify-between shrink-0 bg-background/50">
+                                <div className="text-[10px] font-medium text-muted-foreground flex items-center gap-1.5">
+                                    <Info className="h-3.5 w-3.5 text-primary" />
+                                    <span>All required fields (<span className="text-red-500">*</span>) must be completed before saving.</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsModalOpen(false)}
+                                        className="bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground text-xs font-extrabold px-4 py-2.5 rounded-xl transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={saving}
+                                        className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-extrabold px-6 py-2.5 rounded-xl transition-all shadow-md inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                                    >
+                                        {saving ? (
+                                            <>
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                Saving Material...
+                                            </>
+                                        ) : editingItem ? "Update Material Master" : "Save Material Master"}
+                                    </button>
+                                </div>
                             </div>
                         </form>
                     </div>

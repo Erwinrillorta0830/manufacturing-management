@@ -94,7 +94,7 @@ export interface ShipmentExpense {
     expense_type?: string;
     overhead_id?: number;
     amount_php: number | string;
-    allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume";
+    allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
 export interface RawMaterial {
@@ -114,6 +114,8 @@ export interface RawMaterial {
     cost_per_unit: number;
     estimated_unit_cost: number;
     density_factor: number;
+    weight?: number | null;
+    weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
@@ -148,6 +150,8 @@ export interface RegisterRawMaterialPayload {
     barcode?: string;
     cost_per_unit?: number;
     density_factor?: number;
+    weight?: number;
+    weight_unit_id?: number | null;
     unit_of_measurement?: number;
     price_per_unit?: number;
     product_brand?: number | null;
@@ -197,7 +201,7 @@ export interface DirectusShipmentExpense {
     shipment_id: number;
     expense_type: string;
     amount_php: number | string;
-    allocation_method: "Value" | "Weight" | "Volume";
+    allocation_method: "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
 export interface DirectusProductPerSupplier {
@@ -234,6 +238,8 @@ export interface PackagingVariant {
     unit_of_measurement?: number;
     unit_of_measurement_count?: number;
     density_factor?: number;
+    weight?: number;
+    weight_unit_id?: number | null;
     product_brand?: number | null;
     product_category?: number | null;
     product_type?: number | null;
@@ -286,6 +292,8 @@ export interface BFFCatalogProduct {
     cost_per_unit?: number | string;
     estimated_unit_cost?: number | string;
     density_factor?: number | string;
+    weight?: number | string | null;
+    weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;

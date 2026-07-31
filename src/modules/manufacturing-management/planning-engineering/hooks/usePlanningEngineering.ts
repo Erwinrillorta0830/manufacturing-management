@@ -479,7 +479,7 @@ export function usePlanningEngineering() {
     };
 
     // Release JO Submit
-    const handleConfirmRelease = async () => {
+    const handleConfirmRelease = async (selectedSubAssemblyVersions?: Record<number, number>) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
 
         setReleasingJO(true);
@@ -505,6 +505,7 @@ export function usePlanningEngineering() {
                     bom: {
                         version_id: firstLine.bom_version_id
                     },
+                    subAssemblyVersionMap: selectedSubAssemblyVersions || {},
                     assignments: assignments,
                     products: [
                         {
