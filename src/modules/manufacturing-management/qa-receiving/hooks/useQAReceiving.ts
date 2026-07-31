@@ -453,7 +453,7 @@ export function useQAReceiving() {
                     const mfg = new Date(value);
                     if (!isNaN(mfg.getTime())) {
                         const line = lineItems.find(l => l.line_id === lineId);
-                        const shelfLifeDays = Number((line?.product_id as any)?.product_shelf_life || 365);
+                        const shelfLifeDays = Number((line?.product_id as unknown as Record<string, unknown>)?.product_shelf_life || 365);
                         const exp = new Date(mfg.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
                         updatedRow.expirationDate = exp.toISOString().split("T")[0];
                     }
@@ -467,7 +467,7 @@ export function useQAReceiving() {
                 }
                 if (!updatedRow.expirationDate) {
                     const line = lineItems.find(l => l.line_id === lineId);
-                    const shelfLifeDays = Number((line?.product_id as any)?.product_shelf_life || 365);
+                    const shelfLifeDays = Number((line?.product_id as unknown as Record<string, unknown>)?.product_shelf_life || 365);
                     const mfgDate = new Date(updatedRow.manufacturingDate || todayStr);
                     const expDate = new Date(mfgDate.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
                     updatedRow.expirationDate = expDate.toISOString().split("T")[0];

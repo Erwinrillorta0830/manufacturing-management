@@ -38,7 +38,8 @@ export function selectPreferredActiveVersion<T extends VersionSelectionCandidate
     if (!versions || versions.length === 0) return null;
     const activeVersions = versions.filter(version => {
         const s = String(version.status ?? "").toLowerCase();
-        return s === "active" || s === "approved" || (version as any).is_active === true || (version as any).is_active === 1;
+        const verRecord = version as Record<string, unknown>;
+        return s === "active" || s === "approved" || verRecord.is_active === true || verRecord.is_active === 1;
     });
     const pool = activeVersions.length > 0 ? activeVersions : versions;
     return pool.find(isStandardBOMVersion) || pool[0] || null;
@@ -153,14 +154,14 @@ export async function getBOMDetailsForVersion(
         const routesJson = await resRoutes.json();
         let routes: RouteStep[] = routesJson.data || [];
 
-        const getRouteId = (val: any): number => {
+        const getRouteId = (val: unknown): number => {
             if (!val) return 0;
-            if (typeof val === "object") return Number(val.route_id || val.id || 0);
+            if (typeof val === "object") return Number((val as Record<string, unknown>).route_id || (val as Record<string, unknown>).id || 0);
             return Number(val) || 0;
         };
-        const getProductId = (val: any): number => {
+        const getProductId = (val: unknown): number => {
             if (!val) return 0;
-            if (typeof val === "object") return Number(val.product_id || val.id || 0);
+            if (typeof val === "object") return Number((val as Record<string, unknown>).product_id || (val as Record<string, unknown>).id || 0);
             return Number(val) || 0;
         };
 
@@ -175,10 +176,10 @@ export async function getBOMDetailsForVersion(
         const bomItems: RouteBOMItem[] = bomJson.data || [];
 
         bomItems.forEach(b => {
-            b.product_id = getProductId(b.product_id) as any;
+            b.product_id = getProductId(b.product_id);
         });
 
-        (version as any).bom_items = bomItems;
+        (version as unknown as Record<string, unknown>).bom_items = bomItems;
         if (routes.length === 0 && bomItems.length > 0) {
             routes = [{
                 route_id: 0,

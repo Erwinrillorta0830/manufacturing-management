@@ -18,11 +18,12 @@ export function SubmittingLoadingOverlay({
     const [currentStepText, setCurrentStepText] = useState("Resolving product recipe versions...");
 
     useEffect(() => {
-        if (!isOpen) {
+        if (!isOpen) return;
+
+        const t0 = setTimeout(() => {
             setProgress(15);
             setCurrentStepText("Resolving product recipe versions...");
-            return;
-        }
+        }, 0);
 
         const t1 = setTimeout(() => {
             setProgress(40);
@@ -40,6 +41,7 @@ export function SubmittingLoadingOverlay({
         }, 2200);
 
         return () => {
+            clearTimeout(t0);
             clearTimeout(t1);
             clearTimeout(t2);
             clearTimeout(t3);
