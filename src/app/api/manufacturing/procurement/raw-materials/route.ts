@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 
 
 export async function GET(request: Request) {
@@ -35,6 +36,20 @@ export async function POST(request: Request) {
 
         if (!productDetails || !productDetails.product_name || !productDetails.product_code) {
             return NextResponse.json({ error: "Missing required fields (product_name, product_code)" }, { status: 400 });
+        }
+
+        const rawWeight = Number(productDetails.weight);
+        if (productDetails.weight === undefined || productDetails.weight === null || isNaN(rawWeight) || rawWeight <= 0) {
+            return NextResponse.json({ error: "Gross weight is required and must be greater than 0." }, { status: 400 });
+        }
+
+        const rawWeightUnitId = productDetails.weight_unit_id ? Number(productDetails.weight_unit_id) : null;
+        if (!rawWeightUnitId) {
+            return NextResponse.json({ error: "Weight unit is required." }, { status: 400 });
+        }
+        const verifiedWeightUnitId = await verifyOrGetValidWeightUnitId(rawWeightUnitId);
+        if (!verifiedWeightUnitId) {
+            return NextResponse.json({ error: "Selected weight unit is invalid." }, { status: 400 });
         }
 
         // Get logged in user ID from secure access token cookie
@@ -71,6 +86,9 @@ export async function POST(request: Request) {
         // Create Raw Material / Packaging Product with explicit null overrides for foreign keys to bypass invalid database defaults
         const productPayload = {
             ...productDetails,
+            weight: rawWeight,
+            product_weight: rawWeight,
+            weight_unit_id: verifiedWeightUnitId,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -120,6 +138,7 @@ export async function POST(request: Request) {
                 for (const variant of packagingVariants) {
                     const variantPayload = {
                         ...variant,
+                        product_weight: variant.weight !== undefined ? variant.weight : undefined,
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
@@ -179,9 +198,22 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
         }
 
+        const rawWeight = productDetails.weight !== undefined ? Number(productDetails.weight) : null;
+        if (productDetails.weight !== undefined && (rawWeight === null || isNaN(rawWeight) || rawWeight <= 0)) {
+            return NextResponse.json({ error: "Gross weight is required and must be greater than 0." }, { status: 400 });
+        }
+
+        const rawWeightUnitId = productDetails.weight_unit_id !== undefined ? (productDetails.weight_unit_id ? Number(productDetails.weight_unit_id) : null) : undefined;
+        if (productDetails.weight_unit_id !== undefined && !rawWeightUnitId) {
+            return NextResponse.json({ error: "Weight unit is required." }, { status: 400 });
+        }
+        const verifiedWeightUnitId = rawWeightUnitId !== undefined ? await verifyOrGetValidWeightUnitId(rawWeightUnitId) : undefined;
+
         // Clean product brand, category, etc., if they are undefined to map to null
         const productPayload = {
             ...productDetails,
+            ...(rawWeight !== null ? { weight: rawWeight, product_weight: rawWeight } : {}),
+            ...(verifiedWeightUnitId !== undefined ? { weight_unit_id: verifiedWeightUnitId } : {}),
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -239,6 +271,7 @@ export async function PATCH(request: Request) {
                 for (const variant of packagingVariants) {
                     const variantPayload = {
                         ...variant,
+                        product_weight: variant.weight !== undefined ? variant.weight : undefined,
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,

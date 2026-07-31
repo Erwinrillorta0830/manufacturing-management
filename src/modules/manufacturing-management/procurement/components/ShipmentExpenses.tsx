@@ -89,6 +89,27 @@ export default function ShipmentExpenses({
         return sum + (qty * Number(item.base_unit_cost_php || 0));
     }, 0);
 
+    const rmQuantity = lines.reduce((sum, line) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const prod = line.product_id as any;
+        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
+        if (!isPackaging) {
+            return sum + (isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0));
+        }
+        return sum;
+    }, 0);
+
+    const pkgWeight = lines.reduce((sum, line) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const prod = line.product_id as any;
+        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
+        if (isPackaging) {
+            const qty = isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0);
+            return sum + (qty * Number(prod?.weight || 0));
+        }
+        return sum;
+    }, 0);
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start justify-between gap-4 bg-muted/20 border p-5 rounded-xl">
@@ -135,6 +156,15 @@ export default function ShipmentExpenses({
                                 <span>Avg Landed Overhead / Unit</span>
                                 <span>₱{totalManifestQty > 0 ? ((totalAllocatedExpenses / totalManifestQty).toFixed(2)) : "0.00"}</span>
                             </div>
+                            {(expenses.some(e => e.allocation_method === "Hybrid") || allocationForm?.allocation_method === "Hybrid") && (
+                                <div className="flex justify-between items-center text-[11px] text-muted-foreground border-t pt-2.5 mt-2.5">
+                                    <span>Hybrid Breakdown</span>
+                                    <div className="flex gap-1.5">
+                                        <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">RM: {rmQuantity.toLocaleString()}</span>
+                                        <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-bold">PKG: {pkgWeight.toLocaleString()}kg</span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -148,6 +178,7 @@ export default function ShipmentExpenses({
                             <br />• <strong>Commercial Value</strong>: Higher value items shoulder more brokerage fees.
                             <br />• <strong>Weight (KG)</strong>: Heavy items (e.g. raw vegetable oil) carry more trucking weight.
                             <br />• <strong>Volume (CBM)</strong>: Bulky items shoulder more sea freight volume.
+                            <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Weight.
                         </p>
                     </div>
                 </div>
@@ -245,14 +276,28 @@ export default function ShipmentExpenses({
                                         return;
                                     }
                                 }
+                                
+                                if (allocationForm.allocation_method === "Hybrid") {
+                                    const missingWeight = lines.some((line) => {
+                                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                        const prod = line.product_id as any;
+                                        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
+                                        return isPackaging && (!prod?.weight || Number(prod?.weight) <= 0);
+                                    });
+                                    if (missingWeight) {
+                                        toast.error("One or more packaging items are missing a gross weight needed for Hybrid allocation.");
+                                        return;
+                                    }
+                                }
+                                
                                 onAllocate(e, shipment.shipment_id, "Received");
                             }}
                             className="space-y-4 overflow-y-auto pr-1 flex-1"
                         >
                             <div className="space-y-1.5 bg-muted/20 p-4 rounded-xl border">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Allocation Logic Method</label>
-                                <div className="grid grid-cols-3 gap-2 mt-1">
-                                    {["Value", "Weight", "Volume"].map((method) => (
+                                <div className="grid grid-cols-2 gap-2 mt-1">
+                                    {["Value", "Weight", "Volume", "Hybrid"].map((method) => (
                                         <button
                                             key={method}
                                             type="button"
@@ -262,7 +307,7 @@ export default function ShipmentExpenses({
                                                     : "bg-background border-border hover:bg-muted"
                                                 }`}
                                         >
-                                            {method === "Value" ? "Commercial Value" : method}
+                                            {method === "Value" ? "Commercial Value" : method === "Hybrid" ? "Hybrid (RM: Quantity / PKG: Weight)" : method}
                                         </button>
                                     ))}
                                 </div>

@@ -448,6 +448,32 @@ export function useQAReceiving() {
                 }
             }
 
+            if (field === "manufacturingDate" && value && typeof value === "string") {
+                if (!previousRow?.expirationDate) {
+                    const mfg = new Date(value);
+                    if (!isNaN(mfg.getTime())) {
+                        const line = lineItems.find(l => l.line_id === lineId);
+                        const shelfLifeDays = Number((line?.product_id as any)?.product_shelf_life || 365);
+                        const exp = new Date(mfg.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
+                        updatedRow.expirationDate = exp.toISOString().split("T")[0];
+                    }
+                }
+            }
+
+            if ((field === "receivedQty" || field === "acceptedQty") && (Number(value) || 0) > 0) {
+                const todayStr = new Date().toISOString().split("T")[0];
+                if (!updatedRow.manufacturingDate) {
+                    updatedRow.manufacturingDate = todayStr;
+                }
+                if (!updatedRow.expirationDate) {
+                    const line = lineItems.find(l => l.line_id === lineId);
+                    const shelfLifeDays = Number((line?.product_id as any)?.product_shelf_life || 365);
+                    const mfgDate = new Date(updatedRow.manufacturingDate || todayStr);
+                    const expDate = new Date(mfgDate.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
+                    updatedRow.expirationDate = expDate.toISOString().split("T")[0];
+                }
+            }
+
             const accepted = Number(updatedRow.acceptedQty || 0);
             const rejected = Number(updatedRow.rejectedQty || 0);
             if (field === "acceptedQty" || field === "receivedQty" || field === "lotId") {

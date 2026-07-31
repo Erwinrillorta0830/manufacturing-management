@@ -37,6 +37,134 @@ interface ShipmentInspectionFormProps {
     onCancel: () => void;
 }
 
+interface SearchableStorageLotSelectProps {
+    value: string | number;
+    disabled?: boolean;
+    storageLots: StorageLot[];
+    allocatedList: ReceivingLotAllocationInput[];
+    currentIndex: number;
+    onChange: (value: string) => void;
+}
+
+function SearchableStorageLotSelect({
+    value,
+    disabled,
+    storageLots,
+    allocatedList,
+    currentIndex,
+    onChange
+}: SearchableStorageLotSelectProps) {
+    const [isOpen, setIsOpen] = React.useState(false);
+    const [search, setSearch] = React.useState("");
+    const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+    const selectedLot = storageLots.find(lot => String(lot.lot_id) === String(value));
+
+    React.useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        if (isOpen) {
+            document.addEventListener("mousedown", handleClickOutside);
+        }
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [isOpen]);
+
+    const filteredLots = React.useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return storageLots;
+        return storageLots.filter(lot => 
+            String(lot.lot_name || "").toLowerCase().includes(q) ||
+            String(lot.lot_code || "").toLowerCase().includes(q) ||
+            String(lot.lot_id || "").toLowerCase().includes(q)
+        );
+    }, [search, storageLots]);
+
+    return (
+        <div ref={dropdownRef} className="relative min-w-0 flex-1">
+            <button
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                    if (!disabled) {
+                        setIsOpen(!isOpen);
+                        setSearch("");
+                    }
+                }}
+                className={`h-9 w-full bg-background border text-foreground rounded-lg px-2.5 text-[10px] font-semibold flex items-center justify-between gap-2 min-w-0 transition-all ${
+                    disabled ? "opacity-60 cursor-not-allowed" : "hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                }`}
+            >
+                <span className="truncate">
+                    {selectedLot ? (
+                        `${selectedLot.lot_name} (${selectedLot.availableQuantity ?? selectedLot.max_batch_capacity} available)`
+                    ) : (
+                        <span className="text-muted-foreground font-normal">Select storage lot...</span>
+                    )}
+                </span>
+                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+
+            {isOpen && (
+                <div className="absolute top-full left-0 mt-1 w-full min-w-[240px] max-h-[220px] bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden flex flex-col p-1.5 animate-in fade-in-50 zoom-in-95">
+                    <div className="relative p-1">
+                        <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
+                        <input
+                            type="text"
+                            autoFocus
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            placeholder="Type to search storage lot..."
+                            className="w-full h-8 pl-8 pr-2 text-[10px] font-medium bg-muted/40 border border-border/60 rounded-md outline-none focus:border-primary focus:bg-background"
+                        />
+                    </div>
+
+                    <div className="overflow-y-auto flex-1 max-h-[160px] space-y-0.5 mt-1">
+                        {filteredLots.length === 0 ? (
+                            <div className="p-3 text-[10px] text-center text-muted-foreground font-medium">
+                                No storage lots match &quot;{search}&quot;
+                            </div>
+                        ) : (
+                            filteredLots.map(lot => {
+                                const isCurrent = String(lot.lot_id) === String(value);
+                                const alreadySelected = allocatedList.some((current, index) => index !== currentIndex && String(current.storageLotId) === String(lot.lot_id));
+                                const full = lot.availableQuantity !== null && lot.availableQuantity !== undefined && lot.availableQuantity <= 0;
+                                const isChoiceDisabled = alreadySelected || (full && !isCurrent);
+
+                                return (
+                                    <button
+                                        key={lot.lot_id}
+                                        type="button"
+                                        disabled={isChoiceDisabled}
+                                        onClick={() => {
+                                            onChange(String(lot.lot_id));
+                                            setIsOpen(false);
+                                        }}
+                                        className={`w-full text-left p-2 rounded-lg text-[10px] flex items-center justify-between gap-2 transition-all ${
+                                            isCurrent
+                                                ? "bg-primary text-primary-foreground font-bold"
+                                                : isChoiceDisabled
+                                                    ? "opacity-40 cursor-not-allowed bg-muted/20"
+                                                    : "hover:bg-muted/60 font-semibold text-foreground"
+                                        }`}
+                                    >
+                                        <span className="truncate">{lot.lot_name}</span>
+                                        <span className="font-mono text-[9px] shrink-0 opacity-80">
+                                            {lot.availableQuantity ?? lot.max_batch_capacity} avail
+                                        </span>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function ShipmentInspectionForm({
     selectedShipment,
     readOnly,
@@ -777,23 +905,14 @@ export default function ShipmentInspectionForm({
                                                          const overCapacity = !readOnly && available !== null && available !== undefined && incomingForLot > available;
                                                 return (
                                                     <div key={`${line.line_id}-accepted-lot-${allocationIndex}`} className="grid grid-cols-[minmax(0,1fr)_130px_auto] gap-2 items-center">
-                                                        <select
+                                                        <SearchableStorageLotSelect
                                                             value={allocation.storageLotId}
                                                             disabled={readOnly}
-                                                            onChange={event => updateAcceptedLot(line.line_id, row, allocationIndex, "storageLotId", event.target.value)}
-                                                            className="h-9 min-w-0 bg-background border text-foreground rounded-lg px-2.5 text-[10px] font-semibold"
-                                                        >
-                                                            <option value="">Select storage lot...</option>
-                                                            {storageLots.map(lot => {
-                                                                const alreadySelected = row.acceptedLotAllocations.some((current, index) => index !== allocationIndex && String(current.storageLotId) === String(lot.lot_id));
-                                                                const full = lot.availableQuantity !== null && lot.availableQuantity !== undefined && lot.availableQuantity <= 0;
-                                                                return (
-                                                                    <option key={lot.lot_id} value={lot.lot_id} disabled={alreadySelected || (full && String(lot.lot_id) !== String(allocation.storageLotId))}>
-                                                                        {lot.lot_name} ({lot.availableQuantity ?? lot.max_batch_capacity} available)
-                                                                    </option>
-                                                                );
-                                                            })}
-                                                        </select>
+                                                            storageLots={storageLots}
+                                                            allocatedList={row.acceptedLotAllocations}
+                                                            currentIndex={allocationIndex}
+                                                            onChange={val => updateAcceptedLot(line.line_id, row, allocationIndex, "storageLotId", val)}
+                                                        />
                                                         <input
                                                             type="number"
                                                             min="0"
@@ -853,23 +972,14 @@ export default function ShipmentInspectionForm({
                                                          const overCapacity = !readOnly && available !== null && available !== undefined && incomingForLot > available;
                                                         return (
                                                             <div key={`${line.line_id}-rejected-lot-${allocationIndex}`} className="grid grid-cols-[minmax(0,1fr)_130px_auto] gap-2 items-center">
-                                                                <select
+                                                                <SearchableStorageLotSelect
                                                                     value={allocation.storageLotId}
                                                                     disabled={readOnly}
-                                                                    onChange={event => updateRejectedLot(line.line_id, row, allocationIndex, "storageLotId", event.target.value)}
-                                                                    className="h-9 min-w-0 bg-background border text-foreground rounded-lg px-2.5 text-[10px] font-semibold"
-                                                                >
-                                                                    <option value="">Select storage lot...</option>
-                                                                    {storageLots.map(lot => {
-                                                                        const alreadySelected = row.rejectedLotAllocations.some((current, index) => index !== allocationIndex && String(current.storageLotId) === String(lot.lot_id));
-                                                                        const full = lot.availableQuantity !== null && lot.availableQuantity !== undefined && lot.availableQuantity <= 0;
-                                                                        return (
-                                                                            <option key={lot.lot_id} value={lot.lot_id} disabled={alreadySelected || (full && String(lot.lot_id) !== String(allocation.storageLotId))}>
-                                                                                {lot.lot_name} ({lot.availableQuantity ?? lot.max_batch_capacity} available)
-                                                                            </option>
-                                                                        );
-                                                                    })}
-                                                                </select>
+                                                                    storageLots={storageLots}
+                                                                    allocatedList={row.rejectedLotAllocations}
+                                                                    currentIndex={allocationIndex}
+                                                                    onChange={val => updateRejectedLot(line.line_id, row, allocationIndex, "storageLotId", val)}
+                                                                />
                                                                 <input
                                                                     type="number"
                                                                     min="0"

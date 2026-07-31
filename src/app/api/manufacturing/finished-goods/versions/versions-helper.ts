@@ -35,14 +35,28 @@ export function isStandardBOMVersion(version: VersionSelectionCandidate) {
 }
 
 export function selectPreferredActiveVersion<T extends VersionSelectionCandidate>(versions: T[]) {
-    const activeVersions = versions.filter(version => String(version.status ?? "").toLowerCase() === "active");
-    return activeVersions.find(isStandardBOMVersion) || activeVersions[0] || null;
+    if (!versions || versions.length === 0) return null;
+    const activeVersions = versions.filter(version => {
+        const s = String(version.status ?? "").toLowerCase();
+        return s === "active" || s === "approved" || (version as any).is_active === true || (version as any).is_active === 1;
+    });
+    const pool = activeVersions.length > 0 ? activeVersions : versions;
+    return pool.find(isStandardBOMVersion) || pool[0] || null;
 }
 
-export async function getBOMDetailsForVersion(productId: number, versionId: number): Promise<{
+export async function getBOMDetailsForVersion(
+    productId: number,
+    versionId: number,
+    visitedProducts: Set<number> = new Set()
+): Promise<{
     version: ProductVersion | null;
     routes: RouteStep[];
 }> {
+    if (!productId || visitedProducts.has(productId)) {
+        return { version: null, routes: [] };
+    }
+    visitedProducts.add(productId);
+
     try {
         let version: ProductVersion | null = null;
         
@@ -75,8 +89,8 @@ export async function getBOMDetailsForVersion(productId: number, versionId: numb
                     const prod = (await prodRes.json()).data;
                     const parentVal = prod?.parent_id;
                     const parentIdVal = parentVal && typeof parentVal === 'object' ? Number(parentVal.product_id) : (parentVal ? Number(parentVal) : null);
-                    if (parentIdVal) {
-                        const parentRes = await getBOMDetailsForVersion(parentIdVal, versionId);
+                    if (parentIdVal && !visitedProducts.has(parentIdVal)) {
+                        const parentRes = await getBOMDetailsForVersion(parentIdVal, versionId, visitedProducts);
                         if (parentRes.version) return parentRes;
                     }
                 }
@@ -89,8 +103,11 @@ export async function getBOMDetailsForVersion(productId: number, versionId: numb
                 if (childrenRes.ok) {
                     const children = (await childrenRes.json()).data || [];
                     for (const child of children) {
-                        const childRes = await getBOMDetailsForVersion(Number(child.product_id), versionId);
-                        if (childRes.version) return childRes;
+                        const childId = Number(child.product_id);
+                        if (childId && !visitedProducts.has(childId)) {
+                            const childRes = await getBOMDetailsForVersion(childId, versionId, visitedProducts);
+                            if (childRes.version) return childRes;
+                        }
                     }
                 }
             } catch (err) {
@@ -134,18 +151,53 @@ export async function getBOMDetailsForVersion(productId: number, versionId: numb
         const routesFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: version.version_id } }));
         const resRoutes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes?filter=${routesFilter}&sort=sequence_order&limit=-1`, { headers, cache: "no-store" });
         const routesJson = await resRoutes.json();
-        const routes: RouteStep[] = routesJson.data || [];
+        let routes: RouteStep[] = routesJson.data || [];
 
-        if (routes.length === 0) {
-            version.routes = [];
-            return { version, routes: [] };
-        }
+        const getRouteId = (val: any): number => {
+            if (!val) return 0;
+            if (typeof val === "object") return Number(val.route_id || val.id || 0);
+            return Number(val) || 0;
+        };
+        const getProductId = (val: any): number => {
+            if (!val) return 0;
+            if (typeof val === "object") return Number(val.product_id || val.id || 0);
+            return Number(val) || 0;
+        };
 
-        const routeIds = routes.map(r => r.route_id);
-        const bomFilter = encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }));
-        const resBom = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?filter=${bomFilter}&limit=-1`, { headers, cache: "no-store" });
-        const bomJson = await resBom.json();
+        const routeIds = routes.map(r => getRouteId(r.route_id)).filter(Boolean);
+        const bomFilter = routeIds.length > 0
+            ? encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }))
+            : "";
+        const resBom = bomFilter
+            ? await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?filter=${bomFilter}&limit=-1`, { headers, cache: "no-store" })
+            : await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?limit=-1`, { headers, cache: "no-store" });
+        const bomJson = resBom.ok ? await resBom.json() : { data: [] };
         const bomItems: RouteBOMItem[] = bomJson.data || [];
+
+        bomItems.forEach(b => {
+            b.product_id = getProductId(b.product_id) as any;
+        });
+
+        (version as any).bom_items = bomItems;
+        if (routes.length === 0 && bomItems.length > 0) {
+            routes = [{
+                route_id: 0,
+                version_id: version.version_id,
+                sequence_order: 1,
+                setup_time_hours: 0,
+                run_time_hours: 0,
+                operation_name: "Standard Assembly",
+                bom_items: bomItems
+            } as unknown as RouteStep];
+        } else if (routes.length > 0) {
+            routes.forEach(r => {
+                const rId = getRouteId(r.route_id);
+                r.bom_items = bomItems.filter(b => {
+                    const bRouteId = getRouteId(b.route_id);
+                    return (bRouteId > 0 && bRouteId === rId) || routes.length === 1;
+                });
+            });
+        }
 
         const bomProductIds = [...new Set(
             bomItems
@@ -188,9 +240,7 @@ export async function getBOMDetailsForVersion(productId: number, versionId: numb
             });
         }
 
-        routes.forEach(r => {
-            r.bom_items = bomItems.filter(b => b.route_id === r.route_id);
-        });
+
 
         version.routes = routes;
         return { version, routes };
@@ -200,10 +250,19 @@ export async function getBOMDetailsForVersion(productId: number, versionId: numb
     }
 }
 
-export async function getActiveVersionForProduct(productId: number, customerId?: number): Promise<{
+export async function getActiveVersionForProduct(
+    productId: number,
+    customerId?: number,
+    visitedProducts: Set<number> = new Set()
+): Promise<{
     version: ProductVersion | null;
     routes: RouteStep[];
 }> {
+    if (!productId || visitedProducts.has(productId)) {
+        return { version: null, routes: [] };
+    }
+    visitedProducts.add(productId);
+
     try {
         let resolvedVersionId: number | null = null;
         let version: ProductVersion | null = null;
@@ -233,8 +292,7 @@ export async function getActiveVersionForProduct(productId: number, customerId?:
             }
         } else {
             const filter = encodeURIComponent(JSON.stringify({
-                product_id: { _eq: productId },
-                status: { _eq: "Active" }
+                product_id: { _eq: productId }
             }));
             const resVer = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${filter}&limit=-1`, { headers, cache: "no-store" });
             if (resVer.ok) {
@@ -250,8 +308,8 @@ export async function getActiveVersionForProduct(productId: number, customerId?:
                     const prod = (await prodRes.json()).data;
                     const parentVal = prod?.parent_id;
                     const parentIdVal = parentVal && typeof parentVal === 'object' ? Number(parentVal.product_id) : (parentVal ? Number(parentVal) : null);
-                    if (parentIdVal) {
-                        const parentRes = await getActiveVersionForProduct(parentIdVal, customerId);
+                    if (parentIdVal && !visitedProducts.has(parentIdVal)) {
+                        const parentRes = await getActiveVersionForProduct(parentIdVal, customerId, visitedProducts);
                         if (parentRes.version) return parentRes;
                     }
                 }
@@ -264,8 +322,11 @@ export async function getActiveVersionForProduct(productId: number, customerId?:
                 if (childrenRes.ok) {
                     const children = (await childrenRes.json()).data || [];
                     for (const child of children) {
-                        const childRes = await getActiveVersionForProduct(Number(child.product_id), customerId);
-                        if (childRes.version) return childRes;
+                        const childId = Number(child.product_id);
+                        if (childId && !visitedProducts.has(childId)) {
+                            const childRes = await getActiveVersionForProduct(childId, customerId, visitedProducts);
+                            if (childRes.version) return childRes;
+                        }
                     }
                 }
             } catch (err) {
@@ -275,7 +336,7 @@ export async function getActiveVersionForProduct(productId: number, customerId?:
             return { version: null, routes: [] };
         }
 
-        return getBOMDetailsForVersion(productId, version.version_id);
+        return getBOMDetailsForVersion(productId, version.version_id, visitedProducts);
     } catch (e) {
         console.error(`[Versions Helper] Error fetching active version for product ID ${productId}:`, e);
         return { version: null, routes: [] };

@@ -505,8 +505,20 @@ export default function IncomingShipments({
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(5);
     const [hasSubmitted, setHasSubmitted] = useState(false);
+    const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
+
+    useEffect(() => {
+        fetch("/api/manufacturing/branches")
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data) && data.length > 0) {
+                    setDynamicBranches(data);
+                }
+            })
+            .catch(err => console.error("Error fetching branches:", err));
+    }, []);
 
     useEffect(() => {
         if (!onServerQueryChange) return;
@@ -1587,10 +1599,18 @@ export default function IncomingShipments({
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground h-9"
                                     >
                                         <option value="" disabled hidden>Select Destination Branch...</option>
-                                        <option value={183}>Main Branch</option>
-                                        <option value={163}>Urdaneta Branch</option>
-                                        <option value={181}>Bihon Branch</option>
-                                        <option value={182}>Bihon Bad Branch</option>
+                                        {dynamicBranches.length > 0 ? (
+                                            dynamicBranches.map(b => (
+                                                <option key={b.id} value={b.id}>{b.branchName}</option>
+                                            ))
+                                        ) : (
+                                            <>
+                                                <option value={183}>Main Branch</option>
+                                                <option value={163}>Urdaneta Branch</option>
+                                                <option value={181}>Bihon Branch</option>
+                                                <option value={182}>Bihon Bad Branch</option>
+                                            </>
+                                        )}
                                     </select>
                                 </div>
 

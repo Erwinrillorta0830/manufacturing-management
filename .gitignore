@@ -44,3 +44,12 @@ next-env.d.ts
 .gemini/
 /scratch/bihon_sop_text.txt
 /scratch/
+
+# obsidian local vault settings
+.obsidian/
+
+# markdown documentation & local notes
+*.md
+!README.md
+!CLAUDE.md
+

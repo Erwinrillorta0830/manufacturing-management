@@ -122,7 +122,7 @@ export async function saveAndAllocateExpenses(
 }
 
 export async function fetchRawMaterials(): Promise<RawMaterial[]> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/products?limit=250");
+    const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/products?limit=250&excludeRollup=true");
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
     // Filter to exclude finished goods (include only raw materials and packaging items)
@@ -148,6 +148,8 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             cost_per_unit: Number(p.cost_per_unit || 0),
             estimated_unit_cost: Number(p.estimated_unit_cost || 0),
             density_factor: Number(p.density_factor || 1.0),
+            weight: Number(p.weight || 0),
+            weight_unit_id: p.weight_unit_id ? (typeof p.weight_unit_id === "object" ? p.weight_unit_id : Number(p.weight_unit_id)) : null,
             product_category: p.product_category ? (typeof p.product_category === "object" ? Number((p.product_category as { category_id?: number; id?: number }).category_id || (p.product_category as { category_id?: number; id?: number }).id) : Number(p.product_category)) : null,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,

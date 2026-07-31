@@ -90,7 +90,9 @@ function assertExpectedTotals(order: PurchaseOrderDraft, totals: ReturnType<type
 async function validateDraft(order: PurchaseOrderDraft) {
     const productIds = [...new Set(order.lines.flatMap(line => [line.productId, line.parentProductId]))];
     const jobOrderIds = [...new Set(order.lines.flatMap(line => line.jobOrderId ? [line.jobOrderId] : []))];
-    const [supplier, products, mappings, branch, jobOrders] = await Promise.all([
+    const branchIdNum = Number(order.branchId);
+
+    const [supplier, products, mappings, branchRows, jobOrders] = await Promise.all([
         directusData<Record<string, unknown>>(
             `/items/suppliers/${order.supplierId}?fields=id,isActive,nonBuy`,
             "Unable to validate the supplier."
@@ -103,7 +105,10 @@ async function validateDraft(order: PurchaseOrderDraft) {
             `/items/product_per_supplier?filter[supplier_id][_eq]=${order.supplierId}&fields=product_id.product_id&limit=-1`,
             "Unable to validate supplier product mappings."
         ),
-        directusData<Record<string, unknown>>(`/items/branches/${order.branchId}?fields=id,isActive`, "Unable to validate the branch."),
+        directusData<Array<Record<string, unknown>>>(
+            `/items/branches?filter[id][_eq]=${branchIdNum}&limit=1`,
+            "Unable to validate the branch."
+        ),
         jobOrderIds.length
             ? directusData<Array<{ job_order_id: number }>>(
                 `/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id&limit=${jobOrderIds.length}`,
@@ -112,10 +117,31 @@ async function validateDraft(order: PurchaseOrderDraft) {
             : Promise.resolve([])
     ]);
 
+    const branch = branchRows && branchRows.length > 0 ? branchRows[0] : null;
+
     if (!(supplier.isActive === true || Number(supplier.isActive) === 1) || supplier.nonBuy === true || Number(supplier.nonBuy) === 1) {
         throw new PurchaseOrderDraftError("The selected supplier is not purchasing eligible.");
     }
-    if (!(branch.isActive === true || Number(branch.isActive) === 1)) {
+
+    if (!branch) {
+        throw new PurchaseOrderDraftError(`The selected branch (#${order.branchId}) was not found.`);
+    }
+
+    const isBranchActive = (b: Record<string, unknown> | null | undefined): boolean => {
+        if (!b) return false;
+        const val = b.isActive ?? b.is_active ?? b.status;
+        if (val === undefined || val === null) return true;
+        if (typeof val === "string") {
+            const lower = val.toLowerCase().trim();
+            if (lower === "0" || lower === "false" || lower === "inactive" || lower === "disabled") return false;
+            return true;
+        }
+        if (typeof val === "number") return val !== 0;
+        if (typeof val === "boolean") return val;
+        return true;
+    };
+
+    if (!isBranchActive(branch)) {
         throw new PurchaseOrderDraftError("The selected branch is inactive.");
     }
     if (products.length !== productIds.length) throw new PurchaseOrderDraftError("One or more selected products do not exist.");
