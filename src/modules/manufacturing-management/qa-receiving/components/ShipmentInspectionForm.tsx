@@ -578,7 +578,7 @@ export default function ShipmentInspectionForm({
                                     {prod.product_image ? (
                                         <div className="h-16 w-16 rounded-xl bg-background border flex items-center justify-center shrink-0 overflow-hidden shadow-xs relative">
                                             <Image
-                                                src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || "http://vtc:8074"}/assets/${prod.product_image}`}
+                                                src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${prod.product_image}`}
                                                 alt={prod.product_name}
                                                 fill
                                                 className="object-cover"

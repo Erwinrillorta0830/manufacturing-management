@@ -4,7 +4,7 @@ import { getUserIdFromToken } from "../../../invoice-consolidation/_auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TEMPLATE_DIRECTUS_URL = (process.env.CRM_DIRECTUS_URL || "http://goatedcodoer:8056").replace(/\/$/, "");
+const TEMPLATE_DIRECTUS_URL = (process.env.DIRECTUS_URL || process.env.CRM_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "");
 const TEMPLATE_DIRECTUS_TOKEN = process.env.CRM_DIRECTUS_STATIC_TOKEN || "";
 const headers: Record<string, string> = { "Content-Type": "application/json" };
 if (TEMPLATE_DIRECTUS_TOKEN) headers.Authorization = `Bearer ${TEMPLATE_DIRECTUS_TOKEN}`;

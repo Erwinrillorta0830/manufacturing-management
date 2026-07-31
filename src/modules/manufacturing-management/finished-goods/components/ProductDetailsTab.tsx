@@ -302,7 +302,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                     <div className="relative group w-20 h-20 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img 
-                                            src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || "http://vtc:8074"}/assets/${editedDetails.product_image}`} 
+                                            src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${editedDetails.product_image}`} 
                                             alt="Preview" 
                                             className="w-full h-full object-cover"
                                             onError={(e) => {
