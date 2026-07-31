@@ -104,7 +104,6 @@ export function useFinishedGoods(initialTab: string = "details") {
     const [allCatalogProducts, setAllCatalogProducts] = useState<BFFCatalogProduct[]>([]);
     const [selectedProductId, setSelectedProductId] = useState<string>("");
     const [searchQuery, setSearchQuery] = useState("");
-    const [debouncedSearchQuery] = useDebounce(searchQuery, 400);
 
     // Version Registration Modal states
     const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
@@ -235,20 +234,12 @@ export function useFinishedGoods(initialTab: string = "details") {
         loadMetadata();
     }, []);
 
-    // Filter Products based on Search Query locally (no network requests)
+    // Keep the full hierarchy in state so searching for a child can still
+    // render its parent in the catalog tree.
     useEffect(() => {
-        const searchLower = debouncedSearchQuery.trim().toLowerCase();
         const finishedGoods = allCatalogProducts.filter((p: BFFCatalogProduct) => Number(p.product_type) === 388);
-        
-        const filtered = searchLower
-            ? finishedGoods.filter((p: BFFCatalogProduct) => 
-                (p.product_name || "").toLowerCase().includes(searchLower) ||
-                (p.product_code || "").toLowerCase().includes(searchLower) ||
-                (p.barcode || "").toLowerCase().includes(searchLower)
-              )
-            : finishedGoods;
 
-        const mapped: Product[] = filtered.map((p: BFFCatalogProduct) => {
+        const mapped: Product[] = finishedGoods.map((p: BFFCatalogProduct) => {
             const parentId = p.parent_id && typeof p.parent_id === "object"
                 ? Number((p.parent_id as any).product_id)
                 : (p.parent_id ? Number(p.parent_id) : null);
@@ -289,22 +280,34 @@ export function useFinishedGoods(initialTab: string = "details") {
                 return exists ? prev : mapped[0].id;
             });
         }
-    }, [debouncedSearchQuery, allCatalogProducts]);
+    }, [allCatalogProducts]);
 
     // Load Versions when Selected Product changes
     useEffect(() => {
+        setVersions([]);
+        setSelectedVersionId(null);
+        setSelectedVersion(null);
+        setActiveBOMId(null);
+        setEditedVersionDetails({});
+        setEditedRoutes([]);
+        setEditedBOM([]);
+        setEditedRoutings([]);
+        setEditedOverheads([]);
+        setHasUnsavedChanges(false);
+
         if (!selectedProductId) return;
         const numericId = Number(selectedProductId);
         if (isNaN(numericId) || numericId <= 0) {
-            setVersions([]);
-            setSelectedVersionId(null);
             return;
         }
+
+        let cancelled = false;
 
         async function loadVersions() {
             setLoadingBOM(true);
             try {
                 const list = await fetchVersions(numericId);
+                if (cancelled) return;
                 setVersions(list);
                 if (list && list.length > 0) {
                     const activeVer = list.find((v: any) => v.is_active || v.status === "Active");
@@ -313,14 +316,19 @@ export function useFinishedGoods(initialTab: string = "details") {
                     setSelectedVersionId(null);
                 }
             } catch (e) {
+                if (cancelled) return;
                 console.error("Failed loading product versions:", e);
                 setVersions([]);
                 setSelectedVersionId(null);
             } finally {
-                setLoadingBOM(false);
+                if (!cancelled) setLoadingBOM(false);
             }
         }
         loadVersions();
+
+        return () => {
+            cancelled = true;
+        };
     }, [selectedProductId]);
 
     // Load dynamic cost for currently selected version when selectedVersionId or debouncedForexRate changes
@@ -328,6 +336,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         if (!selectedVersionId || !selectedProductId) return;
         const numericId = Number(selectedProductId);
         const vId = selectedVersionId as number;
+        if (!versions.some(version => version.version_id === vId && Number(version.product_id) === numericId)) return;
 
         async function loadSelectedVersionCost() {
             try {
@@ -352,7 +361,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             }
         }
         loadSelectedVersionCost();
-    }, [selectedVersionId, selectedProductId, debouncedForexRate]);
+    }, [selectedVersionId, selectedProductId, debouncedForexRate, versions]);
 
     // Load BOM & Routings when Selected Version or simulatedForexRate changes
     useEffect(() => {
@@ -382,7 +391,7 @@ export function useFinishedGoods(initialTab: string = "details") {
 
         };
 
-        if (selectedVersionId === null || !versions.some((v) => v.version_id === selectedVersionId)) {
+        if (selectedVersionId === null || !versions.some((v) => v.version_id === selectedVersionId && Number(v.product_id) === numericId)) {
             setSelectedVersion(null);
             setEditedVersionDetails({});
             setEditedRoutes([]);
@@ -399,6 +408,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             setLoadingBOM(true);
             try {
                 const versionObj = await fetchBOMDetails(numericId, selectedVersionId!, debouncedForexRate);
+                if (cancelled) return;
                 if (versionObj) {
                     setSelectedVersion(versionObj);
                     setEditedVersionDetails({
@@ -479,12 +489,18 @@ export function useFinishedGoods(initialTab: string = "details") {
                     setHasUnsavedChanges(false);
                 }
             } catch (e) {
+                if (cancelled) return;
                 console.error("Failed to load BOM version details:", e);
             } finally {
-                setLoadingBOM(false);
+                if (!cancelled) setLoadingBOM(false);
             }
         }
+        let cancelled = false;
         loadRecipe();
+
+        return () => {
+            cancelled = true;
+        };
     }, [selectedVersionId, selectedProductId, selectedProduct, simulatedForexRate, debouncedForexRate, versions, units, allCatalogProducts]);
 
     // Handlers

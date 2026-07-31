@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     getBOMDetailsForVersion,
     saveActiveBOMDetails,
@@ -38,6 +39,14 @@ export async function GET(request: Request) {
         const productId = parseInt(productIdStr);
         const versionId = parseInt(versionIdStr);
 
+        const versionRes = await fetch(
+            `${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}?fields=version_id,product_id`,
+            { headers, cache: "no-store" }
+        );
+        if (!versionRes.ok) return NextResponse.json(null);
+        const versionData = (await versionRes.json()).data as { product_id?: unknown } | undefined;
+        if (!versionData || Number(versionData.product_id) !== productId) return NextResponse.json(null);
+
         const details = await getBOMDetailsForVersion(productId, versionId);
         if (!details || !details.version) {
             return NextResponse.json(null);
@@ -62,6 +71,21 @@ export async function POST(request: Request) {
 
         const numericProductId = parseInt(productId);
         const numericVersionId = parseInt(versionId);
+
+        const versionRes = await fetch(
+            `${DIRECTUS_URL}/items/product_manufacturing_version/${numericVersionId}?fields=version_id,product_id`,
+            { headers, cache: "no-store" }
+        );
+        if (!versionRes.ok) {
+            return NextResponse.json({ error: "Selected version was not found." }, { status: 404 });
+        }
+        const versionData = (await versionRes.json()).data as { product_id?: unknown } | undefined;
+        if (!versionData || Number(versionData.product_id) !== numericProductId) {
+            return NextResponse.json(
+                { error: "Selected version does not belong to this finished good." },
+                { status: 400 }
+            );
+        }
 
         await validateRoutesAndBOM(routes);
 
@@ -182,7 +206,7 @@ export async function POST(request: Request) {
 
         // 4. Run standard rollup costing recalculation and save to product standard cost field
         const rollupResult = await calculateRollupCost(numericProductId, new Set(), undefined, 58, undefined, numericVersionId);
-        if (rollupResult.bomId) {
+        if (rollupResult.bomId && rollupResult.costTree.length > 0) {
             const standardCostUpdated = await updateProductStandardCost(numericProductId, rollupResult.unitCost);
             if (!standardCostUpdated) {
                 throw new Error("Failed to update product standard cost in Directus.");

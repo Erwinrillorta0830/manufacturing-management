@@ -19,11 +19,12 @@ export async function GET(request: Request) {
 
         // Calculate cost using rollup engine helper (which handles version -> routes -> bom_items)
         const rollup = await calculateRollupCost(productId, new Set(), undefined, forexRate, undefined, versionId);
+        const hasCogs = rollup.bomId !== null && rollup.costTree.length > 0;
 
         return NextResponse.json({
-            cost: rollup.unitCost,
+            cost: hasCogs ? rollup.unitCost : 0,
             batchCost: rollup.batchCost,
-            hasCogs: true,
+            hasCogs,
             rollup
         });
 
