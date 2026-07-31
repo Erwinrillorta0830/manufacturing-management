@@ -169,6 +169,21 @@ export function useClients() {
         loadBarangays();
     }, [selectedCityCode, editingCustomer]);
 
+    // Reconcile persisted barangay names/codes after the async PSGC options load.
+    useEffect(() => {
+        if (!editingCustomer || !formData.brgy || barangays.length === 0) return;
+
+        const currentBarangay = String(formData.brgy).trim().toLowerCase();
+        const matchedBarangay = barangays.find((barangay) => (
+            barangay.code === formData.brgy
+            || barangay.name.toLowerCase() === currentBarangay
+        ));
+
+        if (matchedBarangay && formData.brgy !== matchedBarangay.code) {
+            setFormData((prev) => ({ ...prev, brgy: matchedBarangay.code }));
+        }
+    }, [barangays, editingCustomer, formData.brgy]);
+
     // Handle modal open for create or edit
     const openCreateModal = () => {
         setEditingCustomer(null);

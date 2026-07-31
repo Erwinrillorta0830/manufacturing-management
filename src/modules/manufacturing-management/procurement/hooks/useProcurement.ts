@@ -391,7 +391,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
             setSupplierError(null);
             loadSuppliers();
         } catch (e) {
-            console.error(e);
             const rawMsg = (e as Error).message || "Failed to submit supplier";
             const userFriendlyMsg = parseCreationError(rawMsg);
             setSupplierError(userFriendlyMsg);
