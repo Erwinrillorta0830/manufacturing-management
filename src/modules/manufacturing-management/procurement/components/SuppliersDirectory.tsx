@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Supplier, RawMaterial, PSGCItem } from "../types";
 import { Search, Plus, MapPin, Phone, Mail, Award, FileText, CheckCircle2, AlertCircle, Globe, Building2, UserSquare2, Trash2, Link, X, Loader2 } from "lucide-react";
 import { fetchLinkedProducts, linkProductToSupplier, unlinkProductFromSupplier, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/procurement-api";
@@ -88,6 +88,8 @@ export default function SuppliersDirectory({
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("active");
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
+    const [isSubmittingSupplier, setIsSubmittingSupplier] = useState(false);
+    const supplierSubmitLock = useRef(false);
 
     const [provinces, setProvinces] = useState<PSGCItem[]>([]);
     const [cities, setCities] = useState<PSGCItem[]>([]);
@@ -122,6 +124,22 @@ export default function SuppliersDirectory({
     const activeSupplierId = activeSupplier?.id ?? null;
 
     const isPH = !supplierForm.country || supplierForm.country.toLowerCase() === "philippines" || supplierForm.country.toLowerCase() === "ph";
+
+    const handleSupplierSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        if (supplierSubmitLock.current) {
+            event.preventDefault();
+            return;
+        }
+
+        supplierSubmitLock.current = true;
+        setIsSubmittingSupplier(true);
+        try {
+            await onCreateSupplier(event);
+        } finally {
+            supplierSubmitLock.current = false;
+            setIsSubmittingSupplier(false);
+        }
+    };
 
     useEffect(() => {
         if (isModalOpen && isPH) {
@@ -810,7 +828,7 @@ export default function SuppliersDirectory({
                                 </div>
                             )}
 
-                            <form onSubmit={onCreateSupplier} className="space-y-4">
+                            <form onSubmit={handleSupplierSubmit} className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-1">
                                     <div className="col-span-2 space-y-1.5">
                                         <label className="text-[11px] font-semibold text-muted-foreground">Supplier Corporate Name <span className="text-red-500">*</span></label>
@@ -1190,9 +1208,11 @@ export default function SuppliersDirectory({
 
                                 <button
                                     type="submit"
-                                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-sm cursor-pointer animate-none"
+                                    disabled={isSubmittingSupplier}
+                                    aria-busy={isSubmittingSupplier}
+                                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-sm cursor-pointer animate-none disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                    {isEditingSupplier ? "Save Changes" : "Complete Registration"}
+                                    {isSubmittingSupplier ? "Saving..." : isEditingSupplier ? "Save Changes" : "Complete Registration"}
                                 </button>
                             </form>
                         </motion.div>
