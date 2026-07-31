@@ -113,7 +113,7 @@ function mapVehicleTypeString(typeId: number): string {
 
 export async function GET() {
     try {
-        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
+        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
         const staticToken = process.env.DIRECTUS_STATIC_TOKEN || "test";
         const headers = {
             "Authorization": `Bearer ${staticToken}`,
@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Missing type or data parameters" }, { status: 400 });
         }
 
-        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
+        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
         const staticToken = process.env.DIRECTUS_STATIC_TOKEN || "test";
         const headers = {
             "Authorization": `Bearer ${staticToken}`,
@@ -339,7 +339,7 @@ export async function DELETE(req: NextRequest) {
         }
 
         const id = parseInt(idStr);
-        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
+        const directusUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
         const staticToken = process.env.DIRECTUS_STATIC_TOKEN || "test";
         const headers = {
             "Authorization": `Bearer ${staticToken}`

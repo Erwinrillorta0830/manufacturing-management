@@ -2,7 +2,7 @@ import React from "react";
 import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
-import { getProductImageUrl, uploadProductImage } from "../services/product-image";
+import { uploadProductImage } from "../services/product-image";
 import { 
     Tag, 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -317,7 +317,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                     <div className="relative group w-20 h-20 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img 
-                                            src={imagePreview || getProductImageUrl(String(editedDetails.product_image))}
+                                            src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${editedDetails.product_image}`} 
                                             alt="Preview" 
                                             className="w-full h-full object-cover"
                                             onError={(e) => {

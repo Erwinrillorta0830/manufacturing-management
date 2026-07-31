@@ -1,4 +1,4 @@
-export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
+export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
 function getStaticToken(): string {
     const token = process.env.DIRECTUS_STATIC_TOKEN;

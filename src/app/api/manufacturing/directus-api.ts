@@ -3,7 +3,7 @@
 
 import { calculateCostBreakdown, calculateMaterialCost, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "@/modules/manufacturing-management/finished-goods/costing";
 
-export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:8074";
+export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 export const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN !== undefined ? process.env.DIRECTUS_STATIC_TOKEN : "test";
 
 export const headers: Record<string, string> = {

@@ -1,4 +1,4 @@
-const DIRECTUS_URL = "http://vtc:8074";
+const DIRECTUS_URL = process.env.DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const token = "test";
 
 async function main() {

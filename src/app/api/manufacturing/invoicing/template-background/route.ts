@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_SIZE = 10 * 1024 * 1024;
-const TEMPLATE_DIRECTUS_URL = (process.env.CRM_DIRECTUS_URL || "http://goatedcodoer:8056").replace(/\/$/, "");
+const TEMPLATE_DIRECTUS_URL = (process.env.DIRECTUS_URL || process.env.CRM_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "");
 const TEMPLATE_DIRECTUS_TOKEN = process.env.CRM_DIRECTUS_STATIC_TOKEN || "";
 
 export async function GET(request: Request) {
