@@ -37,7 +37,7 @@ export function ReceivingModal({
 }: ReceivingModalProps) {
     if (!isOpen || !selectedReceivingJO) return null;
 
-    const actualConsumed = (selectedReceivingJO as any).actualConsumed;
+    const actualConsumed = selectedReceivingJO.actualConsumed;
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-xs animate-in fade-in duration-300">
@@ -63,7 +63,7 @@ export function ReceivingModal({
                         <label className="text-[10px] font-black uppercase text-muted-foreground tracking-wider block">WIP Materials Consumed (Actually Picked)</label>
                         <div className="border border-border bg-muted/10 p-2.5 rounded-lg text-[10px] space-y-1 max-h-[100px] overflow-y-auto font-semibold">
                             {actualConsumed && actualConsumed.length > 0 ? (
-                                actualConsumed.map((c: any, idx: number) => {
+                                actualConsumed.map((c, idx: number) => {
                                     const name = data?.products?.find(p => p.product_id === c.productId)?.product_name || `Component #${c.productId}`;
                                     return (
                                         <div key={idx} className="flex justify-between items-center py-0.5 border-b border-border/40 last:border-none">
@@ -88,7 +88,7 @@ export function ReceivingModal({
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold uppercase text-muted-foreground">Target Production Run</label>
                             <div className="w-full bg-muted/40 border border-border rounded-lg px-3 py-2 text-xs font-bold text-foreground">
-                                {((selectedReceivingJO as any).quantity || selectedReceivingJO.planned_quantity || 0).toLocaleString()} units
+                                {(selectedReceivingJO.quantity || selectedReceivingJO.planned_quantity || 0).toLocaleString()} units
                             </div>
                         </div>
                     </div>

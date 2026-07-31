@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { PickingJO, ReceivingJO, ReceivingResult } from "../types/inventory.types";
+import { PickingJO, ReceivingJO, ReceivingResult, PickingItem } from "../types/inventory.types";
 import {
     fetchPickingData,
     fetchReceivingData,
@@ -37,8 +37,9 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
         try {
             const data = await fetchPickingData();
             setPickingList(data);
-        } catch (e: any) {
-            toast.error(e.message || "Failed to load picking lists.");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to load picking lists.";
+            toast.error(msg);
         } finally {
             setPickingLoading(false);
         }
@@ -49,8 +50,9 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
         try {
             const data = await fetchReceivingData();
             setReceivingJOs(data);
-        } catch (e: any) {
-            toast.error(e.message || "Failed to load receiving job orders.");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to load receiving job orders.";
+            toast.error(msg);
         } finally {
             setReceivingLoading(false);
         }
@@ -70,11 +72,11 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
             return;
         }
 
-        const itemsToPick: any[] = [];
-        jo.allocationResults.forEach((alloc: any) => {
+        const itemsToPick: PickingItem[] = [];
+        jo.allocationResults.forEach((alloc) => {
             const productId = alloc.component_product_id;
             if (alloc.batches && Array.isArray(alloc.batches)) {
-                alloc.batches.forEach((b: any) => {
+                alloc.batches.forEach((b) => {
                     itemsToPick.push({
                         productId,
                         lotNumber: b.lot_number,
@@ -106,8 +108,9 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
             setIsPickingModalOpen(false);
             loadPicking();
             onDataRefresh();
-        } catch (err: any) {
-            toast.error(err.message || "An error occurred during picking.");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "An error occurred during picking.";
+            toast.error(msg);
         } finally {
             setPickingSubmitting(false);
         }
@@ -140,8 +143,9 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
             setIsReceivingModalOpen(false);
             loadReceiving();
             onDataRefresh();
-        } catch (err: any) {
-            toast.error(err.message || "An error occurred during yield receiving.");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "An error occurred during yield receiving.";
+            toast.error(msg);
         } finally {
             setRecSubmitting(false);
         }

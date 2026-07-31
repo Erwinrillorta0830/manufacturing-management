@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
-import { RawMaterialItem, TypeFilter, BranchGroupedBatches } from "../types/raw-materials.types";
+import { RawMaterialItem, TypeFilter, BranchGroupedBatches, BatchItem } from "../types/raw-materials.types";
 import { fetchProductInventoryDetails } from "../services/raw-materials.service";
 
 export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
@@ -8,7 +8,7 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
     const [expandedProductId, setExpandedProductId] = useState<number | null>(null);
     const [loadingBatches, setLoadingBatches] = useState(false);
-    const [productBatches, setProductBatches] = useState<any[]>([]);
+    const [productBatches, setProductBatches] = useState<BatchItem[]>([]);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
 
@@ -81,14 +81,15 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
     const groupedByBranch = useMemo(() => {
         const branchesMap: Record<string, BranchGroupedBatches> = {};
 
-        productBatches.forEach((item: any) => {
+        productBatches.forEach((item: BatchItem) => {
             const branch = item.branch_id || { branch_name: "Unassigned Warehouse", branch_code: "N/A" };
-            const branchName = branch.branch_name;
+            const branchName = branch.branch_name || "Unassigned Warehouse";
+            const branchCode = branch.branch_code || "N/A";
 
             if (!branchesMap[branchName]) {
                 branchesMap[branchName] = {
                     branchName,
-                    branchCode: branch.branch_code,
+                    branchCode,
                     batches: [],
                     totalQty: 0
                 };

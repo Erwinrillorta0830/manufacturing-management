@@ -17,8 +17,8 @@ export function ReceivingResultModal({
 }: ReceivingResultModalProps) {
     if (!isOpen || !receivingResult) return null;
 
-    const yieldAllocations = (receivingResult as any).yieldAllocations || receivingResult.allocations || [];
-    const materialCostVariances = (receivingResult as any).materialCostVariances;
+    const yieldAllocations = receivingResult.yieldAllocations || receivingResult.allocations || [];
+    const materialCostVariances = receivingResult.materialCostVariances;
 
     return (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-background/90 backdrop-blur-md animate-in fade-in duration-300">
@@ -55,14 +55,17 @@ export function ReceivingResultModal({
                                 </thead>
                                 <tbody>
                                     {yieldAllocations && yieldAllocations.length > 0 ? (
-                                        yieldAllocations.map((alloc: any, idx: number) => (
-                                            <tr key={idx} className="border-b border-border/40 last:border-0 hover:bg-muted/5">
-                                                <td className="p-2.5 font-extrabold text-foreground">{alloc.order_no}</td>
-                                                <td className="p-2.5 font-semibold text-muted-foreground">{alloc.customer_name}</td>
-                                                <td className="p-2.5 text-foreground font-semibold">{alloc.target_qty?.toLocaleString()} units</td>
-                                                <td className="p-2.5 text-right font-black text-primary">{alloc.allocated_yield?.toLocaleString()} units</td>
-                                            </tr>
-                                        ))
+                                        yieldAllocations.map((allocItem, idx: number) => {
+                                            const alloc = allocItem as { order_no?: string; customer_name?: string; target_qty?: number; allocated_yield?: number };
+                                            return (
+                                                <tr key={idx} className="border-b border-border/40 last:border-0 hover:bg-muted/5">
+                                                    <td className="p-2.5 font-extrabold text-foreground">{alloc.order_no}</td>
+                                                    <td className="p-2.5 font-semibold text-muted-foreground">{alloc.customer_name}</td>
+                                                    <td className="p-2.5 text-foreground font-semibold">{alloc.target_qty?.toLocaleString()} units</td>
+                                                    <td className="p-2.5 text-right font-black text-primary">{alloc.allocated_yield?.toLocaleString()} units</td>
+                                                </tr>
+                                            );
+                                        })
                                     ) : (
                                         <tr>
                                             <td colSpan={4} className="p-4 text-center text-muted-foreground font-semibold">
@@ -126,7 +129,7 @@ export function ReceivingResultModal({
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {materialCostVariances.details && materialCostVariances.details.map((detail: any, idx: number) => (
+                                        {materialCostVariances.details && materialCostVariances.details.map((detail, idx: number) => (
                                             <tr key={idx} className="border-b border-border/40 last:border-0 hover:bg-muted/5">
                                                 <td className="p-2.5 font-bold text-foreground">{detail.productName}</td>
                                                 <td className="p-2.5 text-muted-foreground font-semibold">
@@ -141,11 +144,15 @@ export function ReceivingResultModal({
                                                 <td className="p-2.5 text-foreground font-semibold">
                                                     PHP {detail.actualTotalCost?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                                 </td>
-                                                <td className={`p-2.5 text-right font-bold ${detail.variance <= 0 ? "text-emerald-500" : "text-rose-500"
-                                                    }`}>
-                                                    {detail.variance > 0 ? "+" : ""}
-                                                    PHP {detail.variance?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                                </td>
+                                                {(() => {
+                                                    const varVal = detail.variance ?? 0;
+                                                    return (
+                                                        <td className={`p-2.5 text-right font-bold ${varVal <= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                                            {varVal > 0 ? "+" : ""}
+                                                            PHP {varVal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                                        </td>
+                                                    );
+                                                })()}
                                             </tr>
                                         ))}
                                     </tbody>

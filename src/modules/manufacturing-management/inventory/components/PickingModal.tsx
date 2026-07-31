@@ -21,7 +21,7 @@ export function PickingModal({
 }: PickingModalProps) {
     if (!isOpen || !selectedPickingJO) return null;
 
-    const isPicked = (selectedPickingJO as any).isPicked;
+    const isPicked = selectedPickingJO.isPicked;
     const branchName = data?.branches?.find(b => Number(b.id) === Number(selectedPickingJO.branch_id))?.branch_name ||
         (Number(selectedPickingJO.branch_id) === 1 || Number(selectedPickingJO.branch_id) === 183 ? "Main Branch" : Number(selectedPickingJO.branch_id) === 163 ? "Urdaneta Branch" : `Branch #${selectedPickingJO.branch_id}`);
 
@@ -52,7 +52,7 @@ export function PickingModal({
                         </div>
                         <div>
                             <span className="text-[9px] text-muted-foreground uppercase font-bold">Target Run Qty</span>
-                            <div className="text-xs font-bold mt-0.5">{((selectedPickingJO as any).quantity || selectedPickingJO.planned_quantity || 0).toLocaleString()} units</div>
+                            <div className="text-xs font-bold mt-0.5">{(selectedPickingJO.quantity || selectedPickingJO.planned_quantity || 0).toLocaleString()} units</div>
                         </div>
                         <div>
                             <span className="text-[9px] text-muted-foreground uppercase font-bold">Branch</span>
@@ -84,7 +84,7 @@ export function PickingModal({
                                 </thead>
                                 <tbody>
                                     {isPicked ? (
-                                        (selectedPickingJO as any).pickedItems && (selectedPickingJO as any).pickedItems.map((item: any, idx: number) => {
+                                        selectedPickingJO.pickedItems && selectedPickingJO.pickedItems.map((item, idx: number) => {
                                             const name = data?.products?.find(p => p.product_id === item.productId)?.product_name || `Component #${item.productId}`;
                                             return (
                                                 <tr key={idx} className="border-b border-border/40 last:border-0">
@@ -97,17 +97,17 @@ export function PickingModal({
                                             );
                                         })
                                     ) : (
-                                        selectedPickingJO.allocationResults && selectedPickingJO.allocationResults.map((alloc: any, idx: number) => {
+                                        selectedPickingJO.allocationResults && selectedPickingJO.allocationResults.map((alloc, idx: number) => {
                                             return (
                                                 <React.Fragment key={idx}>
                                                     {alloc.batches && alloc.batches.length > 0 ? (
-                                                        alloc.batches.map((batch: any, bIdx: number) => (
+                                                        alloc.batches.map((batch, bIdx: number) => (
                                                             <tr key={`${idx}-${bIdx}`} className="border-b border-border/40 last:border-0 hover:bg-muted/5">
                                                                 <td className="p-2.5 font-semibold text-foreground">
                                                                     {bIdx === 0 ? alloc.component_name : <span className="text-muted-foreground pl-3">↳ Lot Split</span>}
                                                                 </td>
                                                                 <td className="p-2.5 text-muted-foreground font-semibold">
-                                                                    {bIdx === 0 ? `${alloc.required.toLocaleString(undefined, { maximumFractionDigits: 2 })} units` : ""}
+                                                                    {bIdx === 0 ? `${(alloc.required || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} units` : ""}
                                                                 </td>
                                                                 <td className="p-2.5 font-extrabold text-foreground">{batch.lot_number}</td>
                                                                 <td className="p-2.5 text-muted-foreground font-bold">{batch.expiration_date}</td>
@@ -117,8 +117,8 @@ export function PickingModal({
                                                     ) : (
                                                         <tr className="border-b border-border/40 last:border-0 text-rose-500">
                                                             <td className="p-2.5 font-semibold">{alloc.component_name}</td>
-                                                            <td className="p-2.5 font-semibold">{alloc.required.toLocaleString()} units</td>
-                                                            <td colSpan={3} className="p-2.5 text-right font-bold text-[10px] uppercase">Deficit: {alloc.deficit.toLocaleString()} units (NO STOCK)</td>
+                                                            <td className="p-2.5 font-semibold">{(alloc.required || 0).toLocaleString()} units</td>
+                                                            <td colSpan={3} className="p-2.5 text-right font-bold text-[10px] uppercase">Deficit: {(alloc.deficit || 0).toLocaleString()} units (NO STOCK)</td>
                                                         </tr>
                                                     )}
                                                 </React.Fragment>
@@ -142,7 +142,7 @@ export function PickingModal({
                             <button
                                 type="button"
                                 onClick={() => onConfirmPick(selectedPickingJO)}
-                                disabled={pickingSubmitting || selectedPickingJO.allocationResults?.some((a: any) => a.deficit > 0)}
+                                disabled={pickingSubmitting || selectedPickingJO.allocationResults?.some((a) => (a.deficit || 0) > 0)}
                                 className="bg-primary hover:bg-primary/95 text-primary-foreground border-transparent text-xs font-bold px-4 py-2 rounded-lg cursor-pointer shadow-sm transition-all flex items-center gap-1.5"
                             >
                                 {pickingSubmitting ? (

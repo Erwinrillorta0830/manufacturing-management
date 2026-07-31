@@ -32,8 +32,9 @@ export function useDashboard() {
         try {
             const json = await fetchDashboardData(start, end);
             setData(json);
-        } catch (e: any) {
-            toast.error(e.message || "Error loading dashboard metrics");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Error loading dashboard metrics";
+            toast.error(msg);
         } finally {
             setLoading(false);
         }

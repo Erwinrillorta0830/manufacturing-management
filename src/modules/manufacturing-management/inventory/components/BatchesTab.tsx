@@ -1,6 +1,6 @@
 import React from "react";
 import { ChevronRight, Bookmark } from "lucide-react";
-import { GroupedBatchProduct } from "../types/inventory.types";
+import { GroupedBatchProduct, BatchItem } from "../types/inventory.types";
 
 interface BatchesTabProps {
     productBatchesGrouped: GroupedBatchProduct[];
@@ -94,7 +94,7 @@ export function BatchesTab({
                                                                 </td>
                                                             </tr>
                                                         ) : (
-                                                            prod.batches.map((batch: any, bIdx: number) => {
+                                                            prod.batches.map((batch: BatchItem, bIdx: number) => {
                                                                 const cost = Number(batch.final_landed_unit_cost || batch.base_unit_cost_php || 0);
                                                                 const availQty = Number(batch.available_quantity ?? batch.quantity_received ?? 0);
                                                                 const resQty = Number(batch.reserved_quantity ?? 0);

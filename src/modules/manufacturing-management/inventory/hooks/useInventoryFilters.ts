@@ -6,7 +6,8 @@ import {
     ExpiryFilter,
     StockLevelProduct,
     GroupedBatchProduct,
-    BatchItem
+    BatchItem,
+    LedgerItem
 } from "../types/inventory.types";
 
 export function useInventoryFilters(data: InventoryData | null) {
@@ -50,7 +51,7 @@ export function useInventoryFilters(data: InventoryData | null) {
         const stockMap: Record<number, { qty: number; branches: Record<number, number> }> = {};
 
         if (batches && batches.length > 0) {
-            batches.forEach((b: any) => {
+            batches.forEach((b: BatchItem) => {
                 const pId = Number(b.product_id);
                 const bId = Number(b.branch_id);
                 const qty = Number(b.available_quantity ?? b.on_hand_quantity ?? b.quantity_received ?? 0);
@@ -62,7 +63,7 @@ export function useInventoryFilters(data: InventoryData | null) {
                 stockMap[pId].branches[bId] = (stockMap[pId].branches[bId] || 0) + qty;
             });
         } else if (ledger && ledger.length > 0) {
-            ledger.forEach((entry: any) => {
+            ledger.forEach((entry: LedgerItem) => {
                 const entryDate = entry.documentDate || entry.date_added || "";
                 if (filterStartDate && entryDate < filterStartDate) return;
                 if (filterEndDate && entryDate > filterEndDate) return;

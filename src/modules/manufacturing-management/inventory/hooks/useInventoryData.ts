@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { InventoryData } from "../types/inventory.types";
+import { InventoryData, LedgerItem, ProductItem } from "../types/inventory.types";
 import { fetchInventoryData } from "../services/inventory.service";
 
 export function useInventoryData() {
@@ -14,8 +14,9 @@ export function useInventoryData() {
         try {
             const inventoryData = await fetchInventoryData();
             setData(inventoryData);
-        } catch (e: any) {
-            toast.error(e.message || "Failed to load inventory.");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to load inventory.";
+            toast.error(msg);
         } finally {
             setLoading(false);
         }
@@ -134,7 +135,7 @@ export function useInventoryData() {
         const { ledger } = data;
 
         const newStocks: Record<number, number> = {};
-        ledger.forEach((entry: any) => {
+        ledger.forEach((entry: LedgerItem) => {
             const pId = Number(entry.productId || entry.product_id);
             const qty = Number(entry.quantity) || 0;
             newStocks[pId] = (newStocks[pId] || 0) + qty;
@@ -150,7 +151,7 @@ export function useInventoryData() {
                 newFlashStates[pId] = newQty > oldQty ? "up" : "down";
                 hasChanges = true;
 
-                const prod = data.products.find((p: any) => Number(p.product_id) === pId);
+                const prod = data.products.find((p: ProductItem) => Number(p.product_id) === pId);
                 const prodName = prod ? prod.product_name : `Product #${pId}`;
                 const diff = Math.abs(newQty - oldQty);
                 if (newQty > oldQty) {

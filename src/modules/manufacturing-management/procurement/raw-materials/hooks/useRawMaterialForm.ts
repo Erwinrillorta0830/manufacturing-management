@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { 
     RawMaterialItem, 
@@ -78,7 +78,7 @@ export function useRawMaterialForm(
         setPackagingVariants([...packagingVariants, { uomId: formUom || "", count: "1", codeSuffix: "" }]);
     };
 
-    const handleUpdateVariant = (index: number, field: string, value: any) => {
+    const handleUpdateVariant = (index: number, field: string, value: string | number) => {
         const copy = [...packagingVariants];
         copy[index] = { ...copy[index], [field]: value };
         setPackagingVariants(copy);
@@ -91,10 +91,13 @@ export function useRawMaterialForm(
     // Load metadata lists on modal mount
     useEffect(() => {
         if (!isModalOpen) return;
-        setLoadingUnits(true);
 
-        fetchRawMaterialMetadata()
-            .then(meta => {
+        let isSubscribed = true;
+        const load = async () => {
+            try {
+                setLoadingUnits(true);
+                const meta = await fetchRawMaterialMetadata();
+                if (!isSubscribed) return;
                 setUnits(meta.units);
                 setWeightUnits(meta.weightUnits);
                 setBrandsList(meta.brands);
@@ -107,73 +110,111 @@ export function useRawMaterialForm(
                         setFormWeightUnitId(kgUnit ? kgUnit.id : meta.weightUnits[0].id);
                     }
                 }
-            })
-            .catch(err => {
+            } catch (err) {
                 console.error("Failed to load raw material metadata:", err);
                 toast.error("Failed to load options metadata");
-            })
-            .finally(() => {
-                setLoadingUnits(false);
-            });
+            } finally {
+                if (isSubscribed) setLoadingUnits(false);
+            }
+        };
+
+        load();
+        return () => {
+            isSubscribed = false;
+        };
     }, [isModalOpen, editingItem]);
 
-    // Reset/Populate form fields depending on Register/Edit mode
-    useEffect(() => {
-        if (!isModalOpen) {
-            setEditingItem(null);
-            setFormName("");
-            setFormCode("");
-            setFormDesc("");
-            setFormDensity("1.000");
-            setFormWeight("");
-            setFormWeightUnitId("");
-            setFormBrand("");
-            setFormCategory("");
-            setFormProductType(389);
-            setFormParentId("");
-            setFormUomCount("1");
-            setSelectedSupplierIds([]);
-            setSupplierSearch("");
-            setShowValidationErrors(false);
-            setPackagingVariants([]);
-        } else if (editingItem) {
-            setFormName(editingItem.product_name || "");
-            setFormCode(editingItem.product_code || "");
-            setFormDesc(editingItem.description || "");
-            setFormUom(editingItem.unit_of_measurement?.unit_id || "");
-            setFormDensity(String(editingItem.density_factor || "1.000"));
-            setFormWeight(editingItem.weight && Number(editingItem.weight) > 0 ? String(editingItem.weight) : "");
-            const existingWeightUnitId = editingItem.weight_unit_id
-                ? (typeof editingItem.weight_unit_id === "object" ? editingItem.weight_unit_id.unit_id || (editingItem.weight_unit_id as any).id : editingItem.weight_unit_id)
-                : "";
-            setFormWeightUnitId(existingWeightUnitId || "");
-            setFormBrand(editingItem.product_brand ? String(typeof editingItem.product_brand === "object" ? (editingItem.product_brand as any).brand_id : editingItem.product_brand) : "");
-            setFormCategory(editingItem.product_category ? String(typeof editingItem.product_category === "object" ? (editingItem.product_category as any).category_id : editingItem.product_category) : "");
-            setFormProductType(editingItem.product_type || 389);
-            setFormParentId(editingItem.parent_id ? String(editingItem.parent_id) : "");
-            setFormUomCount(editingItem.unit_of_measurement_count ? String(editingItem.unit_of_measurement_count) : "1");
+    // Populate / Reset form when editingItem changes or modal opens
+    const resetForm = useCallback(() => {
+        setFormName("");
+        setFormCode("");
+        setFormDesc("");
+        setFormDensity("1.000");
+        setFormWeight("");
+        setFormWeightUnitId("");
+        setFormBrand("");
+        setFormCategory("");
+        setFormProductType(389);
+        setFormParentId("");
+        setFormUomCount("1");
+        setSelectedSupplierIds([]);
+        setSupplierSearch("");
+        setShowValidationErrors(false);
+        setPackagingVariants([]);
+    }, []);
 
-            fetchLinkedSuppliers(editingItem.product_id)
-                .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
-                .catch(err => console.error("Failed to load item suppliers:", err));
+    const populateForm = useCallback((item: RawMaterialItem) => {
+        setFormName(item.product_name || "");
+        setFormCode(item.product_code || "");
+        setFormDesc(item.description || "");
+        setFormUom(item.unit_of_measurement?.unit_id || "");
+        setFormDensity(String(item.density_factor || "1.000"));
+        setFormWeight(item.weight && Number(item.weight) > 0 ? String(item.weight) : "");
+
+        let existingWeightUnitId: number | "" = "";
+        if (item.weight_unit_id) {
+            if (typeof item.weight_unit_id === "object") {
+                const wObj = item.weight_unit_id as { unit_id?: number; id?: number };
+                existingWeightUnitId = wObj.unit_id || wObj.id || "";
+            } else {
+                existingWeightUnitId = item.weight_unit_id;
+            }
         }
-    }, [isModalOpen, editingItem]);
+        setFormWeightUnitId(existingWeightUnitId);
 
-    // Auto-generate child product code when parent, UOM, or UOM count changes
-    useEffect(() => {
-        if (formParentId && !editingItem) {
-            const parentItem = rawMaterials.find(rm => String(rm.product_id) === String(formParentId));
+        let brandVal = "";
+        if (item.product_brand) {
+            brandVal = typeof item.product_brand === "object"
+                ? String((item.product_brand as { brand_id?: number }).brand_id || "")
+                : String(item.product_brand);
+        }
+        setFormBrand(brandVal);
+
+        let catVal = "";
+        if (item.product_category) {
+            catVal = typeof item.product_category === "object"
+                ? String((item.product_category as { category_id?: number }).category_id || "")
+                : String(item.product_category);
+        }
+        setFormCategory(catVal);
+
+        setFormProductType(item.product_type || 389);
+        setFormParentId(item.parent_id ? String(item.parent_id) : "");
+        setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
+
+        fetchLinkedSuppliers(item.product_id)
+            .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
+            .catch(err => console.error("Failed to load item suppliers:", err));
+    }, []);
+
+    const handleStartEdit = (item: RawMaterialItem) => {
+        setEditingItem(item);
+        populateForm(item);
+        setIsModalOpen(true);
+    };
+
+    const handleOpenModal = () => {
+        setEditingItem(null);
+        resetForm();
+        setIsModalOpen(true);
+    };
+
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        setEditingItem(null);
+        resetForm();
+    };
+
+    const handleParentChange = (val: string) => {
+        setFormParentId(val);
+        if (val && !editingItem) {
+            const parentItem = rawMaterials.find(rm => String(rm.product_id) === String(val));
             if (parentItem && parentItem.product_code) {
                 const parentCode = parentItem.product_code;
                 const uomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "UNIT";
                 setFormCode(`${parentCode}-${uomShortcut.toUpperCase()}${formUomCount}`);
             }
         }
-    }, [formParentId, formUom, formUomCount, rawMaterials, units, editingItem]);
-
-    const handleStartEdit = (item: RawMaterialItem) => {
-        setEditingItem(item);
-        setIsModalOpen(true);
     };
 
     const handleCreateBrand = async (name: string) => {
@@ -182,8 +223,9 @@ export function useRawMaterialForm(
             setBrandsList(prev => [...prev, newOpt]);
             setFormBrand(newOpt.value);
             toast.success(`Brand "${name}" created on the fly`);
-        } catch (e: any) {
-            toast.error(e.message || "Failed to create brand");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to create brand";
+            toast.error(msg);
         }
     };
 
@@ -193,8 +235,9 @@ export function useRawMaterialForm(
             setCategoriesList(prev => [...prev, newOpt]);
             setFormCategory(newOpt.value);
             toast.success(`Category "${name}" created on the fly`);
-        } catch (e: any) {
-            toast.error(e.message || "Failed to create category");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to create category";
+            toast.error(msg);
         }
     };
 
@@ -323,13 +366,15 @@ export function useRawMaterialForm(
 
         setSaving(false);
         if (success) {
-            setIsModalOpen(false);
+            handleCloseModal();
         }
     };
 
     return {
         isModalOpen,
         setIsModalOpen,
+        handleOpenModal,
+        handleCloseModal,
         editingItem,
         handleStartEdit,
         saving,
@@ -360,7 +405,7 @@ export function useRawMaterialForm(
         formProductType,
         setFormProductType,
         formParentId,
-        setFormParentId,
+        setFormParentId: handleParentChange,
         formUomCount,
         setFormUomCount,
         selectedSupplierIds,

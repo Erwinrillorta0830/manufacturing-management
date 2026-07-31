@@ -45,15 +45,15 @@ export function MaterialPickingTab({
             </thead>
             <tbody>
                 {filtered.map((jo) => {
-                    const isPicked = (jo as any).isPicked;
+                    const isPicked = jo.isPicked;
                     const branchName = data?.branches?.find(b => Number(b.id) === Number(jo.branch_id))?.branch_name ||
                         (Number(jo.branch_id) === 1 || Number(jo.branch_id) === 183 ? "Main Branch" : Number(jo.branch_id) === 163 ? "Urdaneta Branch" : `Branch #${jo.branch_id}`);
 
                     return (
                         <tr key={jo.jo_id} className="border-b border-input/60 hover:bg-muted/10">
                             <td className="py-3.5 px-4 font-extrabold text-foreground">{jo.jo_id}</td>
-                            <td className="py-3.5 px-4 font-bold text-foreground">{jo.product_name || `Product #${(jo as any).product_id}`}</td>
-                            <td className="py-3.5 px-4 font-bold text-foreground">{((jo as any).quantity || jo.planned_quantity || 0).toLocaleString()} units</td>
+                            <td className="py-3.5 px-4 font-bold text-foreground">{jo.product_name || `Product #${jo.product_id}`}</td>
+                            <td className="py-3.5 px-4 font-bold text-foreground">{(jo.quantity || jo.planned_quantity || 0).toLocaleString()} units</td>
                             <td className="py-3.5 px-4 font-semibold text-muted-foreground">{branchName}</td>
                             <td className="py-3.5 px-4">
                                 <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${isPicked

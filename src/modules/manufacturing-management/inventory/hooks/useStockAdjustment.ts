@@ -42,8 +42,9 @@ export function useStockAdjustment(onSuccess: () => void) {
             setAdjQty("");
             setAdjRemarks("");
             onSuccess();
-        } catch (err: any) {
-            toast.error(err.message || "An error occurred.");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "An error occurred.";
+            toast.error(msg);
         } finally {
             setSubmittingAdj(false);
         }

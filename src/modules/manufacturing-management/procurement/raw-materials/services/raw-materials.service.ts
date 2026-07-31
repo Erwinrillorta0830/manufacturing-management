@@ -28,8 +28,8 @@ export async function fetchRawMaterialMetadata(): Promise<{
 
     const units: UnitOption[] = unitsRes || [];
     const weightUnits: WeightUnitOption[] = weightUnitsRes || [];
-    const brands: SelectOption[] = (brandsData => (brandsData || []).map((b: any) => ({ value: String(b.brand_id), label: b.brand_name })))(brandsRes);
-    const categories: SelectOption[] = (categoriesData => (categoriesData || []).map((c: any) => ({ value: String(c.category_id), label: c.category_name })))(categoriesRes);
+    const brands: SelectOption[] = (brandsData => (brandsData || []).map((b: { brand_id: number; brand_name: string }) => ({ value: String(b.brand_id), label: b.brand_name })))(brandsRes);
+    const categories: SelectOption[] = (categoriesData => (categoriesData || []).map((c: { category_id: number; category_name: string }) => ({ value: String(c.category_id), label: c.category_name })))(categoriesRes);
 
     return { units, weightUnits, brands, categories };
 }

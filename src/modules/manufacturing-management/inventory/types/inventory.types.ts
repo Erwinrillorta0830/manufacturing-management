@@ -33,9 +33,13 @@ export interface BatchItem {
     quantity_received?: number;
     available_quantity?: number;
     on_hand_quantity?: number;
+    reserved_quantity?: number;
     base_unit_cost_php?: number;
     final_landed_unit_cost?: number;
     branch_name?: string;
+    version_name?: string;
+    lot_name?: string;
+    batch_no?: string;
     expiryStatus?: "active" | "soon" | "expired";
     daysToExpiry?: number | null;
 }
@@ -94,15 +98,22 @@ export interface PickingItem {
 export interface PickingJO {
     jo_id: string;
     branch_id: number;
+    product_id?: number;
     product_name?: string;
     product_code?: string;
     planned_quantity?: number;
+    quantity?: number;
+    isPicked?: boolean;
+    pickedItems?: Array<{ productId: number; lotNumber: string; quantity: number }>;
     status?: string;
     allocationResults?: Array<{
         component_product_id: number;
         component_name?: string;
+        required?: number;
+        deficit?: number;
         batches?: Array<{
             lot_number: string;
+            expiration_date?: string;
             quantity: number;
         }>;
     }>;
@@ -114,8 +125,10 @@ export interface ReceivingJO {
     product_name?: string;
     product_code?: string;
     planned_quantity?: number;
+    quantity?: number;
     branch_id?: number;
     status?: string;
+    actualConsumed?: Array<{ productId: number; lotNumber: string; quantity: number }>;
 }
 
 export interface ReceivingResult {
@@ -123,7 +136,21 @@ export interface ReceivingResult {
     joId: string;
     yieldQuantity: number;
     costVariance?: number;
-    allocations?: any[];
+    allocations?: Array<Record<string, unknown>>;
+    yieldAllocations?: Array<{ order_no?: string; customer_name?: string; target_qty?: number; allocated_yield?: number }>;
+    materialCostVariances?: {
+        total_variance: number;
+        standard_total_cost?: number;
+        actual_total_cost?: number;
+        details?: Array<{
+            productName?: string;
+            standardQty?: number;
+            actualQty?: number;
+            standardTotalCost?: number;
+            actualTotalCost?: number;
+            variance?: number;
+        }>;
+    };
     error?: string;
 }
 

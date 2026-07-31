@@ -276,7 +276,7 @@ export function InventoryControls({
                         <span className="text-xs text-muted-foreground font-bold">Expiry Status:</span>
                         <select
                             value={expiryFilter}
-                            onChange={(e: any) => setExpiryFilter(e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExpiryFilter(e.target.value as ExpiryFilter)}
                             className="bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground font-semibold outline-none"
                         >
                             <option value="all">All Batches</option>

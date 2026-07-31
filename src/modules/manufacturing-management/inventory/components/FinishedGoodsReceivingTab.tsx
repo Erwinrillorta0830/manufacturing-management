@@ -55,7 +55,7 @@ export function FinishedGoodsReceivingTab({
                         <tr key={jo.jo_id} className="border-b border-input/60 hover:bg-muted/10">
                             <td className="py-3.5 px-4 font-extrabold text-foreground">{jo.jo_id}</td>
                             <td className="py-3.5 px-4 font-bold text-foreground">{jo.product_name || `Product #${jo.product_id}`}</td>
-                            <td className="py-3.5 px-4 font-bold text-foreground">{((jo as any).quantity || jo.planned_quantity || 0).toLocaleString()} units</td>
+                            <td className="py-3.5 px-4 font-bold text-foreground">{(jo.quantity || jo.planned_quantity || 0).toLocaleString()} units</td>
                             <td className="py-3.5 px-4 font-semibold text-muted-foreground">{branchName}</td>
                             <td className="py-3.5 px-4">
                                 <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${isFinished

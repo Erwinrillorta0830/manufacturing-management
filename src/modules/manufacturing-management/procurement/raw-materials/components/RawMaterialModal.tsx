@@ -45,7 +45,7 @@ interface RawMaterialModalProps {
     setSupplierSearch: (v: string) => void;
     packagingVariants: Array<{ uomId: number | ""; count: string; codeSuffix: string }>;
     handleAddVariant: () => void;
-    handleUpdateVariant: (idx: number, field: string, value: any) => void;
+    handleUpdateVariant: (idx: number, field: string, value: string | number) => void;
     handleRemoveVariant: (idx: number) => void;
     uomOptions: SelectOption[];
     weightUnitOptions: SelectOption[];
@@ -62,7 +62,6 @@ export function RawMaterialModal({
     onClose,
     editingItem,
     saving,
-    loadingUnits,
     suppliers,
     showValidationErrors,
     formName,
