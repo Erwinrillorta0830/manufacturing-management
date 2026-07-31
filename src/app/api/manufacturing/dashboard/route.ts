@@ -181,8 +181,9 @@ export async function GET(request: Request) {
             }
         });
 
-        // 2. Classify products into Raw Materials vs Finished Goods
+        // 2. Classify products into Raw Materials, Packaging Materials, vs Finished Goods
         const rawMaterials: DashboardProductItem[] = [];
+        const packagingMaterials: DashboardProductItem[] = [];
         const finishedGoods: DashboardProductItem[] = [];
 
         products.forEach((prod: Product) => {
@@ -191,6 +192,7 @@ export async function GET(request: Request) {
             const value = stock * (Number(prod.cost_per_unit) || 0);
 
             const has_versions = versionProductIds.has(pId);
+            const catName = (prod.product_category?.category_name || "").toLowerCase();
 
             const item = {
                 product_id: pId,
@@ -205,13 +207,46 @@ export async function GET(request: Request) {
                 value
             };
 
+            const pName = (prod.product_name || "").toLowerCase();
+            const pCode = (prod.product_code || "").toUpperCase();
+            const pTypeStr = String(prod.product_type || "").toLowerCase();
+
             const isFG = Number(prod.product_type) === 388 ||
+                         pTypeStr === "finished_good" ||
                          has_versions === true || 
-                         prod.product_category?.category_name?.toLowerCase().includes("finished") || 
-                         prod.product_category?.category_name?.toLowerCase() === "fg";
+                         catName.includes("finished") || 
+                         catName === "fg";
+
+            const isPackaging = Number(prod.product_type) === 390 ||
+                                pTypeStr.includes("pack") ||
+                                catName.includes("pack") ||
+                                catName.includes("box") ||
+                                catName.includes("label") ||
+                                catName.includes("bottle") ||
+                                catName.includes("wrapper") ||
+                                catName.includes("container") ||
+                                catName.includes("carton") ||
+                                catName.includes("pouch") ||
+                                catName.includes("sticker") ||
+                                catName.includes("film") ||
+                                catName.includes("cap") ||
+                                pName.includes("packaging") ||
+                                pName.includes("pouch") ||
+                                pName.includes("bottle") ||
+                                pName.includes("sticker") ||
+                                pName.includes("carton") ||
+                                pName.includes("label") ||
+                                pName.includes("wrapper") ||
+                                pName.includes("box") ||
+                                pName.includes("container") ||
+                                pCode.startsWith("PKG") ||
+                                pCode.startsWith("BOX") ||
+                                pCode.startsWith("LBL");
 
             if (isFG) {
                 finishedGoods.push(item);
+            } else if (isPackaging) {
+                packagingMaterials.push(item);
             } else {
                 rawMaterials.push(item);
             }
@@ -604,6 +639,12 @@ export async function GET(request: Request) {
                     totalStock: rawMaterials.reduce((sum, item) => sum + item.stock, 0),
                     totalValue: rawMaterials.reduce((sum, item) => sum + item.value, 0),
                     items: rawMaterials.sort((a, b) => b.value - a.value).slice(0, 50)
+                },
+                packagingMaterials: {
+                    totalSKUs: packagingMaterials.length,
+                    totalStock: packagingMaterials.reduce((sum, item) => sum + item.stock, 0),
+                    totalValue: packagingMaterials.reduce((sum, item) => sum + item.value, 0),
+                    items: packagingMaterials.sort((a, b) => b.value - a.value).slice(0, 50)
                 },
                 finishedGoods: {
                     totalSKUs: finishedGoods.length,

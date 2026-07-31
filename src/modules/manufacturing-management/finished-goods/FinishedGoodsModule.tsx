@@ -1655,7 +1655,7 @@ export default function FinishedGoodsModule() {
                                                 <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
                                                     {/* disabled-lint-next-line @next/next/no-img-element */}
                                                     <img
-                                                        src={registerImagePreview || getProductImageUrl(registerForm.productImage)}
+                                                        src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${registerForm.productImage}`}
                                                         alt="Preview"
                                                         className="w-full h-full object-cover"
                                                         onError={(e) => {

@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Row = Record<string, unknown>;
-const TEMPLATE_DIRECTUS_URL = (process.env.CRM_DIRECTUS_URL || "http://goatedcodoer:8056").replace(/\/$/, "");
+const TEMPLATE_DIRECTUS_URL = (process.env.DIRECTUS_URL || process.env.CRM_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "");
 const TEMPLATE_DIRECTUS_TOKEN = process.env.CRM_DIRECTUS_STATIC_TOKEN || "";
 
 async function rows(collection: string, params: URLSearchParams): Promise<Row[]> {

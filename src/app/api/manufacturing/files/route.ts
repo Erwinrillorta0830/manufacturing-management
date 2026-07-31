@@ -3,10 +3,16 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const CONFIGURED_API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
-const FALLBACK_API_BASE_URL = "http://vtc:8074";
-const API_BASE_URLS = [CONFIGURED_API_BASE_URL, FALLBACK_API_BASE_URL].filter(
-    (baseUrl, index, urls) => baseUrl && urls.indexOf(baseUrl) === index
+const API_BASE_URLS = Array.from(
+    new Set(
+        [
+            process.env.DIRECTUS_URL,
+            process.env.NEXT_PUBLIC_DIRECTUS_URL,
+            process.env.NEXT_PUBLIC_API_BASE_URL,
+        ]
+            .filter((url): url is string => Boolean(url && url.trim()))
+            .map(url => url.trim().replace(/\/+$/, ""))
+    )
 );
 
 const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
