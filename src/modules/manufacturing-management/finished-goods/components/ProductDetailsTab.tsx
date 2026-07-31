@@ -2,7 +2,7 @@ import React from "react";
 import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
-import { getProductImageUrl, uploadProductImage } from "../services/product-image";
+import { uploadProductImage } from "../services/product-image";
 import { 
     Tag, 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -3,13 +3,6 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const API_BASE_URL = (
-    process.env.DIRECTUS_URL ||
-    process.env.NEXT_PUBLIC_DIRECTUS_URL ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    ""
-).replace(/\/+$/, "");
-
 const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
