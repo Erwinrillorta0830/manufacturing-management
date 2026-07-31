@@ -46,7 +46,7 @@ export default async function ClientsPage() {
     let headerUser = {
         name: "User",
         email: "",
-        avatar: "/avatars/shadcn.jpg"
+        avatar: "/vos.png"
     };
 
     if (token) {
@@ -57,7 +57,7 @@ export default async function ClientsPage() {
         headerUser = {
             name: [first, last].filter(Boolean).join(" ") || email || "User",
             email,
-            avatar: "/avatars/shadcn.jpg"
+            avatar: "/vos.png"
         };
     }
 

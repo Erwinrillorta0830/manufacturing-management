@@ -10,15 +10,105 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
     try {
         const bId = Number(branchId);
         const prodFilter = productIds.length > 0 ? `&filter[product_id][_in]=${productIds.join(",")}` : "";
-        const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1${prodFilter}&fields=product_id,product_name,product_code,maintaining_quantity`, { headers, cache: "no-store" });
+        const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1${prodFilter}&fields=product_id,product_name,product_code,maintaining_quantity,product_type,parent_id`, { headers, cache: "no-store" });
         const products = prodRes.ok ? (await prodRes.json()).data || [] : [];
 
-        // 1. Fetch PO Receivings to resolve QA status for raw materials
-        const recFilter = productIds.length > 0 ? `filter[product_id][_in]=${productIds.join(",")}&` : "";
-        const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" });
+        const allProductIds = productIds.length > 0 ? productIds : products.map((p: any) => Number(p.product_id)).filter(Boolean);
+
+        // Extract parent IDs for version checking
+        const parentIds = products.map((p: any) => {
+            const parentVal = p.parent_id;
+            return parentVal && typeof parentVal === 'object' ? Number(parentVal.product_id) : (parentVal ? Number(parentVal) : null);
+        }).filter((id: number | null): id is number => id !== null && id > 0);
+
+        const versionCheckProductIds = Array.from(new Set([...allProductIds, ...parentIds]));
+
+        // Fetch all batch data in parallel
+        const recFilter = allProductIds.length > 0 ? `filter[product_id][_in]=${allProductIds.join(",")}&` : "";
+        const yieldFilter = allProductIds.length > 0 ? `filter[job_order_id][product_id][_in]=${allProductIds.join(",")}&` : "";
+        const movFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                ...(allProductIds.length > 0 ? [{ product_id: { _in: allProductIds } }] : []),
+                { branch_id: { _eq: bId } }
+            ]
+        }));
+
+        const validReceiptsFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                ...(allProductIds.length > 0 ? [{ product_id: { _in: allProductIds } }] : []),
+                { branch_id: { _eq: bId } },
+                { qa_status: { _in: ["Passed", "Partially Accepted"] } },
+                { is_reverted: { _eq: 0 } },
+                { received_quantity: { _gt: 0 } }
+            ]
+        }));
+
+        const versionFilter = encodeURIComponent(JSON.stringify({
+            product_id: { _in: versionCheckProductIds.length > 0 ? versionCheckProductIds : [0] }
+        }));
+
+        const [recRes, yieldRes, movRes, versionsRes, validReceiptsRes] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter=${validReceiptsFilter}&sort=expiry_date&limit=-1`, { headers, cache: "no-store" })
+        ]);
+
         const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
+        const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+        const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+        const versionData = versionsRes.ok ? (await versionsRes.json()).data || [] : [];
+        const validReceipts = validReceiptsRes.ok ? (await validReceiptsRes.json()).data || [] : [];
+
+        const versionProductIds = new Set<number>(versionData.map((v: any) => Number(v.product_id)));
+
+        // Map valid receipts by product_id
+        const validReceiptsByProduct = new Map<number, any[]>();
+        const allReceiptIds: number[] = [];
+        validReceipts.forEach((r: any) => {
+            const pId = Number(r.product_id?.product_id || r.product_id);
+            if (pId) {
+                if (!validReceiptsByProduct.has(pId)) {
+                    validReceiptsByProduct.set(pId, []);
+                }
+                validReceiptsByProduct.get(pId)!.push(r);
+            }
+            const porId = Number(r.purchase_order_product_id);
+            if (porId) allReceiptIds.push(porId);
+        });
+
+        // Batch fetch reservations for all products by product_id & batch_no
+        const lotReservationsMap: Record<string, number> = {};
+        if (allProductIds.length > 0) {
+            try {
+                const resFilter = encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { product_id: { _in: allProductIds } },
+                        { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
+                    ]
+                }));
+                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,purchase_order_receiving_id,purchase_order_receiving_id.lot_no,purchase_order_receiving_id.batch_no,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+                if (resRes.ok) {
+                    const resData = (await resRes.json()).data || [];
+                    resData.forEach((r: any) => {
+                        const pId = Number(r.product_id);
+                        const porObj = r.purchase_order_receiving_id;
+                        const batchNo = r.batch_no || (typeof porObj === 'object' ? (porObj?.batch_no || porObj?.lot_no) : null);
+                        if (pId && batchNo) {
+                            const key = `${pId}:${batchNo}`;
+                            lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error("Error fetching reservations for net-requirements:", err);
+            }
+        }
+
         const batchStatusMap = new Map<string, string>();
         const batchExpiryMap = new Map<string, string>();
+
         receipts.forEach((rec: any) => {
             const pId = Number(rec.product_id?.product_id || rec.product_id);
             const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
@@ -27,10 +117,6 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             if (rec.expiry_date) batchExpiryMap.set(key, rec.expiry_date);
         });
 
-        // 2. Fetch Yield Ledger logs to resolve QA status for finished goods
-        const yieldFilter = productIds.length > 0 ? `filter[job_order_id][product_id][_in]=${productIds.join(",")}&` : "";
-        const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
-        const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
         yields.forEach((yl: any) => {
             const pId = Number(yl.job_order_id?.product_id);
             if (!pId) return;
@@ -39,16 +125,6 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             batchStatusMap.set(key, yl.qa_status || "Pending");
             if (yl.expiry_date) batchExpiryMap.set(key, yl.expiry_date);
         });
-
-        // 3. Fetch inventory movements to calculate the true ledger stock
-        const movFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                ...(productIds.length > 0 ? [{ product_id: { _in: productIds } }] : []),
-                { branch_id: { _eq: bId } }
-            ]
-        }));
-        const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-        const movements = movRes.ok ? (await movRes.json()).data || [] : [];
         
         const movementStockMap = new Map<string, number>(); // "productId:batchNo" -> sum of quantity
         movements.forEach((mov: any) => {
@@ -76,56 +152,26 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             }
         });
 
-        // Resolve recommended lot numbers for raw materials
+        // Resolve recommended lot numbers for raw materials and sub-assemblies
         const enrichedProducts = [];
         for (const p of products) {
             const pId = Number(p.product_id);
             const onHand = onHandMap[pId] || 0;
             const safetyStock = Number(p.maintaining_quantity || 0);
 
-            // Check if it is a sub-assembly
-            const activeVer = await getActiveVersionForProduct(pId);
-            const isSubAssembly = activeVer && activeVer.version;
+            const parentVal = p.parent_id;
+            const parentId = parentVal && typeof parentVal === 'object' ? Number(parentVal.product_id) : (parentVal ? Number(parentVal) : null);
+
+            const isSubAssembly = Number(p.product_type) === 388 || versionProductIds.has(pId) || (parentId !== null && versionProductIds.has(parentId));
 
             let recommendedLots: any[] = [];
             if (!isSubAssembly) {
-                const branchFilter = branchId ? `&filter[branch_id][_eq]=${branchId}` : "";
-                const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${pId}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0${branchFilter}&sort=expiry_date`;
-                
-                const receiptsRes = await fetch(receiptsUrl, { headers, cache: "no-store" });
-                const validReceipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
+                const prodValidReceipts = validReceiptsByProduct.get(pId) || [];
 
-                const receiptIds = validReceipts.map((r: any) => r.purchase_order_product_id).filter(Boolean);
-                const reservationsMap: Record<number, number> = {};
-
-                if (receiptIds.length > 0) {
-                    try {
-                        const resFilter = encodeURIComponent(JSON.stringify({
-                            _and: [
-                                { purchase_order_receiving_id: { _in: receiptIds } },
-                                { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
-                            ]
-                        }));
-                        const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
-                        if (resRes.ok) {
-                            const resData = (await resRes.json()).data || [];
-                            resData.forEach((r: any) => {
-                                const porId = Number(r.purchase_order_receiving_id);
-                                if (porId) {
-                                    reservationsMap[porId] = (reservationsMap[porId] || 0) + Number(r.reserved_quantity || 0);
-                                }
-                            });
-                        }
-                    } catch (err) {
-                        console.error("Error fetching reservations for net-requirements:", err);
-                    }
-                }
-
-                validReceipts.forEach((rec: any) => {
+                prodValidReceipts.forEach((rec: any) => {
                     const lotNo = rec.lot_no || rec.batch_no || "LOT-N/A";
                     const physicalQty = movementStockMap.get(`${pId}:${lotNo}`) || 0;
-                    const recId = Number(rec.purchase_order_product_id);
-                    const alreadyReserved = reservationsMap[recId] || 0;
+                    const alreadyReserved = lotReservationsMap[`${pId}:${lotNo}`] || 0;
                     const netAvailable = Math.max(0, physicalQty - alreadyReserved);
 
                     if (netAvailable > 0) {
@@ -136,7 +182,7 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                     }
                 });
             } else {
-                // If it is a sub-assembly, we can recommend its manufactured batches directly from movementStockMap
+                // If it is a sub-assembly, recommend its manufactured batches directly from movementStockMap minus reservations
                 movementStockMap.forEach((ledgerQty, key) => {
                     const parts = key.split(":");
                     const keyPId = Number(parts[0]);
@@ -144,10 +190,14 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                     if (keyPId === pId && ledgerQty > 0) {
                         const status = batchStatusMap.get(`${pId}:${lotNum}`) || "Passed";
                         if (status === "Passed" || status === "Partially Accepted") {
-                            recommendedLots.push({
-                                lot_no: lotNum,
-                                available: ledgerQty
-                            });
+                            const alreadyReserved = lotReservationsMap[`${pId}:${lotNum}`] || 0;
+                            const netAvailable = Math.max(0, ledgerQty - alreadyReserved);
+                            if (netAvailable > 0) {
+                                recommendedLots.push({
+                                    lot_no: lotNum,
+                                    available: netAvailable
+                                });
+                            }
                         }
                     }
                 });

@@ -29,6 +29,7 @@ import { useFinishedGoods, type RegisterFormField } from "./hooks/useFinishedGoo
 import { Product, BOMItem, RoutingStep } from "./types";
 import { CreatableSelect } from "./components/CreatableSelect";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
+import { getProductImageUrl, uploadProductImage } from "./services/product-image";
 
 export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
@@ -37,6 +38,8 @@ export default function FinishedGoodsModule() {
     const validTabs = ["details", "routes_bom", "costing", "qa_templates", "importation"];
     const initialTab = requestedTab && validTabs.includes(requestedTab) ? requestedTab : "details";
     const [uploadingRegImage, setUploadingRegImage] = useState(false);
+    const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
+    const [registerImageError, setRegisterImageError] = useState<string | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     const {
@@ -113,6 +116,18 @@ export default function FinishedGoodsModule() {
         allCatalogProducts
     } = useFinishedGoods(initialTab);
 
+    useEffect(() => {
+        if (isRegisterModalOpen) return;
+        setRegisterImagePreview(null);
+        setRegisterImageError(null);
+    }, [isRegisterModalOpen]);
+
+    useEffect(() => {
+        return () => {
+            if (registerImagePreview) URL.revokeObjectURL(registerImagePreview);
+        };
+    }, [registerImagePreview]);
+
     // Synchronize new editedRoutes state to legacy editedBOM and editedRoutings for costing simulation
     useEffect(() => {
         const ingredients: BOMItem[] = [];
@@ -175,6 +190,14 @@ export default function FinishedGoodsModule() {
     const [importVat, setImportVat] = useState<number>(253684.78);
     const [importDensityFactor, setImportDensityFactor] = useState<number>(0.880);
     const [automateCustoms, setAutomateCustoms] = useState<boolean>(true);
+
+    // Sidebar Pagination State
+    const [sidebarPage, setSidebarPage] = useState(1);
+    const [sidebarPageSize, setSidebarPageSize] = useState(10);
+
+    useEffect(() => {
+        setSidebarPage(1);
+    }, [searchQuery]);
 
     // Sync tab param on load
     useEffect(() => {
@@ -751,7 +774,10 @@ export default function FinishedGoodsModule() {
                                     <span className="text-xs">Loading products...</span>
                                 </div>
                             ) : (
-                                treeProducts.roots.map((root) => {
+                                (() => {
+                                    const totalSidebarPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
+                                    const paginatedRoots = treeProducts.roots.slice((sidebarPage - 1) * sidebarPageSize, sidebarPage * sidebarPageSize);
+                                    return paginatedRoots.map((root) => {
                                     const children = treeProducts.childrenMap.get(root.id) || [];
                                     const displayedChildren = searchQuery.trim()
                                         ? children.filter(c => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.sku.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.barcode.toLowerCase().includes(searchQuery.trim().toLowerCase()))
@@ -812,12 +838,12 @@ export default function FinishedGoodsModule() {
                                                             <div className="absolute left-[-16px] top-1/2 -translate-y-1/2 w-3 border-t border-border/60" />
 
                                                             <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                                <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5 text-muted-foreground">
-                                                                    <Sliders className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                                                <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
+                                                                    <Layers className="h-3 w-3 text-muted-foreground shrink-0" />
                                                                     {child.title}
                                                                 </span>
-                                                                <span className="shrink-0 bg-muted/60 text-muted-foreground px-1 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
-                                                                    Variant
+                                                                <span className="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
+                                                                    Child
                                                                 </span>
                                                             </div>
                                                             <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5">
@@ -832,7 +858,8 @@ export default function FinishedGoodsModule() {
                                             )}
                                         </div>
                                     );
-                                })
+                                });
+                                })()
                             )}
                             {!loadingProducts && treeProducts.roots.length === 0 && (
                                 <div className="p-8 text-center text-xs text-muted-foreground">
@@ -840,6 +867,34 @@ export default function FinishedGoodsModule() {
                                 </div>
                             )}
                         </div>
+
+                        {/* Sidebar Pagination Footer */}
+                        {treeProducts.roots.length > 0 && (() => {
+                            const totalPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
+                            return (
+                                <div className="p-2.5 border-t bg-muted/20 flex items-center justify-between text-xs text-muted-foreground font-medium shrink-0">
+                                    <span>
+                                        Page {sidebarPage} of {totalPages}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            disabled={sidebarPage <= 1}
+                                            onClick={() => setSidebarPage(prev => Math.max(1, prev - 1))}
+                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                                        >
+                                            Prev
+                                        </button>
+                                        <button
+                                            disabled={sidebarPage >= totalPages}
+                                            onClick={() => setSidebarPage(prev => Math.min(totalPages, prev + 1))}
+                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 
@@ -1600,7 +1655,7 @@ export default function FinishedGoodsModule() {
                                                 <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
                                                     {/* disabled-lint-next-line @next/next/no-img-element */}
                                                     <img
-                                                        src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || "http://vtc:8074"}/assets/${registerForm.productImage}`}
+                                                        src={registerImagePreview || getProductImageUrl(registerForm.productImage)}
                                                         alt="Preview"
                                                         className="w-full h-full object-cover"
                                                         onError={(e) => {
@@ -1615,6 +1670,8 @@ export default function FinishedGoodsModule() {
                                                         onClick={async () => {
                                                             const oldId = registerForm.productImage;
                                                             setRegisterForm(prev => ({ ...prev, productImage: "" }));
+                                                            setRegisterImagePreview(null);
+                                                            setRegisterImageError(null);
                                                             if (oldId && oldId.length > 10) {
                                                                 try {
                                                                     await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
@@ -1647,30 +1704,31 @@ export default function FinishedGoodsModule() {
                                                         onChange={async (e) => {
                                                             const file = e.target.files?.[0];
                                                             if (!file) return;
+                                                            const input = e.currentTarget;
                                                             setUploadingRegImage(true);
+                                                            setRegisterImageError(null);
                                                             try {
-                                                                const formData = new FormData();
-                                                                formData.append("file", file);
-                                                                const uploadRes = await fetch("/api/manufacturing/files", {
-                                                                    method: "POST",
-                                                                    body: formData
-                                                                });
-                                                                if (!uploadRes.ok) throw new Error("Upload failed");
-                                                                const json = await uploadRes.json();
-                                                                const newFileId = json?.data?.id;
-                                                                if (newFileId) {
-                                                                    setRegisterForm(prev => ({ ...prev, productImage: newFileId }));
-                                                                }
+                                                                const newFileId = await uploadProductImage(file);
+                                                                setRegisterForm(prev => ({ ...prev, productImage: newFileId }));
+                                                                setRegisterImagePreview(URL.createObjectURL(file));
+                                                                toast.success("Product image uploaded successfully.");
                                                             } catch (err) {
-                                                                console.error(err);
-                                                                alert("Failed to upload image");
+                                                                const message = err instanceof Error ? err.message : "Failed to upload product image.";
+                                                                setRegisterImageError(message);
+                                                                toast.error(message);
                                                             } finally {
                                                                 setUploadingRegImage(false);
+                                                                input.value = "";
                                                             }
                                                         }}
                                                         className="hidden"
                                                     />
                                                 </label>
+                                                {registerImageError && (
+                                                    <p className="text-[10px] text-destructive" role="alert">
+                                                        {registerImageError}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -1730,28 +1788,24 @@ export default function FinishedGoodsModule() {
                                                 <span className="text-xs text-muted-foreground/60 italic self-center">No suppliers mapped to this product yet</span>
                                             )}
                                         </div>
-                                        <select
+                                        <CreatableSelect
+                                            options={suppliers
+                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
+                                                .map(s => ({
+                                                    value: String(s.id),
+                                                    label: s.supplier_name,
+                                                }))}
                                             value=""
-                                            onChange={e => {
-                                                const val = e.target.value;
-                                                if (val && !registerForm.supplierIds.includes(val)) {
+                                            onValueChange={(val) => {
+                                                if (!registerForm.supplierIds.includes(val)) {
                                                     setRegisterForm(prev => ({
                                                         ...prev,
                                                         supplierIds: [...prev.supplierIds, val]
                                                     }));
                                                 }
                                             }}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        >
-                                            <option value="">Choose Supplier to Add...</option>
-                                            {suppliers
-                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
-                                                .map(s => (
-                                                    <option key={s.id} value={String(s.id)}>
-                                                        {s.supplier_name}
-                                                    </option>
-                                                ))}
-                                        </select>
+                                            placeholder="Choose Supplier to Add..."
+                                        />
                                     </div>
                                 </div>
                             </div>

@@ -1013,11 +1013,15 @@ export default function BiAndFinancialsModule() {
                                 />
                                 <Tooltip 
                                     contentStyle={{ 
-                                        backgroundColor: "hsl(var(--background))", 
+                                        backgroundColor: "hsl(var(--popover))", 
                                         borderColor: "hsl(var(--border))",
+                                        color: "hsl(var(--popover-foreground))",
                                         borderRadius: "8px",
-                                        fontSize: "12px"
+                                        fontSize: "12px",
+                                        boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.3)"
                                     }}
+                                    itemStyle={{ color: "hsl(var(--popover-foreground))" }}
+                                    labelStyle={{ color: "hsl(var(--popover-foreground))", fontWeight: 600, marginBottom: "4px" }}
                                 />
                                 <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "10px" }} />
                                 <defs>

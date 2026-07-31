@@ -13,6 +13,7 @@ import {
     validateProductRegistration
 } from "@/modules/manufacturing-management/finished-goods/product-validation";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { fetchAllWeightUnits } from "../weight-units/weight-units-helper";
 
 interface DirectusProductCurrencyProfile {
     id: number;
@@ -34,6 +35,8 @@ interface DirectusProduct {
     barcode?: string | null;
     parent_id?: number | null;
     density_factor?: number | null;
+    weight?: number | null;
+    weight_unit_id?: number | { id?: number; code?: string; name?: string } | null;
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;
     has_cogs?: boolean;
@@ -46,59 +49,84 @@ export async function GET(request: Request) {
         const limit = parseInt(searchParams.get("limit") || "-1");
         const excludeRollup = searchParams.get("excludeRollup") === "true";
 
-        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category,product_class,product_segment,product_section,product_shelf_life,product_image,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category,product_class,product_segment,product_section,product_shelf_life,product_image,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,weight_unit_id,product_type";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }
 
-        const [prodRes, versionsRes, profilesRes] = await Promise.all([
+        const [prodResult, versionsResult, profilesResult, weightUnitsResult] = await Promise.allSettled([
             fetch(url, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=product_id`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/product_currency_profiles?limit=-1`, { headers, cache: "no-store" })
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,status,base_quantity,expected_yield_percentage`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_currency_profiles?limit=-1`, { headers, cache: "no-store" }),
+            fetchAllWeightUnits()
         ]);
 
+        if (prodResult.status === "rejected") throw prodResult.reason;
+        const prodRes = prodResult.value;
         if (!prodRes.ok) throw new Error(`Directus failed to fetch products: ${prodRes.status}`);
         const prodJson = await prodRes.json();
         const products: DirectusProduct[] = prodJson.data || [];
 
         const versionProductIds = new Set<number>();
-        if (versionsRes.ok) {
-            const versionsJson = await versionsRes.json();
-            const versions = versionsJson.data || [];
-            versions.forEach((v: { product_id: number }) => {
-                if (v.product_id) {
-                    versionProductIds.add(Number(v.product_id));
-                }
-            });
+        if (versionsResult.status === "fulfilled" && versionsResult.value.ok) {
+            try {
+                const versionsJson = await versionsResult.value.json();
+                const versions = versionsJson.data || [];
+                versions.forEach((v: { product_id: number }) => {
+                    if (v.product_id) {
+                        versionProductIds.add(Number(v.product_id));
+                    }
+                });
+            } catch (err) {
+                console.error("API Error parsing product version metadata:", err);
+            }
         }
 
-        const profiles = profilesRes.ok ? (await profilesRes.json()).data || [] : [];
+        let profiles: DirectusProductCurrencyProfile[] = [];
+        if (profilesResult.status === "fulfilled" && profilesResult.value.ok) {
+            try {
+                profiles = (await profilesResult.value.json()).data || [];
+            } catch (err) {
+                console.error("API Error parsing product currency profiles:", err);
+            }
+        }
         const profilesMap = new Map<number, DirectusProductCurrencyProfile>();
         profiles.forEach((p: DirectusProductCurrencyProfile) => {
             profilesMap.set(Number(p.product_id), p);
         });
 
-        // Resolve calculateRollupCost helper
+        const weightUnitsData = weightUnitsResult.status === "fulfilled" ? weightUnitsResult.value : [];
+        const weightUnitsMap = new Map((weightUnitsData || []).map(w => [w.id, w]));
+
+        // Create product lookup map
         const productsMap = new Map<number, DirectusProduct>();
         products.forEach((p) => {
             p.has_versions = versionProductIds.has(Number(p.product_id));
             p.currency_profile = profilesMap.get(Number(p.product_id)) || null;
+            if (p.weight_unit_id && typeof p.weight_unit_id !== "object") {
+                const matched = weightUnitsMap.get(Number(p.weight_unit_id));
+                if (matched) (p as DirectusProduct & Record<string, unknown>).weight_unit_id = { id: matched.id, code: matched.code, name: matched.name };
+            }
             productsMap.set(Number(p.product_id), p);
         });
 
-        // Use Promise.all to compute dynamic rollup cost for each product concurrently
+        // Compute resolved products
         const resolvedProducts = await Promise.all(products.map(async (p: DirectusProduct) => {
             const productCopy = { ...p };
             productCopy.has_versions = versionProductIds.has(Number(p.product_id));
             productCopy.currency_profile = profilesMap.get(Number(p.product_id)) || null;
+            if (productCopy.weight_unit_id && typeof productCopy.weight_unit_id !== "object") {
+                const matched = weightUnitsMap.get(Number(productCopy.weight_unit_id));
+                if (matched) (productCopy as DirectusProduct & Record<string, unknown>).weight_unit_id = { id: matched.id, code: matched.code, name: matched.name };
+            }
 
             if (excludeRollup) {
                 productCopy.has_cogs = false;
                 return productCopy;
             }
 
-            // Skip calculateRollupCost if the product has no versions (meaning it cannot have an active version)
+            // Skip calculateRollupCost if the product has no versions
             if (!productCopy.has_versions) {
                 productCopy.has_cogs = false;
                 return productCopy;
@@ -107,11 +135,13 @@ export async function GET(request: Request) {
             try {
                 // Get rolled up cost (COGS) using current active version routes & route-level BOM
                 const costRollup = await calculateRollupCost(p.product_id, new Set(), productsMap, 58.00, profilesMap);
-                if (costRollup && costRollup.bomId !== null) {
+                if (costRollup && costRollup.bomId !== null && costRollup.costTree.length > 0) {
                     productCopy.cost_per_unit = costRollup.unitCost;
                     productCopy.has_cogs = true;
                 } else {
-                    productCopy.cost_per_unit = 0;
+                    // Keep the persisted product cost when no rollup exists yet.
+                    // The value is still marked as non-COGS so callers can
+                    // distinguish it from a calculated active-version cost.
                     productCopy.has_cogs = false;
                 }
             } catch (err) {
@@ -320,4 +350,3 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update product" }, { status: 500 });
     }
 }
-

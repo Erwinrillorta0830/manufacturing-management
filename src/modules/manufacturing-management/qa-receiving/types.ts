@@ -10,6 +10,7 @@ export interface Branch {
 export interface StorageLot {
     lot_id: number;
     lot_name: string;
+    lot_code?: string;
     inventory_type_id?: number | null;
     max_batch_capacity: number;
     occupiedQuantity?: number;

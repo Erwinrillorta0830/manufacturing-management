@@ -20,6 +20,8 @@ export async function handleGET(request: Request) {
         const bomId = searchParams.get("bomId");
         const action = searchParams.get("action");
 
+
+
         if (action === "net-requirements") {
             const productIdsStr = searchParams.get("productIds");
             const branchIdStr = searchParams.get("branchId");
@@ -364,7 +366,7 @@ export async function handleGET(request: Request) {
             const reservationsMap = new Map<number, any[]>();
             if (jomIds.length > 0) {
                 try {
-                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=id,jo_material_reservation_id,jo_material_id,reserved_quantity,purchase_order_receiving_id.purchase_order_product_id,purchase_order_receiving_id.id,purchase_order_receiving_id.lot_no,purchase_order_receiving_id.batch_no,purchase_order_receiving_id.receipt_no&limit=-1`;
+                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=id,jo_material_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
                     const resRes = await fetch(reservationsUrl, { headers });
                     if (resRes.ok) {
                         const reservations = (await resRes.json()).data || [];
@@ -434,24 +436,26 @@ export async function handleGET(request: Request) {
                 }
             }
 
-            // Fetch lot reservations map
-            const lotReservationsMap: Record<number, number> = {};
-            const allReceiptIds = validReceiptsAll.map((r: any) => r.purchase_order_product_id).filter(Boolean);
-            if (allReceiptIds.length > 0) {
+            // Fetch lot reservations map by product_id & batch_no
+            const lotReservationsMap: Record<string, number> = {};
+            if (pIds.length > 0) {
                 try {
                     const resFilter = encodeURIComponent(JSON.stringify({
                         _and: [
-                            { purchase_order_receiving_id: { _in: allReceiptIds } },
+                            { product_id: { _in: pIds } },
+                            { branch_id: { _eq: branchId } },
                             { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
                         ]
                     }));
-                    const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers });
+                    const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,reserved_quantity&limit=-1`, { headers });
                     if (resRes.ok) {
                         const resData = (await resRes.json()).data || [];
                         resData.forEach((r: any) => {
-                            const porId = Number(r.purchase_order_receiving_id);
-                            if (porId) {
-                                lotReservationsMap[porId] = (lotReservationsMap[porId] || 0) + Number(r.reserved_quantity || 0);
+                            const prodId = Number(r.product_id);
+                            const batchNo = r.batch_no;
+                            if (prodId && batchNo) {
+                                const key = `${prodId}:${batchNo}`;
+                                lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
                             }
                         });
                     }
@@ -544,13 +548,10 @@ export async function handleGET(request: Request) {
                         const lotNum = rec.lot_no || rec.batch_no || "LOT-N/A";
                         const physicalQty = movementBatchStockMap.get(`${compProductId}:${lotNum}`) || 0;
                         const recId = Number(rec.purchase_order_product_id);
-                        const alreadyReserved = lotReservationsMap[recId] || 0;
+                        const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
                         const netAvailable = Math.max(0, physicalQty - alreadyReserved);
 
-                        const matchedRes = matReservations.find((mr: any) => {
-                            const mrPorId = Number(mr.purchase_order_receiving_id?.purchase_order_product_id || mr.purchase_order_receiving_id?.id || mr.purchase_order_receiving_id || 0);
-                            return mrPorId === recId;
-                        });
+                        const matchedRes = matReservations.find((mr: any) => mr.batch_no === lotNum);
                         const reservationId = matchedRes ? (matchedRes.id || matchedRes.jo_material_reservation_id) : null;
                         const reservedQtyForThisLot = matchedRes ? Number(matchedRes.reserved_quantity || 0) : 0;
 
@@ -565,20 +566,16 @@ export async function handleGET(request: Request) {
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };
-                    }).filter((c: any) => c.available > 0 || matReservations.some((mr: any) => {
-                        const mrPorId = Number(mr.purchase_order_receiving_id?.purchase_order_product_id || mr.purchase_order_receiving_id?.id || mr.purchase_order_receiving_id || 0);
-                        return mrPorId === c.receipt_id;
-                    }));
+                    }).filter((c: any) => c.available > 0 || matReservations.some((mr: any) => mr.batch_no === c.lot_no));
 
                     // Format multi-lot text if reservations exist
                     if (matReservations.length > 0) {
                         lotNo = matReservations.map((r: any) => {
-                            const por = r.purchase_order_receiving_id;
-                            const lNo = por?.lot_no || por?.batch_no || "N/A";
+                            const lNo = r.batch_no || "N/A";
                             return `${lNo} (${Number(r.reserved_quantity || 0).toFixed(0)})`;
                         }).join(", ");
 
-                        receiptNo = matReservations.map((r: any) => r.purchase_order_receiving_id?.receipt_no).filter(Boolean).join(", ");
+                        receiptNo = matReservations.map((r: any) => r.receipt_no || "N/A").filter(Boolean).join(", ");
                     }
                 }
 
@@ -802,6 +799,357 @@ export async function handleGET(request: Request) {
             });
             
             return NextResponse.json(enriched);
+        }
+
+        if (action === "wizard-step-2") {
+            const prodId = Number(searchParams.get("productId") || "0");
+            const vId = searchParams.get("bomId") ? Number(searchParams.get("bomId")) : undefined;
+            const branchId = Number(searchParams.get("branchId") || "1");
+
+            if (!prodId) {
+                return NextResponse.json({ error: "Missing or invalid productId query parameter" }, { status: 400 });
+            }
+
+            // 2a & 2d: Fetch parent BOM details & routes, and manufacturing operations catalog in parallel
+            const [bomDetails, opRes] = await Promise.all([
+                vId
+                    ? getBOMDetailsForVersion(prodId, vId)
+                    : getActiveVersionForProduct(prodId),
+                fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers })
+            ]);
+
+            const { version, routes } = bomDetails;
+            if (!version) {
+                return NextResponse.json({
+                    bom: null,
+                    components: [],
+                    routings: [],
+                    subAssemblyBoms: {},
+                    inventories: []
+                });
+            }
+
+            const operations = opRes.ok ? (await opRes.json()).data || [] : [];
+            const operationsMap = new Map<number, string>(
+                operations.map((o: any) => [Number(o.id), o.operation_name])
+            );
+
+            // Map version to bom structure
+            const bom = {
+                ...version,
+                bom_id: version.version_id,
+                bom_name: version.version_name,
+                base_quantity: version.base_quantity,
+                expected_yield_percentage: version.expected_yield_percentage
+            };
+
+            // Map routings
+            const routings = routes.map(r => ({
+                routing_id: r.route_id,
+                bom_id: version.version_id,
+                sequence_order: r.sequence_order,
+                setup_time_hours: r.setup_time_hours,
+                run_time_hours: r.run_time_hours,
+                duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
+                step_batch_size: r.step_batch_size,
+                operation_id: r.operation_id,
+                work_center_id: r.work_center_id,
+                qa_template_id: r.qa_template_id,
+                operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`
+            }));
+
+            // Helper to safely extract integer product ID from primitive or object
+            const extractProductId = (val: any): number => {
+                if (!val) return 0;
+                if (typeof val === "object") {
+                    return Number(val.product_id || val.id || 0);
+                }
+                return Number(val) || 0;
+            };
+
+            // Collect parent BOM items
+            const versionObj = version as any;
+            const parentBomItems: any[] = (versionObj.bom_items && versionObj.bom_items.length > 0)
+                ? versionObj.bom_items
+                : routes.flatMap(r => r.bom_items || []);
+
+            // 2b: Identify sub-assemblies (all parent BOM component product IDs)
+            const parentComponentProductIds = Array.from(new Set(
+                parentBomItems
+                    .map(item => extractProductId(item.product_id))
+                    .filter(id => id > 0)
+            ));
+
+            // Resolve sub-assemblies BOM component lists in parallel upfront
+            const subAssemblyBoms: Record<number, any[]> = {};
+            const subAssemblyChildProductIds: number[] = [];
+            const subBomItemsByProdId = new Map<number, { items: any[]; versionId: number | null; routes: any[]; baseQuantity: number }>();
+
+            if (parentComponentProductIds.length > 0) {
+                const subDetailsResults = await Promise.all(
+                    parentComponentProductIds.map(subProdId => getActiveVersionForProduct(subProdId))
+                );
+
+                parentComponentProductIds.forEach((subProdId, index) => {
+                    const subRes = subDetailsResults[index];
+                    const subRoutes = subRes?.routes || [];
+                    const verBomItems = (subRes?.version as any)?.bom_items || [];
+
+                    // Combine verBomItems and subRoutes.bom_items, deduplicating by item id/product_id
+                    const combinedItems: any[] = [...verBomItems];
+                    subRoutes.forEach((sr: any) => {
+                        if (sr.bom_items && Array.isArray(sr.bom_items)) {
+                            sr.bom_items.forEach((bi: any) => {
+                                const biPid = extractProductId(bi.product_id);
+                                if (biPid > 0 && !combinedItems.some(ci => extractProductId(ci.product_id) === biPid)) {
+                                    combinedItems.push(bi);
+                                }
+                            });
+                        }
+                    });
+
+                    combinedItems.forEach((bItem: any) => {
+                        const cPid = extractProductId(bItem.product_id);
+                        if (cPid > 0) {
+                            subAssemblyChildProductIds.push(cPid);
+                        }
+                    });
+
+                    if (subRes?.version || subRoutes.length > 0 || combinedItems.length > 0) {
+                        subBomItemsByProdId.set(subProdId, {
+                            items: combinedItems,
+                            versionId: subRes?.version?.version_id || null,
+                            routes: subRoutes,
+                            baseQuantity: Number(subRes?.version?.base_quantity || 1)
+                        });
+                    }
+                });
+            }
+
+            // 2c: Collect all product IDs (parent components + sub-assembly components)
+            const allProductIds = Array.from(new Set([...parentComponentProductIds, ...subAssemblyChildProductIds]));
+
+            // Fetch product details for all collected product IDs to enrich component objects
+            const productsMap = new Map<number, any>();
+            if (allProductIds.length > 0) {
+                const prodRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                    { headers }
+                );
+                if (prodRes.ok) {
+                    const prods = (await prodRes.json()).data || [];
+                    prods.forEach((p: any) => productsMap.set(Number(p.product_id), p));
+                }
+            }
+
+            const resolveCategoryName = (pDetails: any, fallbackCode: string = "", pType: any = null): string => {
+                const catName = pDetails?.product_category?.category_name || pDetails?.category_id?.category_name;
+                if (catName && catName !== "Uncategorized") return catName;
+                const code = String(pDetails?.product_code || fallbackCode || "").toUpperCase();
+                const typeVal = pDetails?.product_type ?? pType;
+                if (code.startsWith("FG-") || typeVal === 388) return "Sub-Assembly";
+                if (code.startsWith("PKG-") || typeVal === 390) return "Packaging Material";
+                if (code.startsWith("RAW-") || typeVal === 389) return "Raw Material";
+                return "Material / Component";
+            };
+
+            // Build parent components array
+            const components = parentBomItems.map(item => {
+                const pId = extractProductId(item.product_id);
+                const pDetails = productsMap.get(pId);
+                return {
+                    component_id: item.id,
+                    bom_id: version.version_id,
+                    component_product_id: {
+                        product_id: pId,
+                        product_name: pDetails?.product_name || `Product #${pId}`,
+                        product_code: pDetails?.product_code || "",
+                        category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
+                        product_type: pDetails?.product_type ?? item.product_type
+                    },
+                    quantity_required: Number(item.quantity_required || 0),
+                    wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
+                    unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
+                };
+            });
+
+            // Build subAssemblyBoms and subAssemblyRoutings records
+            const subAssemblyRoutings: Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }> = {};
+
+            parentComponentProductIds.forEach(subProdId => {
+                const subData = subBomItemsByProdId.get(subProdId);
+                if (!subData) return;
+
+                const subItems = subData.items || [];
+                const subRoutes = subData.routes || [];
+                const baseQty = subData.baseQuantity || 1;
+                const subVersionId = subData.versionId || null;
+
+                subAssemblyBoms[subProdId] = subItems.map(item => {
+                    const cPid = extractProductId(item.product_id);
+                    const pDetails = productsMap.get(cPid);
+                    return {
+                        component_id: item.id,
+                        bom_id: subVersionId,
+                        base_quantity: baseQty,
+                        component_product_id: {
+                            product_id: cPid,
+                            product_name: pDetails?.product_name || `Product #${cPid}`,
+                            product_code: pDetails?.product_code || "",
+                            category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
+                            product_type: pDetails?.product_type ?? item.product_type
+                        },
+                        quantity_required: Number(item.quantity_required || 0),
+                        wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
+                        unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
+                    };
+                });
+
+                let setupHours = 0;
+                let runHoursPerUnit = 0;
+                subRoutes.forEach((r: any) => {
+                    const stepBatch = Number(r.step_batch_size || 1);
+                    setupHours += Number(r.setup_time_hours || 0);
+                    runHoursPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
+                });
+
+                subAssemblyRoutings[subProdId] = {
+                    setup_time_hours: setupHours,
+                    run_time_hours_per_unit: runHoursPerUnit,
+                    base_quantity: baseQty
+                };
+            });
+
+            // Fetch all available manufacturing versions for sub-assembly components
+            const subAssemblyVersions: Record<number, any[]> = {};
+            const selectedSubAssemblyVersions: Record<number, number> = {};
+
+            if (parentComponentProductIds.length > 0) {
+                try {
+                    const verFilter = encodeURIComponent(JSON.stringify({ product_id: { _in: parentComponentProductIds } }));
+                    const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${verFilter}&fields=version_id,product_id,version_name,status,base_quantity&limit=-1`, { headers });
+                    if (verRes.ok) {
+                        const allVers = (await verRes.json()).data || [];
+                        parentComponentProductIds.forEach(pId => {
+                            const pVers = allVers.filter((v: any) => Number(v.product_id) === pId);
+                            if (pVers.length > 0) {
+                                subAssemblyVersions[pId] = pVers;
+                                const selected = selectPreferredActiveVersion(pVers) || pVers[0];
+                                selectedSubAssemblyVersions[pId] = Number(selected.version_id);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error fetching sub-assembly version lists:", e);
+                }
+            }
+
+            // Run getProductInventoryAndSafetyStock for all collected product IDs
+            const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId);
+
+            // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
+            return NextResponse.json({
+                bom,
+                components,
+                routings,
+                subAssemblyVersions,
+                selectedSubAssemblyVersions,
+                subAssemblyBoms,
+                subAssemblyRoutings,
+                inventories
+            });
+        }
+
+        if (action === "sub-assembly-version-details") {
+            const extractProductId = (val: any): number => {
+                if (!val) return 0;
+                if (typeof val === "object") return Number(val.product_id || val.id || 0);
+                return Number(val) || 0;
+            };
+
+            const subProdId = Number(searchParams.get("productId") || "0");
+            const vId = Number(searchParams.get("versionId") || "0");
+            const branchId = Number(searchParams.get("branchId") || "1");
+
+            if (!subProdId || !vId) {
+                return NextResponse.json({ error: "Missing productId or versionId" }, { status: 400 });
+            }
+
+            const { version, routes } = await getBOMDetailsForVersion(subProdId, vId);
+            const versionObj = version as any;
+            const verBomItems: any[] = (versionObj?.bom_items && versionObj.bom_items.length > 0)
+                ? versionObj.bom_items
+                : routes.flatMap(r => r.bom_items || []);
+
+            const childProductIds = Array.from(new Set(verBomItems.map((item: any) => extractProductId(item.product_id)).filter(id => id > 0)));
+
+            const productsMap = new Map<number, any>();
+            if (childProductIds.length > 0) {
+                const prodRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${childProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                    { headers }
+                );
+                if (prodRes.ok) {
+                    const prods = (await prodRes.json()).data || [];
+                    prods.forEach((p: any) => productsMap.set(Number(p.product_id), p));
+                }
+            }
+
+            const resolveCategoryName = (pDetails: any, fallbackCode: string = "", pType: any = null): string => {
+                const catName = pDetails?.product_category?.category_name || pDetails?.category_id?.category_name;
+                if (catName && catName !== "Uncategorized") return catName;
+                const code = String(pDetails?.product_code || fallbackCode || "").toUpperCase();
+                const typeVal = pDetails?.product_type ?? pType;
+                if (code.startsWith("FG-") || typeVal === 388) return "Sub-Assembly";
+                if (code.startsWith("PKG-") || typeVal === 390) return "Packaging Material";
+                if (code.startsWith("RAW-") || typeVal === 389) return "Raw Material";
+                return "Material / Component";
+            };
+
+            const baseQty = Number(version?.base_quantity || 1);
+            const bomItems = verBomItems.map((item: any) => {
+                const cPid = extractProductId(item.product_id);
+                const pDetails = productsMap.get(cPid);
+                return {
+                    component_id: item.id,
+                    bom_id: vId,
+                    base_quantity: baseQty,
+                    component_product_id: {
+                        product_id: cPid,
+                        product_name: pDetails?.product_name || `Product #${cPid}`,
+                        product_code: pDetails?.product_code || "",
+                        category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
+                        product_type: pDetails?.product_type ?? item.product_type
+                    },
+                    quantity_required: Number(item.quantity_required || 0),
+                    wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
+                    unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
+                };
+            });
+
+            let setupHours = 0;
+            let runHoursPerUnit = 0;
+            routes.forEach((r: any) => {
+                const stepBatch = Number(r.step_batch_size || 1);
+                setupHours += Number(r.setup_time_hours || 0);
+                runHoursPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
+            });
+
+            const routing = {
+                setup_time_hours: setupHours,
+                run_time_hours_per_unit: runHoursPerUnit,
+                base_quantity: baseQty
+            };
+
+            const inventories = await getProductInventoryAndSafetyStock(childProductIds, branchId);
+
+            return NextResponse.json({
+                productId: subProdId,
+                versionId: vId,
+                bomItems,
+                routing,
+                inventories
+            });
         }
 
         if (productId) {
