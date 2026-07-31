@@ -1,6 +1,8 @@
 import React from "react";
+import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
+import { getProductImageUrl, uploadProductImage } from "../services/product-image";
 import { 
     Tag, 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -59,7 +61,20 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     products
 }) => {
     const [uploadingImage, setUploadingImage] = React.useState(false);
+    const [imagePreview, setImagePreview] = React.useState<string | null>(null);
+    const [imageUploadError, setImageUploadError] = React.useState<string | null>(null);
     const fieldError = (field: string) => editFieldErrors[field];
+
+    React.useEffect(() => {
+        setImagePreview(null);
+        setImageUploadError(null);
+    }, [selectedProduct.id]);
+
+    React.useEffect(() => {
+        return () => {
+            if (imagePreview) URL.revokeObjectURL(imagePreview);
+        };
+    }, [imagePreview]);
 
     const parentOptions = React.useMemo(() => {
         const baseOptions = products
@@ -302,7 +317,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                     <div className="relative group w-20 h-20 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img 
-                                            src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || "http://vtc:8074"}/assets/${editedDetails.product_image}`} 
+                                            src={imagePreview || getProductImageUrl(String(editedDetails.product_image))}
                                             alt="Preview" 
                                             className="w-full h-full object-cover"
                                             onError={(e) => {
@@ -318,6 +333,8 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                             onClick={async () => {
                                                 const oldId = editedDetails.product_image;
                                                 handleDetailChange("product_image", undefined);
+                                                setImagePreview(null);
+                                                setImageUploadError(null);
                                                 if (oldId && oldId.length > 10) {
                                                     try {
                                                         await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
@@ -351,30 +368,31 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                             onChange={async (e) => {
                                                 const file = e.target.files?.[0];
                                                 if (!file) return;
+                                                const input = e.currentTarget;
                                                 setUploadingImage(true);
+                                                setImageUploadError(null);
                                                 try {
-                                                    const formData = new FormData();
-                                                    formData.append("file", file);
-                                                    const uploadRes = await fetch("/api/manufacturing/files", {
-                                                        method: "POST",
-                                                        body: formData
-                                                    });
-                                                    if (!uploadRes.ok) throw new Error("Upload failed");
-                                                    const json = await uploadRes.json();
-                                                    const newFileId = json?.data?.id;
-                                                    if (newFileId) {
-                                                        handleDetailChange("product_image", newFileId);
-                                                    }
+                                                    const newFileId = await uploadProductImage(file);
+                                                    handleDetailChange("product_image", newFileId);
+                                                    setImagePreview(URL.createObjectURL(file));
+                                                    toast.success("Product image uploaded successfully.");
                                                 } catch (err) {
-                                                    console.error(err);
-                                                    alert("Failed to upload image");
+                                                    const message = err instanceof Error ? err.message : "Failed to upload product image.";
+                                                    setImageUploadError(message);
+                                                    toast.error(message);
                                                 } finally {
                                                     setUploadingImage(false);
+                                                    input.value = "";
                                                 }
                                             }}
                                             className="hidden"
                                         />
                                     </label>
+                                    {imageUploadError && (
+                                        <p className="text-[10px] text-destructive" role="alert">
+                                            {imageUploadError}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         </div>
