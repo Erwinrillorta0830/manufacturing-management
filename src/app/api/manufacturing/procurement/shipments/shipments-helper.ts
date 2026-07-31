@@ -1,7 +1,7 @@
-/* eslint-disable */
 import { DIRECTUS_URL, headers } from "../_directus";
-import { canonicalBatchNumber, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { toStandardKg, calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 
 import { DirectusShipment } from "@/modules/manufacturing-management/procurement/types";
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
@@ -107,9 +107,9 @@ interface ProductMin {
     product_id: number;
     product_name?: string;
     product_code?: string;
-    unit_of_measurement?: any;
+    unit_of_measurement?: unknown;
     unit_of_measurement_count?: number;
-    parent_id?: any;
+    parent_id?: unknown;
 }
 
 interface DirectusInventoryLot {
@@ -487,7 +487,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         const expensesUrl = `${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&limit=-1`;
         const expensesRes = await fetch(expensesUrl, { headers, cache: "no-store" });
         const expenses = expensesRes.ok ? (await expensesRes.json()).data || [] : [];
-        const totalExpensesPhp = expenses.reduce((sum: number, exp: any) => sum + Number(exp.amount_php || 0), 0);
+        const totalExpensesPhp = expenses.reduce((sum: number, exp: { amount_php?: number | string }) => sum + Number(exp.amount_php || 0), 0);
         const allocationMethod = expenses[0]?.allocation_method?.replace("By ", "") || "Value";
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
@@ -520,7 +520,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         const productIds = popData.map((p) => typeof p.product_id === "object" && p.product_id ? p.product_id.product_id : p.product_id).filter(Boolean);
         let products: ProductMin[] = [];
         if (productIds.length > 0) {
-            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,cbm_height,cbm_width,cbm_length&limit=-1`;
+            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,weight_unit_id.*,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,weight_unit_id,cbm_height,cbm_width,cbm_length,product_type.name,product_type.type_name&limit=-1`;
             const prodRes = await fetch(prodUrl, { headers, cache: "no-store" });
             if (prodRes.ok) {
                 products = (await prodRes.json()).data as ProductMin[] || [];
@@ -534,36 +534,26 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const lineId = Number(line.purchase_order_product_id);
             const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0 };
             const qty = Math.max(0, history.received || Number(line.ordered_quantity || 0));
+            const rawW = Number((product as Record<string, unknown> | undefined)?.weight || (product as Record<string, unknown> | undefined)?.product_weight || 0);
+            const weightUnitObj = (product as Record<string, unknown> | undefined)?.weight_unit_id as Record<string, unknown> | undefined;
+            const wUnitCode = (weightUnitObj?.code as string) || (weightUnitObj?.unit_shortcut as string);
+            const normW = toStandardKg(rawW, wUnitCode);
+            const productTypeObj = (product as Record<string, unknown> | undefined)?.product_type as Record<string, unknown> | undefined;
+            const cbmH = Number((product as Record<string, unknown> | undefined)?.cbm_height || 0);
+            const cbmW = Number((product as Record<string, unknown> | undefined)?.cbm_width || 0);
+            const cbmL = Number((product as Record<string, unknown> | undefined)?.cbm_length || 0);
             return {
                 key: lineId,
                 quantity: qty,
                 baseUnitCost: Number(line.unit_price || 0),
-                weight: Number((product as any)?.weight || (product as any)?.product_weight || 0),
-                volume: Number((product as any)?.cbm_height || 0) * Number((product as any)?.cbm_width || 0) * Number((product as any)?.cbm_length || 0)
+                weight: normW,
+                volume: cbmH * cbmW * cbmL,
+                category: (productTypeObj?.name as string) || (productTypeObj?.type_name as string) || "RM",
+                weightUnit: wUnitCode
             };
         });
 
-        const totalValue = inputs.reduce((sum, line) => sum + line.quantity * line.baseUnitCost, 0);
-        const totalWeight = inputs.reduce((sum, line) => sum + line.quantity * Number(line.weight || 0), 0);
-        const totalVolume = inputs.reduce((sum, line) => sum + line.quantity * Number(line.volume || 0), 0);
-
-        const allocations = new Map(inputs.map(line => {
-            let ratio: number;
-            if (allocationMethod === "Weight" && totalWeight > 0) {
-                ratio = line.quantity * Number(line.weight || 0) / totalWeight;
-            } else if (allocationMethod === "Volume" && totalVolume > 0) {
-                ratio = line.quantity * Number(line.volume || 0) / totalVolume;
-            } else if (totalValue > 0) {
-                ratio = line.quantity * line.baseUnitCost / totalValue;
-            } else {
-                ratio = inputs.length > 0 ? 1 / inputs.length : 0;
-            }
-            const allocatedExpense = Math.round((ratio * totalExpensesPhp + Number.EPSILON) * 100) / 100;
-            const finalLandedUnitCost = Math.round(
-                (line.baseUnitCost + (line.quantity > 0 ? allocatedExpense / line.quantity : 0) + Number.EPSILON) * 100
-            ) / 100;
-            return [line.key, { allocatedExpense, finalLandedUnitCost }];
-        }));
+        const allocations = calculateLandedCostAllocations(inputs, totalExpensesPhp, normalizeAllocationMethod(allocationMethod));
 
         // Merge them
         return popData.map((pop) => {

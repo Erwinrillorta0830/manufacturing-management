@@ -361,11 +361,10 @@ export async function POST(request: Request) {
 
                             const reservedVal = Number(resRow.reserved_quantity || 0);
                             const usedVal = Number(resRow.actual_used_quantity || 0);
-                            const porId = resRow.purchase_order_receiving_id ? Number(resRow.purchase_order_receiving_id) : null;
+                            const lotNo = resRow.batch_no || "LOT-N/A";
 
-                            const portion = porId !== null ? Math.min(reservedVal, remainingToConsume) : remainingToConsume;
-
-                            if (portion <= 0 && porId !== null) continue;
+                            const portion = Math.min(reservedVal, remainingToConsume);
+                            if (portion <= 0) continue;
 
                             const newReserved = Math.max(0, reservedVal - portion);
                             const newUsed = usedVal + portion;
@@ -380,46 +379,31 @@ export async function POST(request: Request) {
                                 })
                             }).catch(err => console.error(`Failed to update materials reservation row:`, err));
 
-                            // Deduct from inventory_movements ledger
-                            if (porId && portion > 0) {
+                            // Deduct from inventory_movements ledger by lotNo
+                            if (portion > 0) {
                                 try {
-                                    const porDetailRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${porId}?fields=purchase_order_id,lot_no,batch_no,expiry_date,receipt_no`, { headers, cache: "no-store" });
-                                    if (porDetailRes.ok) {
-                                        const porDetail = (await porDetailRes.json()).data;
-                                        if (porDetail) {
-                                            const poId = porDetail.purchase_order_id;
-                                            const lotNo = porDetail.lot_no || porDetail.batch_no || "LOT-N/A";
-                                            const receiptNo = porDetail.receipt_no;
-                                            
-                                            const movQuery = encodeURIComponent(JSON.stringify({
-                                                _and: [
-                                                    { product_id: { _eq: rawProductId } },
-                                                    { branch_id: { _eq: branchId } },
-                                                    { _or: [
-                                                        { source_document_id: { _eq: Number(porId) } },
-                                                        { batch_no: { _eq: lotNo } },
-                                                        ...(poId ? [{ source_document_no: { _eq: String(poId) } }] : []),
-                                                        ...(receiptNo ? [{ source_document_no: { _eq: String(receiptNo) } }] : [])
-                                                    ] }
-                                                ]
-                                            }));
-                                            
-                                            const mRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movQuery}&limit=1`, { headers, cache: "no-store" });
-                                            if (mRes.ok) {
-                                                const movList = (await mRes.json()).data || [];
-                                                if (movList.length > 0) {
-                                                    const lot = movList[0];
-                                                    await logConsumageAndMovement(portion, lot);
-                                                } else {
-                                                    await logConsumageAndMovement(portion, { batch_no: lotNo, expiry_date: porDetail.expiry_date });
-                                                }
-                                            } else {
-                                                await logConsumageAndMovement(portion, { batch_no: lotNo, expiry_date: porDetail.expiry_date });
-                                            }
+                                    const movQuery = encodeURIComponent(JSON.stringify({
+                                        _and: [
+                                            { product_id: { _eq: rawProductId } },
+                                            { branch_id: { _eq: branchId } },
+                                            { batch_no: { _eq: lotNo } }
+                                        ]
+                                    }));
+                                    
+                                    const mRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movQuery}&limit=1`, { headers, cache: "no-store" });
+                                    if (mRes.ok) {
+                                        const movList = (await mRes.json()).data || [];
+                                        if (movList.length > 0) {
+                                            const lot = movList[0];
+                                            await logConsumageAndMovement(portion, lot);
+                                        } else {
+                                            await logConsumageAndMovement(portion, { batch_no: lotNo });
                                         }
+                                    } else {
+                                        await logConsumageAndMovement(portion, { batch_no: lotNo });
                                     }
                                 } catch (porErr) {
-                                    console.error(`Failed to locate inventory movement for POR ID ${porId}:`, porErr);
+                                    console.error(`Failed to locate inventory movement for lot ${lotNo}:`, porErr);
                                 }
                             } else {
                                 // For sub-assembly direct reservations

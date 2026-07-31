@@ -108,6 +108,10 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
             const { version, routes } = pVersionId 
                 ? await getBOMDetailsForVersion(pId, pVersionId)
                 : await getActiveVersionForProduct(pId);
+
+            if (version && version.status && (version.status as string) !== "Active" && (version.status as string) !== "Approved") {
+                throw new Error(`Cannot create Job Order for Product '${p.product_name}': Version '${version.version_name || pVersionId}' is not yet approved (Status: ${version.status}).`);
+            }
             
             const components: any[] = [];
             if (routes && routes.length > 0) {
@@ -149,17 +153,11 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                         const reservationsMap: Record<number, number> = {};
                         if (receiptIds.length > 0) {
                             try {
-                                const resFilter = encodeURIComponent(JSON.stringify({
-                                    _and: [
-                                        { purchase_order_receiving_id: { _in: receiptIds } },
-                                        { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
-                                    ]
-                                }));
-                                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+                                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[purchase_order_receiving_id][_in]=${receiptIds.join(",")}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
                                 if (resRes.ok) {
                                     const resData = (await resRes.json()).data || [];
                                     resData.forEach((r: any) => {
-                                        const porId = Number(r.purchase_order_receiving_id);
+                                        const porId = Number(r.purchase_order_receiving_id?.id || r.purchase_order_receiving_id);
                                         if (porId) {
                                             reservationsMap[porId] = (reservationsMap[porId] || 0) + Number(r.reserved_quantity || 0);
                                         }
@@ -365,7 +363,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                              const isSubAssembly = activeVer && activeVer.version;
 
                              let allocatedQty = 0;
-                             const allocations: { purchase_order_product_id: number; allocated: number }[] = [];
+                             const allocations: { purchase_order_product_id: number; batch_no?: string; allocated: number }[] = [];
 
                              if (isSubAssembly) {
                                   if (!joData.branch_id) {
@@ -493,6 +491,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                          allocatedQty += taken;
                                          allocations.push({
                                              purchase_order_product_id: recId,
+                                             batch_no: lotNo,
                                              allocated: taken
                                          });
                                      }
@@ -539,8 +538,10 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                 for (const alloc of allocations) {
                                     const reservationPayload = {
                                         product_id: compProductId,
+                                        branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+                                        batch_no: alloc.batch_no || null,
                                         jo_material_id: jomId,
-                                        purchase_order_receiving_id: alloc.purchase_order_product_id,
+                                        purchase_order_receiving_id: alloc.purchase_order_product_id || null,
                                         reserved_quantity: alloc.allocated,
                                         actual_used_quantity: 0,
                                         created_by: joData.created_by ? Number(joData.created_by) : null
@@ -560,25 +561,46 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                             // Auto-spawn child Job Orders for manufactured sub-assemblies with shortages
                             if (shortfall > 0) {
                                 try {
-                                    const activeVer = await getActiveVersionForProduct(compProductId);
+                                    const subVerMap = (joData as any).subAssemblyVersionMap || (joData as any).sub_assembly_version_map || {};
+                                    const selectedVerId = subVerMap[compProductId] || subVerMap[String(compProductId)];
+                                    const activeVer = selectedVerId 
+                                        ? await getBOMDetailsForVersion(compProductId, Number(selectedVerId))
+                                        : await getActiveVersionForProduct(compProductId);
+
                                     if (activeVer && activeVer.version) {
+                                        const subRoutes = activeVer.routes || [];
+                                        const subBaseQty = Number(activeVer.version.base_quantity || 1);
+                                        let subSetup = 0;
+                                        let subRunPerUnit = 0;
+                                        subRoutes.forEach((r: any) => {
+                                            const stepBatch = Number(r.step_batch_size || 1);
+                                            subSetup += Number(r.setup_time_hours || 0);
+                                            subRunPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
+                                        });
+                                        const subHours = subSetup + ((subRunPerUnit * shortfall) / subBaseQty);
+                                        totalEstimatedHours += subHours;
+
                                         const childJoNo = `${joNoStr}-SUB${compProductId}`;
                                         const checkJoRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${childJoNo}&limit=1`, { headers });
                                         const alreadyExists = checkJoRes.ok ? ((await checkJoRes.json()).data || []).length > 0 : false;
 
                                         if (!alreadyExists) {
-                                            console.log(`[Sub-Assembly Spawner] Auto-spawning child Job Order ${childJoNo} for product ID ${compProductId} (Qty: ${shortfall})`);
+                                            console.log(`[Sub-Assembly Spawner] Auto-spawning child Job Order ${childJoNo} for product ID ${compProductId} (Qty: ${shortfall}, Version ID: ${activeVer.version.version_id}) with estimated hours: ${subHours.toFixed(1)}`);
                                             const childJoPayload = {
                                                 jo_id: childJoNo,
                                                 product_id: compProductId,
                                                 quantity: shortfall,
                                                 due_date: joData.due_date || null,
-                                                status: "Released",
+                                                status: joData.status || "Released",
                                                 branch_id: joData.branch_id,
                                                 created_by: joData.created_by,
                                                 parent_job_order_id: joIdInt,
                                                 shift_option: joData.shift_option || "8",
-                                                remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`
+                                                remarks: `Auto-spawned sub-assembly run for parent Job Order ${joNoStr}`,
+                                                bom: {
+                                                    version_id: activeVer.version.version_id
+                                                },
+                                                subAssemblyVersionMap: subVerMap
                                             };
                                             await createJobOrder(childJoPayload, []);
                                         }

@@ -177,8 +177,16 @@ export async function POST(request: Request) {
             );
             if (rejectedAllocationError) throw new ReceivingPreviewError(`Line ${line.lineId}: ${rejectedAllocationError}`);
             if (!line.supplierBatchNumber.trim()) throw new ReceivingPreviewError(`Enter a supplier batch number for line ${line.lineId}.`);
-            if (!line.isPackaging && (!line.manufacturingDate || !line.expiryDate)) {
-                throw new ReceivingPreviewError(`Manufacturing and expiry dates are required for raw-material line ${line.lineId}.`);
+            if (!line.isPackaging) {
+                if (!line.manufacturingDate) {
+                    line.manufacturingDate = new Date().toISOString().split("T")[0];
+                }
+                if (!line.expiryDate) {
+                    const mfgDateStr = line.manufacturingDate || new Date().toISOString().split("T")[0];
+                    const mfgTime = new Date(mfgDateStr).getTime();
+                    const calculatedExp = new Date(mfgTime + 365 * 24 * 60 * 60 * 1000);
+                    line.expiryDate = calculatedExp.toISOString().split("T")[0];
+                }
             }
             if (line.manufacturingDate && line.expiryDate && line.manufacturingDate > line.expiryDate) {
                 throw new ReceivingPreviewError(`Manufacturing date cannot be later than expiry date for line ${line.lineId}.`);

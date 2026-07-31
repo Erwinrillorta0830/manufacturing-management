@@ -193,7 +193,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     fetchBrands(),
                     fetchCategories(),
                     fetchUnits(),
-                    fetch("/api/manufacturing/finished-goods/products?limit=-1"),
+                    fetch("/api/manufacturing/finished-goods/products?limit=-1&excludeRollup=true"),
                     fetch("/api/manufacturing/finished-goods/overhead-types"),
                     fetch("/api/manufacturing/finished-goods/operations"),
                     fetch("/api/manufacturing/procurement/suppliers"),

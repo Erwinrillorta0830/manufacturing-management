@@ -1,0 +1,665 @@
+/* Product Version Approval Module CSS - Light & Dark Mode Compatible */
+
+.va-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    color: hsl(var(--foreground));
+    font-family: inherit;
+}
+
+/* Header & Subtitle */
+.va-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.va-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: hsl(var(--foreground));
+}
+
+.va-subtitle {
+    font-size: 0.875rem;
+    color: hsl(var(--muted-foreground));
+}
+
+/* KPI Summary Cards Grid */
+.va-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+}
+
+.va-kpi-card {
+    background: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.va-kpi-card:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--ring));
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.va-kpi-icon-wrapper {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.625rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.va-kpi-icon-pending {
+    background: rgba(245, 158, 11, 0.15);
+    color: #d97706;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.va-kpi-icon-approved {
+    background: rgba(16, 185, 129, 0.15);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.va-kpi-icon-rejected {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.va-kpi-icon-revision {
+    background: rgba(59, 130, 246, 0.15);
+    color: #2563eb;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.va-kpi-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.va-kpi-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+    line-height: 1.2;
+}
+
+.va-kpi-label {
+    font-size: 0.8125rem;
+    color: hsl(var(--muted-foreground));
+    margin-top: 0.125rem;
+}
+
+/* Controls Bar (Filter Tabs + Search + Actions) */
+.va-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: hsl(var(--card));
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    border: 1px solid hsl(var(--border));
+}
+
+.va-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    overflow-x: auto;
+}
+
+.va-tab-btn {
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    border: 1px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.va-tab-btn:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--accent));
+}
+
+.va-tab-btn.active {
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.va-tab-count {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 9999px;
+    background: rgba(0, 0, 0, 0.1);
+    color: currentColor;
+}
+
+.va-search-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--input));
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    min-width: 280px;
+}
+
+.va-search-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: hsl(var(--foreground));
+    font-size: 0.84rem;
+    width: 100%;
+}
+
+.va-search-input::placeholder {
+    color: hsl(var(--muted-foreground));
+}
+
+.va-refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.45rem 0.85rem;
+    background: hsl(var(--secondary));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    color: hsl(var(--secondary-foreground));
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.va-refresh-btn:hover {
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+}
+
+/* Table Styling */
+.va-table-card {
+    background: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.va-table-scroll {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.va-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    text-align: left;
+}
+
+.va-table th {
+    background: hsl(var(--muted) / 0.5);
+    padding: 0.875rem 1rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+    font-size: 0.725rem;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid hsl(var(--border));
+}
+
+.va-table td {
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    color: hsl(var(--foreground));
+}
+
+.va-table tr:hover {
+    background: hsl(var(--muted) / 0.3);
+}
+
+/* Product Info cell */
+.va-product-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.va-product-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.va-product-name {
+    font-weight: 600;
+    color: hsl(var(--foreground));
+}
+
+.va-product-code {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+}
+
+.va-category-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    background: hsl(var(--secondary));
+    color: hsl(var(--secondary-foreground));
+    border: 1px solid hsl(var(--border));
+    width: fit-content;
+}
+
+/* Status Badges */
+.va-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.va-status-pending {
+    background: rgba(245, 158, 11, 0.12);
+    color: #d97706;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.va-status-approved, .va-status-active {
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.va-status-rejected {
+    background: rgba(239, 68, 68, 0.12);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.va-status-revision {
+    background: rgba(59, 130, 246, 0.12);
+    color: #2563eb;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+/* Table Actions */
+.va-actions-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.va-btn-review {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.375rem 0.65rem;
+    border-radius: 0.375rem;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    font-size: 0.775rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.va-btn-review:hover {
+    opacity: 0.9;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.va-btn-quick-approve {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 0.375rem;
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.va-btn-quick-approve:hover {
+    background: rgba(16, 185, 129, 0.25);
+    transform: scale(1.05);
+}
+
+.va-btn-reject {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 0.375rem;
+    background: rgba(239, 68, 68, 0.12);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.va-btn-reject:hover {
+    background: rgba(239, 68, 68, 0.25);
+    transform: scale(1.05);
+}
+
+/* Modal Overlay & Card */
+.va-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    padding: 1.5rem;
+}
+
+.va-modal-card {
+    background: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border: 1px solid hsl(var(--border));
+    border-radius: 1rem;
+    width: 100%;
+    max-width: 1000px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+    animation: vaModalFadeIn 0.2s ease-out;
+}
+
+@keyframes vaModalFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.97) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.va-modal-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid hsl(var(--border));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: hsl(var(--muted) / 0.3);
+}
+
+.va-modal-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.va-modal-close-btn {
+    background: transparent;
+    border: none;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    padding: 0.35rem;
+    border-radius: 0.375rem;
+    transition: all 0.15s ease;
+}
+
+.va-modal-close-btn:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--accent));
+}
+
+.va-modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Modal Inner Sub-tabs */
+.va-modal-tabs {
+    display: flex;
+    border-bottom: 1px solid hsl(var(--border));
+    gap: 1.5rem;
+}
+
+.va-modal-tab {
+    padding: 0.625rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    transition: all 0.15s ease;
+}
+
+.va-modal-tab.active {
+    color: hsl(var(--primary));
+    border-bottom-color: hsl(var(--primary));
+}
+
+/* Diff Highlighting Rules */
+.va-diff-added {
+    background: rgba(16, 185, 129, 0.1) !important;
+    border-left: 3px solid #10b981;
+}
+
+.va-diff-removed {
+    background: rgba(239, 68, 68, 0.1) !important;
+    border-left: 3px solid #ef4444;
+}
+
+.va-diff-modified {
+    background: rgba(245, 158, 11, 0.1) !important;
+    border-left: 3px solid #f59e0b;
+}
+
+.va-diff-tag {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+}
+
+.va-diff-tag-added {
+    background: #10b981;
+    color: #ffffff;
+}
+
+.va-diff-tag-removed {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+.va-diff-tag-modified {
+    background: #f59e0b;
+    color: #ffffff;
+}
+
+.va-diff-tag-unchanged {
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+}
+
+/* Decision Form Section */
+.va-decision-section {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.va-decision-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+}
+
+.va-decision-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+}
+
+.va-decision-radio-card {
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    color: hsl(var(--foreground));
+    transition: all 0.15s ease;
+}
+
+.va-decision-radio-card:hover {
+    border-color: hsl(var(--ring));
+}
+
+.va-decision-radio-card.selected {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+}
+
+.va-textarea {
+    width: 100%;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--input));
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    color: hsl(var(--foreground));
+    font-size: 0.85rem;
+    outline: none;
+    min-height: 80px;
+    resize: vertical;
+}
+
+.va-textarea:focus {
+    border-color: hsl(var(--ring));
+}
+
+.va-modal-footer {
+    padding: 1rem 1.5rem;
+    background: hsl(var(--muted) / 0.3);
+    border-top: 1px solid hsl(var(--border));
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.va-btn-secondary {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background: hsl(var(--secondary));
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--secondary-foreground));
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.va-btn-secondary:hover {
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+}
+
+.va-btn-submit {
+    padding: 0.5rem 1.25rem;
+    border-radius: 0.5rem;
+    background: hsl(var(--primary));
+    border: none;
+    color: hsl(var(--primary-foreground));
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.va-btn-submit:hover:not(:disabled) {
+    opacity: 0.9;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.va-btn-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Empty / Loading States */
+.va-loading-state, .va-empty-state {
+    padding: 3rem 1.5rem;
+    text-align: center;
+    color: hsl(var(--muted-foreground));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}

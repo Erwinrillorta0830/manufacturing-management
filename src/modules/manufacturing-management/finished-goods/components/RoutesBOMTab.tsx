@@ -5,6 +5,7 @@ import React from "react";
 import { Plus, Trash2, Shield, Settings, DollarSign, Clock, Layers } from "lucide-react";
 import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit } from "../types";
 import { BOMMaterialSelect } from "./BOMMaterialSelect";
+import { MaterialTypeSelect } from "./MaterialTypeSelect";
 import { CreatableSelect } from "./CreatableSelect";
 import { Button } from "@/components/ui/button";
 import { calculateMaterialCost } from "../costing";
@@ -575,21 +576,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                         return (
                                                             <tr key={b.id} className="border-b border-muted/50 hover:bg-muted/5">
                                                                 <td className="p-1.5 align-middle min-w-[175px]">
-                                                                    <select
-                                                                        aria-label="Material Type"
+                                                                    <MaterialTypeSelect
                                                                         value={selectedMaterialType || ""}
-                                                                        onChange={(e) => handleChangeMaterialType(
+                                                                        onChange={(val) => handleChangeMaterialType(
                                                                             r.route_id,
                                                                             b.id,
-                                                                            e.target.value as MaterialType | ""
+                                                                            val as MaterialType | ""
                                                                         )}
-                                                                        className={`w-full min-w-0 h-8 rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap truncate bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary ${classification.className}`}
-                                                                    >
-                                                                        <option value="">Select a Material Type</option>
-                                                                        {MATERIAL_TYPE_OPTIONS.map(option => (
-                                                                            <option key={option.value} value={option.value}>{option.label}</option>
-                                                                        ))}
-                                                                    </select>
+                                                                    />
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
                                                                     <BOMMaterialSelect

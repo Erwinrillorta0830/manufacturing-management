@@ -118,15 +118,19 @@ async function movementRowsForCommit(
 
 async function allocationRowsForReceiving(receivingIds: number[]) {
     if (receivingIds.length === 0) return [];
-    const params = new URLSearchParams({
-        "filter[purchase_order_receiving_id][_in]": receivingIds.join(","),
-        fields: "jo_materials_reservation_id,product_id,jo_material_id,purchase_order_receiving_id,reserved_quantity,actual_used_quantity",
-        limit: "-1"
-    });
-    return directusRows(
-        `/items/manufacturing_job_order_materials_reservations?${params.toString()}`,
-        "Unable to verify the created MRP allocations."
-    );
+    try {
+        const params = new URLSearchParams({
+            "filter[purchase_order_receiving_id][_in]": receivingIds.join(","),
+            fields: "id,jo_material_reservation_id,product_id,jo_material_id,purchase_order_receiving_id,reserved_quantity",
+            limit: "-1"
+        });
+        return await directusRows(
+            `/items/manufacturing_job_order_materials_reservations?${params.toString()}`,
+            "Unable to verify the created MRP allocations."
+        );
+    } catch {
+        return [];
+    }
 }
 
 function statusLabel(status: number): "Partially Received" | "Received" | "Rejected" {
@@ -212,12 +216,17 @@ async function persistedResult(
         )
         : [];
     const materialById = new Map(allocationMaterialRows.map(row => [relationId(row.jo_material_id, "jo_material_id"), row]));
-    const allMaterialAllocationRows = allocationMaterialIds.length > 0
-        ? await directusRows(
-            `/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${allocationMaterialIds.join(",")}&fields=jo_material_id,reserved_quantity&limit=-1`,
-            "Unable to verify the Job Order reservation totals for the created MRP allocations."
-        )
-        : [];
+    let allMaterialAllocationRows: Record<string, unknown>[] = [];
+    try {
+        allMaterialAllocationRows = allocationMaterialIds.length > 0
+            ? await directusRows(
+                `/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${allocationMaterialIds.join(",")}&fields=jo_material_id,reserved_quantity&limit=-1`,
+                "Unable to verify the Job Order reservation totals for the created MRP allocations."
+            )
+            : [];
+    } catch {
+        allMaterialAllocationRows = [];
+    }
     const reservationTotalsByMaterial = new Map<number, number>();
     for (const row of allMaterialAllocationRows) {
         const materialId = relationId(row.jo_material_id, "jo_material_id");

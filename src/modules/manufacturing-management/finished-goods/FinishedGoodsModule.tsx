@@ -191,6 +191,14 @@ export default function FinishedGoodsModule() {
     const [importDensityFactor, setImportDensityFactor] = useState<number>(0.880);
     const [automateCustoms, setAutomateCustoms] = useState<boolean>(true);
 
+    // Sidebar Pagination State
+    const [sidebarPage, setSidebarPage] = useState(1);
+    const [sidebarPageSize, setSidebarPageSize] = useState(10);
+
+    useEffect(() => {
+        setSidebarPage(1);
+    }, [searchQuery]);
+
     // Sync tab param on load
     useEffect(() => {
         const tab = searchParams.get("tab");
@@ -766,7 +774,10 @@ export default function FinishedGoodsModule() {
                                     <span className="text-xs">Loading products...</span>
                                 </div>
                             ) : (
-                                treeProducts.roots.map((root) => {
+                                (() => {
+                                    const totalSidebarPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
+                                    const paginatedRoots = treeProducts.roots.slice((sidebarPage - 1) * sidebarPageSize, sidebarPage * sidebarPageSize);
+                                    return paginatedRoots.map((root) => {
                                     const children = treeProducts.childrenMap.get(root.id) || [];
                                     const displayedChildren = searchQuery.trim()
                                         ? children.filter(c => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.sku.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.barcode.toLowerCase().includes(searchQuery.trim().toLowerCase()))
@@ -827,12 +838,12 @@ export default function FinishedGoodsModule() {
                                                             <div className="absolute left-[-16px] top-1/2 -translate-y-1/2 w-3 border-t border-border/60" />
 
                                                             <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                                <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5 text-muted-foreground">
-                                                                    <Sliders className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                                                <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
+                                                                    <Layers className="h-3 w-3 text-muted-foreground shrink-0" />
                                                                     {child.title}
                                                                 </span>
-                                                                <span className="shrink-0 bg-muted/60 text-muted-foreground px-1 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
-                                                                    Variant
+                                                                <span className="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
+                                                                    Child
                                                                 </span>
                                                             </div>
                                                             <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5">
@@ -847,7 +858,8 @@ export default function FinishedGoodsModule() {
                                             )}
                                         </div>
                                     );
-                                })
+                                });
+                                })()
                             )}
                             {!loadingProducts && treeProducts.roots.length === 0 && (
                                 <div className="p-8 text-center text-xs text-muted-foreground">
@@ -855,6 +867,34 @@ export default function FinishedGoodsModule() {
                                 </div>
                             )}
                         </div>
+
+                        {/* Sidebar Pagination Footer */}
+                        {treeProducts.roots.length > 0 && (() => {
+                            const totalPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
+                            return (
+                                <div className="p-2.5 border-t bg-muted/20 flex items-center justify-between text-xs text-muted-foreground font-medium shrink-0">
+                                    <span>
+                                        Page {sidebarPage} of {totalPages}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            disabled={sidebarPage <= 1}
+                                            onClick={() => setSidebarPage(prev => Math.max(1, prev - 1))}
+                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                                        >
+                                            Prev
+                                        </button>
+                                        <button
+                                            disabled={sidebarPage >= totalPages}
+                                            onClick={() => setSidebarPage(prev => Math.min(totalPages, prev + 1))}
+                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 

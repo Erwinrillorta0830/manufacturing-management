@@ -1,6 +1,6 @@
 /* eslint-disable */
-import React, { useState, useEffect } from "react";
-import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCircle, Clock } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCircle, Clock, Package, Layers } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -21,6 +21,10 @@ import {
 } from "@/components/ui/select";
 import { Branch, SalesOrderDetail } from "../types";
 import { OperatorSelect } from "./OperatorSelect";
+import { SearchableVersionSelect } from "./SearchableVersionSelect";
+import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
+import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/containerization-helper";
+import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
 
 interface ReleaseJODialogProps {
     isConfirmOpen: boolean;
@@ -39,7 +43,7 @@ interface ReleaseJODialogProps {
     remarks: string;
     setRemarks: (val: string) => void;
     releasingJO: boolean;
-    handleConfirmRelease: () => void;
+    handleConfirmRelease: (selectedSubAssemblyVersions?: Record<number, number>) => void;
     assignments: Record<number, number[]>;
     setAssignments: React.Dispatch<React.SetStateAction<Record<number, number[]>>>;
 }
@@ -75,6 +79,10 @@ export function ReleaseJODialog({
     const [bomBaseQty, setBomBaseQty] = useState(1);
     const [searchQuery, setSearchQuery] = useState("");
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
+    const [subAssemblyRoutings, setSubAssemblyRoutings] = useState<Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }>>({});
+    const [subAssemblyVersions, setSubAssemblyVersions] = useState<Record<number, any[]>>({});
+    const [selectedSubAssemblyVersions, setSelectedSubAssemblyVersions] = useState<Record<number, number>>({});
+    const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
 
     const selectedBranch = branches.find((b) => b.id === selectedBranchId);
@@ -89,6 +97,10 @@ export function ReleaseJODialog({
             setAssignments({});
             setSearchQuery("");
             setSubAssemblyBoms({});
+            setSubAssemblyRoutings({});
+            setSubAssemblyVersions({});
+            setSelectedSubAssemblyVersions({});
+            setLoadingSubVersion({});
             setPrintSelection({});
             setHasLoadedDetails(false);
         }
@@ -113,60 +125,19 @@ export function ReleaseJODialog({
                     const first = selectedLines[0];
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
-                    const url = `/api/manufacturing/planning-engineering?productId=${pId}&bomId=${bId || ""}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${selectedBranchId || 1}`;
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
                         setRoutings(data.routings || []);
-                        const comps = data.components || [];
-                        setComponents(comps);
+                        setComponents(data.components || []);
+                        setSubAssemblyBoms(data.subAssemblyBoms || {});
+                        setSubAssemblyRoutings(data.subAssemblyRoutings || {});
+                        setSubAssemblyVersions(data.subAssemblyVersions || {});
+                        setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                        setInventories(data.inventories || {});
                         if (data.bom) {
                             setBomBaseQty(Number(data.bom.base_quantity || 1));
-                        }
-
-                        // Recursively explode sub-assembly BOMs
-                        const subComps = comps.filter((c: any) => c.component_product_id?.product_type === 388 || c.component_product_id?.is_finished_good);
-                        const childBoms: Record<number, any[]> = {};
-                        const childProductIds: number[] = [];
-
-                        await Promise.all(subComps.map(async (sc: any) => {
-                            const scId = sc.component_product_id?.product_id;
-                            if (!scId) return;
-                            try {
-                                const subRes = await fetch(`/api/manufacturing/planning-engineering?productId=${scId}`);
-                                if (subRes.ok) {
-                                    const details = await subRes.json();
-                                    const cList = details.components || [];
-                                    childBoms[scId] = cList;
-                                    cList.forEach((cc: any) => {
-                                        const ccId = cc.component_product_id?.product_id;
-                                        if (ccId) childProductIds.push(ccId);
-                                    });
-                                }
-                            } catch (e) {
-                                console.error("Failed to load sub-assembly BOM for", scId, e);
-                            }
-                        }));
-                        setSubAssemblyBoms(childBoms);
-
-                        // Merge all product IDs (parent + children) to query stock
-                        const allProductIds = [
-                            ...comps.map((c: any) => c.component_product_id?.product_id).filter(Boolean),
-                            ...childProductIds
-                        ];
-
-                        // Fetch inventory stock for all components
-                        if (allProductIds.length > 0) {
-                            const stockUrl = `/api/manufacturing/planning-engineering?action=net-requirements&productIds=${allProductIds.join(",")}&branchId=${selectedBranchId || 1}`;
-                            const stockRes = await fetch(stockUrl);
-                            if (stockRes.ok) {
-                                const stockData = await stockRes.json();
-                                const stockMap: Record<number, any> = {};
-                                stockData.forEach((s: any) => {
-                                    stockMap[Number(s.product_id)] = s;
-                                });
-                                setInventories(stockMap);
-                            }
                         }
                         setHasLoadedDetails(true);
                     }
@@ -180,6 +151,27 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen, selectedLines, currentStep, selectedBranchId, hasLoadedDetails]);
 
+    const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
+        setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
+        setLoadingSubVersion(prev => ({ ...prev, [subProdId]: true }));
+        try {
+            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${selectedBranchId || 1}`;
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                setSubAssemblyBoms(prev => ({ ...prev, [subProdId]: data.bomItems || [] }));
+                setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing || { setup_time_hours: 0, run_time_hours_per_unit: 0, base_quantity: 1 } }));
+                if (data.inventories) {
+                    setInventories(prev => ({ ...prev, ...data.inventories }));
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load sub-assembly version details:", e);
+        } finally {
+            setLoadingSubVersion(prev => ({ ...prev, [subProdId]: false }));
+        }
+    };
+
     // Initialize default print selections for shortfalls
     useEffect(() => {
         const initialSelections: Record<string, boolean> = {};
@@ -190,7 +182,8 @@ export function ReleaseJODialog({
             const shortfall = Math.max(0, needed - available);
 
             if (shortfall > 0) {
-                const isSubAssembly = comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
+                const children = subAssemblyBoms[Number(compProductId)] || [];
+                const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
                 initialSelections[`parent-${compProductId}`] = !isSubAssembly;
 
                 if (isSubAssembly) {
@@ -210,10 +203,71 @@ export function ReleaseJODialog({
         setPrintSelection(initialSelections);
     }, [components, inventories, subAssemblyBoms, targetQuantity, bomBaseQty]);
 
-    // Calculate time metrics
-    const totalSetupHours = routings.reduce((sum, r) => sum + Number(r.setup_time_hours || 0), 0);
-    const totalRunHours = (targetQuantity * routings.reduce((sum, r) => sum + Number(r.run_time_hours || 0), 0)) / bomBaseQty;
-    const totalEstimatedHours = totalSetupHours + totalRunHours;
+    // Calculate time metrics (Main assembly + Sub-assembly shortfall runs)
+    const boxSetupHours = routings.reduce((sum, r) => sum + Number(r.setup_time_hours || 0), 0);
+    const boxRunHours = (targetQuantity * routings.reduce((sum, r) => sum + (Number(r.run_time_hours || 0) / Number(r.step_batch_size || 1)), 0)) / bomBaseQty;
+    const boxEstimatedHours = boxSetupHours + boxRunHours;
+
+    let subAssemblyEstimatedHours = 0;
+    components.forEach((comp) => {
+        const compProductId = Number(comp.component_product_id?.product_id || 0);
+        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+        const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
+        const shortfall = Math.max(0, needed - available);
+        const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
+        if (shortfall > 0 && subRoute) {
+            const subSetup = Number(subRoute.setup_time_hours || 0);
+            const subRun = Number(subRoute.run_time_hours_per_unit || 0) * shortfall;
+            subAssemblyEstimatedHours += (subSetup + subRun);
+        }
+    });
+
+    const totalSetupHours = boxSetupHours;
+    const totalRunHours = boxRunHours;
+    const totalEstimatedHours = boxEstimatedHours + subAssemblyEstimatedHours;
+
+    const containerMetrics = useMemo(() => {
+        if (!selectedLines || selectedLines.length === 0) return null;
+        const first = selectedLines[0];
+        const prodObj = first.product_id as any;
+        if (!prodObj) return null;
+        return calculateContainerizationMetrics(
+            prodObj.product_name || prodObj.product_code || "Product",
+            targetQuantity,
+            prodObj.unit_of_measurement_count
+        );
+    }, [selectedLines, targetQuantity]);
+
+    const cogsBreakdown = useMemo(() => {
+        if (!selectedLines || selectedLines.length === 0) return null;
+        const first = selectedLines[0];
+        const prodObj = first.product_id as any;
+        if (!prodObj) return null;
+
+        const bomItemsForCosting = components.map((comp) => ({
+            quantity_required: Number(comp.quantity_required || 0),
+            wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
+            cost_per_unit: Number(comp.component_product_id?.cost_per_unit || comp.cost_per_unit || 0)
+        }));
+
+        const routeStepsForCosting = routings.map((r) => ({
+            sequence_order: Number(r.sequence_order || 0),
+            work_center_id: Number(r.work_center_id || 0),
+            setup_time_hours: Number(r.setup_time_hours || 0),
+            run_time_hours: Number(r.run_time_hours || 0),
+            step_batch_size: Number(r.step_batch_size || 1),
+            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour || r.overhead_cost_per_hour || 0)
+        }));
+
+        return calculateUnitCOGSBreakdown(
+            bomBaseQty,
+            (first as any).expected_yield_percentage || prodObj.expected_yield_percentage,
+            (first as any).custom_overhead || prodObj.custom_overhead,
+            bomItemsForCosting,
+            routeStepsForCosting,
+            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0)
+        );
+    }, [selectedLines, components, routings, bomBaseQty]);
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
@@ -236,7 +290,8 @@ export function ReleaseJODialog({
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
-            const isSubAssembly = comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
+            const children = subAssemblyBoms[Number(compProductId)] || [];
+            const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
 
             if (shortfall > 0 && printSelection[`parent-${compProductId}`]) {
                 tableRowsHtml += `
@@ -390,7 +445,7 @@ export function ReleaseJODialog({
 
     return (
         <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-            <DialogContent className="sm:max-w-[620px] bg-background text-foreground border-border">
+            <DialogContent className="max-w-6xl w-[94vw] max-h-[92vh] flex flex-col p-6 overflow-hidden bg-card text-foreground border-border sm:max-w-6xl">
                 <DialogHeader className="border-b border-border pb-3">
                     <DialogTitle className="text-lg font-bold flex items-center justify-between text-foreground">
                         <span>Release Production Run</span>
@@ -416,7 +471,7 @@ export function ReleaseJODialog({
                 </div>
 
                 {selectedLines.length > 0 && (
-                    <div className="py-2 space-y-4 max-h-[460px] overflow-y-auto px-1">
+                    <div className="py-2 space-y-4 flex-1 overflow-y-auto max-h-[68vh] px-1">
                         
                         {/* STEP 1: CONFIGURE HEADER PARAMETERS */}
                         {currentStep === 1 && (
@@ -518,31 +573,140 @@ export function ReleaseJODialog({
                                     </div>
                                 ) : (
                                     <>
-                                        {/* Time Summary */}
-                                        <div className="bg-card border border-border rounded-xl p-3.5 flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-primary/10 border border-primary/20 rounded-lg text-primary">
-                                                    <Clock className="h-5 w-5" />
+                                        {/* Time Summary Breakdown Cards */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            {/* Main Assembly Card */}
+                                            <div className="bg-card border border-border rounded-xl p-3 flex flex-col justify-between">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <Package className="h-4 w-4 text-primary" />
+                                                    <span className="text-xs font-bold text-foreground">📦 Assembly</span>
                                                 </div>
                                                 <div>
-                                                    <h4 className="text-xs font-semibold text-foreground">Estimated Duration</h4>
-                                                    <p className="text-[10px] text-muted-foreground">Computed from routing parameters</p>
+                                                    <div className="text-base font-black text-foreground">
+                                                        {boxEstimatedHours.toFixed(1)} hrs
+                                                    </div>
+                                                    <div className="text-[10px] text-muted-foreground font-medium">
+                                                        {Number(shiftOption) > 0 ? `~${(boxEstimatedHours / Number(shiftOption)).toFixed(1)} Days` : `${boxEstimatedHours.toFixed(1)} hrs`}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="text-right">
-                                                <span className="text-lg font-black text-foreground">
-                                                    {totalEstimatedHours.toFixed(1)} hrs
-                                                    {Number(shiftOption) > 0 && (
-                                                        <span className="text-xs text-muted-foreground font-bold ml-1.5">
-                                                            (~{(totalEstimatedHours / Number(shiftOption)).toFixed(1)} Days)
-                                                        </span>
-                                                    )}
-                                                </span>
-                                                <div className="text-[9px] text-muted-foreground">
-                                                    Setup: {totalSetupHours.toFixed(1)}h | Run: {totalRunHours.toFixed(1)}h
+
+                                            {/* Sub-Assembly Card */}
+                                            <div className={`bg-card border rounded-xl p-3 flex flex-col justify-between ${subAssemblyEstimatedHours > 0 ? "border-sky-500/30 bg-sky-500/5" : "border-border"}`}>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <Layers className="h-4 w-4 text-sky-500" />
+                                                    <span className="text-xs font-bold text-foreground">🧩 Sub-Assembly</span>
+                                                </div>
+                                                <div>
+                                                    <div className="text-base font-black text-foreground">
+                                                        {subAssemblyEstimatedHours.toFixed(1)} hrs
+                                                    </div>
+                                                    <div className="text-[10px] text-muted-foreground font-medium">
+                                                        {subAssemblyEstimatedHours > 0 && Number(shiftOption) > 0
+                                                            ? `~${(subAssemblyEstimatedHours / Number(shiftOption)).toFixed(1)} Days`
+                                                            : "No piece shortfalls"}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Total Duration Card */}
+                                            <div className="bg-primary/10 border border-primary/30 rounded-xl p-3 flex flex-col justify-between">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <Clock className="h-4 w-4 text-primary" />
+                                                    <span className="text-xs font-bold text-foreground">⏱️ Total Lead Time</span>
+                                                </div>
+                                                <div>
+                                                    <div className="text-base font-black text-primary font-mono tracking-tight">
+                                                        {formatHoursToHMS(totalEstimatedHours)}
+                                                    </div>
+                                                    <div className="text-[10px] text-primary/80 font-bold">
+                                                        {Number(shiftOption) > 0 ? `~${(totalEstimatedHours / Number(shiftOption)).toFixed(1)} Days (${totalEstimatedHours.toFixed(1)} hrs)` : `${totalEstimatedHours.toFixed(1)} hrs Total`}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
+
+                                        {/* Batch Yield & Pallet Containerization Banner */}
+                                        {containerMetrics && (
+                                            <div className="bg-muted/40 border border-border rounded-xl p-3.5 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <Package className="h-4 w-4 text-emerald-500" />
+                                                        <span className="text-xs font-bold text-foreground uppercase tracking-wider text-[11px]">
+                                                            📦 Plant Production & Pallet Containerization
+                                                        </span>
+                                                    </div>
+                                                    <Badge variant="outline" className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                                                        {containerMetrics.expectedYieldPercentage}% Yield Factor
+                                                    </Badge>
+                                                </div>
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">🌾 Batch Mix & Sacks</span>
+                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.mixCount} Mixes</span>
+                                                        <span className="text-[10px] text-muted-foreground block">({containerMetrics.sackCount} Sacks / {(containerMetrics.flourGramsTotal / 1000).toLocaleString()} kg Flour)</span>
+                                                    </div>
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">🏭 Expected Net Pcs</span>
+                                                        <span className="font-extrabold text-foreground text-xs">{Math.round(containerMetrics.netPieces).toLocaleString()} Pcs</span>
+                                                        <span className="text-[10px] text-muted-foreground block">({(containerMetrics.scrapRate * 100).toFixed(1)}% Waste Scrap)</span>
+                                                    </div>
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">📦 Cases / Bundles</span>
+                                                        <span className="font-extrabold text-foreground text-xs">{containerMetrics.totalCasesBundlesFull} Full</span>
+                                                        <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingPcs} pcs remaining)</span>
+                                                    </div>
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">🚛 Pallet Allocation</span>
+                                                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">{containerMetrics.totalPalletsFull} Pallets</span>
+                                                        <span className="text-[10px] text-muted-foreground block">(+{containerMetrics.remainingCasesBundles} cases/bundles)</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Live Unit COGS & Cost Breakdown Banner */}
+                                        {cogsBreakdown && (
+                                            <div className="bg-sky-500/5 border border-sky-500/20 dark:bg-sky-950/20 dark:border-sky-500/30 rounded-xl p-3.5 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="outline" className="text-[10px] font-extrabold bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30">
+                                                            💰 Unit COGS & Labor Breakdown
+                                                        </Badge>
+                                                        <span className="text-[11px] font-semibold text-muted-foreground">
+                                                            Base COGS: <strong className="text-foreground">₱{cogsBreakdown.baseUnitCOGS.toFixed(2)}</strong> / unit
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="text-xs font-black text-sky-600 dark:text-sky-400">
+                                                            ₱{cogsBreakdown.adjustedUnitCOGS.toFixed(2)} / unit
+                                                        </span>
+                                                        <span className="text-[9px] text-muted-foreground block font-medium">
+                                                            (Adjusted for {cogsBreakdown.expectedYieldPercentage}% Yield)
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
+                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.materialCostPerUnit.toFixed(2)}</span>
+                                                        <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
+                                                    </div>
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
+                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
+                                                        <span className="text-[9px] text-muted-foreground block">
+                                                            {cogsBreakdown.isCustomLaborOverride ? "Fixed Version Override" : "Work Center Hourly Rate"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="bg-background border border-border/60 rounded-lg p-2">
+                                                        <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
+                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
+                                                        <span className="text-[9px] text-muted-foreground block">Power, Steam & Depreciation</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
 
                                         {/* Material Checklist */}
                                         <div className="space-y-2">
@@ -585,8 +749,8 @@ export function ReleaseJODialog({
                                                                 const shortfall = Math.max(0, needed - available);
                                                                 const isSufficient = shortfall === 0;
                                                                 const uom = comp.unit_of_measurement || "pcs";
-                                                                const isSubAssembly = comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
                                                                 const children = subAssemblyBoms[Number(compProductId)] || [];
+                                                                const isSubAssembly = children.length > 0 || comp.component_product_id?.product_type === 388 || comp.component_product_id?.is_finished_good;
 
                                                                 return (
                                                                     <React.Fragment key={`${compProductId || "null"}_${index}`}>
@@ -615,6 +779,51 @@ export function ReleaseJODialog({
                                                                                 </div>
                                                                                 <div className="font-bold text-foreground">{comp.component_product_id?.product_name || `Product #${compProductId}`}</div>
                                                                                 <div className="text-[9px] text-muted-foreground/80">{comp.component_product_id?.product_code || ""}</div>
+                                                                                
+                                                                                {/* Sub-Assembly Version Selector & Routing Details */}
+                                                                                {isSubAssembly && (
+                                                                                    <div className="mt-2 space-y-2 p-2.5 bg-sky-500/5 dark:bg-sky-950/20 rounded-lg border border-sky-500/20">
+                                                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                                            <div className="flex-1 min-w-[240px] max-w-md">
+                                                                                                <SearchableVersionSelect
+                                                                                                    versions={subAssemblyVersions[Number(compProductId)] || []}
+                                                                                                    selectedVersionId={selectedSubAssemblyVersions[Number(compProductId)]}
+                                                                                                    onVersionChange={(vId) => handleSubAssemblyVersionChange(Number(compProductId), vId)}
+                                                                                                    loading={!!loadingSubVersion[Number(compProductId)]}
+                                                                                                    productName={comp.component_product_id?.product_name || "Sub-Assembly"}
+                                                                                                />
+                                                                                            </div>
+                                                                                            
+                                                                                            {/* Sub-Assembly Route Duration Preview */}
+                                                                                            {subAssemblyRoutings[Number(compProductId)] && (
+                                                                                                <div className="text-[10px] bg-card/90 px-2.5 py-1 rounded-md border border-sky-500/30 flex flex-wrap items-center gap-2 font-mono shadow-sm shrink-0">
+                                                                                                    <Clock className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+                                                                                                    <span>
+                                                                                                        Setup: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].setup_time_hours}h</strong>
+                                                                                                    </span>
+                                                                                                    <span>|</span>
+                                                                                                    <span>
+                                                                                                        Run Rate: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit.toFixed(3)}h/unit</strong>
+                                                                                                    </span>
+                                                                                                    {shortfall > 0 && (
+                                                                                                        <span className="text-sky-600 dark:text-sky-400 font-bold ml-1">
+                                                                                                            (= {(subAssemblyRoutings[Number(compProductId)].setup_time_hours + (subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit * shortfall / (subAssemblyRoutings[Number(compProductId)].base_quantity || 1))).toFixed(1)} hrs est.)
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+
+                                                                                        {/* Auto-spawn Child JO indicator */}
+                                                                                        {shortfall > 0 && (
+                                                                                            <div className="text-[9.5px] text-sky-700 dark:text-sky-300 font-medium flex items-center gap-1.5 pt-1 border-t border-sky-500/10">
+                                                                                                <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
+                                                                                                <span>Auto-Spawns Child Job Order: <strong className="font-mono bg-sky-500/10 px-1 py-0.5 rounded">{joNumber}-SUB{compProductId}</strong> for <strong className="font-bold">{shortfall.toLocaleString(undefined, {maximumFractionDigits:2})} {uom}</strong></span>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                )}
+
                                                                                 {inventories[Number(compProductId)]?.recommended_lots?.length > 0 && (
                                                                                     <div className="mt-1 space-y-0.5">
                                                                                         <div className="text-[7.5px] text-primary/80 font-bold uppercase tracking-wider">Recommended Lots:</div>
@@ -664,9 +873,10 @@ export function ReleaseJODialog({
                                                                         </tr>
 
                                                                         {/* Indented child raw materials for Sub-Assemblies */}
-                                                                        {isSubAssembly && shortfall > 0 && children.map((cc: any, subIndex: number) => {
+                                                                        {isSubAssembly && children.length > 0 && children.map((cc: any, subIndex: number) => {
                                                                             const ccId = cc.component_product_id?.product_id;
-                                                                            const ccNeeded = Number(cc.quantity_required) * shortfall;
+                                                                            const subBaseQty = Number(cc.base_quantity || 1);
+                                                                            const ccNeeded = (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty);
                                                                             const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                                             const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                                             const ccUom = cc.unit_of_measurement || "pcs";
@@ -835,7 +1045,7 @@ export function ReleaseJODialog({
                         ) : (
                             <Button
                                 size="sm"
-                                onClick={handleConfirmRelease}
+                                onClick={() => handleConfirmRelease(selectedSubAssemblyVersions)}
                                 disabled={releasingJO}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                             >
@@ -852,6 +1062,7 @@ export function ReleaseJODialog({
                     </div>
                 </DialogFooter>
             </DialogContent>
+            <SubmittingLoadingOverlay isOpen={releasingJO} title="Releasing Sales Order Production Run..." />
         </Dialog>
     );
 }

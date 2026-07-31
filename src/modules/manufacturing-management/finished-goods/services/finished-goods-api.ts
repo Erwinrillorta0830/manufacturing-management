@@ -26,6 +26,7 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
     const query = new URLSearchParams();
     if (search) query.append("search", search);
     query.append("limit", String(limit));
+    query.append("excludeRollup", "true");
 
     const res = await fetch(`/api/manufacturing/finished-goods/products?${query.toString()}`);
     if (!res.ok) throw new Error("Failed to fetch products from BFF");
@@ -132,7 +133,7 @@ export async function saveBOMDetails(
         uom_id?: number | null;
         expected_yield_percentage: number;
         custom_overhead?: number;
-        status: 'For Approval' | 'Active' | 'Inactive';
+        status: string;
         valid_from?: string | null;
         valid_to?: string | null;
         title?: string;

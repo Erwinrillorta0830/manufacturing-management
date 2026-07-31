@@ -153,6 +153,7 @@ export async function handlePOST(request: Request) {
                         newlyReservedQty += taken;
                         newAllocations.push({
                             purchase_order_receiving_id: recId,
+                            batch_no: lotNo,
                             allocated: taken
                         });
                     }
@@ -163,8 +164,10 @@ export async function handlePOST(request: Request) {
                     for (const alloc of newAllocations) {
                         const reservationPayload = {
                             product_id: compProductId,
+                            branch_id: branchId,
+                            batch_no: alloc.batch_no || null,
                             jo_material_id: mat.jo_material_id || mat.id,
-                            purchase_order_receiving_id: alloc.purchase_order_receiving_id,
+                            purchase_order_receiving_id: alloc.purchase_order_receiving_id || null,
                             reserved_quantity: alloc.allocated,
                             actual_used_quantity: 0,
                             created_by: joData.created_by ? Number(joData.created_by) : null
@@ -586,6 +589,7 @@ export async function handlePOST(request: Request) {
             created_at: await getISOStringInConfiguredTimezone(),
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
+            sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,
             assignments: jo.assignments || null,
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             products: jo.products ? jo.products.map((p: any) => ({

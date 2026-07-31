@@ -21,16 +21,17 @@ export async function getLatestLandedCost(
         let profile: DirectusProductCurrencyProfile | undefined = undefined;
         if (profilesMap) {
             profile = profilesMap.get(productId);
-        } else {
-            const resProfile = await fetch(`${DIRECTUS_URL}/items/product_currency_profiles?filter[product_id][_eq]=${productId}&limit=1`, { headers, cache: "no-store" });
-            if (resProfile.ok) {
-                const profileJson = await resProfile.json();
-                profile = profileJson.data?.[0];
-            }
         }
 
         if (profile && profile.is_foreign_sourced && profile.purchase_currency === "USD" && profile.purchase_price) {
             return Number(profile.purchase_price) * forexRate;
+        }
+
+        if (productsMap) {
+            const cachedProd = productsMap.get(productId);
+            if (cachedProd && Number(cachedProd.cost_per_unit) > 0) {
+                return Number(cachedProd.cost_per_unit);
+            }
         }
 
         const query = encodeURIComponent(JSON.stringify({
@@ -76,7 +77,7 @@ export async function getLatestLandedCost(
  */
 export async function fetchAllProducts(search?: string, limit: number = -1): Promise<DirectusProduct[]> {
     try {
-        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_name,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_name,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;

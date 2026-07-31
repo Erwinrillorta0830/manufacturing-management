@@ -145,20 +145,44 @@ async function validateRevisionReferences(command: RevisionCommand) {
             throw new PurchaseOrderLifecycleError("Buffer stock cannot be linked to a job order.", 400);
         }
     }
-    const [supplier, branch] = await Promise.all([
+    const branchIdNum = Number(command.shipmentData.branch_id);
+
+    const [supplier, branchRows] = await Promise.all([
         directusData<Record<string, unknown>>(
             `/items/suppliers/${command.shipmentData.supplier_id}?fields=id,isActive,nonBuy`,
             "Unable to validate the revised supplier."
         ),
-        directusData<Record<string, unknown>>(
-            `/items/branches/${command.shipmentData.branch_id}?fields=id,isActive`,
+        directusData<Array<Record<string, unknown>>>(
+            `/items/branches?filter[id][_eq]=${branchIdNum}&limit=1`,
             "Unable to validate the revised branch."
         )
     ]);
+
+    const branch = branchRows && branchRows.length > 0 ? branchRows[0] : null;
+
     if (!asBoolean(supplier.isActive) || asBoolean(supplier.nonBuy)) {
         throw new PurchaseOrderLifecycleError("The revised supplier is not purchasing eligible.", 400);
     }
-    if (!asBoolean(branch.isActive)) {
+
+    if (!branch) {
+        throw new PurchaseOrderLifecycleError(`The revised branch (#${command.shipmentData.branch_id}) was not found.`, 400);
+    }
+
+    const isBranchActive = (b: Record<string, unknown> | null | undefined): boolean => {
+        if (!b) return false;
+        const val = b.isActive ?? b.is_active ?? b.status;
+        if (val === undefined || val === null) return true;
+        if (typeof val === "string") {
+            const lower = val.toLowerCase().trim();
+            if (lower === "0" || lower === "false" || lower === "inactive" || lower === "disabled") return false;
+            return true;
+        }
+        if (typeof val === "number") return val !== 0;
+        if (typeof val === "boolean") return val;
+        return true;
+    };
+
+    if (!isBranchActive(branch)) {
         throw new PurchaseOrderLifecycleError("The revised branch is inactive.", 400);
     }
     await loadCategoryIds(productIds);

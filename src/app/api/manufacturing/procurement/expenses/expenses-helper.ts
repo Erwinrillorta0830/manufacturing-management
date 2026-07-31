@@ -1,8 +1,9 @@
 import { DIRECTUS_URL, headers } from "../_directus";
 import { DirectusShipmentExpense } from "@/modules/manufacturing-management/procurement/types";
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
+import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
 
-export type AllocationMethod = "Value" | "Weight" | "Volume";
+export type AllocationMethod = "Value" | "Weight" | "Volume" | "Hybrid";
 
 interface ExtendedProduct {
     product_id: number;
@@ -21,12 +22,55 @@ interface ExtendedShipmentLineItem {
     base_unit_cost_php: number;
 }
 
+export function toStandardKg(w: number, unitCodeOrShortcut?: string): number {
+    if (!w || w <= 0) return 0;
+    const unit = (unitCodeOrShortcut || "kg").toLowerCase().trim();
+    switch (unit) {
+        case "g": case "gram": case "grams":
+            return w / 1000;
+        case "mg": case "milligram": case "milligrams":
+            return w / 1000000;
+        case "mcg": case "microgram": case "micrograms": case "μg":
+            return w / 1000000000;
+        case "lb": case "lbs": case "pound": case "pounds":
+            return w * 0.45359237;
+        case "oz": case "ounce": case "ounces":
+            return w * 0.0283495231;
+        case "t": case "tonne": case "metric ton": case "tons": case "mt":
+            return w * 1000;
+        case "st_ton": case "short ton":
+            return w * 907.18474;
+        case "lt_ton": case "long ton":
+            return w * 1016.0469088;
+        case "st": case "stone":
+            return w * 6.35029318;
+        case "ct": case "carat": case "carats":
+            return w * 0.0002;
+        case "gr": case "grain": case "grains":
+            return w * 0.00006479891;
+        case "dr": case "dram": case "drams":
+            return w * 0.0017718451953125;
+        case "dwt": case "pennyweight":
+            return w * 0.00155517384;
+        case "oz_t": case "troy ounce":
+            return w * 0.0311034768;
+        case "lb_t": case "troy pound":
+            return w * 0.3732417216;
+        case "cwt": case "hundredweight":
+            return w * 50.80234544;
+        case "kg": case "kilogram": case "kilograms": default:
+            return w;
+    }
+}
+
 export interface LandedCostInput {
     key: number;
     quantity: number;
     baseUnitCost: number;
     weight?: number;
     volume?: number;
+    category?: string;
+    weightUnit?: string;
 }
 
 export interface LandedCostResult {
@@ -60,6 +104,9 @@ export function normalizeAllocationMethod(value: string): AllocationMethod {
         case "Value":
         case "By Value":
             return "Value";
+        case "Hybrid":
+        case "By Hybrid":
+            return "Hybrid";
         default:
             throw new Error(`Unsupported allocation method: ${value}`);
     }
@@ -70,6 +117,20 @@ export function calculateLandedCostAllocations(
     totalExpensesPhp: number,
     method: AllocationMethod
 ): Map<number, LandedCostResult> {
+    if (method === "Hybrid") {
+        return calculateHybridLandedCostAllocation(
+            lines.map(line => ({
+                key: line.key,
+                category: line.category || "RM",
+                quantity: line.quantity,
+                baseUnitCost: line.baseUnitCost,
+                weight: line.weight || 0,
+                weightUnit: line.weightUnit
+            })),
+            totalExpensesPhp
+        );
+    }
+
     const totalValue = lines.reduce((sum, line) => sum + line.quantity * line.baseUnitCost, 0);
     const totalWeight = lines.reduce((sum, line) => sum + line.quantity * Number(line.weight || 0), 0);
     const totalVolume = lines.reduce((sum, line) => sum + line.quantity * Number(line.volume || 0), 0);
@@ -158,14 +219,20 @@ export async function processShipmentLandedCosts(
 
         const lines = await fetchShipmentLineItems(shipmentId) as ExtendedShipmentLineItem[];
         const inputs: LandedCostInput[] = lines.map(line => {
-            const product = line.product_id;
+            const product = line.product_id as unknown as Record<string, unknown>;
             const quantity = Number(line.quantity_received || line.quantity_ordered || 0);
+            
+            const productType = product?.product_type as Record<string, unknown> | undefined;
+            const weightUnit = product?.weight_unit_id as Record<string, unknown> | undefined;
+            
             return {
                 key: line.line_id,
                 quantity,
                 baseUnitCost: Number(line.base_unit_cost_php || 0),
                 weight: Number(product?.weight || product?.product_weight || 0),
-                volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0)
+                volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0),
+                category: (productType?.name as string) || (productType?.type_name as string) || "RM",
+                weightUnit: (weightUnit?.code as string) || (weightUnit?.unit_shortcut as string)
             };
         });
         const allocations = calculateLandedCostAllocations(inputs, totalExpensesPhp, allocationMethod);
