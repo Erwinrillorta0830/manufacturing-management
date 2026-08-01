@@ -47,6 +47,7 @@ interface ClientFormModalProps {
     selectedCityCode: string;
     setSelectedCityCode: (v: string) => void;
     onSave: (e: React.FormEvent) => void;
+    saving?: boolean;
     onNameChange: (val: string) => void;
 
     // Overrides settings props
@@ -154,6 +155,7 @@ export default function ClientFormModal({
     selectedCityCode,
     setSelectedCityCode,
     onSave,
+    saving = false,
     onNameChange,
     products = [],
     versionsMap = {},
@@ -241,7 +243,6 @@ export default function ClientFormModal({
                 toast.success(`Location captured! Lat: ${lat}, Lng: ${lng}`);
             },
             (error) => {
-                console.error("Geolocation error:", error);
                 let userFriendlyMessage = error.message;
                 if (error.code === 1) { // PERMISSION_DENIED
                     userFriendlyMessage = "Location permission was denied. Please allow location access in your browser settings.";
@@ -282,7 +283,6 @@ export default function ClientFormModal({
             setFormData(prev => ({ ...prev, store_type_id: String(data.id) }));
             setIsStoreTypeFocused(false);
         } catch (err) {
-            console.error("Error creating store type:", err);
             const message = err instanceof Error ? err.message : "Failed to create store type";
             toast.error(message);
         } finally {
@@ -529,7 +529,10 @@ export default function ClientFormModal({
                                 </div>
 
                                 <div className="space-y-1.5 relative" ref={storeTypeContainerRef}>
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Store Trade Type</label>
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                        Store Trade Type
+                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                    </label>
                                     <div className="relative">
                                         <input
                                             type="text"
@@ -864,10 +867,12 @@ export default function ClientFormModal({
                             <button
                                 type="button"
                                 onClick={onSave}
-                                className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold hover:bg-primary/95 transition-all shadow-md cursor-pointer"
+                                disabled={saving}
+                                aria-busy={saving}
+                                className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold hover:bg-primary/95 transition-all shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                             >
-                                <Save className="h-3.5 w-3.5" />
-                                Save Profile
+                                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                {saving ? "Saving..." : "Save Profile"}
                             </button>
                         </>
                     )}
