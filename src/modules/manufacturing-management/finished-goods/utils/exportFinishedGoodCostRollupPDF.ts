@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Product, BOMItem } from "../types";
+import { Product, BOMItem, VersionOverheadItem } from "../types";
 import { CostingBreakdown, OverheadSummary } from "../costing";
 
 interface ExportPDFParams {
@@ -15,7 +15,7 @@ interface ExportPDFParams {
     standardNetProfit: number;
     standardNetMarginPercent: number;
     editedBOM: BOMItem[];
-    versionOverheadItems?: Record<string, unknown>[];
+    versionOverheadItems?: VersionOverheadItem[];
 }
 
 export function generateFinishedGoodCostRollupPDF({
@@ -205,7 +205,7 @@ export function generateFinishedGoodCostRollupPDF({
     currentY += 3;
 
     const bomRows = editedBOM.map(item => {
-        const itemObj = item as Record<string, unknown>;
+        const itemObj = item as unknown as Record<string, unknown>;
         const qty = Number(item.quantity || 0);
         const wastage = Number(item.wastagePercent ?? itemObj.wastageFactor ?? 0);
         const landed = Number(item.landedCost ?? itemObj.unitCost ?? itemObj.costPerUnit ?? 0);
@@ -258,7 +258,7 @@ export function generateFinishedGoodCostRollupPDF({
         currentY += 3;
 
         const ohRows = versionOverheadItems.map(oh => {
-            const ohObj = oh as Record<string, unknown>;
+            const ohObj = oh as unknown as Record<string, unknown>;
             return [
                 (ohObj.overhead_name as string) || "Overhead",
                 (ohObj.remarks as string) || "—",

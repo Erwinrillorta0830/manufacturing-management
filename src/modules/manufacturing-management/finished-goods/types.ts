@@ -190,6 +190,15 @@ export interface VersionPosition {
 
 export type VersionLaborPosition = VersionPosition;
 
+export interface VersionOverheadItem {
+    id: string;
+    overhead_type_id?: number;
+    overhead_name: string;
+    cost_per_unit: number;
+    is_active: boolean;
+    remarks?: string;
+}
+
 export interface ProductVersion {
     version_id: number;
     id?: number; // legacy/compatibility
@@ -212,7 +221,7 @@ export interface ProductVersion {
     is_active?: boolean; // legacy/compatibility
     routes?: RouteStep[];
     overheads?: ProductOverhead[];
-    overhead_items?: Record<string, unknown>[];
+    overhead_items?: VersionOverheadItem[];
     labor_positions?: VersionPosition[];
 }
 

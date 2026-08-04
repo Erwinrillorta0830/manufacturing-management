@@ -1,7 +1,7 @@
 import React from "react";
 import { Sliders, RefreshCw, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { BOMItem, Product } from "../types";
+import { BOMItem, Product, VersionOverheadItem } from "../types";
 import { CostingBreakdown, OverheadSummary } from "../costing";
 import { generateFinishedGoodCostRollupPDF } from "../utils/exportFinishedGoodCostRollupPDF";
 
@@ -31,7 +31,7 @@ interface CostRollupTabProps {
     setSimulationPriceOverrides: React.Dispatch<React.SetStateAction<Record<string, number>>>;
     editedBOM: BOMItem[];
     selectedProduct: Product;
-    selectedVersionId: number | null;
+    selectedVersionId?: number | null;
     simulatedGrossProfit: number;
     simulatedGrossMarginPercent: number;
     simulatedNetProfit: number;
@@ -43,14 +43,7 @@ interface CostRollupTabProps {
     simulatedNetMarginPercent: number;
     simulatedForexRate: number;
     setSimulatedForexRate: React.Dispatch<React.SetStateAction<number>>;
-    versionOverheadItems?: {
-        id: string;
-        overhead_type_id?: number;
-        overhead_name: string;
-        cost_per_unit: number;
-        is_active: boolean;
-        remarks?: string;
-    }[];
+    versionOverheadItems?: VersionOverheadItem[];
 }
 
 export const CostRollupTab: React.FC<CostRollupTabProps> = ({
@@ -104,7 +97,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
             ["BOM Component Breakdown", "Quantity", "UOM", "Unit Cost (PHP)", "Extended Cost (PHP)"],
             ...editedBOM.map(b => {
                 const qty = Number(b.quantity || 0);
-                const itemObj = b as Record<string, unknown>;
+                const itemObj = b as unknown as Record<string, unknown>;
                 const landed = Number(b.landedCost ?? itemObj.unitCost ?? itemObj.costPerUnit ?? 0);
                 const ext = qty * landed;
                 return [
@@ -118,7 +111,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
             [""],
             ["Overhead Item", "Cost per Unit (PHP)"],
             ...versionOverheadItems.map(o => {
-                const oObj = o as Record<string, unknown>;
+                const oObj = o as unknown as Record<string, unknown>;
                 return [
                     o.overhead_name || "Overhead",
                     (Number(o.cost_per_unit || oObj.cost || 0)).toFixed(2)

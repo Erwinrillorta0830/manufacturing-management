@@ -1,6 +1,6 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition } from "@/modules/manufacturing-management/finished-goods/types";
+import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition, RoutePosition } from "@/modules/manufacturing-management/finished-goods/types";
 
 type DirectusOverheadRelation = {
     id?: number | string;
@@ -176,11 +176,11 @@ export async function getBOMDetailsForVersion(
         }
         const verPositionsData = (verPositionsRes && verPositionsRes.ok) ? (await verPositionsRes.json()).data || [] : [];
         version.labor_positions = verPositionsData.map((item: Record<string, unknown>): VersionPosition => ({
-            id: item.id as string | number,
+            id: item.id != null ? (item.id as string | number) : undefined,
             version_id: Number(item.version_id),
             position_id: item.position_id != null ? Number(item.position_id) : null,
             position_name: String(item.position_name || "Operator"),
-            category: (item.category as string) || "direct_labor",
+            category: item.category === "maintenance" ? "maintenance" : "direct_labor",
             manpower_count: Number(item.manpower_count || 1),
             hourly_rate: Number(item.hourly_rate || 0),
             hours_required: item.hours_required != null ? Number(item.hours_required) : undefined,
@@ -232,7 +232,7 @@ export async function getBOMDetailsForVersion(
 
         if ((!version.labor_positions || version.labor_positions.length === 0) && positionItems.length > 0) {
             version.labor_positions = positionItems.map((item: Record<string, unknown>): VersionPosition => ({
-                id: item.id,
+                id: item.id != null ? (item.id as string | number) : undefined,
                 version_id: version!.version_id,
                 position_id: item.position_id != null ? Number(item.position_id) : null,
                 position_name: String(item.position_name || "Operator"),
@@ -267,7 +267,17 @@ export async function getBOMDetailsForVersion(
                     const bRouteId = getRouteId(b.route_id);
                     return (bRouteId > 0 && bRouteId === rId) || routes.length === 1;
                 });
-                r.positions = positionItems.filter(p => getRouteId(p.route_id) === rId);
+                r.positions = positionItems
+                    .filter(p => getRouteId(p.route_id) === rId)
+                    .map((p): RoutePosition => ({
+                        id: p.id != null ? (p.id as string | number) : undefined,
+                        route_id: getRouteId(p.route_id),
+                        position_id: p.position_id != null ? Number(p.position_id) : undefined,
+                        position_name: String(p.position_name || "Operator"),
+                        manpower_count: Number(p.manpower_count || 1),
+                        hourly_rate: Number(p.hourly_rate || 0),
+                        daily_rate: p.daily_rate != null ? Number(p.daily_rate) : undefined
+                    }));
             });
         }
 

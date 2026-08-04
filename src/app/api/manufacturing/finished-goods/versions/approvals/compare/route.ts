@@ -433,8 +433,8 @@ export async function GET(request: Request) {
         });
 
         // 5c. Compute Overhead Items Diffs
-        const targetOverheadItems = (targetBOM.version?.overhead_items || []) as Record<string, unknown>[];
-        const baseOverheadItems = (baseBOM.version?.overhead_items || []) as Record<string, unknown>[];
+        const targetOverheadItems = (targetBOM.version?.overhead_items || []) as unknown as Record<string, unknown>[];
+        const baseOverheadItems = (baseBOM.version?.overhead_items || []) as unknown as Record<string, unknown>[];
 
         const getOhKey = (o: Record<string, unknown>) => String(o.overhead_name || o.remarks || o.overhead_type_id || "").trim().toLowerCase();
 
