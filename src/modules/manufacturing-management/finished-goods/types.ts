@@ -171,6 +171,25 @@ export interface QAParameter {
     is_critical?: boolean;
 }
 
+export interface VersionPosition {
+    id?: number | string;
+    version_id?: number;
+    position_id?: number | null;
+    position_name: string;
+    category?: 'direct_labor' | 'maintenance';
+    manpower_count: number | string;
+    hourly_rate: number | string;
+    hours_required?: number | string;
+    daily_rate?: number | string;
+    ot_hours?: number | string;
+    include_mandates?: boolean;
+    sss_amount?: number | string;
+    phic_amount?: number | string;
+    hdmf_amount?: number | string;
+}
+
+export type VersionLaborPosition = VersionPosition;
+
 export interface ProductVersion {
     version_id: number;
     id?: number; // legacy/compatibility
@@ -193,6 +212,19 @@ export interface ProductVersion {
     is_active?: boolean; // legacy/compatibility
     routes?: RouteStep[];
     overheads?: ProductOverhead[];
+    overhead_items?: Record<string, unknown>[];
+    labor_positions?: VersionPosition[];
+}
+
+export interface RoutePosition {
+    id?: number | string;
+    route_id?: number;
+    position_id?: number | null;
+    position_name: string;
+    manpower_count: number | string;
+    hourly_rate: number | string;
+    daily_rate?: number | string;
+    daily_wage?: number | string;
 }
 
 export interface RouteStep {
@@ -204,8 +236,11 @@ export interface RouteStep {
     setup_time_hours: number;
     run_time_hours: number;
     step_batch_size?: number;
+    default_manpower?: number;
+    expected_labor_cost?: number;
     qa_template_id?: number | null;
     bom_items?: RouteBOMItem[];
+    positions?: RoutePosition[];
     // Expandable relations for easy UI rendering
     work_center?: WorkCenter | null;
     qa_template?: QATemplate | null;
@@ -268,9 +303,19 @@ export interface OperationType {
     operation_name: string;
 }
 
+export interface ChartOfAccount {
+    coa_id: number;
+    gl_code?: string;
+    account_title?: string;
+    description?: string;
+    status?: string;
+}
+
 export interface OverheadType {
     id: number;
     overhead_name: string;
+    coa_id?: number | ChartOfAccount | null;
+    description?: string | null;
 }
 
 // ─── Directus API-layer types (used by API route helpers) ───────────────────

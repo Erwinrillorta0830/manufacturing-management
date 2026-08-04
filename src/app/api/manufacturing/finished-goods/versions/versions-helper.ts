@@ -1,6 +1,6 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead } from "@/modules/manufacturing-management/finished-goods/types";
+import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition } from "@/modules/manufacturing-management/finished-goods/types";
 
 type DirectusOverheadRelation = {
     id?: number | string;
@@ -149,6 +149,49 @@ export async function getBOMDetailsForVersion(
             })
             .filter((item: ProductOverhead | null): item is ProductOverhead => item !== null);
 
+        const verOverheadFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: version.version_id } }));
+        const verOverheadRes = await fetch(`${DIRECTUS_URL}/items/product_version_overheads?filter=${verOverheadFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        if (verOverheadRes && verOverheadRes.ok) {
+            const verOverheadData = (await verOverheadRes.json()).data || [];
+            if (verOverheadData.length > 0) {
+                const typesRes = await fetch(`${DIRECTUS_URL}/items/overhead_types?limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+                const typesList = typesRes && typesRes.ok ? (await typesRes.json()).data || [] : [];
+                const typesMap = new Map(typesList.map((t: Record<string, unknown>) => [Number(t.id), t.overhead_name as string]));
+
+                version.overhead_items = verOverheadData.map((item: Record<string, unknown>) => ({
+                    id: String(item.id),
+                    overhead_type_id: Number(item.overhead_type_id),
+                    overhead_name: typesMap.get(Number(item.overhead_type_id)) || (item.remarks as string) || "Overhead Item",
+                    cost_per_unit: Number(item.cost || 0),
+                    is_active: Boolean(item.is_active ?? true),
+                    remarks: (item.remarks as string) || ""
+                }));
+            }
+        }
+
+        const posVersionFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: version.version_id } }));
+        let verPositionsRes = await fetch(`${DIRECTUS_URL}/items/product_version_positions?filter=${posVersionFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        if (!verPositionsRes || !verPositionsRes.ok) {
+            verPositionsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_version_positions?filter=${posVersionFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        }
+        const verPositionsData = (verPositionsRes && verPositionsRes.ok) ? (await verPositionsRes.json()).data || [] : [];
+        version.labor_positions = verPositionsData.map((item: Record<string, unknown>): VersionPosition => ({
+            id: item.id as string | number,
+            version_id: Number(item.version_id),
+            position_id: item.position_id != null ? Number(item.position_id) : null,
+            position_name: String(item.position_name || "Operator"),
+            category: (item.category as string) || "direct_labor",
+            manpower_count: Number(item.manpower_count || 1),
+            hourly_rate: Number(item.hourly_rate || 0),
+            hours_required: item.hours_required != null ? Number(item.hours_required) : undefined,
+            daily_rate: item.daily_rate != null ? Number(item.daily_rate) : undefined,
+            ot_hours: item.ot_hours != null ? Number(item.ot_hours) : 0,
+            include_mandates: item.include_mandates !== undefined ? Boolean(item.include_mandates) : true,
+            sss_amount: item.sss_amount != null ? Number(item.sss_amount) : undefined,
+            phic_amount: item.phic_amount != null ? Number(item.phic_amount) : undefined,
+            hdmf_amount: item.hdmf_amount != null ? Number(item.hdmf_amount) : undefined
+        }));
+
         const routesFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: version.version_id } }));
         const resRoutes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes?filter=${routesFilter}&sort=sequence_order&limit=-1`, { headers, cache: "no-store" });
         const routesJson = await resRoutes.json();
@@ -167,6 +210,7 @@ export async function getBOMDetailsForVersion(
 
         const routeIds = routes.map(r => getRouteId(r.route_id)).filter(Boolean);
         const bomItems: RouteBOMItem[] = [];
+        const positionItems: Record<string, unknown>[] = [];
         if (routeIds.length > 0) {
             const bomFilter = encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }));
             const resBom = await fetch(
@@ -175,6 +219,27 @@ export async function getBOMDetailsForVersion(
             );
             const bomJson = resBom.ok ? await resBom.json() : { data: [] };
             bomItems.push(...((bomJson.data || []) as RouteBOMItem[]));
+
+            const posFilter = encodeURIComponent(JSON.stringify({ route_id: { _in: routeIds } }));
+            const resPos = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_route_positions?filter=${posFilter}&limit=-1`,
+                { headers, cache: "no-store" }
+            ).catch(() => null);
+            if (resPos && resPos.ok) {
+                positionItems.push(...((await resPos.json()).data || []));
+            }
+        }
+
+        if ((!version.labor_positions || version.labor_positions.length === 0) && positionItems.length > 0) {
+            version.labor_positions = positionItems.map((item: Record<string, unknown>): VersionPosition => ({
+                id: item.id,
+                version_id: version!.version_id,
+                position_id: item.position_id != null ? Number(item.position_id) : null,
+                position_name: String(item.position_name || "Operator"),
+                manpower_count: Number(item.manpower_count || 1),
+                hourly_rate: Number(item.hourly_rate || 0),
+                daily_rate: item.daily_rate != null ? Number(item.daily_rate) : undefined
+            }));
         }
 
         bomItems.forEach(b => {
@@ -189,8 +254,11 @@ export async function getBOMDetailsForVersion(
                 sequence_order: 1,
                 setup_time_hours: 0,
                 run_time_hours: 0,
+                default_manpower: 1,
+                expected_labor_cost: 0,
                 operation_name: "Standard Assembly",
-                bom_items: bomItems
+                bom_items: bomItems,
+                positions: []
             } as unknown as RouteStep];
         } else if (routes.length > 0) {
             routes.forEach(r => {
@@ -199,6 +267,7 @@ export async function getBOMDetailsForVersion(
                     const bRouteId = getRouteId(b.route_id);
                     return (bRouteId > 0 && bRouteId === rId) || routes.length === 1;
                 });
+                r.positions = positionItems.filter(p => getRouteId(p.route_id) === rId);
             });
         }
 
