@@ -36,6 +36,7 @@ export default function ClientsModule() {
         openEditModal,
         handleCustomerNameChange,
         handleSaveCustomer,
+        savingCustomer,
         products,
         versionsMap,
         overrides,
@@ -156,6 +157,7 @@ export default function ClientsModule() {
                 selectedCityCode={selectedCityCode}
                 setSelectedCityCode={setSelectedCityCode}
                 onSave={handleSaveCustomer}
+                saving={savingCustomer}
                 onNameChange={handleCustomerNameChange}
                 products={products}
                 versionsMap={versionsMap}

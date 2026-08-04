@@ -65,7 +65,7 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     return {
         name,
         email: email || "",
-        avatar: "/avatars/shadcn.jpg",
+        avatar: "/vos.png",
     };
 }
 

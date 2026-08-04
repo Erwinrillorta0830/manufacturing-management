@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Customer, PaymentTerm, StoreType } from "../types";
 import { toast } from "sonner";
 
@@ -29,6 +29,8 @@ export function useClients() {
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+    const [savingCustomer, setSavingCustomer] = useState(false);
+    const savingCustomerRef = useRef(false);
 
     // Form inputs state
     const [formData, setFormData] = useState({
@@ -86,8 +88,7 @@ export function useClients() {
                 const paymentData = await paymentRes.json();
                 setPaymentTerms(Array.isArray(paymentData) ? paymentData : []);
             }
-        } catch (err) {
-            console.error("Error loading client data:", err);
+        } catch {
             toast.error("Failed to load customer registry");
         } finally {
             setLoading(false);
@@ -110,8 +111,8 @@ export function useClients() {
                 const cityList = await cityRes.json();
                 setCities(cityList);
             }
-        } catch (err) {
-            console.error("Error loading PSGC location list:", err);
+        } catch {
+            toast.error("Failed to load location references");
         }
     };
 
@@ -161,13 +162,28 @@ export function useClients() {
                         setFormData(prev => ({ ...prev, brgy: matchedBrgy.code }));
                     }
                 }
-            } catch (err) {
+            } catch {
                 setBarangays([]);
-                console.error("Error loading barangays:", err);
+                toast.error("Failed to load barangay list");
             }
         };
         loadBarangays();
     }, [selectedCityCode, editingCustomer]);
+
+    // Reconcile persisted barangay names/codes after the async PSGC options load.
+    useEffect(() => {
+        if (!editingCustomer || !formData.brgy || barangays.length === 0) return;
+
+        const currentBarangay = String(formData.brgy).trim().toLowerCase();
+        const matchedBarangay = barangays.find((barangay) => (
+            barangay.code === formData.brgy
+            || barangay.name.toLowerCase() === currentBarangay
+        ));
+
+        if (matchedBarangay && formData.brgy !== matchedBarangay.code) {
+            setFormData((prev) => ({ ...prev, brgy: matchedBarangay.code }));
+        }
+    }, [barangays, editingCustomer, formData.brgy]);
 
     // Handle modal open for create or edit
     const openCreateModal = () => {
@@ -292,7 +308,6 @@ export function useClients() {
             });
             setVersionsMap(vMap);
         } catch (err) {
-            console.error("Failed to load products/versions for customer settings:", err);
             setBomSettingsError(err instanceof Error ? err.message : "Failed to load BOM settings");
             toast.error("Failed to load BOM settings. Close and reopen the customer to retry.");
         } finally {
@@ -317,11 +332,21 @@ export function useClients() {
     // Save customer (Create or Update)
     const handleSaveCustomer = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (savingCustomerRef.current) return;
         
         if (!formData.customer_code.trim() || !formData.customer_name.trim()) {
             toast.error("Customer Code and Customer Name are required");
             return;
         }
+
+        if (!formData.store_type_id) {
+            toast.error("Store Trade Type is required");
+            return;
+        }
+
+        savingCustomerRef.current = true;
+        setSavingCustomer(true);
 
         // Map province and city names from selected codes
         const provName = provinces.find(p => p.code === selectedProvinceCode)?.name || formData.province;
@@ -381,9 +406,11 @@ export function useClients() {
             setIsModalOpen(false);
             loadData();
         } catch (err) {
-            console.error("Save client error:", err);
             const message = err instanceof Error ? err.message : "Failed to save client details";
             toast.error(message);
+        } finally {
+            savingCustomerRef.current = false;
+            setSavingCustomer(false);
         }
     };
 
@@ -403,7 +430,6 @@ export function useClients() {
             toast.success("Client record deleted successfully");
             loadData();
         } catch (err) {
-            console.error("Delete client error:", err);
             const message = err instanceof Error ? err.message : "Failed to delete client account";
             toast.error(message);
         }
@@ -438,7 +464,6 @@ export function useClients() {
                 throw new Error(err.error || "Failed to save override");
             }
         } catch (err) {
-            console.error("Error saving customer version override:", err);
             toast.error(err instanceof Error ? err.message : "Failed to save setting");
         }
     };
@@ -486,6 +511,7 @@ export function useClients() {
         openEditModal,
         handleCustomerNameChange,
         handleSaveCustomer,
+        savingCustomer,
         handleDeleteCustomer,
         products,
         versionsMap,
