@@ -50,7 +50,7 @@ export async function GET(request: Request) {
         const excludeRollup = searchParams.get("excludeRollup") === "true";
 
         const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category,product_class,product_segment,product_section,product_shelf_life,product_image,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,weight_unit_id,product_type";
-        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
+        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }

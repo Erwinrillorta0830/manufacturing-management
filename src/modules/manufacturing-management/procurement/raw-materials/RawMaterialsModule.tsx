@@ -41,7 +41,7 @@ export default function RawMaterialsModule({
                 setSearch={dataHook.setSearch}
                 typeFilter={dataHook.typeFilter}
                 setTypeFilter={dataHook.setTypeFilter}
-                onOpenModal={formHook.handleOpenModal}
+                onOpenModal={() => formHook.setIsModalOpen(true)}
             />
 
             <RawMaterialsTable
@@ -62,7 +62,7 @@ export default function RawMaterialsModule({
 
             <RawMaterialModal
                 isOpen={formHook.isModalOpen}
-                onClose={formHook.handleCloseModal}
+                onClose={() => formHook.setIsModalOpen(false)}
                 editingItem={formHook.editingItem}
                 saving={formHook.saving}
                 loadingUnits={formHook.loadingUnits}

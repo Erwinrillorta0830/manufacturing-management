@@ -5,6 +5,7 @@ import {
     getBOMDetailsForVersion,
     saveActiveBOMDetails,
     syncRoutesAndBOM,
+    syncVersionOverheadItems,
     BOMValidationError,
     validateRoutesAndBOM
 } from "./bom-details-helper";
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { productId, versionId, details, routes = [], overheads } = body;
+        const { productId, versionId, details, routes = [], overheads, labor_positions } = body;
 
         if (!productId || !versionId) {
             return NextResponse.json({ error: "Missing productId or versionId" }, { status: 400 });
@@ -111,15 +112,29 @@ export async function POST(request: Request) {
         });
         await ensureProductIdentityAvailable(identity.descriptionKey, numericProductId);
 
+        const extractRelationId = (val: unknown): number | undefined => {
+            if (val === null || val === undefined) return undefined;
+            if (typeof val === "object") {
+                const id = Number((val as Record<string, unknown>).brand_id ?? (val as Record<string, unknown>).category_id ?? (val as Record<string, unknown>).unit_id ?? (val as Record<string, unknown>).class_id ?? (val as Record<string, unknown>).segment_id ?? (val as Record<string, unknown>).section_id ?? (val as Record<string, unknown>).id);
+                return Number.isFinite(id) && id > 0 ? id : undefined;
+            }
+            const num = Number(val);
+            return Number.isFinite(num) && num > 0 ? num : undefined;
+        };
+
+        const currentProdRes = await fetch(`${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_brand,product_category`, { headers, cache: "no-store" });
+        const currentProd = currentProdRes.ok ? (await currentProdRes.json()).data : null;
+
+        const brandToUpdate = extractRelationId(validatedDetails.productBrand) ?? extractRelationId(currentProd?.product_brand);
+        const categoryToUpdate = extractRelationId(validatedDetails.productCategory) ?? extractRelationId(currentProd?.product_category);
+
         // 1. Update Product Details
-        const prodOk = await updateProductDetails(numericProductId, {
+        const prodPayload: Record<string, unknown> = {
             product_name: identity.productName,
             product_code: productCode,
             barcode: details.barcode,
             price_per_unit: details.targetSellingPrice,
             density_factor: validatedDetails.densityFactor,
-            product_brand: validatedDetails.productBrand,
-            product_category: validatedDetails.productCategory,
             description: identity.descriptionKey,
             short_description: typeof details.shortDescription === "string"
                 ? details.shortDescription.trim() || null
@@ -128,15 +143,24 @@ export async function POST(request: Request) {
                     : null,
             cost_per_unit: details.costPerUnit,
             unit_of_measurement_count: validatedDetails.unitOfMeasurementCount,
-            product_class: details.productClass,
-            product_segment: details.productSegment,
-            product_section: details.productSection,
+            product_class: extractRelationId(details.productClass),
+            product_segment: extractRelationId(details.productSegment),
+            product_section: extractRelationId(details.productSection),
             product_shelf_life: validatedDetails.productShelfLife,
             product_image: details.productImage,
 
             unit_of_measurement: identity.unitId,
             parent_id: identity.parentId
-        });
+        };
+
+        if (brandToUpdate !== undefined) {
+            prodPayload.product_brand = brandToUpdate;
+        }
+        if (categoryToUpdate !== undefined) {
+            prodPayload.product_category = categoryToUpdate;
+        }
+
+        const prodOk = await updateProductDetails(numericProductId, prodPayload);
         if (!prodOk.ok) {
             if (prodOk.status === 409 || /sku|product_code|unique/i.test(prodOk.error || "")) {
                 throw new ProductIdentityError(
@@ -145,7 +169,7 @@ export async function POST(request: Request) {
                     "PRODUCT_SKU_CONFLICT"
                 );
             }
-            throw new Error("Failed to update product details in Directus");
+            throw new Error(prodOk.error || "Failed to update product details in Directus");
         }
 
         const productVerification = await verifyProductDetails(numericProductId, {
@@ -195,9 +219,12 @@ export async function POST(request: Request) {
             console.error("Error parsing user token in POST bom-details route:", err);
         }
 
-        // 3. Sync routes and their route-level BOM items
-        const syncOk = await syncRoutesAndBOM(numericVersionId, routes, userId ? Number(userId) : null);
+        // 3. Sync routes and their route-level BOM items and version labor positions
+        const syncOk = await syncRoutesAndBOM(numericVersionId, routes, userId ? Number(userId) : null, labor_positions || details?.labor_positions);
         if (!syncOk) throw new Error("Failed to sync routes and route-level BOM items in Directus");
+
+        const overheadItemsToSync = details.overhead_items || overheads || [];
+        await syncVersionOverheadItems(numericVersionId, overheadItemsToSync);
 
         if (Array.isArray(overheads)) {
             const overheadOk = await syncProductOverheads(numericProductId, numericVersionId, overheads);
