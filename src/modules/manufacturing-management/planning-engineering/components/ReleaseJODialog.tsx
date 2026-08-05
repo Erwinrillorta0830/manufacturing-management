@@ -205,7 +205,8 @@ export function ReleaseJODialog({
 
     // Calculate time metrics (Main assembly + Sub-assembly shortfall runs)
     const boxSetupHours = routings.reduce((sum, r) => sum + Number(r.setup_time_hours || 0), 0);
-    const boxRunHours = (targetQuantity * routings.reduce((sum, r) => sum + (Number(r.run_time_hours || 0) / Number(r.step_batch_size || 1)), 0)) / bomBaseQty;
+    const boxBatchCount = bomBaseQty > 0 ? (targetQuantity / bomBaseQty) : 1;
+    const boxRunHours = boxBatchCount * routings.reduce((sum, r) => sum + Number(r.run_time_hours || 0), 0);
     const boxEstimatedHours = boxSetupHours + boxRunHours;
 
     let subAssemblyEstimatedHours = 0;
@@ -216,8 +217,11 @@ export function ReleaseJODialog({
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
         if (shortfall > 0 && subRoute) {
+            const subBaseQty = Number(subRoute.base_quantity || 6986.19);
+            const subBatches = subBaseQty > 0 ? (shortfall / subBaseQty) : 1;
             const subSetup = Number(subRoute.setup_time_hours || 0);
-            const subRun = Number(subRoute.run_time_hours_per_unit || 0) * shortfall;
+            const subRunPerBatch = Number((subRoute as any).total_run_time_hours || (subRoute as any).run_time_hours || (Number(subRoute.run_time_hours_per_unit || 0) * subBaseQty));
+            const subRun = subRunPerBatch * subBatches;
             subAssemblyEstimatedHours += (subSetup + subRun);
         }
     });

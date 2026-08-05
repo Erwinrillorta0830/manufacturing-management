@@ -165,7 +165,65 @@ export async function validateRoutesAndBOM(routes: any[]): Promise<void> {
     }
 }
 
-export async function syncRoutesAndBOM(versionId: number, routes: any[], userId: number | null = null): Promise<boolean> {
+export async function syncVersionLaborPositions(
+    versionId: number,
+    laborPositions: any[],
+    userId: number | null = null
+): Promise<boolean> {
+    try {
+        if (!Array.isArray(laborPositions)) return true;
+
+        let collectionName = "product_version_positions";
+        const filter = encodeURIComponent(JSON.stringify({ version_id: { _eq: versionId } }));
+
+        let resGet = await fetch(`${DIRECTUS_URL}/items/${collectionName}?filter=${filter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        if (!resGet || !resGet.ok) {
+            collectionName = "manufacturing_version_positions";
+            resGet = await fetch(`${DIRECTUS_URL}/items/${collectionName}?filter=${filter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        }
+
+        const existingPositions: { id: number }[] = (resGet && resGet.ok) ? (await resGet.json()).data || [] : [];
+        for (const pos of existingPositions) {
+            await fetch(`${DIRECTUS_URL}/items/${collectionName}/${pos.id}`, { method: "DELETE", headers }).catch(() => {});
+        }
+
+        for (const pItem of laborPositions) {
+            const posPayload = {
+                version_id: versionId,
+                position_id: pItem.position_id || pItem.positionId || (typeof pItem.id === "number" && pItem.id > 0 ? pItem.id : null),
+                position_name: String(pItem.position_name || pItem.positionName || "Operator"),
+                category: pItem.category || "direct_labor",
+                manpower_count: Math.max(1, Number(pItem.manpower_count || 1)),
+                hourly_rate: Number(pItem.hourly_rate ?? pItem.hourlyRate ?? 0),
+                hours_required: Number(pItem.hours_required ?? pItem.hoursRequired ?? 0),
+                daily_rate: Number(pItem.daily_rate ?? pItem.dailyRate ?? pItem.daily_wage ?? 0),
+                ot_hours: Number(pItem.ot_hours ?? pItem.otHours ?? 0),
+                include_mandates: pItem.include_mandates !== undefined ? Boolean(pItem.include_mandates) : true,
+                sss_amount: Number(pItem.sss_amount ?? pItem.sssAmount ?? 0),
+                phic_amount: Number(pItem.phic_amount ?? pItem.phicAmount ?? 0),
+                hdmf_amount: Number(pItem.hdmf_amount ?? pItem.hdmfAmount ?? 0),
+                created_by: userId
+            };
+            await fetch(`${DIRECTUS_URL}/items/${collectionName}`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(posPayload)
+            }).catch((err) => console.error(`Error creating version position in ${collectionName}:`, err));
+        }
+
+        return true;
+    } catch (e) {
+        console.error("[Manufacturing Directus API] Failed syncing version labor positions:", e);
+        return false;
+    }
+}
+
+export async function syncRoutesAndBOM(
+    versionId: number,
+    routes: any[],
+    userId: number | null = null,
+    explicitLaborPositions?: any[]
+): Promise<boolean> {
     try {
         await validateRoutesAndBOM(routes);
 
@@ -197,9 +255,25 @@ export async function syncRoutesAndBOM(versionId: number, routes: any[], userId:
         }
 
         // 3. Insert or Update routes from UI request
+        const allPositionsToSync: any[] = Array.isArray(explicitLaborPositions) ? [...explicitLaborPositions] : [];
+
         for (const step of routes) {
             const stepId = step.route_id || step.id;
             const isNewRoute = !stepId || isNaN(Number(stepId)) || Number(stepId) < 0;
+
+            const positions = Array.isArray(step.positions) ? step.positions : (Array.isArray(step.labor_positions) ? step.labor_positions : []);
+            if (!explicitLaborPositions && positions.length > 0) {
+                allPositionsToSync.push(...positions);
+            }
+
+            const defaultManpower = positions.length > 0
+                ? positions.reduce((sum: number, p: any) => sum + Math.max(1, Number(p.manpower_count || 1)), 0)
+                : Math.max(1, Number(step.default_manpower || 1));
+            
+            const runHours = Number(step.run_time_hours || step.durationHours || 0);
+            const expectedLaborCost = positions.length > 0
+                ? positions.reduce((sum: number, p: any) => sum + (Math.max(1, Number(p.manpower_count || 1)) * Number(p.hourly_rate || 0) * runHours), 0)
+                : Number(step.expected_labor_cost || 0);
 
             const routePayload = {
                 version_id: versionId,
@@ -207,8 +281,10 @@ export async function syncRoutesAndBOM(versionId: number, routes: any[], userId:
                 operation_id: step.operation_id || step.operationId || null,
                 sequence_order: Number(step.sequence_order || step.sequence || 0),
                 setup_time_hours: Number(step.setup_time_hours || 0),
-                run_time_hours: Number(step.run_time_hours || step.durationHours || 0),
+                run_time_hours: runHours,
                 step_batch_size: Number(step.step_batch_size !== undefined ? step.step_batch_size : 1),
+                default_manpower: defaultManpower,
+                expected_labor_cost: Math.round(expectedLaborCost * 10000) / 10000,
                 qa_template_id: step.qa_template_id || null,
                 created_by: userId
             };
@@ -221,7 +297,10 @@ export async function syncRoutesAndBOM(versionId: number, routes: any[], userId:
                     headers,
                     body: JSON.stringify(routePayload)
                 });
-                if (!res.ok) throw new Error(`Failed to create route: ${res.status}`);
+                if (!res.ok) {
+                    const errTxt = await res.text();
+                    throw new Error(`Failed to create route: ${res.status} - ${errTxt}`);
+                }
                 const data = await res.json();
                 finalRouteId = data.data.route_id;
             } else {
@@ -297,10 +376,55 @@ export async function syncRoutesAndBOM(versionId: number, routes: any[], userId:
                 }
             }
         }
+
+        // Sync version labor positions (linked by version_id)
+        if (allPositionsToSync.length > 0 || Array.isArray(explicitLaborPositions)) {
+            await syncVersionLaborPositions(versionId, allPositionsToSync, userId);
+        }
+
         return true;
     } catch (e) {
         if (e instanceof BOMValidationError) throw e;
         console.error("[Manufacturing Directus API] Failed syncing routes and BOM:", e);
+        throw new Error(`Failed syncing routes and BOM: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+export async function syncVersionOverheadItems(versionId: number, overheadItems: any[]): Promise<boolean> {
+    try {
+        if (!Array.isArray(overheadItems)) return true;
+
+        const filter = encodeURIComponent(JSON.stringify({ version_id: { _eq: versionId } }));
+        const existingRes = await fetch(`${DIRECTUS_URL}/items/product_version_overheads?filter=${filter}&limit=-1`, { headers, cache: "no-store" });
+        const existingData = existingRes.ok ? (await existingRes.json()).data || [] : [];
+
+        for (const item of existingData) {
+            await fetch(`${DIRECTUS_URL}/items/product_version_overheads/${item.id}`, { method: "DELETE", headers }).catch(() => {});
+        }
+
+        for (const item of overheadItems) {
+            const cost = Number(item.cost_per_unit || item.cost || 0);
+            const typeId = Number(item.overhead_type_id || item.typeId || 0);
+            const is_active = item.is_active !== undefined ? Boolean(item.is_active) : true;
+            const remarks = item.overhead_name || item.remarks || "";
+
+            await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    version_id: versionId,
+                    overhead_type_id: typeId > 0 ? typeId : 1,
+                    cost,
+                    allocation_basis: "per_unit",
+                    is_active,
+                    remarks
+                })
+            }).catch(() => {});
+        }
+
+        return true;
+    } catch (e) {
+        console.error("[Manufacturing Directus API] Failed syncing version overhead items:", e);
         return false;
     }
 }

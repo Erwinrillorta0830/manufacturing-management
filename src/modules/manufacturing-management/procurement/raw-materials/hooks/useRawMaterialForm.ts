@@ -372,6 +372,7 @@ export function useRawMaterialForm(
 
     return {
         isModalOpen,
+        setIsModalOpen,
         handleOpenModal,
         handleCloseModal,
         editingItem,

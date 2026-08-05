@@ -54,6 +54,14 @@ function readNumber(value: unknown): number | null {
 }
 
 function readPositiveId(value: unknown): number | null {
+    if (typeof value === "object" && value !== null) {
+        const obj = value as Record<string, unknown>;
+        const idCandidate = obj.brand_id ?? obj.category_id ?? obj.unit_id ?? obj.id;
+        const parsedObjId = readNumber(idCandidate);
+        if (parsedObjId !== null && Number.isInteger(parsedObjId) && parsedObjId > 0) {
+            return parsedObjId;
+        }
+    }
     const parsed = readNumber(value);
     return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

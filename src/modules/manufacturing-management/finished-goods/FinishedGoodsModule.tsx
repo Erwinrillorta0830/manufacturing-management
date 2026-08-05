@@ -18,13 +18,20 @@ import {
     Image as ImageIcon,
     Package,
     Shield,
+    Calculator,
+    GitFork,
+    GitCompare,
+    Activity
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
 import { RoutesBOMTab } from "./components/RoutesBOMTab";
+import { DirectLaborStandardsTab } from "./components/DirectLaborStandardsTab";
+import { OverheadManagementTab } from "./components/OverheadManagementTab";
 import { QATemplatesTab } from "./components/QATemplatesTab";
 import { CostRollupTab } from "./components/CostRollupTab";
 import { ImportationTab } from "./components/ImportationTab";
+import { VersionCompareModal } from "./components/VersionCompareModal";
 import { useFinishedGoods, type RegisterFormField } from "./hooks/useFinishedGoods";
 import { Product, BOMItem, RoutingStep } from "./types";
 import { CreatableSelect } from "./components/CreatableSelect";
@@ -35,12 +42,56 @@ export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const requestedTab = searchParams.get("tab");
-    const validTabs = ["details", "routes_bom", "costing", "qa_templates", "importation"];
-    const initialTab = requestedTab && validTabs.includes(requestedTab) ? requestedTab : "details";
+    const validTabs = ["details", "version_management", "routes_bom", "costing", "qa_templates", "importation"];
+    const initialTab = requestedTab && validTabs.includes(requestedTab) ? (requestedTab === "routes_bom" ? "version_management" : requestedTab) : "details";
     const [uploadingRegImage, setUploadingRegImage] = useState(false);
     const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
     const [registerImageError, setRegisterImageError] = useState<string | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [versionSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
+    const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+    const [isSyncingYield, setIsSyncingYield] = useState(false);
+
+    const handleSyncHistoricalYield = async () => {
+        if (!selectedProductId || !selectedVersionId) {
+            toast.error("Please select a product and version first.");
+            return;
+        }
+        setIsSyncingYield(true);
+        try {
+            const res = await fetch(`/api/manufacturing/finished-goods/versions/historical-yield?productId=${selectedProductId}`);
+            if (!res.ok) throw new Error("Failed to fetch historical yield data");
+            const data = await res.json();
+            
+            if (data.totalJobsAnalyzed === 0) {
+                toast.info("No completed Job Orders found for this product yet. Defaulting to 98.5%.");
+            }
+
+            const applyRes = await fetch(`/api/manufacturing/finished-goods/versions/historical-yield`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    versionId: selectedVersionId,
+                    expectedYieldPercentage: data.averageActualYield
+                })
+            });
+
+            if (!applyRes.ok) throw new Error("Failed to apply historical yield to version");
+
+            setEditedVersionDetails((prev: any) => ({
+                ...prev,
+                expected_yield_percentage: data.averageActualYield
+            }));
+            setHasUnsavedChanges(true);
+
+            toast.success(`Applied historical yield of ${data.averageActualYield}% from ${data.totalJobsAnalyzed} completed Job Orders!`);
+        } catch (err: any) {
+            console.error("Historical yield error:", err);
+            toast.error(err.message || "Failed to sync historical yield");
+        } finally {
+            setIsSyncingYield(false);
+        }
+    };
 
     const {
         handleCreateBrand,
@@ -102,6 +153,8 @@ export default function FinishedGoodsModule() {
         setHasUnsavedChanges,
         operationTypes,
         setOperationTypes,
+        overheadTypes,
+        setOverheadTypes,
         simulatedForexRate,
         setSimulatedForexRate,
         handleRegisterProduct,
@@ -175,6 +228,7 @@ export default function FinishedGoodsModule() {
     const [simulationYield, setSimulationYield] = useState<number>(100);
     const [simulationPriceOverrides, setSimulationPriceOverrides] = useState<Record<string, number>>({});
     const [simulationTargetPrice, setSimulationTargetPrice] = useState<number>(0);
+    const [registrationType, setRegistrationType] = useState<"parent" | "child">("parent");
 
     // Importation / Landed Cost Calculator States
     const [importNetWeight, setImportNetWeight] = useState<number>(21500);
@@ -374,9 +428,15 @@ export default function FinishedGoodsModule() {
         let materialsCost = 0;
         let machineOverheadCost = 0;
         let machineHours = 0;
+        let lineElapsedHours = 0;
         let totalMachineCost = 0;
 
         editedRoutes.forEach(route => {
+            const stepDur = (Number(route.setup_time_hours) || 0) + (Number(route.run_time_hours) || 0);
+            if (stepDur > lineElapsedHours) {
+                lineElapsedHours = stepDur;
+            }
+
             const workCenter = workCenters.find(wc => wc.work_center_id === route.work_center_id);
             const routeBreakdown = calculateRouteBreakdown({
                 stepBatchSize: route.step_batch_size || 1,
@@ -397,14 +457,27 @@ export default function FinishedGoodsModule() {
             totalMachineCost += routeBreakdown.totalMachineCost;
         });
 
+        const baseQuantity = Number(editedVersionDetails.base_quantity) > 0 ? Number(editedVersionDetails.base_quantity) : 1;
+        const laborPositions = editedVersionDetails.labor_positions || [];
+        const totalLaborCost = laborPositions.reduce((sum, pos) => {
+            const count = Number(pos.manpower_count) || 0;
+            const hourly = Number(pos.hourly_rate) || 0;
+            const hours = Number(pos.hours_required) || 0;
+            return sum + (count * hourly * hours);
+        }, 0);
+        const directLaborCost = totalLaborCost / baseQuantity;
+
         return calculateCostBreakdown({
             materialsCost,
+            directLaborCost,
             machineOverheadCost,
             customOverheadCost: editedVersionDetails.custom_overhead,
             expectedYieldPercentage,
-            baseQuantity: Number(editedVersionDetails.base_quantity) || 1,
+            baseQuantity,
             machineHours,
-            totalMachineCost
+            lineElapsedHours,
+            totalMachineCost,
+            laborPositions
         });
     };
 
@@ -604,140 +677,91 @@ export default function FinishedGoodsModule() {
                     <h1 className="text-base font-bold tracking-tight">Finished Goods Master</h1>
                     {(loadingBOM || savingBOM) && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
                 </div>
-                <div className="flex items-center gap-2 relative">
-                    <div className="relative inline-flex rounded-lg shadow-sm">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setRegisterForm({
-                                    title: "",
-                                    sku: "",
-                                    baseUom: "L",
-                                    targetSellingPrice: "",
-                                    barcode: "",
-                                    densityFactor: "1.0",
-                                    expectedYield: "100",
-                                    versionName: "v1.0",
-                                    brandId: "",
-                                    categoryId: "",
-                                    description: "",
-                                    costPerUnit: "",
-                                    uomCount: "0",
-                                    classId: "",
-                                    segmentId: "",
-                                    sectionId: "",
-                                    shelfLife: "",
-                                    productImage: "",
-                                    parentId: "",
-                                    supplierIds: [] as string[]
-                                });
-                                resetRegisterFormErrors();
-                                setIsRegisterModalOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-l-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all cursor-pointer border-r border-primary-foreground/10"
-                        >
-                            <Plus className="h-3.5 w-3.5" />
-                            Register Product
-                        </button>
+                <div className="flex items-center gap-2">
+                    {/* Register Parent Good (Piece) */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setRegistrationType("parent");
+                            setRegisterForm({
+                                title: "",
+                                sku: "",
+                                baseUom: "Pcs",
+                                targetSellingPrice: "",
+                                barcode: "",
+                                densityFactor: "1.0",
+                                expectedYield: "100",
+                                versionName: "v1.0",
+                                brandId: "",
+                                categoryId: "",
+                                description: "",
+                                costPerUnit: "",
+                                uomCount: "1",
+                                classId: "",
+                                segmentId: "",
+                                sectionId: "",
+                                shelfLife: "",
+                                productImage: "",
+                                parentId: "",
+                                supplierIds: [] as string[]
+                            });
+                            resetRegisterFormErrors();
+                            setIsRegisterModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 shadow-2xs transition-all cursor-pointer"
+                        title="Register a Primary Manufactured Good (Piece / Individual Pouch)"
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                        Register Parent (Piece)
+                    </button>
 
-                        <button
-                            type="button"
-                            onClick={() => setIsMenuOpen(!isMenuOpen)}
-                            className="inline-flex items-center rounded-r-lg bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all cursor-pointer"
-                        >
-                            <ChevronDown className="h-3.5 w-3.5" />
-                        </button>
+                    {/* Register Child Variant (Box / Case) */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setRegistrationType("child");
+                            const defaultParentId = selectedProduct && !selectedProduct.parent_id
+                                ? selectedProduct.id
+                                : (products.find(p => !p.parent_id)?.id || "");
+                            
+                            const parentProd = products.find(p => String(p.id) === String(defaultParentId));
+                            
+                            setRegisterForm({
+                                title: parentProd ? `${parentProd.title} (Box of 20)` : "",
+                                sku: "",
+                                baseUom: "Case",
+                                targetSellingPrice: parentProd ? String((parentProd.targetSellingPrice || 0) * 20) : "",
+                                barcode: "",
+                                densityFactor: String(parentProd?.densityFactor || "1.0"),
+                                expectedYield: "100",
+                                versionName: "v1.0",
+                                brandId: parentProd?.product_brand ? String(parentProd.product_brand) : "",
+                                categoryId: parentProd?.product_category ? String(parentProd.product_category) : "",
+                                description: parentProd?.description || "",
+                                costPerUnit: "",
+                                uomCount: "20",
+                                classId: parentProd?.product_class ? String(parentProd.product_class) : "",
+                                segmentId: parentProd?.product_segment ? String(parentProd.product_segment) : "",
+                                sectionId: parentProd?.product_section ? String(parentProd.product_section) : "",
+                                shelfLife: parentProd?.product_shelf_life ? String(parentProd.product_shelf_life) : "",
+                                productImage: "",
+                                parentId: defaultParentId,
+                                supplierIds: [] as string[]
+                            });
+                            resetRegisterFormErrors();
+                            setIsRegisterModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 shadow-2xs transition-all cursor-pointer"
+                        title="Register a Packaged Child Variant (Box / Case / Mother Bag)"
+                    >
+                        <Layers className="h-3.5 w-3.5 text-primary" />
+                        Register Child (Box)
+                    </button>
 
-                        {isMenuOpen && (
-                            <>
-                                <div
-                                    className="fixed inset-0 z-10"
-                                    onClick={() => setIsMenuOpen(false)}
-                                />
-                                <div className="absolute right-0 top-full mt-1.5 w-56 rounded-lg bg-card border border-border/80 shadow-lg py-1 z-20 text-xs text-foreground font-semibold divide-y divide-border/40 animate-in slide-in-from-top-1 duration-150">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setIsMenuOpen(false);
-                                            setRegisterForm({
-                                                title: "",
-                                                sku: "",
-                                                baseUom: "L",
-                                                targetSellingPrice: "",
-                                                barcode: "",
-                                                densityFactor: "1.0",
-                                                expectedYield: "100",
-                                                versionName: "v1.0",
-                                                brandId: "",
-                                                categoryId: "",
-                                                description: "",
-                                                costPerUnit: "",
-                                                uomCount: "0",
-                                                classId: "",
-                                                segmentId: "",
-                                                sectionId: "",
-                                                shelfLife: "",
-                                                productImage: "",
-                                                parentId: "",
-                                                supplierIds: [] as string[]
-                                            });
-                                            resetRegisterFormErrors();
-                                            setIsRegisterModalOpen(true);
-                                        }}
-                                        className="w-full text-left px-3 py-2 hover:bg-muted text-foreground flex items-center gap-2"
-                                    >
-                                        <Plus className="h-3.5 w-3.5 text-muted-foreground" />
-                                        Register New Product
-                                    </button>
-                                    {selectedProduct && !selectedProduct.parent_id && (
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setIsMenuOpen(false);
-                                                setRegisterForm({
-                                                    title: selectedProduct.title,
-                                                    sku: "",
-                                                    baseUom: "",
-                                                    targetSellingPrice: "",
-                                                    barcode: "",
-                                                    densityFactor: String(selectedProduct.densityFactor || "1.0"),
-                                                    expectedYield: "",
-                                                    versionName: "v1.0",
-                                                    brandId: selectedProduct.product_brand ? String(selectedProduct.product_brand) : "",
-                                                    categoryId: selectedProduct.product_category ? String(selectedProduct.product_category) : "",
-                                                    description: selectedProduct.description || "",
-                                                    costPerUnit: "",
-                                                    uomCount: "",
-                                                    classId: selectedProduct.product_class ? String(selectedProduct.product_class) : "",
-                                                    segmentId: selectedProduct.product_segment ? String(selectedProduct.product_segment) : "",
-                                                    sectionId: selectedProduct.product_section ? String(selectedProduct.product_section) : "",
-                                                    shelfLife: selectedProduct.product_shelf_life ? String(selectedProduct.product_shelf_life) : "",
-                                                    productImage: "",
-                                                    parentId: selectedProduct.id,
-                                                    supplierIds: [] as string[]
-                                                });
-                                                resetRegisterFormErrors();
-                                                setIsRegisterModalOpen(true);
-                                            }}
-                                            className="w-full text-left px-3 py-2 hover:bg-muted text-foreground flex items-center gap-2"
-                                        >
-                                            <Layers className="h-3.5 w-3.5 text-primary" />
-                                            <div>
-                                                <span className="block">Add Child Variant</span>
-                                                <span className="block text-[9px] text-muted-foreground font-normal truncate max-w-[180px]">
-                                                    Parent: {selectedProduct.title}
-                                                </span>
-                                            </div>
-                                        </button>
-                                    )}
-                                </div>
-                            </>
-                        )}
-                    </div>
                     <button
                         onClick={handleSave}
                         disabled={savingBOM || !selectedProduct}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                     >
                         {savingBOM ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -978,10 +1002,29 @@ export default function FinishedGoodsModule() {
 
                                             <button
                                                 onClick={handleOpenVersionModal}
-                                                className="inline-flex items-center gap-1 rounded bg-muted border px-2 py-1 text-xs font-semibold hover:bg-accent transition-colors text-foreground"
+                                                className="inline-flex items-center gap-1 rounded bg-muted border px-2 py-1 text-xs font-semibold hover:bg-accent transition-colors text-foreground cursor-pointer"
                                                 title="Register New Version"
                                             >
                                                 <Plus className="h-3 w-3" /> New
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsCompareModalOpen(true)}
+                                                className="inline-flex items-center gap-1 rounded bg-primary/10 border border-primary/20 px-2 py-1 text-xs font-semibold hover:bg-primary/20 transition-colors text-primary cursor-pointer"
+                                                title="Compare BOM versions side-by-side"
+                                            >
+                                                <GitCompare className="h-3 w-3" /> Compare Matrix
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                disabled={isSyncingYield}
+                                                onClick={handleSyncHistoricalYield}
+                                                className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/20 px-2 py-1 text-xs font-semibold hover:bg-amber-500/20 transition-colors text-amber-700 dark:text-amber-300 cursor-pointer disabled:opacity-50"
+                                                title="Sync expected yield from completed Job Order production records"
+                                            >
+                                                <Activity className={`h-3 w-3 ${isSyncingYield ? "animate-spin" : ""}`} /> Sync Yield
                                             </button>
                                         </div>
                                     </div>
@@ -998,17 +1041,18 @@ export default function FinishedGoodsModule() {
                     <div className="flex border-b px-4 bg-muted/10 shrink-0">
                         {[
                             { id: "details", label: "Product Details", icon: FileText },
-                            { id: "routes_bom", label: "Routes & BOM", icon: Layers },
+                            { id: "version_management", label: "Version Management", icon: Layers },
                             { id: "costing", label: "Live Costing & Simulator", icon: Sliders },
                             { id: "qa_templates", label: "QA Checklist Templates", icon: Shield },
                             { id: "importation", label: "Importation & Landed Cost", icon: Briefcase }
                         ].map((t) => {
                             const Icon = t.icon;
+                            const isActive = activeTab === t.id || (t.id === "version_management" && activeTab === "routes_bom");
                             return (
                                 <button
                                     key={t.id}
-                                    onClick={() => handleTabChange(t.id)}
-                                    className={`flex items-center gap-1.5 px-4 py-3 text-xs font-semibold border-b-2 transition-all -mb-[1px] ${activeTab === t.id
+                                    onClick={() => handleTabChange(t.id === "version_management" ? "version_management" : t.id)}
+                                    className={`flex items-center gap-1.5 px-4 py-3 text-xs font-semibold border-b-2 transition-all -mb-[1px] ${isActive
                                             ? "border-primary text-primary"
                                             : "border-transparent text-muted-foreground hover:text-foreground"
                                         }`}
@@ -1080,19 +1124,77 @@ export default function FinishedGoodsModule() {
                                     </div>
                                 ) : (
                                     <>
-                                        {activeTab === "routes_bom" && (
-                                            <RoutesBOMTab
-                                                editedRoutes={editedRoutes}
-                                                setEditedRoutes={setEditedRoutes}
-                                                operationTypes={operationTypes}
-                                                workCenters={workCenters}
-                                                qaTemplates={qaTemplates}
-                                                units={units}
-                                                setHasUnsavedChanges={setHasUnsavedChanges}
-                                                setOperationTypes={setOperationTypes}
-                                                editedVersionDetails={editedVersionDetails}
-                                                setEditedVersionDetails={setEditedVersionDetails}
-                                            />
+                                        {(activeTab === "version_management" || activeTab === "routes_bom") && (
+                                            <div className="space-y-6">
+                                                {/* Inner Sub-tab Navigation under Version Management */}
+                                                <div className="flex border-b border-border/60 gap-2 bg-muted/20 px-3 pt-2 rounded-t-xl shrink-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setVersionSubTab("routes_bom")}
+                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
+                                                            versionSubTab === "routes_bom"
+                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                                                : "border-transparent text-muted-foreground hover:text-foreground"
+                                                        }`}
+                                                    >
+                                                        <GitFork className="h-3.5 w-3.5" />
+                                                        Routes &amp; BOM
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setVersionSubTab("direct_labor")}
+                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
+                                                            versionSubTab === "direct_labor"
+                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                                                : "border-transparent text-muted-foreground hover:text-foreground"
+                                                        }`}
+                                                    >
+                                                        <Briefcase className="h-3.5 w-3.5 text-primary" />
+                                                        Direct Labor Standards
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setVersionSubTab("overheads")}
+                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
+                                                            versionSubTab === "overheads"
+                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                                                : "border-transparent text-muted-foreground hover:text-foreground"
+                                                        }`}
+                                                    >
+                                                        <Calculator className="h-3.5 w-3.5" />
+                                                        Overhead Management
+                                                    </button>
+                                                </div>
+
+                                                {versionSubTab === "routes_bom" ? (
+                                                    <RoutesBOMTab
+                                                        editedRoutes={editedRoutes}
+                                                        setEditedRoutes={setEditedRoutes}
+                                                        operationTypes={operationTypes}
+                                                        workCenters={workCenters}
+                                                        qaTemplates={qaTemplates}
+                                                        units={units}
+                                                        setHasUnsavedChanges={setHasUnsavedChanges}
+                                                        setOperationTypes={setOperationTypes}
+                                                        editedVersionDetails={editedVersionDetails}
+                                                        setEditedVersionDetails={setEditedVersionDetails}
+                                                    />
+                                                ) : versionSubTab === "direct_labor" ? (
+                                                    <DirectLaborStandardsTab
+                                                        editedVersionDetails={editedVersionDetails}
+                                                        setEditedVersionDetails={setEditedVersionDetails}
+                                                        setHasUnsavedChanges={setHasUnsavedChanges}
+                                                    />
+                                                ) : (
+                                                    <OverheadManagementTab
+                                                        overheadTypes={overheadTypes}
+                                                        setOverheadTypes={setOverheadTypes}
+                                                        editedVersionDetails={editedVersionDetails}
+                                                        setEditedVersionDetails={setEditedVersionDetails}
+                                                        setHasUnsavedChanges={setHasUnsavedChanges}
+                                                    />
+                                                )}
+                                            </div>
                                         )}
 
                                         {activeTab === "qa_templates" && (
@@ -1106,6 +1208,7 @@ export default function FinishedGoodsModule() {
 
                                         {activeTab === "costing" && (
                                             <CostRollupTab
+                                                versionOverheadItems={editedVersionDetails.overhead_items}
                                                 standardPrice={standardPrice}
                                                 standardCogs={standardCostBreakdown.unitCost}
                                                 standardBreakdown={standardCostBreakdown}
@@ -1352,24 +1455,92 @@ export default function FinishedGoodsModule() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                         {/* Header */}
-                        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
-                            <div className="flex items-center gap-2">
-                                <Plus className="h-5 w-5 text-primary animate-pulse" />
-                                <div>
-                                    <h3 className="text-base font-bold text-foreground">Register Product & BOM Version</h3>
-                                    <p className="text-xs text-muted-foreground">Add new product master record and link its initial bill of materials version.</p>
+                        <div className="flex flex-col gap-3 px-6 py-4 border-b shrink-0 bg-muted/20">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Plus className="h-5 w-5 text-primary" />
+                                    <div>
+                                        <h3 className="text-base font-bold text-foreground">
+                                            {registrationType === "parent" ? "Register Parent Good (Piece)" : "Register Child Variant (Box / Case)"}
+                                        </h3>
+                                        <p className="text-xs text-muted-foreground">
+                                            {registrationType === "parent"
+                                                ? "Add a master manufactured good (piece/pouch) with core BOM recipe and workstation routings."
+                                                : "Add a packaged outer variant (box/case) containing multiple parent pieces."}
+                                        </p>
+                                    </div>
                                 </div>
+                                <button
+                                    onClick={() => setIsRegisterModalOpen(false)}
+                                    className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
+                                >
+                                    Close
+                                </button>
                             </div>
-                            <button
-                                onClick={() => setIsRegisterModalOpen(false)}
-                                className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg"
-                            >
-                                Close
-                            </button>
+
+                            {/* Mode Segment Switcher */}
+                            <div className="flex items-center gap-2 p-1 bg-muted/40 rounded-lg border border-border/60">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setRegistrationType("parent");
+                                        setRegisterForm(prev => ({ ...prev, parentId: "", uomCount: "1" }));
+                                    }}
+                                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                        registrationType === "parent"
+                                            ? "bg-primary text-primary-foreground shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                    }`}
+                                >
+                                    <Package className="h-3.5 w-3.5" /> Parent Good (Piece / Individual Pouch)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setRegistrationType("child");
+                                        const defaultParentId = selectedProduct && !selectedProduct.parent_id
+                                            ? selectedProduct.id
+                                            : (products.find(p => !p.parent_id)?.id || "");
+                                        const parentProd = products.find(p => String(p.id) === String(defaultParentId));
+                                        setRegisterForm(prev => ({
+                                            ...prev,
+                                            parentId: defaultParentId,
+                                            title: prev.title || (parentProd ? `${parentProd.title} (Box of 20)` : ""),
+                                            baseUom: "Case",
+                                            uomCount: prev.uomCount && prev.uomCount !== "1" ? prev.uomCount : "20"
+                                        }));
+                                    }}
+                                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                        registrationType === "child"
+                                            ? "bg-primary text-primary-foreground shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                    }`}
+                                >
+                                    <Layers className="h-3.5 w-3.5" /> Child Variant (Box / Case / Mother Bag)
+                                </button>
+                            </div>
                         </div>
 
                         {/* Form */}
                         <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 space-y-6">
+                            {/* Mode Informational Banner */}
+                            <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
+                                registrationType === "parent"
+                                    ? "bg-primary/5 border-primary/20 text-primary"
+                                    : "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300"
+                            }`}>
+                                {registrationType === "parent" ? (
+                                    <>
+                                        <Package className="h-4 w-4 shrink-0" />
+                                        <span><strong>Parent Product Mode:</strong> Registers the primary manufactured unit (Piece/Pouch). Holds the core BOM materials, workstation routings, and direct labor standards.</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Layers className="h-4 w-4 shrink-0" />
+                                        <span><strong>Child Variant Mode:</strong> Registers a packaged outer container (Box/Case). Linked to a Parent Good and inherits its master recipe.</span>
+                                    </>
+                                )}
+                            </div>
                             {/* Group 1: General Info */}
                             <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
                                 <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
@@ -1462,61 +1633,66 @@ export default function FinishedGoodsModule() {
                                         />
                                         {registerErrorMessage("categoryId")}
                                     </div>
-                                    <div className="col-span-2">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Parent Product (Optional)</label>
-                                        <CreatableSelect
-                                            id="register-parent"
-                                            options={parentOptions}
-                                            value={registerForm.parentId}
-                                            onValueChange={(val) => {
-                                                const selectedId = val;
-                                                clearRegisterFormError("parentId");
-                                                clearRegisterFormError("baseUom");
-                                                const parentProd = products.find(p => p.id === selectedId);
-                                                setRegisterForm(prev => {
-                                                    if (parentProd) {
+                                    {registrationType === "child" && (
+                                        <div className="col-span-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                                            <label className="text-[11px] font-bold text-amber-700 dark:text-amber-300 uppercase block">
+                                                Select Parent Manufactured Good (Piece / Individual Pouch) <span className="text-red-500">*</span>
+                                            </label>
+                                            <CreatableSelect
+                                                id="register-parent"
+                                                options={parentOptions}
+                                                value={registerForm.parentId}
+                                                onValueChange={(val) => {
+                                                    const selectedId = val;
+                                                    clearRegisterFormError("parentId");
+                                                    clearRegisterFormError("baseUom");
+                                                    const parentProd = products.find(p => p.id === selectedId);
+                                                    setRegisterForm(prev => {
+                                                        if (parentProd) {
+                                                            const count = Number(prev.uomCount) || 20;
+                                                            return {
+                                                                ...prev,
+                                                                parentId: selectedId,
+                                                                title: `${parentProd.title} (Box of ${count})`,
+                                                                sku: "",
+                                                                baseUom: "Case",
+                                                                targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
+                                                                uomCount: String(count),
+                                                                expectedYield: "100",
+                                                                description: parentProd.description || prev.description,
+                                                                brandId: parentProd.product_brand ? String(parentProd.product_brand) : prev.brandId,
+                                                                categoryId: parentProd.product_category ? String(parentProd.product_category) : prev.categoryId,
+                                                                classId: parentProd.product_class ? String(parentProd.product_class) : prev.classId,
+                                                                segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
+                                                                sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
+                                                                shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
+                                                                densityFactor: String(parentProd.densityFactor || "1.0")
+                                                            };
+                                                        }
                                                         return {
                                                             ...prev,
                                                             parentId: selectedId,
-                                                            title: parentProd.title,
                                                             sku: "",
-                                                            baseUom: "",
-                                                            uomCount: "",
-                                                            expectedYield: "",
-                                                            description: parentProd.description || prev.description,
-                                                            brandId: parentProd.product_brand ? String(parentProd.product_brand) : prev.brandId,
-                                                            categoryId: parentProd.product_category ? String(parentProd.product_category) : prev.categoryId,
-                                                            classId: parentProd.product_class ? String(parentProd.product_class) : prev.classId,
-                                                            segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
-                                                            sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
-                                                            shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
-                                                            densityFactor: String(parentProd.densityFactor || "1.0")
+                                                            baseUom: "Case",
+                                                            expectedYield: "100"
                                                         };
-                                                    }
-                                                    return {
-                                                        ...prev,
-                                                        parentId: selectedId,
-                                                        sku: "",
-                                                        baseUom: "",
-                                                        uomCount: "",
-                                                        expectedYield: ""
-                                                    };
-                                                });
-                                            }}
-                                            placeholder="Select parent product..."
-                                            aria-invalid={!!registerError("parentId")}
-                                            aria-describedby={registerError("parentId") ? "register-parentId-error" : undefined}
-                                            className={registerError("parentId") ? "border-red-500 focus:ring-red-500" : undefined}
-                                        />
-                                        {registerErrorMessage("parentId")}
-                                    </div>
+                                                    });
+                                                }}
+                                                placeholder="Select parent piece product..."
+                                                aria-invalid={!!registerError("parentId")}
+                                                aria-describedby={registerError("parentId") ? "register-parentId-error" : undefined}
+                                                className={registerError("parentId") ? "border-red-500 focus:ring-red-500" : undefined}
+                                            />
+                                            {registerErrorMessage("parentId")}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
                             {/* Group 2: Measurements & Life */}
                             <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
                                 <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                    <Sliders className="h-3.5 w-3.5" /> 2. Physicals & Inventory
+                                    <Sliders className="h-3.5 w-3.5" /> 2. Physicals &amp; Inventory
                                 </h4>
                                 <div className="grid grid-cols-3 gap-4">
                                     <div>
@@ -1534,11 +1710,13 @@ export default function FinishedGoodsModule() {
                                         {registerErrorMessage("baseUom")}
                                     </div>
                                     <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">UOM Count (Pack Mult) <span className="text-red-500">*</span></label>
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                                            {registrationType === "child" ? "Pieces per Box / Case *" : "Pack Multiplier *"}
+                                        </label>
                                         <input
                                             id="register-uomCount"
                                             type="number"
-                                            placeholder="e.g. 1"
+                                            placeholder={registrationType === "child" ? "e.g. 20" : "1"}
                                             value={registerForm.uomCount}
                                             onChange={e => {
                                                 const val = e.target.value;
@@ -1853,6 +2031,16 @@ export default function FinishedGoodsModule() {
                     </div>
                 </div>
             )}
+
+            {/* Version Comparison Modal */}
+            <VersionCompareModal
+                isOpen={isCompareModalOpen}
+                onClose={() => setIsCompareModalOpen(false)}
+                productId={selectedProductId}
+                productTitle={selectedProduct?.title || "Finished Good"}
+                versions={versions}
+                currentVersionId={selectedVersionId}
+            />
         </div>
     );
 }

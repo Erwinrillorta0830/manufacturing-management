@@ -1,8 +1,9 @@
 import React from "react";
-import { Sliders, RefreshCw } from "lucide-react";
+import { Sliders, RefreshCw, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { BOMItem, Product } from "../types";
+import { BOMItem, Product, VersionOverheadItem } from "../types";
 import { CostingBreakdown, OverheadSummary } from "../costing";
+import { generateFinishedGoodCostRollupPDF } from "../utils/exportFinishedGoodCostRollupPDF";
 
 interface ProductOverhead {
     id: string;
@@ -30,7 +31,7 @@ interface CostRollupTabProps {
     setSimulationPriceOverrides: React.Dispatch<React.SetStateAction<Record<string, number>>>;
     editedBOM: BOMItem[];
     selectedProduct: Product;
-    selectedVersionId: number | null;
+    selectedVersionId?: number | null;
     simulatedGrossProfit: number;
     simulatedGrossMarginPercent: number;
     simulatedNetProfit: number;
@@ -42,9 +43,11 @@ interface CostRollupTabProps {
     simulatedNetMarginPercent: number;
     simulatedForexRate: number;
     setSimulatedForexRate: React.Dispatch<React.SetStateAction<number>>;
+    versionOverheadItems?: VersionOverheadItem[];
 }
 
 export const CostRollupTab: React.FC<CostRollupTabProps> = ({
+    versionOverheadItems = [],
     standardPrice,
     standardCogs,
     standardBreakdown,
@@ -61,7 +64,6 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
     setSimulationPriceOverrides,
     editedBOM,
     selectedProduct,
-    selectedVersionId,
     simulatedGrossProfit,
     simulatedGrossMarginPercent,
     simulatedNetProfit,
@@ -72,132 +74,81 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
     simulatedForexRate,
     setSimulatedForexRate
 }) => {
-    const [customers, setCustomers] = React.useState<{ id: number; customer_name: string; customer_code?: string }[]>([]);
-    const [selectedCustomerId, setSelectedCustomerId] = React.useState<string>("");
-    const [quoteNumber, setQuoteNumber] = React.useState<string>("");
-    const [remarks, setRemarks] = React.useState<string>("");
-    const [isSavingQuote, setIsSavingQuote] = React.useState<boolean>(false);
-    const [isQuoteModalOpen, setIsQuoteModalOpen] = React.useState<boolean>(false);
+    const formatCurrency = (val: number | string | null | undefined): string => {
+        const num = Number(val || 0);
+        return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
 
-    React.useEffect(() => {
-        if (isQuoteModalOpen) {
-            // Load customers list
-            fetch("/api/manufacturing/finished-goods/customers")
-                .then(res => res.ok ? res.json() : [])
-                .then(data => {
-                    setCustomers(data);
-                    if (data.length > 0) {
-                        setSelectedCustomerId(String(data[0].id));
-                    }
-                })
-                .catch(e => console.error("Error loading customers:", e));
+    const handleExportCSV = () => {
+        const rows = [
+            ["Cost Rollup Report", selectedProduct?.title || "Finished Good"],
+            ["SKU", selectedProduct?.sku || ""],
+            ["Base UOM", selectedProduct?.baseUom || ""],
+            ["Date Generated", new Date().toLocaleDateString()],
+            [""],
+            ["Metric", "Standard Value (PHP)"],
+            ["Target Selling Price", standardPrice.toFixed(2)],
+            ["Cost of Goods Sold (COGS)", standardCogs.toFixed(2)],
+            ["Gross Profit", standardGrossProfit.toFixed(2)],
+            ["Gross Margin %", `${standardGrossMarginPercent.toFixed(1)}%`],
+            ["Net Profit", standardNetProfit.toFixed(2)],
+            ["Net Margin %", `${standardNetMarginPercent.toFixed(1)}%`],
+            [""],
+            ["BOM Component Breakdown", "Quantity", "UOM", "Unit Cost (PHP)", "Extended Cost (PHP)"],
+            ...editedBOM.map(b => {
+                const qty = Number(b.quantity || 0);
+                const itemObj = b as unknown as Record<string, unknown>;
+                const landed = Number(b.landedCost ?? itemObj.unitCost ?? itemObj.costPerUnit ?? 0);
+                const ext = qty * landed;
+                return [
+                    b.name || "Ingredient",
+                    qty.toString(),
+                    b.uom || "PCS",
+                    landed.toFixed(2),
+                    ext.toFixed(2)
+                ];
+            }),
+            [""],
+            ["Overhead Item", "Cost per Unit (PHP)"],
+            ...versionOverheadItems.map(o => {
+                const oObj = o as unknown as Record<string, unknown>;
+                return [
+                    o.overhead_name || "Overhead",
+                    (Number(o.cost_per_unit || oObj.cost || 0)).toFixed(2)
+                ];
+            })
+        ];
 
-            // Generate unique quote number: e.g. QT-YYYYMMDD-HHMM
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-            const hour = String(now.getHours()).padStart(2, '0');
-            const min = String(now.getMinutes()).padStart(2, '0');
-            const sec = String(now.getSeconds()).padStart(2, '0');
-            setQuoteNumber(`QT-${year}${month}${day}-${hour}${min}${sec}`);
-        }
-    }, [isQuoteModalOpen]);
+        const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(cell => `"${cell}"`).join(",")).join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Cost_Rollup_${selectedProduct?.sku || "FG"}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success("Cost rollup exported to CSV!");
+    };
 
-    const handleSaveQuotation = async () => {
-        if (!selectedCustomerId) {
-            toast.error("Please select a customer first");
-            return;
-        }
-        if (!quoteNumber.trim()) {
-            toast.error("Quote number is required");
-            return;
-        }
-        if (!selectedVersionId || selectedVersionId <= 0) {
-            toast.error("Select a valid BOM version before saving a quotation");
-            return;
-        }
-        if (editedBOM.some(item => !item.productId || Number(item.productId) <= 0)) {
-            toast.error("Every BOM ingredient must have a valid product before saving a quotation");
-            return;
-        }
-
-        setIsSavingQuote(true);
+    const handleExportPDF = () => {
         try {
-            // Compile header
-            const header = {
-                quote_number: quoteNumber,
-                customer_id: parseInt(selectedCustomerId),
-                total_selling_price: simulationTargetPrice,
-                total_simulated_cost: simulatedCogs,
-                forex_rate_used: simulatedForexRate,
-                remarks: remarks || ""
-            };
-
-            // Compile snapshots
-            interface QuoteSnapshot {
-                product_id: number;
-                version_id: number;
-                node_name: string;
-                node_type: string;
-                quantity: number;
-                uom: string;
-                frozen_unit_cost_php: number;
-                frozen_total_cost_php: number;
-            }
-            const snapshots: QuoteSnapshot[] = [];
-
-            // 1. Ingredients
-            editedBOM.forEach(item => {
-                const overrideCost = simulationPriceOverrides[item.id] !== undefined ? simulationPriceOverrides[item.id] : item.landedCost;
-                snapshots.push({
-                    product_id: Number(item.productId),
-                    version_id: selectedVersionId,
-                    node_name: item.name,
-                    node_type: item.type === "by_product" ? "by_product" : "ingredient",
-                    quantity: item.quantity,
-                    uom: item.uom,
-                    frozen_unit_cost_php: overrideCost,
-                    frozen_total_cost_php: item.quantity * overrideCost
-                });
+            generateFinishedGoodCostRollupPDF({
+                selectedProduct,
+                standardPrice,
+                standardCogs,
+                standardBreakdown,
+                standardOverheads,
+                standardGrossProfit,
+                standardGrossMarginPercent,
+                standardNetProfit,
+                standardNetMarginPercent,
+                editedBOM,
+                versionOverheadItems
             });
-
-            // 2. Routing step nodes from standard (we can use dummy placeholder if active component doesn't receive routings, but let's grab it if available)
-            // Note: routings are configured inside FinishedGoodsModule.tsx state, we can add snapshots for materials, overheads and routing steps
-            // Let's check what we have in standardOverheads/simulatedOverheads
-            simulatedOverheads.items.forEach(o => {
-                snapshots.push({
-                    product_id: Number(selectedProduct.id),
-                    version_id: selectedVersionId,
-                    node_name: o.overheadName,
-                    node_type: "overhead",
-                    quantity: 1,
-                    uom: "PHP",
-                    frozen_unit_cost_php: Number(o.amount) || 0,
-                    frozen_total_cost_php: Number(o.amount) || 0
-                });
-            });
-
-            const response = await fetch("/api/manufacturing/finished-goods/quotes", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ header, snapshots })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || "Failed to save quotation snapshot");
-            }
-
-            toast.success(`Quotation ${quoteNumber} saved and frozen successfully!`);
-            setIsQuoteModalOpen(false);
-            setRemarks("");
-        } catch (e) {
-            console.error("Save quotation error:", e);
-            const err = e instanceof Error ? e : new Error(String(e));
-            toast.error(err.message || "Error saving quotation");
-        } finally {
-            setIsSavingQuote(false);
+            toast.success("PDF report generated and downloaded!");
+        } catch (err: unknown) {
+            console.error("PDF Export error:", err);
+            toast.error((err as Error).message || "Failed to generate PDF report");
         }
     };
 
@@ -205,45 +156,85 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
         <div className="grid gap-6 lg:grid-cols-2">
             {/* Cost Rollup Tree / Summary */}
             <div className="space-y-6 rounded-xl border bg-muted/10 p-5">
-                <div>
-                    <h3 className="text-base font-bold text-foreground">Standard Cost & Profitability Rollup</h3>
-                    <p className="text-xs text-muted-foreground">Excel-aligned profit margins and overhead expense breakdown.</p>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h3 className="text-base font-bold text-foreground">Standard Cost & Profitability Rollup</h3>
+                        <p className="text-xs text-muted-foreground">Excel-aligned profit margins and overhead expense breakdown.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={handleExportPDF}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-all cursor-pointer shadow-2xs"
+                            title="Generate and download jsPDF document"
+                        >
+                            <FileText className="h-3.5 w-3.5 text-primary" /> Download PDF
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleExportCSV}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg border bg-background hover:bg-muted text-foreground transition-all cursor-pointer shadow-2xs"
+                            title="Export Cost Rollup Report to CSV"
+                        >
+                            <Download className="h-3.5 w-3.5 text-foreground" /> CSV
+                        </button>
+                    </div>
                 </div>
 
                 <div className="space-y-4">
                     <div className="rounded-lg bg-card p-3.5 border space-y-2">
                         <div className="flex justify-between items-center text-xs font-semibold text-muted-foreground">
                             <span>Target Selling Price</span>
-                            <span className="text-foreground text-sm font-bold">₱{standardPrice.toFixed(2)}</span>
+                            <span className="text-foreground text-sm font-bold">₱{formatCurrency(standardPrice)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs font-semibold text-muted-foreground border-b pb-2">
                             <span>Cost of Goods Sold (COGS / unit)</span>
-                            <span className="text-foreground text-sm font-bold">₱{standardCogs.toFixed(2)}</span>
+                            <span className="text-foreground text-sm font-bold">₱{formatCurrency(standardCogs)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs border-b pb-2">
                             <span>Batch COGS</span>
-                            <span className="text-foreground text-sm font-bold">₱{standardBreakdown.batchCost.toFixed(2)}</span>
+                            <span className="text-foreground text-sm font-bold">₱{formatCurrency(standardBreakdown.batchCost)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs font-bold pt-1">
                             <span className="text-primary">Gross Margin (on sales)</span>
                             <span className="text-primary text-sm">
-                                ₱{standardGrossProfit.toFixed(2)} ({standardPrice > 0 ? `${standardGrossMarginPercent.toFixed(1)}%` : "N/A"})
+                                ₱{formatCurrency(standardGrossProfit)} ({standardPrice > 0 ? `${standardGrossMarginPercent.toFixed(1)}%` : "N/A"})
                             </span>
                         </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-xs rounded-lg border bg-card p-3">
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground">Materials (pre-yield, per unit)</span>
-                            <span className="font-medium">₱{standardBreakdown.materialsCost.toFixed(2)}</span>
+                            <span className="text-muted-foreground">Direct Materials (pre-yield, per unit)</span>
+                            <span className="font-medium">₱{formatCurrency(standardBreakdown.materialsCost)}</span>
                         </div>
 
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground">Machine overhead (per unit)</span>
-                            <span className="font-medium">₱{standardBreakdown.machineOverheadCost.toFixed(2)}</span>
+                            <span className="text-muted-foreground font-semibold text-amber-600 dark:text-amber-400">Direct Labor (per unit)</span>
+                            <span className="font-bold text-amber-600 dark:text-amber-400">₱{formatCurrency(standardBreakdown.directLaborCost)}</span>
+                        </div>
+
+                        <div className="flex justify-between gap-2">
+                            <span className="text-muted-foreground">Machine &amp; routing overhead (per unit)</span>
+                            <span className="font-medium">₱{formatCurrency(standardBreakdown.machineOverheadCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground">Workstation duration</span>
+                            <span className="text-muted-foreground font-semibold text-sky-600 dark:text-sky-400">Continuous Line Shift Duration (Inline)</span>
+                            <span className="font-bold font-mono text-sky-600 dark:text-sky-400">
+                                {(() => {
+                                    const hrs = standardBreakdown.lineElapsedHours || 0;
+                                    if (!hrs || isNaN(hrs)) return "00:00:00";
+                                    const totalSeconds = Math.round(Math.abs(hrs) * 3600);
+                                    const h = Math.floor(totalSeconds / 3600);
+                                    const m = Math.floor((totalSeconds % 3600) / 60);
+                                    const s = totalSeconds % 60;
+                                    const pad = (num: number) => String(num).padStart(2, "0");
+                                    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+                                })()}
+                            </span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                            <span className="text-muted-foreground">Cumulative Workstation Machine Hours</span>
                             <span className="font-medium font-mono">
                                 {(() => {
                                     const hrs = standardBreakdown.machineHours;
@@ -259,20 +250,20 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                             </span>
                         </div>
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground">Total workstation cost</span>
-                            <span className="font-medium">₱{standardBreakdown.totalMachineCost.toFixed(2)}</span>
+                            <span className="text-muted-foreground">Total work center cost (batch total)</span>
+                            <span className="font-medium font-mono text-foreground">₱{formatCurrency(standardBreakdown.totalMachineCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2">
-                            <span className="text-muted-foreground">Custom overhead</span>
-                            <span className="font-medium">₱{standardBreakdown.customOverheadCost.toFixed(2)}</span>
+                            <span className="text-muted-foreground">Version overhead allocation (per unit)</span>
+                            <span className="font-medium">₱{formatCurrency(standardBreakdown.customOverheadCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2 border-t pt-2 col-span-2">
                             <span className="font-semibold">Pre-yield direct unit cost</span>
-                            <span className="font-semibold">₱{standardBreakdown.preYieldDirectCost.toFixed(2)}</span>
+                            <span className="font-semibold">₱{formatCurrency(standardBreakdown.preYieldDirectCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2 col-span-2">
                             <span className="text-muted-foreground">Yield-adjusted unit cost</span>
-                            <span className="font-medium">₱{standardBreakdown.unitCost.toFixed(2)}</span>
+                            <span className="font-medium">₱{formatCurrency(standardBreakdown.unitCost)}</span>
                         </div>
                         <div className="flex justify-between gap-2 col-span-2">
                             <span className="text-muted-foreground">Expected yield</span>
@@ -282,39 +273,56 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
 
                     {/* Overhead Details */}
                     <div className="space-y-2.5">
-                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Overhead Expenses</span>
-                        <div className="grid grid-cols-2 gap-2 text-xs border rounded-lg bg-card p-3 shadow-xs">
-                            <div className="flex justify-between gap-2 border-b pb-1 col-span-2">
-                                <span className="text-muted-foreground">Custom Manufacturing Overhead (included in COGS):</span>
-                                <span className="font-medium text-foreground shrink-0">
-                                    ₱{standardOverheads.customOverhead.toFixed(2)}
-                                </span>
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Overhead Expenses Breakdown</span>
+                        <div className="border rounded-lg bg-card p-3 shadow-xs space-y-2 text-xs">
+                            <div className="flex justify-between items-center border-b pb-1.5 font-semibold text-foreground">
+                                <span>Version Overhead Allocation (Included in Unit COGS):</span>
+                                <span className="font-mono font-bold text-primary">₱{formatCurrency(standardOverheads.customOverhead)}</span>
                             </div>
-                            {standardOverheads.items.map((item) => (
-                                <div key={item.id} className="flex justify-between border-b pb-1">
-                                    <span className="text-muted-foreground truncate pr-1" title={item.overheadName}>
-                                        {item.overheadName}:
-                                    </span>
-                                    <span className="font-medium text-foreground shrink-0">
-                                        ₱{Number(item.amount).toFixed(2)}
-                                    </span>
+
+                            {/* Configured Overhead Types Line-Item Breakdown */}
+                            {versionOverheadItems.filter(i => i.is_active !== false).length > 0 ? (
+                                <div className="space-y-1.5 py-1">
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Configured Overhead Types:</span>
+                                    <div className="space-y-1 pl-2 border-l-2 border-primary/40">
+                                        {versionOverheadItems.filter(i => i.is_active !== false).map((item) => (
+                                            <div key={item.id} className="flex justify-between items-center text-xs py-0.5">
+                                                <span className="text-foreground font-medium flex items-center gap-1.5" title={item.remarks}>
+                                                    <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                                                    {item.overhead_name}
+                                                </span>
+                                                <span className="font-mono font-bold text-foreground">
+                                                    ₱{formatCurrency(item.cost_per_unit)} <span className="text-[10px] text-muted-foreground font-normal">/ unit</span>
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                            ))}
-                            {standardOverheads.items.length === 0 && (
-                                <div className="col-span-2 text-center text-muted-foreground py-2">
-                                    No additional overhead variables registered.
+                            ) : standardOverheads.items.length > 0 ? (
+                                <div className="space-y-1 py-1 pl-2 border-l-2 border-primary/40">
+                                    {standardOverheads.items.map((item) => (
+                                        <div key={item.id} className="flex justify-between items-center text-xs py-0.5">
+                                            <span className="text-foreground font-medium">{item.overheadName}:</span>
+                                            <span className="font-mono font-bold text-foreground">₱{formatCurrency(item.amount)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-center text-muted-foreground py-1 text-[11px]">
+                                    No active overhead types allocated to this version.
                                 </div>
                             )}
-                            <div className="flex justify-between gap-2 border-t pt-2 col-span-2">
-                                <span className="text-muted-foreground">Additional Operating Overhead (excluded from COGS):</span>
-                                <span className="font-medium text-foreground shrink-0">
-                                    ₱{standardOverheads.additionalOperatingOverhead.toFixed(2)}
+
+                            <div className="flex justify-between items-center border-t pt-2 text-muted-foreground">
+                                <span>Additional Operating Overhead (Excluded from COGS):</span>
+                                <span className="font-mono font-semibold text-foreground">
+                                    ₱{formatCurrency(standardOverheads.additionalOperatingOverhead)}
                                 </span>
                             </div>
                         </div>
                         <div className="flex justify-between items-center text-xs font-semibold px-1">
-                            <span className="text-muted-foreground">Total Overhead Expenses:</span>
-                            <span className="text-foreground font-bold">₱{standardOverheads.totalOverheadExpenses.toFixed(2)}</span>
+                            <span className="text-muted-foreground uppercase text-[11px] font-bold">Total Overhead Expenses:</span>
+                            <span className="text-foreground font-black text-sm font-mono">₱{formatCurrency(standardOverheads.totalOverheadExpenses)}</span>
                         </div>
                     </div>
 
@@ -323,53 +331,52 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         standardNetProfit >= 0 ? "bg-emerald-500/5 border-emerald-500/20" : "bg-destructive/5 border-destructive/20"
                     }`}>
                         <div>
-                          <div className="text-xs font-bold text-muted-foreground uppercase">Net Profit Bottom Line (margin on sales)</div>
-                          <div className={`text-xl font-extrabold tracking-tight ${standardNetProfit >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                              ₱{standardNetProfit.toFixed(2)} ({standardPrice > 0 ? `${standardNetMarginPercent.toFixed(1)}%` : "N/A"})
-                          </div>
+                            <span className="text-xs font-semibold text-muted-foreground block">Standard Net Margin (on sales)</span>
+                            <span className="text-xs text-muted-foreground">Net of all COGS and operating overheads</span>
                         </div>
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
-                            standardNetProfit >= 0 ? "bg-emerald-500/10 text-emerald-600" : "bg-destructive/10 text-destructive animate-pulse"
-                        }`}>
-                            {standardNetProfit >= 0 ? "Optimal Margin" : "Net Loss Alert"}
-                        </span>
+                        <div className="text-right">
+                            <span className={`text-lg font-black font-mono block ${
+                                standardNetProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                            }`}>
+                                ₱{formatCurrency(standardNetProfit)}
+                            </span>
+                            <span className="text-xs font-bold text-muted-foreground">
+                                {standardPrice > 0 ? `${standardNetMarginPercent.toFixed(1)}% margin` : "N/A"}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* What-If Simulator Sandbox */}
-            <div className="space-y-6 rounded-xl border bg-card p-5 shadow-sm text-foreground">
-                <div className="flex items-center justify-between border-b pb-3">
+            {/* Simulator Column */}
+            <div className="space-y-6 rounded-xl border bg-card p-5 shadow-xs">
+                <div className="flex justify-between items-center">
                     <div>
-                        <h3 className="text-base font-bold flex items-center gap-1.5">
-                            <Sliders className="h-4 w-4 text-amber-500" />
-                            What-If Simulator Sandbox
+                        <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                            <Sliders className="h-4 w-4 text-primary" /> What-If Cost &amp; Margin Simulator
                         </h3>
-                        <p className="text-xs text-muted-foreground">Simulate yield drops and override material costs.</p>
+                        <p className="text-xs text-muted-foreground">Simulate yield changes, price fluctuations &amp; target margins in real-time.</p>
                     </div>
-                    <button 
+
+                    <button
                         onClick={() => {
-                            setSimulationYield(selectedProduct.expectedYieldPercent);
-                            setSimulationTargetPrice(selectedProduct.targetSellingPrice);
-                            const initialPrices: Record<string, number> = {};
-                            editedBOM.forEach(item => {
-                                initialPrices[item.id] = item.landedCost;
-                            });
-                            setSimulationPriceOverrides(initialPrices);
-                            toast.success("Simulation parameters reset");
+                            setSimulationYield(Number(standardBreakdown.yieldPercentage) || 100);
+                            setSimulationTargetPrice(standardPrice);
+                            setSimulationPriceOverrides({});
+                            toast.info("Simulation reset to standard baseline");
                         }}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded border bg-background hover:bg-muted text-muted-foreground"
-                        title="Reset Simulation"
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border px-2.5 py-1.5 rounded-lg bg-background"
+                        title="Reset simulation parameters to standard version baseline"
                     >
-                        <RefreshCw className="h-3.5 w-3.5" />
+                        <RefreshCw className="h-3 w-3" /> Reset
                     </button>
                 </div>
 
-                {/* Yield loss slider */}
-                <div className="space-y-2">
+                {/* Yield slider */}
+                <div className="space-y-2 border-t pt-3">
                     <div className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-muted-foreground">Simulate Yield Drop</span>
-                        <span className="font-bold text-amber-600">{Number(simulationYield).toFixed(1)}%</span>
+                        <span className="font-semibold text-muted-foreground">Expected Yield Percentage</span>
+                        <span className="font-bold text-primary">{simulationYield.toFixed(1)}%</span>
                     </div>
                     <input 
                         type="range"
@@ -388,7 +395,7 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         <span className="font-semibold text-muted-foreground flex items-center gap-1">
                             🌐 Simulate USD Forex Rate
                         </span>
-                        <span className="font-bold text-blue-600">₱{Number(simulatedForexRate).toFixed(2)}</span>
+                        <span className="font-bold text-blue-600">₱{formatCurrency(simulatedForexRate)}</span>
                     </div>
                     <div className="flex items-center gap-3">
                         <input 
@@ -445,7 +452,6 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                     </div>
                 </div>
 
-
                 {/* Target selling price override */}
                 <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-muted-foreground">Simulation Target Price</label>
@@ -469,133 +475,52 @@ export const CostRollupTab: React.FC<CostRollupTabProps> = ({
                         <div className="rounded-xl border bg-muted/30 p-4 space-y-2">
                             <div className="flex justify-between items-center text-xs">
                                 <span>Simulated COGS / unit:</span>
-                                <span className="font-semibold text-foreground">₱{simulatedCogs.toFixed(2)}</span>
+                                <span className="font-semibold text-foreground">₱{formatCurrency(simulatedCogs)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs font-bold text-primary">
                                 <span>Simulated Gross Margin (on sales):</span>
-                                <span>₱{simulatedGrossProfit.toFixed(2)} ({simulationTargetPrice > 0 ? `${simulatedGrossMarginPercent.toFixed(1)}%` : "N/A"})</span>
+                                <span>₱{formatCurrency(simulatedGrossProfit)} ({simulationTargetPrice > 0 ? `${simulatedGrossMarginPercent.toFixed(1)}%` : "N/A"})</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs border-t pt-1">
+                                <span className="text-muted-foreground">Direct Materials (per unit):</span>
+                                <span className="font-semibold text-foreground">₱{formatCurrency(simulatedBreakdown.materialsCost)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold">Direct Labor (per unit):</span>
+                                <span className="font-bold text-amber-600 dark:text-amber-400">₱{formatCurrency(simulatedBreakdown.directLaborCost)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="text-muted-foreground">Machine Routing Overhead (per unit):</span>
+                                <span className="font-semibold text-foreground">₱{formatCurrency(simulatedBreakdown.machineOverheadCost)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs border-b pb-2">
                                 <span>Simulated Overhead Expenses:</span>
-                                <span className="font-semibold text-muted-foreground">₱{simulatedOverheads.totalOverheadExpenses.toFixed(2)}</span>
+                                <span className="font-semibold text-muted-foreground">₱{formatCurrency(simulatedOverheads.totalOverheadExpenses)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs">
-                                <span>Custom overhead included in COGS:</span>
-                                <span className="font-semibold text-muted-foreground">₱{simulatedOverheads.customOverhead.toFixed(2)}</span>
+                                <span>Version overhead included in unit COGS:</span>
+                                <span className="font-semibold text-muted-foreground">₱{formatCurrency(simulatedOverheads.customOverhead)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs">
-                                <span>Additional overhead excluded from COGS:</span>
-                                <span className="font-semibold text-muted-foreground">₱{simulatedOverheads.additionalOperatingOverhead.toFixed(2)}</span>
+                                <span>Operating overhead excluded from COGS:</span>
+                                <span className="font-semibold text-muted-foreground">₱{formatCurrency(simulatedOverheads.additionalOperatingOverhead)}</span>
                             </div>
                             <div className="flex justify-between items-center text-xs">
                                 <span>Simulated batch COGS:</span>
-                                <span className="font-semibold text-muted-foreground">₱{simulatedBreakdown.batchCost.toFixed(2)}</span>
+                                <span className="font-semibold text-muted-foreground">₱{formatCurrency(simulatedBreakdown.batchCost)}</span>
                             </div>
                             <div className="flex justify-between items-center text-sm border-t pt-2 mt-1">
                                 <span className="font-extrabold text-foreground">Simulated Net Profit (margin on sales):</span>
                                 <span className={`font-extrabold text-sm ${
                                     isLow ? "text-destructive" : "text-emerald-600"
                                 }`}>
-                                    ₱{simProfit.toFixed(2)} ({simulationTargetPrice > 0 ? `${simulatedNetMarginPercent.toFixed(1)}%` : "N/A"})
+                                    ₱{formatCurrency(simProfit)} ({simulationTargetPrice > 0 ? `${simulatedNetMarginPercent.toFixed(1)}%` : "N/A"})
                                 </span>
                             </div>
                         </div>
                     );
                 })()}
-
-                {/* Freeze / Save Quotation Trigger */}
-                <button
-                    onClick={() => setIsQuoteModalOpen(true)}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-3 text-xs font-bold shadow-md hover:bg-primary/95 transition-all mt-4"
-                >
-                    📁 Freeze & Save Quotation
-                </button>
             </div>
-
-            {/* Save Quotation Modal */}
-            {isQuoteModalOpen && (
-                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-md animate-in zoom-in-95 duration-200 p-6 space-y-4 text-foreground">
-                        <div>
-                            <h3 className="text-base font-bold text-foreground">Freeze Cost Simulation</h3>
-                            <p className="text-xs text-muted-foreground">This saves a snapshot of the current what-if sandbox costs for client pricing negotiation.</p>
-                        </div>
-
-                        <div className="space-y-3">
-                            <div>
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">Quote Number (Unique)</label>
-                                <input
-                                    type="text"
-                                    value={quoteNumber}
-                                    onChange={e => setQuoteNumber(e.target.value)}
-                                    className="w-full rounded border px-3 py-2 text-xs bg-background text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">Customer Account</label>
-                                <select
-                                    value={selectedCustomerId}
-                                    onChange={e => setSelectedCustomerId(e.target.value)}
-                                    className="w-full rounded border px-3 py-2 text-xs bg-background text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                >
-                                    <option value="">-- Select Customer --</option>
-                                    {customers.map(c => (
-                                        <option key={c.id} value={c.id}>
-                                            {c.customer_name} ({c.customer_code})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">Remarks / Negotiation Notes</label>
-                                <textarea
-                                    rows={3}
-                                    value={remarks}
-                                    onChange={e => setRemarks(e.target.value)}
-                                    placeholder="e.g. Special promo pricing for Q3 volume purchase..."
-                                    className="w-full rounded border px-3 py-2 text-xs bg-background text-foreground outline-none focus:ring-1 focus:ring-primary resize-none"
-                                />
-                            </div>
-
-                            {/* Summary review */}
-                            <div className="rounded-lg bg-muted/30 p-3 text-xs space-y-1.5 border">
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Simulated Cost:</span>
-                                    <span className="font-semibold text-foreground">₱{simulatedCogs.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Agreed Selling Price:</span>
-                                    <span className="font-semibold text-primary">₱{simulationTargetPrice.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between border-t pt-1.5 mt-1">
-                                    <span className="font-bold">Estimated Margin:</span>
-                                    <span className={`font-bold ${simulationTargetPrice - simulatedCogs >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        ₱{(simulationTargetPrice - simulatedCogs).toFixed(2)} ({simulatedNetMarginPercent.toFixed(1)}%)
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end gap-3 pt-3 border-t">
-                            <button
-                                onClick={() => setIsQuoteModalOpen(false)}
-                                className="px-4 py-2 border rounded text-xs font-semibold hover:bg-muted text-muted-foreground"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleSaveQuotation}
-                                disabled={isSavingQuote}
-                                className="px-4 py-2 bg-primary text-primary-foreground font-semibold rounded text-xs hover:bg-primary/95 disabled:opacity-50"
-                            >
-                                {isSavingQuote ? "Freezing..." : "Confirm & Save"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
