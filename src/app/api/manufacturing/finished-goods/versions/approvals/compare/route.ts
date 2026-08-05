@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../versions-helper";
-import { ProductVersion, RouteStep, RouteBOMItem } from "@/modules/manufacturing-management/finished-goods/types";
+import { ProductVersion, RouteStep, RouteBOMItem, VersionPosition } from "@/modules/manufacturing-management/finished-goods/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -341,6 +341,144 @@ export async function GET(request: Request) {
             all: allRouteDiffs
         };
 
+        // 5b. Compute Direct Labor Diffs
+        const targetLaborPositions = (targetBOM.version?.labor_positions || []) as VersionPosition[];
+        const baseLaborPositions = (baseBOM.version?.labor_positions || []) as VersionPosition[];
+
+        const getPosKey = (p: VersionPosition) => String(p.position_name || "Operator").trim().toLowerCase();
+
+        const targetPosMap = new Map<string, VersionPosition>();
+        targetLaborPositions.forEach(p => targetPosMap.set(getPosKey(p), p));
+
+        const basePosMap = new Map<string, VersionPosition>();
+        baseLaborPositions.forEach(p => basePosMap.set(getPosKey(p), p));
+
+        const allPosKeys = [...new Set([...targetPosMap.keys(), ...basePosMap.keys()])];
+
+        const allLaborDiffs: Record<string, unknown>[] = [];
+        allPosKeys.forEach(key => {
+            const targetP = targetPosMap.get(key);
+            const baseP = basePosMap.get(key);
+
+            const positionName = targetP?.position_name || baseP?.position_name || "Operator";
+            const category = targetP?.category || baseP?.category || "direct_labor";
+
+            const baseCount = Number(baseP?.manpower_count ?? 0);
+            const targetCount = Number(targetP?.manpower_count ?? 0);
+            const countDiff = targetCount - baseCount;
+
+            const baseDaily = Number(baseP?.daily_rate ?? (baseP?.hourly_rate ? Number(baseP.hourly_rate) * 8 : 0));
+            const targetDaily = Number(targetP?.daily_rate ?? (targetP?.hourly_rate ? Number(targetP.hourly_rate) * 8 : 0));
+            const dailyDiff = targetDaily - baseDaily;
+
+            const baseHours = Number(baseP?.hours_required ?? 0);
+            const targetHours = Number(targetP?.hours_required ?? 0);
+            const hoursDiff = targetHours - baseHours;
+
+            const baseOt = Number(baseP?.ot_hours ?? 0);
+            const targetOt = Number(targetP?.ot_hours ?? 0);
+
+            const baseMandates = baseP?.include_mandates !== false;
+            const targetMandates = targetP?.include_mandates !== false;
+
+            let status: "added" | "removed" | "modified" | "unchanged";
+            if (!baseP && targetP) status = "added";
+            else if (baseP && !targetP) status = "removed";
+            else if (
+                Math.abs(countDiff) > 0.001 ||
+                Math.abs(dailyDiff) > 0.001 ||
+                Math.abs(hoursDiff) > 0.001 ||
+                Math.abs(targetOt - baseOt) > 0.001 ||
+                baseMandates !== targetMandates
+            ) status = "modified";
+            else status = "unchanged";
+
+            const calculateCost = (p?: VersionPosition) => {
+                if (!p) return 0;
+                const count = Math.max(0, Number(p.manpower_count) || 0);
+                const hourly = Number(p.hourly_rate) || (Number(p.daily_rate) / 8) || 0;
+                const hours = Number(p.hours_required) || 0;
+                const ot = Number(p.ot_hours) || 0;
+                const daily = Number(p.daily_rate) || (hourly * 8) || 0;
+                const sss = p.include_mandates !== false ? (Number(p.sss_amount) || (daily * 0.0954)) : 0;
+                const phic = p.include_mandates !== false ? (Number(p.phic_amount) || (200 / 26)) : 0;
+                const hdmf = p.include_mandates !== false ? (Number(p.hdmf_amount) || (100 / 26)) : 0;
+                return (count * hourly * hours) + (count * hourly * 1.25 * ot) + ((sss + phic + hdmf) * count);
+            };
+
+            const baseCost = calculateCost(baseP);
+            const targetCost = calculateCost(targetP);
+
+            allLaborDiffs.push({
+                positionName,
+                category,
+                status,
+                baseCount,
+                targetCount,
+                countDiff,
+                baseDaily,
+                targetDaily,
+                dailyDiff,
+                baseHours,
+                targetHours,
+                hoursDiff,
+                baseOt,
+                targetOt,
+                baseMandates,
+                targetMandates,
+                baseCost: Number(baseCost.toFixed(2)),
+                targetCost: Number(targetCost.toFixed(2)),
+                costDiff: Number((targetCost - baseCost).toFixed(2))
+            });
+        });
+
+        // 5c. Compute Overhead Items Diffs
+        const targetOverheadItems = (targetBOM.version?.overhead_items || []) as unknown as Record<string, unknown>[];
+        const baseOverheadItems = (baseBOM.version?.overhead_items || []) as unknown as Record<string, unknown>[];
+
+        const getOhKey = (o: Record<string, unknown>) => String(o.overhead_name || o.remarks || o.overhead_type_id || "").trim().toLowerCase();
+
+        const targetOhMap = new Map<string, Record<string, unknown>>();
+        targetOverheadItems.forEach(o => targetOhMap.set(getOhKey(o), o));
+
+        const baseOhMap = new Map<string, Record<string, unknown>>();
+        baseOverheadItems.forEach(o => baseOhMap.set(getOhKey(o), o));
+
+        const allOhKeys = [...new Set([...targetOhMap.keys(), ...baseOhMap.keys()])];
+
+        const allOverheadDiffs: Record<string, unknown>[] = [];
+        allOhKeys.forEach(key => {
+            const targetO = targetOhMap.get(key);
+            const baseO = baseOhMap.get(key);
+
+            const overheadName = targetO?.overhead_name || baseO?.overhead_name || "Overhead Item";
+            const remarks = targetO?.remarks || baseO?.remarks || "";
+
+            const baseCost = Number(baseO?.cost_per_unit ?? baseO?.cost ?? 0);
+            const targetCost = Number(targetO?.cost_per_unit ?? targetO?.cost ?? 0);
+            const costDiff = targetCost - baseCost;
+
+            const baseActive = baseO ? (baseO.is_active !== false) : false;
+            const targetActive = targetO ? (targetO.is_active !== false) : false;
+
+            let status: "added" | "removed" | "modified" | "unchanged";
+            if (!baseO && targetO) status = "added";
+            else if (baseO && !targetO) status = "removed";
+            else if (Math.abs(costDiff) > 0.001 || baseActive !== targetActive) status = "modified";
+            else status = "unchanged";
+
+            allOverheadDiffs.push({
+                overheadName,
+                remarks,
+                status,
+                baseCost: Number(baseCost.toFixed(2)),
+                targetCost: Number(targetCost.toFixed(2)),
+                costDiff: Number(costDiff.toFixed(2)),
+                baseActive,
+                targetActive
+            });
+        });
+
         // 6. Compute Cost Impact
         const targetMatCost = Array.from(targetCompMap.values()).reduce((sum, c) => {
             const effectiveQty = c.quantity * (1 + (c.wastageFactor / 100));
@@ -352,19 +490,43 @@ export async function GET(request: Request) {
             return sum + (effectiveQty * c.costPerUnit);
         }, 0);
 
-        const targetLabCost = Array.from(targetRouteMap.values()).reduce((sum, r) => {
-            return sum + ((r.setupTime + r.runTime) * r.hourlyRate);
-        }, 0);
+        const targetLabCost = targetLaborPositions.reduce((sum, p) => {
+            const count = Math.max(0, Number(p.manpower_count) || 0);
+            const hourly = Number(p.hourly_rate) || (Number(p.daily_rate) / 8) || 0;
+            const hours = Number(p.hours_required) || 0;
+            const ot = Number(p.ot_hours) || 0;
+            const daily = Number(p.daily_rate) || (hourly * 8) || 0;
+            const sss = p.include_mandates !== false ? (Number(p.sss_amount) || (daily * 0.0954)) : 0;
+            const phic = p.include_mandates !== false ? (Number(p.phic_amount) || (200 / 26)) : 0;
+            const hdmf = p.include_mandates !== false ? (Number(p.hdmf_amount) || (100 / 26)) : 0;
+            return sum + (count * hourly * hours) + (count * hourly * 1.25 * ot) + ((sss + phic + hdmf) * count);
+        }, 0) / Math.max(1, Number(targetBOM.version?.base_quantity || 1));
 
-        const baseLabCost = Array.from(baseRouteMap.values()).reduce((sum, r) => {
-            return sum + ((r.setupTime + r.runTime) * r.hourlyRate);
-        }, 0);
+        const baseLabCost = baseLaborPositions.reduce((sum, p) => {
+            const count = Math.max(0, Number(p.manpower_count) || 0);
+            const hourly = Number(p.hourly_rate) || (Number(p.daily_rate) / 8) || 0;
+            const hours = Number(p.hours_required) || 0;
+            const ot = Number(p.ot_hours) || 0;
+            const daily = Number(p.daily_rate) || (hourly * 8) || 0;
+            const sss = p.include_mandates !== false ? (Number(p.sss_amount) || (daily * 0.0954)) : 0;
+            const phic = p.include_mandates !== false ? (Number(p.phic_amount) || (200 / 26)) : 0;
+            const hdmf = p.include_mandates !== false ? (Number(p.hdmf_amount) || (100 / 26)) : 0;
+            return sum + (count * hourly * hours) + (count * hourly * 1.25 * ot) + ((sss + phic + hdmf) * count);
+        }, 0) / Math.max(1, Number(baseBOM.version?.base_quantity || 1));
 
         const targetOverhead = Number(targetBOM.version?.custom_overhead ?? 0);
         const baseOverhead = Number(baseBOM.version?.custom_overhead ?? 0);
 
-        const targetTotal = targetMatCost + targetLabCost + targetOverhead;
-        const baseTotal = baseMatCost + baseLabCost + baseOverhead;
+        const targetOhItemsSum = targetOverheadItems
+            .filter((item: Record<string, unknown>) => item.is_active !== false)
+            .reduce((sum: number, item: Record<string, unknown>) => sum + Number(item.cost_per_unit || item.cost || 0), 0);
+
+        const baseOhItemsSum = baseOverheadItems
+            .filter((item: Record<string, unknown>) => item.is_active !== false)
+            .reduce((sum: number, item: Record<string, unknown>) => sum + Number(item.cost_per_unit || item.cost || 0), 0);
+
+        const targetTotal = targetMatCost + targetLabCost + targetOverhead + targetOhItemsSum;
+        const baseTotal = baseMatCost + baseLabCost + baseOverhead + baseOhItemsSum;
 
         const matCostDiff = targetMatCost - baseMatCost;
         const labCostDiff = targetLabCost - baseLabCost;
@@ -383,6 +545,10 @@ export async function GET(request: Request) {
             baseCustomOverhead: Number(baseOverhead.toFixed(2)),
             targetCustomOverhead: Number(targetOverhead.toFixed(2)),
             customOverheadDiff: Number((targetOverhead - baseOverhead).toFixed(2)),
+
+            baseOverheadItemsSum: Number(baseOhItemsSum.toFixed(2)),
+            targetOverheadItemsSum: Number(targetOhItemsSum.toFixed(2)),
+            overheadItemsSumDiff: Number((targetOhItemsSum - baseOhItemsSum).toFixed(2)),
 
             baseTotalCost: Number(baseTotal.toFixed(2)),
             targetTotalCost: Number(targetTotal.toFixed(2)),
@@ -424,6 +590,7 @@ export async function GET(request: Request) {
             materialCost: Number(targetMatCost.toFixed(2)),
             laborCost: Number(targetLabCost.toFixed(2)),
             customOverhead: Number(targetOverhead.toFixed(2)),
+            overheadItemsSum: Number(targetOhItemsSum.toFixed(2)),
             totalUnitCost: Number(targetTotal.toFixed(2))
         };
 
@@ -437,6 +604,8 @@ export async function GET(request: Request) {
             bomComparison: componentDiffs,
             routingDiffs,
             routingComparison: routingDiffs,
+            laborDiffs: allLaborDiffs,
+            overheadDiffs: allOverheadDiffs,
             costImpact
         });
     } catch (e) {

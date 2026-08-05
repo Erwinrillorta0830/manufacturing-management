@@ -237,7 +237,7 @@ export function useFinishedGoods(initialTab: string = "details") {
     // Keep the full hierarchy in state so searching for a child can still
     // render its parent in the catalog tree.
     useEffect(() => {
-        const finishedGoods = allCatalogProducts.filter((p: BFFCatalogProduct) => Number(p.product_type) === 388);
+        const finishedGoods = allCatalogProducts.filter((p: BFFCatalogProduct) => !p.product_type || Number(p.product_type) === 388);
 
         const mapped: Product[] = finishedGoods.map((p: BFFCatalogProduct) => {
             const parentId = p.parent_id && typeof p.parent_id === "object"
@@ -417,6 +417,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                         base_quantity: versionObj.base_quantity,
                         expected_yield_percentage: versionObj.expected_yield_percentage,
                         custom_overhead: versionObj.custom_overhead ?? 0,
+                        overhead_items: (versionObj as any).overhead_items || [],
+                        labor_positions: (versionObj as any).labor_positions || [],
                         status: versionObj.status,
                         uom_id: versionObj.uom_id,
                         valid_from: versionObj.valid_from,
@@ -820,15 +822,39 @@ export function useFinishedGoods(initialTab: string = "details") {
             return;
         }
 
+        const fallbackBrandId = Number(brands[0]?.brand_id ?? (brands[0] as any)?.id ?? 0);
+        const fallbackCategoryId = Number(categories[0]?.category_id ?? (categories[0] as any)?.id ?? 0);
+        const fallbackUomId = Number(units[0]?.unit_id ?? (units[0] as any)?.id ?? 0);
+
+        const rawBrand = editedDetails.product_brand ?? (selectedProduct as any)?.product_brand ?? (selectedProduct as any)?.brand_id;
+        const parsedBrand = typeof rawBrand === "object" && rawBrand !== null ? Number(rawBrand.brand_id ?? rawBrand.id) : Number(rawBrand);
+        const brandId = Number.isFinite(parsedBrand) && parsedBrand > 0 ? parsedBrand : fallbackBrandId;
+
+        const rawCat = editedDetails.product_category ?? (selectedProduct as any)?.product_category ?? (selectedProduct as any)?.category_id;
+        const parsedCat = typeof rawCat === "object" && rawCat !== null ? Number(rawCat.category_id ?? rawCat.id) : Number(rawCat);
+        const categoryId = Number.isFinite(parsedCat) && parsedCat > 0 ? parsedCat : fallbackCategoryId;
+
         const matchedUnit = units.find(u => u.unit_shortcut === editedDetails.baseUom);
+        const rawUom = matchedUnit?.unit_id ?? (editedDetails as any)?.uom_id ?? (selectedProduct as any)?.unit_of_measurement ?? (selectedProduct as any)?.uom_id;
+        const parsedUom = typeof rawUom === "object" && rawUom !== null ? Number(rawUom.unit_id ?? rawUom.id) : Number(rawUom);
+        const uomId = Number.isFinite(parsedUom) && parsedUom > 0 ? parsedUom : fallbackUomId;
+
+        const uomCount = Number(editedDetails.unit_of_measurement_count ?? (selectedProduct as any)?.unit_of_measurement_count ?? (selectedProduct as any)?.uom_count ?? 1);
+        const densityFactor = Number(editedDetails.densityFactor ?? (selectedProduct as any)?.densityFactor ?? (selectedProduct as any)?.density_factor ?? 1);
+        const shelfLife = Number(editedDetails.product_shelf_life ?? (selectedProduct as any)?.product_shelf_life ?? (selectedProduct as any)?.shelf_life ?? 365);
+        const expectedYield = Number(editedDetails.expectedYieldPercent ?? editedVersionDetails?.expected_yield_percentage ?? (selectedProduct as any)?.expectedYieldPercent ?? 100);
+
         const editValidationInput = {
             ...editedDetails,
-            productBrand: editedDetails.product_brand,
-            productCategory: editedDetails.product_category,
-            unitOfMeasurementCount: editedDetails.unit_of_measurement_count,
-            productShelfLife: editedDetails.product_shelf_life,
-            unit_of_measurement: matchedUnit?.unit_id,
-            expected_yield_percentage: editedDetails.expectedYieldPercent
+            title: editedDetails.title || selectedProduct?.title || "Untitled Product",
+            sku: editedDetails.sku || selectedProduct?.sku || `SKU-${numericProductId}`,
+            productBrand: brandId > 0 ? brandId : (fallbackBrandId > 0 ? fallbackBrandId : undefined),
+            productCategory: categoryId > 0 ? categoryId : (fallbackCategoryId > 0 ? fallbackCategoryId : undefined),
+            unitOfMeasurementCount: uomCount > 0 ? uomCount : 1,
+            productShelfLife: shelfLife > 0 ? shelfLife : 365,
+            densityFactor: densityFactor > 0 ? densityFactor : 1,
+            unit_of_measurement: uomId > 0 ? uomId : (fallbackUomId > 0 ? fallbackUomId : undefined),
+            expected_yield_percentage: expectedYield > 0 && expectedYield <= 100 ? expectedYield : 100
         };
         const validationErrors = getProductEditValidationErrors(editValidationInput) as EditProductFieldErrors;
         if (Object.keys(validationErrors).length > 0) {
@@ -904,6 +930,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                 uom_id: editedVersionDetails.uom_id || null,
                 expected_yield_percentage: validatedDetails.expectedYield,
                 custom_overhead: Number(editedVersionDetails.custom_overhead ?? 0),
+                overhead_items: editedVersionDetails.overhead_items || [],
+                labor_positions: editedVersionDetails.labor_positions || [],
                 status: editedVersionDetails.status || "For Approval",
                 valid_from: editedVersionDetails.valid_from || null,
                 valid_to: editedVersionDetails.valid_to || null,

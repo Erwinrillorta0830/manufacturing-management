@@ -2,8 +2,8 @@
 "use client";
 
 import React from "react";
-import { Plus, Trash2, Shield, Settings, DollarSign, Clock, Layers } from "lucide-react";
-import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit } from "../types";
+import { Plus, Trash2, Shield, Settings, Clock, Layers, Users, Briefcase } from "lucide-react";
+import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit, VersionLaborPosition } from "../types";
 import { BOMMaterialSelect } from "./BOMMaterialSelect";
 import { MaterialTypeSelect } from "./MaterialTypeSelect";
 import { CreatableSelect } from "./CreatableSelect";
@@ -72,6 +72,97 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         }));
     }, [workCenters]);
 
+    const [productionPositions, setProductionPositions] = React.useState<any[]>([]);
+
+    React.useEffect(() => {
+        fetch("/api/manufacturing/finished-goods/positions")
+            .then((res) => (res.ok ? res.json() : []))
+            .then((data) => {
+                if (Array.isArray(data)) setProductionPositions(data);
+            })
+            .catch((err) => console.error("Error loading production positions:", err));
+    }, []);
+
+    const positionOptions = React.useMemo(() => {
+        return productionPositions.map(p => {
+            const daily = Number(p.daily_rate || 505);
+            const hourly = Number(p.hourly_rate || (daily / 8) || 63.13);
+            return {
+                value: p.position_name,
+                label: `${p.position_name} (₱${daily.toFixed(2)}/day | ₱${hourly.toFixed(2)}/hr)`
+            };
+        });
+    }, [productionPositions]);
+
+    // Version-Level Direct Labor Standards Handlers
+    const handleAddVersionLaborPosition = () => {
+        if (!setEditedVersionDetails) return;
+        const defaultPos = productionPositions[0];
+        const daily = defaultPos ? Number(defaultPos.daily_rate || 505) : 505;
+        const hourly = defaultPos ? Number(defaultPos.hourly_rate || (daily / 8) || 63.13) : 63.13;
+        const newPos: VersionLaborPosition = {
+            id: `vpos-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            position_name: defaultPos?.position_name || "OPERATOR",
+            manpower_count: 1,
+            hourly_rate: hourly,
+            daily_rate: daily,
+            hours_required: 1
+        };
+        const currentList = editedVersionDetails?.labor_positions || [];
+        setEditedVersionDetails((prev: any) => ({
+            ...prev,
+            labor_positions: [...currentList, newPos]
+        }));
+        setHasUnsavedChanges(true);
+    };
+
+    const handleUpdateVersionLaborPosition = (index: number, field: keyof VersionLaborPosition, value: any) => {
+        if (!setEditedVersionDetails) return;
+        const currentList = [...(editedVersionDetails?.labor_positions || [])];
+        if (!currentList[index]) return;
+
+        let updatedItem = { ...currentList[index], [field]: value };
+
+        if (field === "position_name") {
+            const match = productionPositions.find(p => p.position_name.toLowerCase() === String(value).toLowerCase());
+            if (match) {
+                const daily = Number(match.daily_rate || 505);
+                const hourly = Number(match.hourly_rate || (daily / 8) || 63.13);
+                updatedItem.position_id = match.id || null;
+                updatedItem.daily_rate = daily;
+                updatedItem.hourly_rate = hourly;
+            }
+        } else if (field === "hourly_rate") {
+            const hRate = parseFloat(value);
+            if (!isNaN(hRate)) {
+                updatedItem.daily_rate = Math.round(hRate * 8 * 100) / 100;
+            }
+        } else if (field === "daily_rate") {
+            const dRate = parseFloat(value);
+            if (!isNaN(dRate)) {
+                updatedItem.hourly_rate = Math.round((dRate / 8) * 100) / 100;
+            }
+        }
+
+        currentList[index] = updatedItem;
+        setEditedVersionDetails((prev: any) => ({
+            ...prev,
+            labor_positions: currentList
+        }));
+        setHasUnsavedChanges(true);
+    };
+
+    const handleDeleteVersionLaborPosition = (index: number) => {
+        if (!setEditedVersionDetails) return;
+        const currentList = [...(editedVersionDetails?.labor_positions || [])];
+        const updatedList = currentList.filter((_, idx) => idx !== index);
+        setEditedVersionDetails((prev: any) => ({
+            ...prev,
+            labor_positions: updatedList
+        }));
+        setHasUnsavedChanges(true);
+    };
+
     const handleCreateOperationType = async (name: string, routeId: number) => {
         try {
             const res = await fetch("/api/manufacturing/finished-goods/operations", {
@@ -85,7 +176,6 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                     const newOp = data.operation;
                     handleUpdateRoute(routeId, "operation_id", newOp.id);
 
-                    // Refresh operations types list in the parent hook
                     const refreshRes = await fetch("/api/manufacturing/finished-goods/operations");
                     if (refreshRes.ok && setOperationTypes) {
                         setOperationTypes(await refreshRes.json());
@@ -202,6 +292,24 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         }));
     }, [units]);
 
+    // Derived Version Direct Labor Calculations
+    const versionLaborPositions: VersionLaborPosition[] = editedVersionDetails?.labor_positions || [];
+    const baseQuantity = Number(editedVersionDetails?.base_quantity) > 0 ? Number(editedVersionDetails.base_quantity) : 1;
+    const unitShortcut = units.find(u => u.unit_id === editedVersionDetails?.uom_id)?.unit_shortcut || "Units";
+
+    const totalLaborBatchCost = React.useMemo(() => {
+        return versionLaborPositions.reduce((sum, pos) => {
+            const count = Number(pos.manpower_count) || 0;
+            const rate = Number(pos.hourly_rate) || 0;
+            const hours = Number(pos.hours_required) || 0;
+            return sum + (count * rate * hours);
+        }, 0);
+    }, [versionLaborPositions]);
+
+    const laborCostPerUnit = baseQuantity > 0 ? totalLaborBatchCost / baseQuantity : 0;
+    const totalManpowerCount = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.manpower_count) || 0), 0);
+    const totalLaborHoursRequired = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.hours_required) || 0), 0);
+
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -210,83 +318,91 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                     <p className="text-xs text-muted-foreground">Configure the sequence of operations, setup times, work centers, and assign raw materials directly under each step.</p>
                 </div>
                 <Button
+                    id="add-route-step-top-btn"
+                    aria-label="Add Route Step"
                     onClick={handleAddRoute}
-                    className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg"
+                    className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg cursor-pointer"
                 >
                     <Plus className="h-3.5 w-3.5" /> Add Route Step
                 </Button>
             </div>
 
             {editedVersionDetails && setEditedVersionDetails && (
-                <div className="bg-card border border-border/85 rounded-xl p-5 shadow-xs space-y-4">
-                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 border-b pb-2">
-                        <Layers className="h-4 w-4 text-primary/80" /> BOM Version Specifications
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase">Version Name</label>
-                            <input
-                                type="text"
-                                value={editedVersionDetails.version_name || ""}
-                                onChange={e => {
-                                    setEditedVersionDetails((prev: any) => ({ ...prev, version_name: e.target.value }));
-                                    setHasUnsavedChanges(true);
-                                }}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase">Base Quantity (Batch Size)</label>
-                            <div className="relative">
+                <div className="space-y-4">
+                    {/* BOM Version Specifications Card */}
+                    <div className="bg-card border border-border/85 rounded-xl p-5 shadow-xs space-y-4">
+                        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 border-b pb-2">
+                            <Layers className="h-4 w-4 text-primary/80" /> BOM Version Specifications
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-1">
+                                <label htmlFor="version-name-input" className="text-[11px] font-bold text-muted-foreground uppercase">Version Name</label>
                                 <input
-                                    type="number"
-                                    step="0.0001"
-                                    value={editedVersionDetails.base_quantity !== undefined ? editedVersionDetails.base_quantity : 1}
+                                    id="version-name-input"
+                                    type="text"
+                                    value={editedVersionDetails.version_name || ""}
                                     onChange={e => {
-                                        setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parseFloat(e.target.value) || 0 }));
+                                        setEditedVersionDetails((prev: any) => ({ ...prev, version_name: e.target.value }));
                                         setHasUnsavedChanges(true);
                                     }}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all pr-12"
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
                                 />
-                                <span className="absolute right-3 top-2.5 text-xs font-semibold text-muted-foreground">
-                                    {units.find(u => u.unit_id === editedVersionDetails.uom_id)?.unit_shortcut || "Units"}
-                                </span>
+                            </div>
+                            <div className="space-y-1">
+                                <label htmlFor="version-base-qty-input" className="text-[11px] font-bold text-muted-foreground uppercase">Base Quantity (Batch Size)</label>
+                                <div className="relative">
+                                    <input
+                                        id="version-base-qty-input"
+                                        type="number"
+                                        step="0.0001"
+                                        value={editedVersionDetails.base_quantity !== undefined ? editedVersionDetails.base_quantity : 1}
+                                        onChange={e => {
+                                            setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parseFloat(e.target.value) || 0 }));
+                                            setHasUnsavedChanges(true);
+                                        }}
+                                        className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all pr-12"
+                                    />
+                                    <span className="absolute right-3 top-2.5 text-xs font-semibold text-muted-foreground">
+                                        {unitShortcut}
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label htmlFor="version-expected-yield-input" className="text-[11px] font-bold text-muted-foreground uppercase">Expected Yield (%)</label>
+                                <input
+                                    id="version-expected-yield-input"
+                                    type="number"
+                                    step="0.01"
+                                    min="1"
+                                    max="100"
+                                    value={editedVersionDetails.expected_yield_percentage !== undefined ? editedVersionDetails.expected_yield_percentage : 100}
+                                    onChange={e => {
+                                        setEditedVersionDetails((prev: any) => ({ ...prev, expected_yield_percentage: parseFloat(e.target.value) || 0 }));
+                                        setHasUnsavedChanges(true);
+                                    }}
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                />
                             </div>
                         </div>
-                        <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase">Expected Yield (%)</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="1"
-                                max="100"
-                                value={editedVersionDetails.expected_yield_percentage !== undefined ? editedVersionDetails.expected_yield_percentage : 100}
-                                onChange={e => {
-                                    setEditedVersionDetails((prev: any) => ({ ...prev, expected_yield_percentage: parseFloat(e.target.value) || 0 }));
-                                    setHasUnsavedChanges(true);
-                                }}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                            />
-                        </div>
+                        {editedRoutes.length > 0 && (
+                            <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+                                <div>
+                                    <span className="font-semibold text-foreground">Line Bottleneck Capacity: </span>
+                                    <span className="font-mono text-primary bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
+                                        {Math.min(...editedRoutes.map(r => Number(r.step_batch_size || 1))).toFixed(4)}{" "}
+                                        {unitShortcut}/hour
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="font-semibold text-foreground">Average Work Center Capacity: </span>
+                                    <span className="font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/30">
+                                        {(editedRoutes.reduce((sum, r) => sum + Number(r.step_batch_size || 1), 0) / editedRoutes.length).toFixed(4)}{" "}
+                                        {unitShortcut}/hour
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    {editedRoutes.length > 0 && (
-                        <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                            <div>
-                                <span className="font-semibold text-foreground">Line Bottleneck Capacity: </span>
-                                <span className="font-mono text-primary bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
-                                    {Math.min(...editedRoutes.map(r => Number(r.step_batch_size || 1))).toFixed(4)}{" "}
-                                    {units.find(u => u.unit_id === editedVersionDetails.uom_id)?.unit_shortcut || "Units"}/hour
-                                </span>
-                            </div>
-                            <div>
-                                <span className="font-semibold text-foreground">Average Work Center Capacity: </span>
-                                <span className="font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/30">
-                                    {(editedRoutes.reduce((sum, r) => sum + Number(r.step_batch_size || 1), 0) / editedRoutes.length).toFixed(4)}{" "}
-                                    {units.find(u => u.unit_id === editedVersionDetails.uom_id)?.unit_shortcut || "Units"}/hour
-                                </span>
-                            </div>
-                        </div>
-                    )}
                 </div>
             )}
 
@@ -295,7 +411,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                     <Layers className="h-10 w-10 text-muted-foreground opacity-40 mb-3" />
                     <h4 className="text-sm font-medium text-foreground">No route steps added yet</h4>
                     <p className="text-xs text-muted-foreground mt-1 max-w-xs">Route steps outline the physical workstations and operations required to produce this version.</p>
-                    <Button onClick={handleAddRoute} variant="outline" size="sm" className="mt-4 text-xs">
+                    <Button id="create-first-step-btn" aria-label="Create First Step" onClick={handleAddRoute} variant="outline" size="sm" className="mt-4 text-xs cursor-pointer">
                         Create First Step
                     </Button>
                 </div>
@@ -306,7 +422,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                         return (
                             <div
                                 key={r.route_id}
-                                className="rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden border-muted/50"
+                                className="rounded-xl border bg-card text-card-foreground shadow-xs overflow-hidden border-muted/50"
                             >
                                 {/* Header */}
                                 <div className="flex justify-between items-center px-4 py-3 bg-muted/10 border-b border-muted/50">
@@ -320,6 +436,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         <div className="flex items-center gap-1 text-xs">
                                             <span className="text-muted-foreground">Seq:</span>
                                             <input
+                                                id={`route-seq-input-${r.route_id}`}
+                                                aria-label={`Sequence order for step ${stepNum}`}
                                                 type="number"
                                                 value={r.sequence_order}
                                                 onChange={(e) => handleUpdateRoute(r.route_id, "sequence_order", parseInt(e.target.value) || 0)}
@@ -327,10 +445,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             />
                                         </div>
                                         <Button
+                                            id={`delete-route-btn-${r.route_id}`}
+                                            aria-label={`Delete Route Step ${stepNum}`}
                                             variant="ghost"
                                             size="icon"
                                             onClick={() => handleDeleteRoute(r.route_id)}
-                                            className="h-7 w-7 text-destructive hover:bg-destructive/15 rounded-md"
+                                            className="h-7 w-7 text-destructive hover:bg-destructive/15 rounded-md cursor-pointer"
                                         >
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
@@ -341,7 +461,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                 <div className="p-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                                     {/* Operation */}
                                     <div className="space-y-1 flex flex-col justify-end">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
+                                        <label htmlFor={`route-op-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
                                             <Settings className="h-3 w-3" /> Operation
                                         </label>
                                         <CreatableSelect
@@ -358,7 +478,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
                                     {/* Work Center */}
                                     <div className="space-y-1 flex flex-col justify-end">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
+                                        <label htmlFor={`route-wc-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
                                             <Layers className="h-3 w-3" /> Work Station / Center
                                         </label>
                                         <CreatableSelect
@@ -386,12 +506,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
                                     {/* Setup Time */}
                                     <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
+                                        <label htmlFor={`setup-time-h-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Clock className="h-3 w-3" /> Setup Time (hh&quot;mm&quot;ss)
                                         </label>
                                         <div className="flex items-center gap-1 bg-slate-950/20 px-2 h-9 rounded-lg border border-muted focus-within:ring-1 focus-within:ring-primary focus-within:bg-background w-full">
                                             {/* Hours */}
                                             <input
+                                                id={`setup-time-h-${r.route_id}`}
+                                                aria-label={`Setup time hours for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 value={Math.floor(Math.round((r.setup_time_hours || 0) * 3600) / 3600) || ""}
@@ -408,6 +530,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
                                             {/* Minutes */}
                                             <input
+                                                id={`setup-time-m-${r.route_id}`}
+                                                aria-label={`Setup time minutes for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 max="59"
@@ -425,6 +549,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
                                             {/* Seconds */}
                                             <input
+                                                id={`setup-time-s-${r.route_id}`}
+                                                aria-label={`Setup time seconds for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 max="59"
@@ -444,12 +570,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
                                     {/* Run Time */}
                                     <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
+                                        <label htmlFor={`run-time-h-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Clock className="h-3 w-3" /> Run Time (hh&quot;mm&quot;ss)
                                         </label>
                                         <div className="flex items-center gap-1 bg-slate-950/20 px-2 h-9 rounded-lg border border-muted focus-within:ring-1 focus-within:ring-primary focus-within:bg-background w-full">
                                             {/* Hours */}
                                             <input
+                                                id={`run-time-h-${r.route_id}`}
+                                                aria-label={`Run time hours for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 value={Math.floor(Math.round((r.run_time_hours || 0) * 3600) / 3600) || ""}
@@ -466,6 +594,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
                                             {/* Minutes */}
                                             <input
+                                                id={`run-time-m-${r.route_id}`}
+                                                aria-label={`Run time minutes for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 max="59"
@@ -483,6 +613,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
                                             {/* Seconds */}
                                             <input
+                                                id={`run-time-s-${r.route_id}`}
+                                                aria-label={`Run time seconds for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
                                                 max="59"
@@ -502,10 +634,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
                                     {/* Step Batch Size */}
                                     <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
+                                        <label htmlFor={`step-batch-size-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Layers className="h-3 w-3" /> Step Batch Size
                                         </label>
                                         <input
+                                            id={`step-batch-size-${r.route_id}`}
+                                            aria-label={`Step batch size for step ${stepNum}`}
                                             type="number"
                                             value={r.step_batch_size ?? 1}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "step_batch_size", parseFloat(e.target.value) || 1)}
@@ -515,10 +649,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
 
                                     {/* QA Template */}
                                     <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
+                                        <label htmlFor={`qa-template-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Shield className="h-3 w-3" /> QA Template (Checklist)
                                         </label>
                                         <select
+                                            id={`qa-template-select-${r.route_id}`}
+                                            aria-label={`QA Template for step ${stepNum}`}
                                             value={r.qa_template_id || ""}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "qa_template_id", e.target.value ? parseInt(e.target.value) : null)}
                                             className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
@@ -541,10 +677,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         <div className="text-center py-6 border border-dashed rounded-lg border-muted bg-card">
                                             <p className="text-xs text-muted-foreground">No ingredients linked to this routing step yet.</p>
                                             <Button
+                                                id={`add-ingredient-empty-btn-${r.route_id}`}
+                                                aria-label={`Add First Ingredient for step ${stepNum}`}
                                                 onClick={() => handleAddIngredient(r.route_id)}
                                                 variant="outline"
                                                 size="sm"
-                                                className="mt-2 h-7 text-[10px]"
+                                                className="mt-2 h-7 text-[10px] cursor-pointer"
                                             >
                                                 <Plus className="h-3 w-3 mr-1" /> Add First Ingredient
                                             </Button>
@@ -571,7 +709,6 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                             unitCost: b.cost_per_unit || 0,
                                                             wastagePercent: b.wastage_factor_percentage
                                                         });
-                                                        const classification = materialClassification(b);
                                                         const selectedMaterialType = b.material_type || materialTypeFromProduct(b.product_type, b.has_versions);
                                                         return (
                                                             <tr key={b.id} className="border-b border-muted/50 hover:bg-muted/5">
@@ -605,6 +742,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
                                                                     <input
+                                                                        id={`bom-qty-${b.id}`}
+                                                                        aria-label="Quantity Required"
                                                                         type="number"
                                                                         step="0.0001"
                                                                         value={b.quantity_required}
@@ -629,6 +768,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
                                                                     <input
+                                                                        id={`bom-wastage-${b.id}`}
+                                                                        aria-label="Wastage Percentage"
                                                                         type="number"
                                                                         value={b.wastage_factor_percentage}
                                                                         onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "wastage_factor_percentage", parseFloat(e.target.value) || 0)}
@@ -637,6 +778,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
                                                                     <input
+                                                                        id={`bom-landed-cost-${b.id}`}
+                                                                        aria-label="Landed Cost"
                                                                         type="number"
                                                                         step="0.01"
                                                                         value={b.cost_per_unit || 0}
@@ -644,15 +787,17 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary"
                                                                     />
                                                                 </td>
-                                                                <td className="p-1.5 align-middle text-right font-medium pr-3 text-muted-foreground">
+                                                                <td className="p-1.5 align-middle text-right font-medium pr-3 text-muted-foreground font-mono">
                                                                     ₱{compCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                 </td>
                                                                 <td className="p-1.5 align-middle text-center">
                                                                     <Button
+                                                                        id={`delete-ingredient-btn-${b.id}`}
+                                                                        aria-label="Delete Ingredient"
                                                                         variant="ghost"
                                                                         size="icon"
                                                                         onClick={() => handleDeleteIngredient(r.route_id, b.id)}
-                                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md"
+                                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md cursor-pointer"
                                                                     >
                                                                         <Trash2 className="h-3.5 w-3.5" />
                                                                     </Button>
@@ -664,10 +809,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             </table>
                                             <div className="p-2 border-t border-muted/50 bg-muted/5 flex justify-end">
                                                 <Button
+                                                    id={`add-ingredient-bottom-btn-${r.route_id}`}
+                                                    aria-label={`Add Ingredient for step ${stepNum}`}
                                                     onClick={() => handleAddIngredient(r.route_id)}
                                                     variant="ghost"
                                                     size="sm"
-                                                    className="h-8 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-md inline-flex items-center gap-1"
+                                                    className="h-8 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-md inline-flex items-center gap-1 cursor-pointer"
                                                 >
                                                     <Plus className="h-3.5 w-3.5" /> Add Ingredient
                                                 </Button>

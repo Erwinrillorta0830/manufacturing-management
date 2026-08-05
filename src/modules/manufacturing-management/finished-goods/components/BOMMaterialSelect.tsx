@@ -47,7 +47,7 @@ export function BOMMaterialSelect({
 
     // Resolve the selected product label on mount or value change
     React.useEffect(() => {
-        if (!value) {
+        if (!value || typeof value !== "number" || value <= 0) {
             setSelectedProduct(null);
             return;
         }
@@ -57,71 +57,110 @@ export function BOMMaterialSelect({
             return;
         }
 
+        const controller = new AbortController();
+
         async function fetchSelected() {
             try {
                 // Fetch the product by id or search with excludeRollup for speed
-                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${value}&limit=1&excludeRollup=true`);
+                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${value}&limit=1&excludeRollup=true`, {
+                    signal: controller.signal
+                });
                 if (res.ok) {
                     const data = await res.json();
-                    const found = data.find((p: BFFCatalogProduct) => p.product_id === value);
-                    if (found) {
-                        setSelectedProduct(found);
+                    if (Array.isArray(data)) {
+                        const found = data.find((p: BFFCatalogProduct) => p.product_id === value);
+                        if (found) {
+                            setSelectedProduct(found);
+                        }
                     }
                 }
-            } catch (e) {
-                console.error("Failed to fetch selected product details:", e);
+            } catch (e: unknown) {
+                if ((e as Error)?.name !== "AbortError") {
+                    console.error("Failed to fetch selected product details:", e);
+                }
             }
         }
 
         fetchSelected();
+
+        return () => {
+            controller.abort();
+        };
     }, [value, selectedProduct]);
 
     // Load initial recommendations when popover opens
     React.useEffect(() => {
         if (!open) return;
 
+        const controller = new AbortController();
+
         async function loadDefaults() {
             setLoading(true);
             try {
-                const res = await fetch("/api/manufacturing/finished-goods/products?limit=50&excludeRollup=true");
+                const res = await fetch("/api/manufacturing/finished-goods/products?limit=50&excludeRollup=true", {
+                    signal: controller.signal
+                });
                 if (res.ok) {
                     const data = await res.json();
-                    setOptions(data);
+                    if (Array.isArray(data)) {
+                        setOptions(data);
+                    }
                 }
-            } catch (e) {
-                console.error("Failed to load default materials list:", e);
+            } catch (e: unknown) {
+                if ((e as Error)?.name !== "AbortError") {
+                    console.error("Failed to load default materials list:", e);
+                }
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) {
+                    setLoading(false);
+                }
             }
         }
         loadDefaults();
+
+        return () => {
+            controller.abort();
+        };
     }, [open]);
 
     // Query matching materials as the user types
     React.useEffect(() => {
         if (!open || !debouncedSearch.trim()) return;
 
+        const controller = new AbortController();
+
         async function searchMaterials() {
             setLoading(true);
             try {
-                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${encodeURIComponent(debouncedSearch.trim())}&limit=30&excludeRollup=true`);
+                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${encodeURIComponent(debouncedSearch.trim())}&limit=30&excludeRollup=true`, {
+                    signal: controller.signal
+                });
                 if (res.ok) {
                     const data = await res.json();
-                    
-                    // Always guarantee the current selection is present in the list
-                    const union = [...data];
-                    if (selectedProduct && !union.some(u => u.product_id === selectedProduct.product_id)) {
-                        union.push(selectedProduct);
+                    if (Array.isArray(data)) {
+                        // Always guarantee the current selection is present in the list
+                        const union = [...data];
+                        if (selectedProduct && !union.some(u => u.product_id === selectedProduct.product_id)) {
+                            union.push(selectedProduct);
+                        }
+                        setOptions(union);
                     }
-                    setOptions(union);
                 }
-            } catch (e) {
-                console.error("Failed searching materials dynamically:", e);
+            } catch (e: unknown) {
+                if ((e as Error)?.name !== "AbortError") {
+                    console.error("Failed searching materials dynamically:", e);
+                }
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) {
+                    setLoading(false);
+                }
             }
         }
         searchMaterials();
+
+        return () => {
+            controller.abort();
+        };
     }, [debouncedSearch, open, selectedProduct]);
 
     const filteredOptions = React.useMemo(() => {

@@ -1,4 +1,4 @@
-const DIRECTUS_URL = process.env.DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
+const DIRECTUS_URL = process.env.DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:3101";
 const DIRECTUS_STATIC_TOKEN = "test";
 
 const headers = {
@@ -100,7 +100,82 @@ const collectionsSchema = [
         name: "manufacturing_routes",
         primaryKey: "route_id",
         fields: [
-            { field: "step_batch_size", type: "float", schema: { is_nullable: true, default_value: 1 } }
+            { field: "step_batch_size", type: "float", schema: { is_nullable: true, default_value: 1 } },
+            { field: "default_manpower", type: "integer", schema: { is_nullable: false, default_value: 1 } },
+            { field: "expected_labor_cost", type: "float", schema: { is_nullable: false, default_value: 0 } }
+        ]
+    },
+    {
+        name: "positions",
+        primaryKey: "id",
+        fields: [
+            { field: "department", type: "integer", schema: { is_nullable: false, default_value: 4 } },
+            { field: "position_name", type: "string", schema: { is_nullable: false, max_length: 255 } },
+            { field: "daily_rate", type: "float", schema: { is_nullable: false, default_value: 1200 } },
+            { field: "created_by", type: "integer", schema: { is_nullable: true } },
+            { field: "created_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "is_active", type: "boolean", schema: { is_nullable: false, default_value: true } },
+            { field: "activated_at", type: "timestamp", schema: { is_nullable: true } }
+        ]
+    },
+    {
+        name: "user",
+        primaryKey: "id",
+        fields: [
+            { field: "position_id", type: "integer", schema: { is_nullable: true } }
+        ]
+    },
+    {
+        name: "manufacturing_route_positions",
+        primaryKey: "id",
+        fields: [
+            { field: "route_id", type: "integer", schema: { is_nullable: false } },
+            { field: "position_id", type: "integer", schema: { is_nullable: true } },
+            { field: "position_name", type: "string", schema: { is_nullable: false, max_length: 255 } },
+            { field: "manpower_count", type: "integer", schema: { is_nullable: false, default_value: 1 } },
+            { field: "hourly_rate", type: "float", schema: { is_nullable: false, default_value: 0 } },
+            { field: "daily_rate", type: "float", schema: { is_nullable: true, default_value: 0 } },
+            { field: "created_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "created_by", type: "integer", schema: { is_nullable: true } },
+            { field: "updated_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "updated_by", type: "integer", schema: { is_nullable: true } }
+        ]
+    },
+    {
+        name: "product_version_overheads",
+        primaryKey: "id",
+        fields: [
+            { field: "version_id", type: "integer", schema: { is_nullable: false } },
+            { field: "overhead_type_id", type: "integer", schema: { is_nullable: false } },
+            { field: "cost", type: "float", schema: { is_nullable: false, default_value: 0 } },
+            { field: "allocation_basis", type: "string", schema: { is_nullable: false, default_value: "per_unit", max_length: 50 } },
+            { field: "is_active", type: "boolean", schema: { is_nullable: false, default_value: true } },
+            { field: "remarks", type: "string", schema: { is_nullable: true, max_length: 255 } },
+            { field: "created_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "created_by", type: "integer", schema: { is_nullable: true } },
+            { field: "updated_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "updated_by", type: "integer", schema: { is_nullable: true } }
+        ]
+    },
+    {
+        name: "chart_of_accounts",
+        primaryKey: "coa_id",
+        fields: [
+            { field: "gl_code", type: "string", schema: { is_nullable: true, max_length: 255 } },
+            { field: "account_title", type: "string", schema: { is_nullable: true, max_length: 255 } },
+            { field: "description", type: "text", schema: { is_nullable: true } },
+            { field: "status", type: "string", schema: { is_nullable: false, default_value: "approved" } }
+        ]
+    },
+    {
+        name: "overhead_types",
+        primaryKey: "id",
+        fields: [
+            { field: "overhead_name", type: "string", schema: { is_nullable: false, max_length: 255 } },
+            { field: "coa_id", type: "integer", schema: { is_nullable: true } },
+            { field: "description", type: "string", schema: { is_nullable: true, max_length: 255 } },
+            { field: "created_at", type: "timestamp", schema: { is_nullable: true } },
+            { field: "created_by", type: "integer", schema: { is_nullable: true } }
         ]
     }
 ];
@@ -170,13 +245,26 @@ async function runMigration() {
                     } else {
                         console.log(`Successfully created field ${fieldInfo.field}`);
                     }
-                } else {
-                    console.log(`Field ${fieldInfo.field} already exists on ${config.name}.`);
                 }
             }
         } catch (error) {
             console.error(`Error migrating collection ${config.name}:`, error.message);
         }
+    }
+
+    // Grant public permissions (role: null) for positions
+    const actions = ["read", "create", "update"];
+    for (const action of actions) {
+        await fetch(`${DIRECTUS_URL}/permissions`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                role: null,
+                collection: "positions",
+                action,
+                fields: ["*"]
+            })
+        }).catch(() => {});
     }
 
     console.log("\nDirectus schema migration completed!");
