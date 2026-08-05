@@ -506,6 +506,7 @@ export default function IncomingShipments({
     const [itemsPerPage, setItemsPerPage] = useState(5);
     const [hasSubmitted, setHasSubmitted] = useState(false);
     const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
+    const [branchCatalogLoaded, setBranchCatalogLoaded] = useState(false);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
 
@@ -517,8 +518,14 @@ export default function IncomingShipments({
                     setDynamicBranches(data);
                 }
             })
-            .catch(err => console.error("Error fetching branches:", err));
+            .catch(err => console.error("Error fetching branches:", err))
+            .finally(() => setBranchCatalogLoaded(true));
     }, []);
+
+    const branchNamesById = React.useMemo(
+        () => new Map(dynamicBranches.map(branch => [Number(branch.id), branch.branchName])),
+        [dynamicBranches]
+    );
 
     useEffect(() => {
         if (!onServerQueryChange) return;
@@ -1157,14 +1164,10 @@ export default function IncomingShipments({
                                         Destination Branch:{" "}
                                         <strong className="text-foreground font-bold">
                                             {(() => {
-                                                const branchId = (activeShipment as IncomingShipment & { branch_id?: number | null }).branch_id;
-                                                switch (Number(branchId)) {
-                                                    case 183: return "Main Branch";
-                                                    case 163: return "Urdaneta Branch";
-                                                    case 181: return "Bihon Branch";
-                                                    case 182: return "Bihon Bad Branch";
-                                                    default: return branchId ? `Branch #${branchId}` : "Unassigned Branch";
-                                                }
+                                                const branchId = activeShipment.branch_id;
+                                                if (!branchId) return "Unassigned Branch";
+                                                return branchNamesById.get(Number(branchId))
+                                                    || (branchCatalogLoaded ? "Branch unavailable" : "Loading branch...");
                                             })()}
                                         </strong>
                                     </span>
@@ -1434,7 +1437,17 @@ export default function IncomingShipments({
                         </div>
 
                         {/* Informative Note */}
-                        {activeShipment.status !== "Received" && (
+                        {activeShipment.status === "Cancelled" ? (
+                            <div className="flex items-start gap-2.5 rounded-xl border border-zinc-500/20 bg-zinc-500/5 p-4">
+                                <AlertCircle className="mt-0.5 h-4.5 w-4.5 shrink-0 text-zinc-500" />
+                                <div className="space-y-1">
+                                    <h5 className="text-xs font-bold text-zinc-700 dark:text-zinc-300">Purchase Order Cancelled</h5>
+                                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                        This purchase order will not proceed to receiving. Landed-cost allocation and inventory updates are not applicable.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : activeShipment.status !== "Received" ? (
                             <div className="flex items-start gap-2.5 bg-blue-500/5 border border-blue-500/10 p-4 rounded-xl">
                                 <Info className="h-4.5 w-4.5 text-blue-500 shrink-0 mt-0.5" />
                                 <div className="space-y-1">
@@ -1444,7 +1457,7 @@ export default function IncomingShipments({
                                      </p>
                                  </div>
                              </div>
-                         )}
+                        ) : null}
                     </>
                 ) : (
                     <div className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground h-full">
