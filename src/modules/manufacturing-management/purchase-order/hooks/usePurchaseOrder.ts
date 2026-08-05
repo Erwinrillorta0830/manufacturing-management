@@ -73,8 +73,15 @@ export function usePurchaseOrder() {
         setListLoading(true);
         try {
             const result = await fetchPurchaseOrders(query, controller.signal);
+            if (controller.signal.aborted) return [];
             setShipments(result.data);
             setListMeta(result.meta);
+            setSelectedShipment(current => {
+                const refreshedSelection = current
+                    ? result.data.find(item => item.shipment_id === current.shipment_id)
+                    : null;
+                return refreshedSelection || result.data[0] || null;
+            });
             return result.data;
         } catch (error) {
             if ((error as Error).name !== "AbortError") toast.error((error as Error).message || "Failed to load purchase orders.");
@@ -105,6 +112,7 @@ export function usePurchaseOrder() {
             setSelectedShipmentLines([]);
             return;
         }
+        setSelectedShipmentLines([]);
         const controller = new AbortController();
         detailController.current = controller;
         setLoading(true);

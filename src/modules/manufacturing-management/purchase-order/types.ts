@@ -74,6 +74,7 @@ export interface PurchaseOrderApprovalHistory {
     action: string;
     approval_stage: "Plant" | "Finance" | "System";
     actor_id: number;
+    actor_name: string;
     actor_role_id?: number | null;
     remarks?: string | null;
     from_inventory_status?: number | null;

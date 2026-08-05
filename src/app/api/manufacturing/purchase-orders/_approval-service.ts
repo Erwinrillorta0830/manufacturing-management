@@ -61,6 +61,14 @@ interface ApprovalHistoryRow {
     created_at: string;
 }
 
+interface ApprovalActorRow {
+    user_id: number;
+    user_fname?: string | null;
+    user_mname?: string | null;
+    user_lname?: string | null;
+    user_email?: string | null;
+}
+
 const ORDER_FIELDS = [
     "purchase_order_id", "purchase_order_no", "reference", "encoder_id", "approver_id", "finance_id",
     "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
@@ -190,9 +198,42 @@ async function loadHistory(id: number): Promise<ApprovalHistoryRow[]> {
     );
 }
 
+function approvalActorDisplayName(actor: ApprovalActorRow): string {
+    const fullName = [actor.user_fname, actor.user_mname, actor.user_lname]
+        .map(part => typeof part === "string" ? part.trim() : "")
+        .filter(Boolean)
+        .join(" ");
+    return fullName || actor.user_email?.trim() || "Unknown user";
+}
+
+async function loadHistoryActorNames(history: ApprovalHistoryRow[]): Promise<Map<number, string>> {
+    const actorIds = [...new Set(history
+        .map(entry => Number(entry.actor_id))
+        .filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (actorIds.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        fields: "user_id,user_fname,user_mname,user_lname,user_email",
+        limit: String(actorIds.length)
+    });
+    params.set("filter[user_id][_in]", actorIds.join(","));
+    const actors = await directusData<ApprovalActorRow[]>(
+        `/items/user?${params.toString()}`,
+        "Unable to load approval actor names."
+    );
+
+    return new Map(actors.map(actor => [
+        Number(actor.user_id),
+        approvalActorDisplayName(actor)
+    ]));
+}
+
 export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?: ApprovalStage) {
     const [order, categoryIds, history] = await Promise.all([loadOrder(id), loadCategoryIds(id), loadHistory(id)]);
-    const rule = await resolveRule(order, categoryIds);
+    const [rule, actorNames] = await Promise.all([
+        resolveRule(order, categoryIds),
+        loadHistoryActorNames(history)
+    ]);
     const state = approvalState(order, rule.requiresFinance);
     const pendingStages = pendingPurchaseOrderApprovalStages(state);
     return {
@@ -209,7 +250,10 @@ export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?
             snapshot: rule.snapshot
         },
         categoryIds,
-        history
+        history: history.map(entry => ({
+            ...entry,
+            actor_name: actorNames.get(Number(entry.actor_id)) || "Unknown user"
+        }))
     };
 }
 
