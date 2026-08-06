@@ -54,7 +54,7 @@ function resizeLotAllocations(
 }
 
 function isLockedReceivingShipment(shipment: Shipment | null): boolean {
-    return shipment?.status === "Received" || shipment?.status === "Partially Received";
+    return shipment?.status === "Received";
 }
 
 export function useQAReceiving() {
@@ -292,57 +292,38 @@ export function useQAReceiving() {
             lines.forEach(l => {
                 const prodName = l.product_id?.product_name?.toLowerCase() || "";
                 const latestReceipt = isReceived || isPartiallyReceived ? l.latest_receipt : null;
-                const latestReceivedQuantity = Number(latestReceipt?.received_quantity ?? l.quantity_received ?? 0);
-                const latestAcceptedQuantity = Number(latestReceipt?.accepted_quantity ?? Math.max(0, latestReceivedQuantity - Number(l.quantity_rejected || 0)));
-                const latestRejectedQuantity = Number(latestReceipt?.rejected_quantity ?? l.quantity_rejected ?? 0);
                 const latestStorageLotId = latestReceipt?.storage_lot_id ?? l.lot_id ?? null;
-                const latestAcceptedAllocations = latestReceipt?.accepted_lot_allocations?.length
-                    ? latestReceipt.accepted_lot_allocations.map(allocation => ({
-                        storageLotId: String(allocation.storage_lot_id),
-                        quantity: allocation.quantity
-                    }))
-                    : latestStorageLotId && latestAcceptedQuantity > 0
-                        ? [{ storageLotId: String(latestStorageLotId), quantity: latestAcceptedQuantity }]
-                        : [];
-                const latestRejectedAllocations = latestReceipt?.rejected_lot_allocations?.length
-                    ? latestReceipt.rejected_lot_allocations.map(allocation => ({
-                        storageLotId: String(allocation.storage_lot_id),
-                        quantity: allocation.quantity
-                    }))
-                    : latestStorageLotId && latestRejectedQuantity > 0
-                        ? [{ storageLotId: String(latestStorageLotId), quantity: latestRejectedQuantity }]
-                        : [];
                 // Guess if packaging based on name context
                 const isPkg = prodName.includes("box") || prodName.includes("bottle") || prodName.includes("cap") || prodName.includes("sticker") || prodName.includes("packaging") || prodName.includes("plastic") || prodName.includes("wrapper");
+                
+                const remainingForLine = Math.max(0, Number(l.remaining_quantity ?? (Number(l.quantity_ordered || 0) - Number(l.quantity_received || 0))));
                 
                 rowsInit[l.line_id] = {
                     receivedQty: isReceived
                         ? Number(l.quantity_received || 0)
                         : isPartiallyReceived
-                            ? latestReceivedQuantity
+                            ? (remainingForLine > 0 ? remainingForLine : 0)
                             : "",
                     acceptedQty: isReceived
                         ? Math.max(0, Number(l.quantity_received || 0) - Number(l.quantity_rejected || 0))
                         : isPartiallyReceived
-                            ? latestAcceptedQuantity
+                            ? (remainingForLine > 0 ? remainingForLine : 0)
                             : "",
-                    rejectedQty: isReceived ? Number(l.quantity_rejected || 0) : isPartiallyReceived ? latestRejectedQuantity : 0,
-                    batchNumber: isReceived || isPartiallyReceived ? (latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "") : "",
-                    lotId: (isReceived || isPartiallyReceived) && latestStorageLotId ? String(latestStorageLotId) : "",
+                    rejectedQty: isReceived ? Number(l.quantity_rejected || 0) : 0,
+                    batchNumber: isReceived ? (latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "") : "",
+                    lotId: latestStorageLotId ? String(latestStorageLotId) : "",
                     acceptedLotAllocations: isReceived
                         ? l.lot_id && Number(l.quantity_received || 0) - Number(l.quantity_rejected || 0) > 0
                             ? [{ storageLotId: String(l.lot_id), quantity: Math.max(0, Number(l.quantity_received || 0) - Number(l.quantity_rejected || 0)) }]
                             : []
-                        : isPartiallyReceived
-                            ? latestAcceptedAllocations
+                        : isPartiallyReceived && remainingForLine > 0 && latestStorageLotId
+                            ? [{ storageLotId: String(latestStorageLotId), quantity: remainingForLine }]
                             : [],
                     rejectedLotAllocations: isReceived
                         ? l.lot_id && Number(l.quantity_rejected || 0) > 0
                             ? [{ storageLotId: String(l.lot_id), quantity: Number(l.quantity_rejected || 0) }]
                             : []
-                        : isPartiallyReceived
-                            ? latestRejectedAllocations
-                            : [],
+                        : [],
                     manufacturingDate: isReceived || isPartiallyReceived ? (latestReceipt?.manufacturing_date || l.manufacturing_date || "") : "",
                     expirationDate: isReceived || isPartiallyReceived ? (latestReceipt?.expiration_date || l.expiration_date || "") : "",
                     rejectionReason: latestReceipt?.rejection_reason || l.rejection_reason || "",
@@ -692,8 +673,6 @@ export function useQAReceiving() {
             return;
         }
 
-        let completesPurchaseOrder = true;
-
         // Validation for new fields and QA constraints
         for (const line of lineItems) {
             const row = inspectionRows[line.line_id];
@@ -718,23 +697,11 @@ export function useQAReceiving() {
                 return;
             }
 
-            if (receiptMode === "full" && Math.abs(received - remaining) > 1e-9) {
-                toast.error("Complete the remaining quantities for Full Receipt, or select Partial Receipt.");
-                return;
-            }
-            if (Math.abs(received - remaining) > 1e-9) completesPurchaseOrder = false;
-
             if (received === 0) continue;
 
             // Expiration rule for raw materials
             if (!row.isPackaging && !row.expirationDate && accepted > 0) {
                 toast.error(`Expiration Date is mandatory for Raw Material: ${name}`);
-                return;
-            }
-
-            // Reject counts above the remaining quantity before preview.
-            if (received > remaining) {
-                toast.error(`Received quantity for ${name} (${received.toLocaleString()}) exceeds the remaining quantity (${remaining.toLocaleString()}).`);
                 return;
             }
 
@@ -747,11 +714,6 @@ export function useQAReceiving() {
                 toast.error(`Remarks are mandatory for ${name} due to logistics discrepancy (Received: ${received}, Remaining: ${remaining}).`);
                 return;
             }
-        }
-
-        if (receiptMode === "partial" && completesPurchaseOrder) {
-            toast.error("Partial Receipt requires at least one line to remain below its remaining ordered quantity. Select Full Receipt to complete the PO.");
-            return;
         }
 
         if (!lineItems.some(line => Number(inspectionRows[line.line_id]?.receivedQty || 0) > 0)) {

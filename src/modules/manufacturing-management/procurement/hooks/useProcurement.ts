@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Supplier, SupplierRepresentative, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, RegisterRawMaterialPayload, PackagingVariant, ShipmentData, LineItem } from "../types";
+import { Supplier, SupplierRepresentative, SupplierFormState, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, RegisterRawMaterialPayload, PackagingVariant, ShipmentData, LineItem } from "../types";
 import type { ShipmentFormState, ManifestLineFormItem } from "../components/IncomingShipments";
 import {
     fetchSuppliers,
@@ -42,7 +42,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     // Forms
     const [supplierError, setSupplierError] = useState<string | null>(null);
-    const [supplierForm, setSupplierForm] = useState({
+    const [supplierForm, setSupplierForm] = useState<SupplierFormState>({
         supplier_name: "",
         supplier_shortcut: "",
         tin_number: "",
@@ -57,8 +57,10 @@ export function useProcurement(defaultTab: string = "suppliers") {
         payment_terms: "",
         delivery_terms: "",
         currency: "PHP",
+        default_currency: "PHP",
         notes_or_comments: "",
         nonBuy: false as boolean | number,
+        is_foreign: 0 as number,
         representatives: [] as SupplierRepresentative[]
     });
 
@@ -105,32 +107,24 @@ export function useProcurement(defaultTab: string = "suppliers") {
             const year = new Date().getFullYear();
             const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             
-            let activeRate = "";
-            if (typeof window !== "undefined") {
-                const useLive = localStorage.getItem("vos_use_live_forex") === "true";
-                if (useLive) {
-                    try {
-                        const historyJson = localStorage.getItem("vos_forex_rate_history");
-                        if (historyJson) {
-                            const history = JSON.parse(historyJson);
-                            if (Array.isArray(history) && history.length > 0) {
-                                activeRate = String(history[0].rate || "");
-                            }
-                        }
-                    } catch { }
-                } else {
-                    const locked = localStorage.getItem("vos_locked_forex_rate");
-                    if (locked) {
-                        activeRate = locked;
-                    }
-                }
-            }
-
-            setShipmentForm(prev => ({
-                ...prev,
-                exchange_rate: activeRate,
-                reference_number: prev.reference_number || `PO-${year}-${randomCode}`
-            }));
+            fetch("/api/manufacturing/procurement/forex")
+                .then(res => res.json())
+                .then(data => {
+                    const usdConfig = data?.activeRates?.find((r: { currency_code: string; exchange_rate: number }) => r.currency_code === "USD");
+                    const activeRate = usdConfig?.exchange_rate ? String(usdConfig.exchange_rate) : "58.00";
+                    setShipmentForm(prev => ({
+                        ...prev,
+                        exchange_rate: prev.exchange_rate || activeRate,
+                        reference_number: prev.reference_number || `PO-${year}-${randomCode}`
+                    }));
+                })
+                .catch(() => {
+                    setShipmentForm(prev => ({
+                        ...prev,
+                        exchange_rate: prev.exchange_rate || "58.00",
+                        reference_number: prev.reference_number || `PO-${year}-${randomCode}`
+                    }));
+                });
         } else {
             setShipmentForm({
                 reference_number: "",
@@ -347,15 +341,14 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
 
         try {
-            // Destructure currency so we do not send it directly to database (avoiding column error)
-            const { currency, ...restOfSupplier } = supplierForm;
-            const notes = restOfSupplier.notes_or_comments || "";
-            const currencyTag = `[Currency: ${currency || "PHP"}]`;
-            const finalNotes = notes.trim() ? `${notes.trim()}\n\n${currencyTag}` : currencyTag;
+            const isForeignVal = (Number(supplierForm.is_foreign) === 1 || (supplierForm.is_foreign as unknown) === true || String(supplierForm.currency || supplierForm.default_currency).toUpperCase() === "USD" || (supplierForm.country && supplierForm.country.toLowerCase() !== "philippines" && supplierForm.country.toLowerCase() !== "ph")) ? 1 : 0;
+            const currVal = supplierForm.currency || supplierForm.default_currency || (isForeignVal === 1 ? "USD" : "PHP");
 
             const payload = {
-                ...restOfSupplier,
-                notes_or_comments: finalNotes
+                ...supplierForm,
+                is_foreign: isForeignVal,
+                currency: currVal,
+                default_currency: currVal
             };
 
             if (isEditingSupplier && editingSupplierId) {
@@ -384,8 +377,10 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 payment_terms: "",
                 delivery_terms: "",
                 currency: "PHP",
+                default_currency: "PHP",
                 notes_or_comments: "",
                 nonBuy: false as boolean | number,
+                is_foreign: 0 as number,
                 representatives: []
             });
             setSupplierError(null);
@@ -399,10 +394,15 @@ export function useProcurement(defaultTab: string = "suppliers") {
     };
 
     const handleStartEditSupplier = (supplier: Supplier) => {
-        const notes = supplier.notes_or_comments || "";
-        const match = notes.match(/\[Currency:\s*(\w+)\]/);
-        const currency = match ? match[1] : "PHP";
-        const cleanNotes = notes.replace(/\[Currency:\s*\w+\]/, "").trim();
+        const isForeign = Number(supplier.is_foreign) === 1 || 
+            (supplier.is_foreign as unknown) === true || 
+            String(supplier.default_currency).toUpperCase() === "USD" || 
+            (Boolean(supplier.country) && supplier.country?.toLowerCase() !== "philippines" && supplier.country?.toLowerCase() !== "ph");
+        const defaultCurrency = supplier.default_currency || (isForeign ? "USD" : "PHP");
+        const cleanNotes = (supplier.notes_or_comments || "")
+            .replace(/\[Currency:\s*\w+\]/gi, "")
+            .replace(/\[Foreign:\s*\d+\]/gi, "")
+            .trim();
 
         setSupplierForm({
             supplier_name: supplier.supplier_name || "",
@@ -418,9 +418,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
             postal_code: supplier.postal_code || "",
             payment_terms: supplier.payment_terms || "",
             delivery_terms: supplier.delivery_terms || "",
-            currency: currency,
+            currency: defaultCurrency,
+            default_currency: defaultCurrency,
             notes_or_comments: cleanNotes,
             nonBuy: supplier.nonBuy === 1 || supplier.nonBuy === true,
+            is_foreign: isForeign ? 1 : 0,
             representatives: supplier.representatives || []
         });
 

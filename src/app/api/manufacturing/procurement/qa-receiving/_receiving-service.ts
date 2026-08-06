@@ -474,10 +474,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 rejectedQuantity: rejected
             });
             if (quantityError) throw new ReceivingError(`${quantityError} Product ${productId}.`, 400);
-            if (!Number.isFinite(ordered) || ordered <= 0 || received > remaining + 1e-9) {
-                throw new ReceivingError(`Received quantity for product ${productId} exceeds its remaining quantity of ${remaining}.`, 400);
+            if (!Number.isFinite(ordered) || ordered <= 0) {
+                throw new ReceivingError(`Invalid ordered quantity for product ${productId}.`, 400);
             }
-            if ((received !== remaining || declaredAccepted > received || rejected > 0) && !item.rejection_reason?.trim()) {
+            if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
                 throw new ReceivingError(`Remarks are required for the quantity discrepancy on product ${productId}.`, 400);
             }
             if (declaredAccepted > 0 && relationId(product.product_type, "id") !== 390 && !item.expiration_date) {
@@ -533,19 +533,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             return previous + current < Number(poLine.ordered_quantity || 0) - 1e-9;
         });
         const allLinesAccounted = incompleteFullLines.length === 0;
-        if (receiptMode === "full" && !allLinesAccounted) {
-            const details = incompleteFullLines.map(poLine => {
-                const lineId = Number(poLine.purchase_order_product_id);
-                const previous = previouslyReceivedByLine.get(lineId)?.received || 0;
-                const current = preparedByLine.get(lineId)?.received || 0;
-                const remaining = Math.max(0, Number(poLine.ordered_quantity || 0) - previous);
-                return `${lineId} (remaining ${remaining}, received ${current})`;
-            });
-            throw new ReceivingError(`Full receipt requires every purchase-order line to account for its remaining quantity. Incomplete line(s): ${details.join(", ")}.`, 400);
-        }
-        if (receiptMode === "partial" && allLinesAccounted) {
-            throw new ReceivingError("This receipt completes the purchase order. Select Full Receipt instead.", 400);
-        }
+
 
         const expenses = await fetchShipmentExpenses(shipmentId);
         const allocationMethod = normalizeAllocationMethod(String(expenses[0]?.allocation_method || "Value"));

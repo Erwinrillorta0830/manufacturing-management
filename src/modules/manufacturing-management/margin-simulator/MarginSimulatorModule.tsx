@@ -47,13 +47,6 @@ interface Product {
     product_shelf_life?: number;
 }
 
-interface SandboxState {
-    simYield?: number;
-    forexMultiplier?: number;
-    priceOverrides?: Record<string, number>;
-    importedOverrides?: Record<string, boolean>;
-    targetPrice?: number;
-}
 
 const SIMULATOR_PRODUCTS: Product[] = [
     {
@@ -209,54 +202,19 @@ export default function MarginSimulatorModule() {
         const currentProd = products.find(p => p.id === selectedId);
         if (!currentProd) return;
 
-        // Try loading from localStorage first
-        const savedStateStr = typeof window !== "undefined" ? localStorage.getItem(`margin_sim_sandbox_${selectedId}`) : null;
-        let savedState: SandboxState | null = null;
-        if (savedStateStr) {
-            try {
-                savedState = JSON.parse(savedStateStr);
-            } catch (e) {
-                console.error("Failed to parse saved sandbox state:", e);
-            }
-        }
-
         const applySandboxState = (bomItems: BOMItem[], standardYield: number, standardPrice: number) => {
-            if (savedState) {
-                setSimYield(savedState.simYield !== undefined ? savedState.simYield : standardYield);
-                setForexMultiplier(savedState.forexMultiplier !== undefined ? savedState.forexMultiplier : 1.0);
-                setTargetPrice(savedState.targetPrice !== undefined ? savedState.targetPrice : standardPrice);
+            setSimYield(standardYield);
+            setTargetPrice(standardPrice);
+            setForexMultiplier(1.0);
 
-                // Merge price overrides
-                const mergedPrices: Record<string, number> = {};
-                bomItems.forEach(item => {
-                    mergedPrices[item.id] = savedState.priceOverrides?.[item.id] !== undefined
-                        ? savedState.priceOverrides[item.id]
-                        : item.landedCost;
-                });
-                setPriceOverrides(mergedPrices);
-
-                // Merge imported overrides
-                const mergedImported: Record<string, boolean> = {};
-                bomItems.forEach(item => {
-                    mergedImported[item.id] = savedState.importedOverrides?.[item.id] !== undefined
-                        ? savedState.importedOverrides[item.id]
-                        : !!(item.foreignSourced || item.isForeign);
-                });
-                setImportedOverrides(mergedImported);
-            } else {
-                setSimYield(standardYield);
-                setTargetPrice(standardPrice);
-                setForexMultiplier(1.0);
-
-                const initialPrices: Record<string, number> = {};
-                const initialImported: Record<string, boolean> = {};
-                bomItems.forEach(item => {
-                    initialPrices[item.id] = item.landedCost;
-                    initialImported[item.id] = !!(item.foreignSourced || item.isForeign);
-                });
-                setPriceOverrides(initialPrices);
-                setImportedOverrides(initialImported);
-            }
+            const initialPrices: Record<string, number> = {};
+            const initialImported: Record<string, boolean> = {};
+            bomItems.forEach(item => {
+                initialPrices[item.id] = item.landedCost;
+                initialImported[item.id] = !!(item.foreignSourced || item.isForeign);
+            });
+            setPriceOverrides(initialPrices);
+            setImportedOverrides(initialImported);
             loadedProductIdRef.current = selectedId;
         };
 
@@ -344,20 +302,7 @@ export default function MarginSimulatorModule() {
         loadBOM();
     }, [selectedId, products]);
 
-    // Save simulator parameters to localStorage on change
-    useEffect(() => {
-        if (loadingProducts || loadingBOM || typeof window === "undefined") return;
-        if (loadedProductIdRef.current !== selectedId) return;
 
-        const stateToSave = {
-            simYield,
-            forexMultiplier,
-            priceOverrides,
-            targetPrice,
-            importedOverrides
-        };
-        localStorage.setItem(`margin_sim_sandbox_${selectedId}`, JSON.stringify(stateToSave));
-    }, [selectedId, simYield, forexMultiplier, priceOverrides, targetPrice, importedOverrides, loadingProducts, loadingBOM]);
 
     const handleProductChange = (productId: string) => {
         setSelectedId(productId);
@@ -657,9 +602,6 @@ export default function MarginSimulatorModule() {
     const simulatedMarginPercent = targetPrice > 0 ? (simulatedMarginPhp / targetPrice) * 100 : 0;
 
     const resetSimulation = () => {
-        if (typeof window !== "undefined") {
-            localStorage.removeItem(`margin_sim_sandbox_${selectedId}`);
-        }
         setSimYield(Number(product.expectedYieldPercent) || 100);
         setTargetPrice(product.targetSellingPrice);
         setForexMultiplier(1.0);

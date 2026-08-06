@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { INVENTORY_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS } from "../../procurement/_domain";
+import { RECEIVING_QUEUE_INVENTORY_STATUS_IDS } from "../../procurement/_domain";
 import { procurementDirectusFetch } from "../../procurement/_directus";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
@@ -222,9 +222,6 @@ export async function POST(request: Request) {
 
         const header = (await headerResponse.json()).data as Record<string, unknown>;
         const statusId = positiveInteger(header.inventory_status, "transaction_status_id") || Number(header.inventory_status);
-        if (statusId === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-            throw new ReceivingPreviewError("Partially received purchase orders are view-only and cannot be received again.", 409);
-        }
         if (!RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(eligible => eligible === statusId)) {
             throw new ReceivingPreviewError("The purchase order must be moved to QA (Receiving) before it can be received.", 409);
         }
@@ -275,26 +272,7 @@ export async function POST(request: Request) {
             if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid ordered quantity.`);
             }
-            if (line.receivedQuantity > remainingQuantity + 1e-9) {
-                throw new ReceivingPreviewError(`Line ${line.lineId} exceeds its remaining quantity of ${remainingQuantity}.`);
-            }
             remainingByLine.set(line.lineId, remainingQuantity);
-        }
-        const lineById = new Map(lines.map(line => [line.lineId, line]));
-        const incompleteLineIds = poLineIds.filter(lineId => {
-            const line = lineById.get(lineId);
-            return !line || Math.abs(line.receivedQuantity - (remainingByLine.get(lineId) || 0)) > 1e-9;
-        });
-        const completesPurchaseOrder = incompleteLineIds.length === 0;
-        if (receiptMode === "full" && !completesPurchaseOrder) {
-            const details = incompleteLineIds.map(lineId => {
-                const line = lineById.get(lineId);
-                return `${lineId} (remaining ${remainingByLine.get(lineId) || 0}, received ${line?.receivedQuantity || 0})`;
-            });
-            throw new ReceivingPreviewError(`Full receipt requires every purchase-order line to account for its remaining quantity. Incomplete line(s): ${details.join(", ")}.`);
-        }
-        if (receiptMode === "partial" && completesPurchaseOrder) {
-            throw new ReceivingPreviewError("This receipt completes the purchase order. Select Full Receipt instead.");
         }
 
         const storageLots = rows(await lotResponse.json());
