@@ -277,6 +277,21 @@ export async function POST(request: Request) {
             valid_from: todayStr
         };
 
+        // Enforce global uniqueness of version_name before creating
+        const versionNameDupCheckUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_name][_eq]=${encodeURIComponent(validatedDetails.versionName)}&limit=1&fields=version_id`;
+        const versionNameDupRes = await fetch(versionNameDupCheckUrl, { headers, cache: "no-store" });
+        if (versionNameDupRes.ok) {
+            const versionNameDupJson = await versionNameDupRes.json();
+            if (versionNameDupJson.data && versionNameDupJson.data.length > 0) {
+                // Rollback product
+                await fetch(`${DIRECTUS_URL}/items/products/${productId}`, { method: "DELETE", headers }).catch(() => { });
+                return NextResponse.json(
+                    { error: "A version with this name already exists. Please choose a unique version name.", code: "VERSION_NAME_CONFLICT" },
+                    { status: 409 }
+                );
+            }
+        }
+
         const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
             method: "POST",
             headers,
