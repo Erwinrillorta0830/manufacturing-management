@@ -81,11 +81,18 @@ interface DirectusPO {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    is_posted?: number | boolean | null;
+    is_posted_amounts?: number | boolean | null;
 }
 
 interface DirectusSupplier {
     id: number;
     supplier_name: string;
+    is_foreign?: number | boolean;
+    currency?: string;
+    default_currency?: string;
+    country?: string;
+    notes_or_comments?: string;
 }
 
 interface DirectusPOProduct {
@@ -288,16 +295,18 @@ function mapPurchaseOrder(po: DirectusPO, suppliers: ReadonlyMap<number, Directu
         created_at: po.date_encoded || "",
         branch_id: po.branch_id || null,
         payment_type: po.payment_type || null,
-        price_type: po.price_type || null
-        ,currency_code: po.currency_code || "PHP"
-        ,workflow_revision: Number(po.workflow_revision || 0)
-        ,approver_id: po.approver_id || null
-        ,finance_id: po.finance_id || null
-        ,date_approved: po.date_approved || null
-        ,date_financed: po.date_financed || null
-        ,approval_rule_id: po.approval_rule_id || null
-        ,approval_requires_finance: po.approval_requires_finance == null ? null : Number(po.approval_requires_finance) === 1
-        ,approval_allow_self_approval: po.approval_allow_self_approval == null ? null : Number(po.approval_allow_self_approval) === 1
+        price_type: po.price_type || null,
+        currency_code: po.currency_code || "PHP",
+        workflow_revision: Number(po.workflow_revision || 0),
+        approver_id: po.approver_id || null,
+        finance_id: po.finance_id || null,
+        date_approved: po.date_approved || null,
+        date_financed: po.date_financed || null,
+        approval_rule_id: po.approval_rule_id || null,
+        approval_requires_finance: po.approval_requires_finance == null ? null : Number(po.approval_requires_finance) === 1,
+        approval_allow_self_approval: po.approval_allow_self_approval == null ? null : Number(po.approval_allow_self_approval) === 1,
+        is_posted: po.is_posted === true || Number(po.is_posted) === 1 ? 1 : 0,
+        is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0
     };
 }
 
@@ -305,7 +314,7 @@ async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, Dir
     const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
     if (uniqueIds.length === 0) return new Map();
     const params = new URLSearchParams({
-        fields: "id,supplier_name",
+        fields: "id,supplier_name,is_foreign,currency,country,notes_or_comments",
         limit: String(uniqueIds.length),
         filter: JSON.stringify({ id: { _in: uniqueIds } })
     });
@@ -435,7 +444,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -478,7 +487,7 @@ export async function fetchIncomingShipments(): Promise<unknown[]> {
 export async function fetchShipmentLineItems(shipmentId: number): Promise<ExtendedShipmentLineItem[]> {
     try {
         // Fetch purchase_order_products
-        const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*&limit=-1`;
+        const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*,discount_type.*&limit=-1`;
         const popRes = await fetch(popUrl, { headers, cache: "no-store" });
         if (!popRes.ok) return [];
         const popData = (await popRes.json()).data as DirectusPOProduct[] || [];
@@ -672,6 +681,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 expiration_date: latestSnapshot?.expiration_date || (latestReceipt ? latestReceipt.expiry_date || "" : ""),
                 purchase_intent: pop.purchase_intent || "Buffer_Stock",
                 job_order_id: pop.job_order_id || null,
+                discount_type: pop.discount_type || null,
                 discount_percent: Number(pop.discount_percent || 0),
                 vat_percent: Number(pop.vat_percent || 0),
                 withholding_percent: Number(pop.withholding_percent || 0)

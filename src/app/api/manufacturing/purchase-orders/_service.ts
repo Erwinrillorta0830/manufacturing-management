@@ -327,7 +327,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
 
 export async function fetchPurchaseOrderCatalog() {
     const [suppliers, branches, jobOrders] = await Promise.all([
-        directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
+        directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name,is_foreign,currency,country&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
         directusData<unknown[]>("/items/branches?filter[isActive][_eq]=1&fields=id,branch_name,branch_code&sort=branch_name&limit=200", "Unable to load branches."),
         directusData<unknown[]>("/items/manufacturing_job_orders?fields=job_order_id,job_order_no,status&sort=-job_order_id&limit=250", "Unable to load job orders.")
     ]);

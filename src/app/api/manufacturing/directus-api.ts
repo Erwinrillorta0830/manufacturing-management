@@ -989,6 +989,9 @@ export interface DirectusSupplier {
     supplier_name: string;
     supplier_shortcut?: string | null;
     isActive?: boolean;
+    is_foreign?: number | boolean;
+    currency?: string;
+    country?: string;
 }
 
 /**
@@ -996,7 +999,7 @@ export interface DirectusSupplier {
  */
 export async function fetchSuppliers(): Promise<DirectusSupplier[]> {
     try {
-        const res = await fetch(`${DIRECTUS_URL}/items/suppliers?filter[isActive][_eq]=true&sort=supplier_name&limit=-1`, { headers, cache: "no-store" });
+        const res = await fetch(`${DIRECTUS_URL}/items/suppliers?fields=id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency&filter[isActive][_eq]=true&sort=supplier_name&limit=-1`, { headers, cache: "no-store" });
         if (!res.ok) throw new Error("Failed to fetch suppliers");
         const json = await res.json();
         return json.data || [];

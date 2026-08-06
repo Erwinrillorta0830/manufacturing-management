@@ -51,11 +51,8 @@ async function assertReceivingStatusOpen(shipmentId: number) {
         "Unable to verify the current purchase-order status."
     );
     const status = Number(headerRows[0]?.inventory_status);
-    if (status === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-        throw new CommitError(409, "Partially received purchase orders are view-only and cannot be received again.");
-    }
     if (status === INVENTORY_STATUS.RECEIVED) return;
-    if (status !== INVENTORY_STATUS.FOR_PICKUP) {
+    if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
         throw new CommitError(409, "The purchase order must be moved to QA (Receiving) before it can be received.");
     }
 }
@@ -383,7 +380,7 @@ async function persistedResult(
         receivingRecordIds: receivingIds,
         inventoryLotIds: [...new Set(finalMovements.map(movement => movement.inventoryLotId))],
         allocationIds: finalAllocations.map(allocation => allocation.allocationId),
-        receiptNumbers,
+        receiptNumbers: [...new Set([input.receiptNumber])],
         receivingRecords,
         movements: finalMovements,
         allocations: finalAllocations
@@ -441,9 +438,8 @@ export async function POST(request: Request) {
             const lineId = Number(poLine.purchase_order_product_id);
             const ordered = Number(poLine.ordered_quantity || 0);
             const previewLine = previewByLine.get(lineId);
-            const remaining = Number(previewLine?.remainingQuantity);
-            if (!Number.isFinite(ordered) || ordered <= 0 || !previewLine || previewLine.receivedQuantity > remaining + 1e-9) {
-                throw new CommitError(422, `Line ${lineId} exceeds its remaining receivable quantity.`);
+            if (!Number.isFinite(ordered) || ordered <= 0 || !previewLine) {
+                throw new CommitError(422, `Line ${lineId} is invalid for receiving.`);
             }
         }
 

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/popover";
 
 export interface CreatableSelectProps {
-    options: { value: string; label: string }[];
+    options: { value: string; label: string; labelNode?: React.ReactNode }[];
     value?: string;
     onValueChange: (value: string) => void;
     placeholder?: string;
@@ -56,9 +56,9 @@ export function CreatableSelect({
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
 
-    // Find the label for the current value
-    const selectedLabel = React.useMemo(() => {
-        return options.find((opt) => opt.value === value)?.label;
+    // Find the selected option object for the current value
+    const selectedOption = React.useMemo(() => {
+        return options.find((opt) => opt.value === value);
     }, [options, value]);
 
     const handleCreate = async () => {
@@ -92,7 +92,7 @@ export function CreatableSelect({
                         type="text"
                         disabled={disabled}
                         placeholder={placeholder}
-                        value={open ? searchQuery : (selectedLabel || "")}
+                        value={open ? searchQuery : (selectedOption?.label || "")}
                         onChange={(e) => {
                             setSearchQuery(e.target.value);
                             setOpen(true);
@@ -141,7 +141,9 @@ export function CreatableSelect({
                         onKeyDown={onKeyDown}
                         data-index={dataIndex}
                     >
-                        <span className="truncate">{selectedLabel || placeholder}</span>
+                        <span className="truncate w-full text-left">
+                            {selectedOption ? (selectedOption.labelNode || selectedOption.label) : placeholder}
+                        </span>
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                 </PopoverTrigger>
@@ -178,25 +180,31 @@ export function CreatableSelect({
                             </CommandEmpty>
                         )}
                         <CommandGroup>
-                            {filteredOptions.map((opt) => (
-                                <CommandItem
-                                    key={opt.value}
-                                    value={opt.value}
-                                    onSelect={() => {
-                                        onValueChange(opt.value);
-                                        setOpen(false);
-                                        setSearchQuery("");
-                                    }}
-                                >
-                                    <Check
-                                        className={cn(
-                                            "mr-2 h-4 w-4",
-                                            value === opt.value ? "opacity-100" : "opacity-0"
-                                        )}
-                                    />
-                                    {opt.label}
-                                </CommandItem>
-                            ))}
+                            {filteredOptions.map((opt, idx) => {
+                                const itemKey = (opt.value != null && opt.value !== "") ? opt.value : `opt-${idx}`;
+                                const searchValue = `${opt.label} ${opt.value ?? ""}`;
+                                return (
+                                    <CommandItem
+                                        key={itemKey}
+                                        value={searchValue}
+                                        onSelect={() => {
+                                            onValueChange(opt.value);
+                                            setOpen(false);
+                                            setSearchQuery("");
+                                        }}
+                                    >
+                                        <Check
+                                            className={cn(
+                                                "mr-2 h-4 w-4 shrink-0",
+                                                value === opt.value ? "opacity-100" : "opacity-0"
+                                            )}
+                                        />
+                                        <div className="w-full truncate">
+                                            {opt.labelNode || opt.label}
+                                        </div>
+                                    </CommandItem>
+                                );
+                            })}
                         </CommandGroup>
                     </CommandList>
                 </Command>

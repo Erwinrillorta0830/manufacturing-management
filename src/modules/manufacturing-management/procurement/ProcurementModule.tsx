@@ -1,15 +1,15 @@
 "use client";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import React, { useState } from "react";
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { Building2, Anchor, Landmark, Layers, Briefcase, Plus, Loader2 } from "lucide-react";
+import React from "react";
+import { Building2, Anchor, Landmark, Layers, DollarSign } from "lucide-react";
 import SuppliersDirectory from "./components/SuppliersDirectory";
 import IncomingShipments from "./components/IncomingShipments";
 import ShipmentExpenses from "./components/ShipmentExpenses";
 import RawMaterialsMaster from "./components/RawMaterialsMaster";
+import ForexManagementModule from "./components/ForexManagementModule";
+import PurchaseAmountPostingModule from "./components/PurchaseAmountPostingModule";
 import { useProcurement } from "./hooks/useProcurement";
+import type { IncomingShipment } from "./types";
 import { CreatableSelect } from "../finished-goods/components/CreatableSelect";
 
 interface ProcurementModuleProps {
@@ -20,6 +20,7 @@ export default function ProcurementModule({ initialTab = "suppliers" }: Procurem
 
     const {
         activeTab,
+        setActiveTab,
         loading,
         rawMaterialsLoading,
         submittingExpenses,
@@ -64,10 +65,41 @@ export default function ProcurementModule({ initialTab = "suppliers" }: Procurem
         setIsExpenseModalOpen(true);
     };
 
+    const navTabs = [
+        { id: "suppliers", label: "Suppliers Directory", icon: Building2 },
+        { id: "incoming-shipments", label: "Incoming Shipments", icon: Anchor },
+        { id: "shipment-expenses", label: "Landed Expenses", icon: Landmark },
+        { id: "purchase-amount", label: "Purchase Amount Posting", icon: DollarSign },
+        { id: "raw-materials", label: "Raw Materials", icon: Layers },
+        { id: "forex", label: "FOREX Management", icon: DollarSign }
+    ];
+
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
+            {/* Procurement Navigation Toolbar */}
+            <div className="flex items-center gap-1 border-b pb-2 shrink-0 overflow-x-auto">
+                {navTabs.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                                isActive
+                                    ? "bg-primary text-primary-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                            }`}
+                        >
+                            <Icon className="h-3.5 w-3.5" />
+                            {tab.label}
+                        </button>
+                    );
+                })}
+            </div>
+
             {/* Tab Content window */}
-            <div className={`flex-1 min-h-0 relative flex flex-col ${activeTab === "raw-materials" ? "overflow-y-auto pr-1" : ""}`}>
+            <div className={`flex-1 min-h-0 relative flex flex-col ${activeTab === "raw-materials" || activeTab === "forex" ? "overflow-y-auto pr-1" : ""}`}>
 
                 {activeTab === "suppliers" && (
                     <SuppliersDirectory
@@ -168,6 +200,20 @@ export default function ProcurementModule({ initialTab = "suppliers" }: Procurem
                         onRegisterRawMaterial={handleRegisterRawMaterial}
                         onUpdateRawMaterial={handleUpdateRawMaterial}
                     />
+                )}
+
+                {activeTab === "forex" && (
+                    <ForexManagementModule />
+                )}
+
+                {activeTab === "purchase-amount" && (
+                    <div className="border rounded-xl p-6 bg-card shadow-sm h-full overflow-y-auto flex flex-col space-y-6">
+                        <PurchaseAmountPostingModule
+                            shipments={shipments}
+                            selectedShipment={selectedShipment}
+                            setSelectedShipment={(shipment) => setSelectedShipment(shipment as IncomingShipment | null)}
+                        />
+                    </div>
                 )}
             </div>
         </div>

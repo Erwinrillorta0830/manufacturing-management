@@ -21,19 +21,7 @@ export function useUOMConversions() {
     const [densities, setDensities] = useState<DensityFactor[]>(DEFAULT_DENSITIES);
     const [loading, setLoading] = useState(false);
 
-    const [logs, setLogs] = useState<ConversionLog[]>(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("vos_conversion_logs");
-            if (saved) {
-                try {
-                    return JSON.parse(saved);
-                } catch {
-                    return [];
-                }
-            }
-        }
-        return [];
-    });
+    const [logs, setLogs] = useState<ConversionLog[]>([]);
 
     // Fetch density factors from Directus via proxy route
     const fetchDensities = async () => {
@@ -65,10 +53,6 @@ export function useUOMConversions() {
     useEffect(() => {
         fetchDensities();
     }, []);
-
-    useEffect(() => {
-        localStorage.setItem("vos_conversion_logs", JSON.stringify(logs));
-    }, [logs]);
 
     // Modal state for adding a custom density
     const [isAddOpen, setIsAddOpen] = useState(false);
