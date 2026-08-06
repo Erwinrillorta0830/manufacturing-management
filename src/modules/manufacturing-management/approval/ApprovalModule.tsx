@@ -390,7 +390,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 {approvalDetail.history.length === 0 ? <p className="text-xs text-muted-foreground">No workflow actions recorded.</p> : (
                                     <div className="divide-y rounded-md border">{approvalDetail.history.map(entry => (
                                         <div key={entry.history_id} className="flex flex-wrap items-start justify-between gap-2 p-3 text-xs">
-                                            <div><div className="font-semibold">{entry.action} <span className="text-muted-foreground">({entry.approval_stage})</span></div><div className="mt-1 text-[11px] text-muted-foreground">Actor #{entry.actor_id}{entry.remarks ? ` | ${entry.remarks}` : ""}</div></div>
+                                            <div><div className="font-semibold">{entry.action} <span className="text-muted-foreground">({entry.approval_stage})</span></div><div className="mt-1 text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div></div>
                                             <div className="text-right text-[10px] text-muted-foreground"><div>{dateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
                                         </div>
                                     ))}</div>

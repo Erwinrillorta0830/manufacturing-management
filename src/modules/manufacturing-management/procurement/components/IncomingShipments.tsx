@@ -84,6 +84,11 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         canonicalDrafting
     });
 
+    const branchNamesById = React.useMemo(
+        () => new Map(dynamicBranches.map(branch => [Number(branch.id), branch.branchName])),
+        [dynamicBranches]
+    );
+
     useEffect(() => {
         if (!onServerQueryChange) return;
         const timeout = window.setTimeout(() => {
