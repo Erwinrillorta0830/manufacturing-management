@@ -13,8 +13,8 @@ interface ShipmentInspectionFormProps {
     storageLots: StorageLot[];
     receiptNumber: string;
     setReceiptNumber: (val: string) => void;
-    receiptMode: "full" | "partial";
-    setReceiptMode: (val: "full" | "partial") => void;
+    receiptMode?: "full" | "partial";
+    setReceiptMode?: (val: "full" | "partial") => void;
     selectedBranchId: string;
     setSelectedBranchId: (val: string) => void;
     inspectionRows: Record<number, InspectionRow>;
@@ -173,8 +173,6 @@ export default function ShipmentInspectionForm({
     storageLots,
     receiptNumber,
     setReceiptNumber,
-    receiptMode,
-    setReceiptMode,
     selectedBranchId,
     setSelectedBranchId,
     inspectionRows,
@@ -262,22 +260,16 @@ export default function ShipmentInspectionForm({
     }), [inspectionRows, lineItems]);
 
     const addAcceptedLot = (lineId: number, row: InspectionRow) => {
+        if (storageLots.length === 0) return;
         const accepted = Number(row.acceptedQty || 0);
         const allocated = row.acceptedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
         const remaining = Math.max(0, accepted - allocated);
-        const selectedIds = new Set(row.acceptedLotAllocations.map(allocation => Number(allocation.storageLotId)));
-        const availableLot = storageLots.find(lot => {
-            const available = lot.availableQuantity;
-            return !selectedIds.has(lot.lot_id) && (available === null || available === undefined || available > 0);
-        });
+        const selectedIds = new Set(row.acceptedLotAllocations.map(allocation => String(allocation.storageLotId)));
+        const availableLot = storageLots.find(lot => !selectedIds.has(String(lot.lot_id))) || storageLots[0];
         if (!availableLot) return;
-        const initialQuantity = availableLot.availableQuantity === null || availableLot.availableQuantity === undefined
-            ? remaining
-            : Math.min(remaining, availableLot.availableQuantity);
-        if (initialQuantity <= 0) return;
         handleUpdateAllocations(lineId, [
             ...row.acceptedLotAllocations,
-            { storageLotId: String(availableLot.lot_id), quantity: initialQuantity }
+            { storageLotId: String(availableLot.lot_id), quantity: remaining }
         ]);
     };
 
@@ -289,22 +281,16 @@ export default function ShipmentInspectionForm({
     };
 
     const addRejectedLot = (lineId: number, row: InspectionRow) => {
+        if (storageLots.length === 0) return;
         const rejected = Number(row.rejectedQty || 0);
         const allocated = row.rejectedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
         const remaining = Math.max(0, rejected - allocated);
-        const selectedIds = new Set(row.rejectedLotAllocations.map(allocation => Number(allocation.storageLotId)));
-        const availableLot = storageLots.find(lot => {
-            const available = lot.availableQuantity;
-            return !selectedIds.has(lot.lot_id) && (available === null || available === undefined || available > 0);
-        });
+        const selectedIds = new Set(row.rejectedLotAllocations.map(allocation => String(allocation.storageLotId)));
+        const availableLot = storageLots.find(lot => !selectedIds.has(String(lot.lot_id))) || storageLots[0];
         if (!availableLot) return;
-        const initialQuantity = availableLot.availableQuantity === null || availableLot.availableQuantity === undefined
-            ? remaining
-            : Math.min(remaining, availableLot.availableQuantity);
-        if (initialQuantity <= 0) return;
         handleUpdateRejectedAllocations(lineId, [
             ...row.rejectedLotAllocations,
-            { storageLotId: String(availableLot.lot_id), quantity: initialQuantity }
+            { storageLotId: String(availableLot.lot_id), quantity: remaining }
         ]);
     };
 
@@ -378,14 +364,14 @@ export default function ShipmentInspectionForm({
                         </h3>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                             <p className="text-[10px] text-muted-foreground">Verify physical quantities, tag batch IDs, and set Expiration limits.</p>
-                            {readOnly && selectedShipment.status !== "Partially Received" && (
+                            {readOnly && (
                                 <span className="text-[9px] bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
                                     Received - View Only
                                 </span>
                             )}
-                            {selectedShipment.status === "Partially Received" && (
-                                <span className="text-[9px] bg-slate-500/10 text-slate-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
-                                    Partially Received - View Only
+                            {!readOnly && selectedShipment.status === "Partially Received" && (
+                                <span className="text-[9px] bg-amber-500/10 text-amber-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                    Partially Received - Receiving Remaining Goods
                                 </span>
                             )}
                             <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
@@ -470,35 +456,6 @@ export default function ShipmentInspectionForm({
                     {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
                 </div>
 
-                <fieldset className="space-y-1">
-                    <legend className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Receiving Mode</legend>
-                    <div className="grid grid-cols-2 gap-1 rounded-xl border p-1 h-10">
-                        <button
-                            type="button"
-                            disabled={readOnly}
-                            onClick={() => setReceiptMode("full")}
-                            aria-pressed={receiptMode === "full"}
-                            className={`rounded-lg text-[10px] font-bold transition-colors ${receiptMode === "full" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
-                        >
-                            Full Receipt
-                        </button>
-                        <button
-                            type="button"
-                            disabled={readOnly}
-                            onClick={() => setReceiptMode("partial")}
-                            aria-pressed={receiptMode === "partial"}
-                            className={`rounded-lg text-[10px] font-bold transition-colors ${receiptMode === "partial" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
-                        >
-                            Partial Receipt
-                        </button>
-                    </div>
-                    <p className="text-[9px] text-muted-foreground">Choose Partial Receipt when any counted quantity is below its remaining quantity.</p>
-                    {selectedShipment.status === "Partially Received" && (
-                        <p className="text-[9px] text-slate-700 font-semibold">
-                            This purchase order is locked after partial receipt. Previous receiving details and the remaining quantity are view-only.
-                        </p>
-                    )}
-                </fieldset>
 
                 <div className="space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
@@ -884,8 +841,7 @@ export default function ShipmentInspectionForm({
                                                 <button
                                                     type="button"
                                                     onClick={() => addAcceptedLot(line.line_id, row)}
-                                                    disabled={row.acceptedLotAllocations.length >= storageLots.length
-                                                        || row.acceptedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0) >= acceptedVal}
+                                                    disabled={row.acceptedLotAllocations.length >= storageLots.length}
                                                     className="h-8 px-2.5 rounded-lg border border-emerald-500/30 bg-background text-emerald-700 text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-emerald-500/10 disabled:opacity-50"
                                                 >
                                                     <Plus className="h-3.5 w-3.5" /> Add storage lot
@@ -954,8 +910,7 @@ export default function ShipmentInspectionForm({
                                                         <button
                                                             type="button"
                                                             onClick={() => addRejectedLot(line.line_id, row)}
-                                                            disabled={row.rejectedLotAllocations.length >= storageLots.length
-                                                                || row.rejectedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0) >= rejectedVal}
+                                                            disabled={row.rejectedLotAllocations.length >= storageLots.length}
                                                             className="h-8 px-2.5 rounded-lg border border-red-500/30 bg-background text-red-700 text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-red-500/10 disabled:opacity-50"
                                                         >
                                                             <Plus className="h-3.5 w-3.5" /> Add storage lot

@@ -30,7 +30,32 @@ export interface Supplier {
     notes_or_comments?: string;
     isActive?: number;
     nonBuy?: boolean | number;
+    is_foreign?: number;
+    currency?: string;
+    default_currency?: string;
     representatives?: SupplierRepresentative[];
+}
+
+export interface SupplierFormState {
+    supplier_name: string;
+    supplier_shortcut: string;
+    tin_number: string;
+    phone_number: string;
+    email_address: string;
+    address: string;
+    city: string;
+    brgy: string;
+    state_province: string;
+    country: string;
+    postal_code: string;
+    payment_terms: string;
+    delivery_terms: string;
+    currency: string;
+    default_currency: string;
+    notes_or_comments: string;
+    nonBuy: boolean | number;
+    is_foreign: number | boolean;
+    representatives: SupplierRepresentative[];
 }
 
 export interface IncomingShipment {
@@ -83,6 +108,7 @@ export interface ShipmentLineItem {
     final_landed_unit_cost: number | string;
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
+    discount_type?: { id: number; discount_type: string; total_percent: number | string } | number | null;
     discount_percent?: number;
     vat_percent?: number;
     withholding_percent?: number;
@@ -169,6 +195,8 @@ export interface DirectusSupplier {
     supplier_shortcut?: string | null;
     isActive?: boolean;
     nonBuy?: boolean | number;
+    is_foreign?: number;
+    default_currency?: string;
 }
 
 export interface DirectusShipment {

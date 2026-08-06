@@ -1,30 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Supplier, RawMaterial, PSGCItem } from "../types";
+import { Supplier, RawMaterial, PSGCItem, SupplierFormState } from "../types";
 import { Search, Plus, MapPin, Phone, Mail, Award, FileText, CheckCircle2, AlertCircle, Globe, Building2, UserSquare2, Trash2, Link, X, Loader2 } from "lucide-react";
 import { fetchLinkedProducts, linkProductToSupplier, unlinkProductFromSupplier, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/procurement-api";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 
-interface SupplierFormState {
-    supplier_name: string;
-    supplier_shortcut: string;
-    tin_number: string;
-    phone_number: string;
-    email_address: string;
-    address: string;
-    city: string;
-    brgy: string;
-    state_province: string;
-    country: string;
-    postal_code: string;
-    payment_terms: string;
-    delivery_terms: string;
-    currency: string;
-    notes_or_comments: string;
-    nonBuy: boolean | number;
-    representatives: import("../types").SupplierRepresentative[];
-}
+
 
 interface SuppliersDirectoryProps {
     suppliers: Supplier[];
@@ -57,15 +39,10 @@ export interface LinkedProduct {
 }
 
 type SupplierStatusFilter = "active" | "inactive" | "all";
+type SupplierForeignFilter = "all" | "local" | "foreign";
 
 const isSupplierActive = (supplier: Supplier): boolean => Number(supplier.isActive) !== 0;
 const isSupplierNonBuy = (supplier: Supplier): boolean => supplier.nonBuy === true || Number(supplier.nonBuy) === 1;
-
-const getCurrencyFromNotes = (notes: string | null | undefined): string => {
-    if (!notes) return "PHP";
-    const match = notes.match(/\[Currency:\s*(\w+)\]/);
-    return match ? match[1] : "PHP";
-};
 
 const cleanNotes = (notes: string | null | undefined): string => {
     if (!notes) return "";
@@ -87,6 +64,7 @@ export default function SuppliersDirectory({
 }: SuppliersDirectoryProps) {
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("active");
+    const [foreignFilter, setForeignFilter] = useState<SupplierForeignFilter>("all");
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
     const [isSubmittingSupplier, setIsSubmittingSupplier] = useState(false);
     const supplierSubmitLock = useRef(false);
@@ -103,17 +81,29 @@ export default function SuppliersDirectory({
     const [loadingCities, setLoadingCities] = useState(false);
     const [loadingBarangays, setLoadingBarangays] = useState(false);
 
+    const isSupplierForeign = React.useCallback((s: Supplier | null | undefined): boolean => {
+        if (!s) return false;
+        if (Number(s.is_foreign) === 1 || (s.is_foreign as unknown) === true) return true;
+        const curr = String(s.currency || s.default_currency || "").toUpperCase();
+        if (curr === "USD") return true;
+        return Boolean(s.country) && s.country?.toLowerCase() !== "philippines" && s.country?.toLowerCase() !== "ph";
+    }, []);
+
     const filteredSuppliers = React.useMemo(() => {
         const normalizedSearch = search.toLowerCase();
         return suppliers.filter(s => {
             const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? isSupplierActive(s) : !isSupplierActive(s));
             if (!matchesStatus) return false;
 
+            const isForeign = isSupplierForeign(s);
+            const matchesForeign = foreignFilter === "all" || (foreignFilter === "foreign" ? isForeign : !isForeign);
+            if (!matchesForeign) return false;
+
             return s.supplier_name.toLowerCase().includes(normalizedSearch) ||
                 s.supplier_shortcut?.toLowerCase().includes(normalizedSearch) ||
                 s.tin_number?.includes(search);
         });
-    }, [suppliers, search, statusFilter]);
+    }, [suppliers, search, statusFilter, foreignFilter, isSupplierForeign]);
 
     const activeSupplier = React.useMemo(() => {
         if (selectedSupplierId !== null) {
@@ -271,6 +261,7 @@ export default function SuppliersDirectory({
     const [isLinkingOpen, setIsLinkingOpen] = useState(false);
     const [selectedProductIdsToLink, setSelectedProductIdsToLink] = useState<string[]>([]);
     const [linkProductSearch, setLinkProductSearch] = useState("");
+    const [linkedFilterSearch, setLinkedFilterSearch] = useState("");
     const [linkingLoading, setLinkingLoading] = useState(false);
     const [unlinkingLinkId, setUnlinkingLinkId] = useState<number | null>(null);
 
@@ -295,6 +286,7 @@ export default function SuppliersDirectory({
         setIsLinkingOpen(false);
         setSelectedProductIdsToLink([]);
         setLinkProductSearch("");
+        setLinkedFilterSearch("");
     }, [activeSupplierId]);
 
     const handleLinkMultipleProducts = async () => {
@@ -351,24 +343,36 @@ export default function SuppliersDirectory({
                             <Plus className="h-3.5 w-3.5" /> Register
                         </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1" role="group" aria-label="Supplier status filter">
-                        {(["active", "inactive", "all"] as SupplierStatusFilter[]).map(filter => {
-                            const count = suppliers.filter(s =>
-                                filter === "all" || (filter === "active" ? isSupplierActive(s) : !isSupplierActive(s))
-                            ).length;
-                            return (
-                                <button
-                                    key={filter}
-                                    type="button"
-                                    onClick={() => setStatusFilter(filter)}
-                                    className={`rounded-md px-2 py-1.5 text-[10px] font-bold capitalize transition-colors ${
-                                        statusFilter === filter ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                                    }`}
-                                >
-                                    {filter} ({count})
-                                </button>
-                            );
-                        })}
+                    <div className="flex items-center gap-2">
+                        <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1 flex-1" role="group" aria-label="Supplier status filter">
+                            {(["active", "inactive", "all"] as SupplierStatusFilter[]).map(filter => {
+                                const count = suppliers.filter(s =>
+                                    filter === "all" || (filter === "active" ? isSupplierActive(s) : !isSupplierActive(s))
+                                ).length;
+                                return (
+                                    <button
+                                        key={filter}
+                                        type="button"
+                                        onClick={() => setStatusFilter(filter)}
+                                        className={`rounded-md px-2 py-1 text-[10px] font-bold capitalize transition-colors ${
+                                            statusFilter === filter ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        {filter} ({count})
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <select
+                            value={foreignFilter}
+                            onChange={e => setForeignFilter(e.target.value as SupplierForeignFilter)}
+                            className="rounded-lg border bg-background px-2 py-1 text-[10px] font-bold text-foreground outline-none focus:ring-1 focus:ring-primary h-[31px]"
+                            aria-label="Filter supplier classification"
+                        >
+                            <option value="all">All Origins</option>
+                            <option value="local">Local (PHP)</option>
+                            <option value="foreign">Foreign (USD)</option>
+                        </select>
                     </div>
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -397,45 +401,57 @@ export default function SuppliersDirectory({
                             No suppliers found. Click &quot;Register&quot; to add one.
                         </div>
                     ) : (
-                        filteredSuppliers.map(s => (
-                            <button
-                                key={s.id}
-                                onClick={() => setSelectedSupplierId(s.id)}
-                                className={`w-full text-left p-4 hover:bg-muted/40 transition-all flex flex-col gap-1.5 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03)] focus:bg-primary/5 active:translate-y-0 ${
-                                    activeSupplier?.id === s.id ? "bg-primary/5 border-l-2 border-primary" : ""
-                                } ${!isSupplierActive(s) ? "opacity-60" : ""}`}
-                            >
-                                <div className="flex items-start justify-between gap-2">
-                                    <span className="font-semibold text-xs text-foreground truncate">{s.supplier_name}</span>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                        {isSupplierNonBuy(s) && (
-                                            <span className="bg-amber-500/15 text-amber-600 border border-amber-500/20 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide">
-                                                Non-Buy
-                                            </span>
-                                        )}
-                                        {!isSupplierActive(s) && (
-                                            <span className="bg-red-500/15 text-red-600 border border-red-500/20 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide">
-                                                Inactive
-                                            </span>
-                                        )}
-                                        {s.supplier_shortcut && (
-                                            <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                                {s.supplier_shortcut}
-                                            </span>
+                        filteredSuppliers.map(s => {
+                            const isForeign = isSupplierForeign(s);
+                            return (
+                                <button
+                                    key={s.id}
+                                    onClick={() => setSelectedSupplierId(s.id)}
+                                    className={`w-full text-left p-4 hover:bg-muted/40 transition-all flex flex-col gap-1.5 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03)] focus:bg-primary/5 active:translate-y-0 ${
+                                        activeSupplier?.id === s.id ? "bg-primary/5 border-l-2 border-primary" : ""
+                                    } ${!isSupplierActive(s) ? "opacity-60" : ""}`}
+                                >
+                                    <div className="flex items-start justify-between gap-2">
+                                        <span className="font-semibold text-xs text-foreground truncate">{s.supplier_name}</span>
+                                        <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                                            {isSupplierNonBuy(s) && (
+                                                <span className="bg-amber-500/15 text-amber-600 border border-amber-500/20 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide">
+                                                    Non-Buy
+                                                </span>
+                                            )}
+                                            {!isSupplierActive(s) && (
+                                                <span className="bg-red-500/15 text-red-600 border border-red-500/20 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide">
+                                                    Inactive
+                                                </span>
+                                            )}
+                                            {isForeign ? (
+                                                <span className="bg-amber-500/15 text-amber-700 border border-amber-500/30 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide flex items-center gap-0.5">
+                                                    <Globe className="h-2.5 w-2.5" /> FOREIGN IMPORT
+                                                </span>
+                                            ) : (
+                                                <span className="bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide flex items-center gap-0.5">
+                                                    <Building2 className="h-2.5 w-2.5" /> LOCAL
+                                                </span>
+                                            )}
+                                            {s.supplier_shortcut && (
+                                                <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                                    {s.supplier_shortcut}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                        <span className="truncate flex items-center gap-1">
+                                            <MapPin className="h-3 w-3 shrink-0" />
+                                            {s.city || "No Address"}, {s.country}
+                                        </span>
+                                        {s.tin_number && (
+                                            <span className="font-mono text-[9px] bg-muted px-1 rounded">TIN: {s.tin_number}</span>
                                         )}
                                     </div>
-                                </div>
-                                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                    <span className="truncate flex items-center gap-1">
-                                        <MapPin className="h-3 w-3 shrink-0" />
-                                        {s.city || "No Address"}, {s.country}
-                                    </span>
-                                    {s.tin_number && (
-                                        <span className="font-mono text-[9px] bg-muted px-1 rounded">TIN: {s.tin_number}</span>
-                                    )}
-                                </div>
-                            </button>
-                        ))
+                                </button>
+                            );
+                        })
                     )}
                 </div>
             </div>
@@ -461,6 +477,15 @@ export default function SuppliersDirectory({
                                         {isSupplierNonBuy(activeSupplier) && (
                                             <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase">
                                                 Non-Buy
+                                            </span>
+                                        )}
+                                        {isSupplierForeign(activeSupplier) ? (
+                                            <span className="bg-amber-500/15 text-amber-700 border border-amber-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase flex items-center gap-1">
+                                                <Globe className="h-3 w-3" /> Foreign Import ({activeSupplier.default_currency || "USD"})
+                                            </span>
+                                        ) : (
+                                            <span className="bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase flex items-center gap-1">
+                                                <Building2 className="h-3 w-3" /> Local ({activeSupplier.default_currency || "PHP"})
                                             </span>
                                         )}
                                     </div>
@@ -558,9 +583,9 @@ export default function SuppliersDirectory({
                                     <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Delivery Terms</span>
                                     <p className="text-xs font-semibold text-foreground">{activeSupplier.delivery_terms || "FOB / Delivery"}</p>
                                 </div>
-                                <div className="border p-4 rounded-xl bg-muted/10 space-y-1">
-                                    <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Preferred Currency</span>
-                                    <p className="text-xs font-semibold text-foreground">{getCurrencyFromNotes(activeSupplier.notes_or_comments)}</p>
+                                 <div className="border p-4 rounded-xl bg-muted/10 space-y-1">
+                                    <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Default / Operating Currency</span>
+                                    <p className="text-xs font-semibold text-foreground">{activeSupplier.default_currency || "PHP"}</p>
                                 </div>
                                 <div className="border p-4 rounded-xl bg-muted/10 space-y-1">
                                     <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">TIN Status</span>
@@ -622,78 +647,163 @@ export default function SuppliersDirectory({
                         </div>
 
                         {/* Associated Products Section */}
-                        <div className="space-y-4 pt-4 border-t">
-                            <div className="flex items-center justify-between">
-                                <h4 className="text-xs font-extrabold text-foreground uppercase tracking-wider flex items-center gap-2 border-l-4 border-primary pl-2.5">
-                                    <Link className="h-4 w-4 text-primary shrink-0" />
-                                    Associated Raw Materials & Products
-                                </h4>
+                        <div className="space-y-4 pt-5 border-t">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="h-8 w-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0 shadow-xs">
+                                        <Link className="h-4 w-4" />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h4 className="text-xs font-black text-foreground uppercase tracking-wider">
+                                                Associated Raw Materials & Catalog Items
+                                            </h4>
+                                            <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                                <CheckCircle2 className="h-3 w-3 text-primary" />
+                                                {linkedProducts.length} Linked
+                                            </span>
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Catalog items and raw materials supplied by {activeSupplier.supplier_name}
+                                        </p>
+                                    </div>
+                                </div>
+
                                 {!isLinkingOpen && (
                                     <button
                                         onClick={() => setIsLinkingOpen(true)}
-                                        className="text-[10px] text-primary hover:underline font-bold border border-primary/20 px-2 py-1 rounded bg-primary/5 hover:bg-primary/10 transition-all cursor-pointer flex items-center gap-1"
+                                        className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
                                     >
-                                        <Plus className="h-3 w-3" /> Link Product
+                                        <Plus className="h-3.5 w-3.5" /> Link Raw Material / Product
                                     </button>
                                 )}
                             </div>
 
-                            {isLinkingOpen && (
-                                <div className="bg-muted/20 p-3 rounded-lg border w-full space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs font-bold text-foreground">Select Products to Link</span>
-                                        {selectedProductIdsToLink.length > 0 && (
-                                            <span className="text-[10px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">
-                                                {selectedProductIdsToLink.length} selected
-                                            </span>
-                                        )}
-                                    </div>
-                                    
-                                    <input
-                                        type="text"
-                                        placeholder="Search products to link..."
-                                        value={linkProductSearch}
-                                        onChange={e => setLinkProductSearch(e.target.value)}
-                                        className="w-full rounded-lg border bg-background px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
-                                    />
-                                    
-                                    <div className="border rounded-lg bg-background p-2.5 max-h-[160px] overflow-y-auto divide-y divide-muted/30">
-                                        {rawMaterials.filter(rm => {
-                                            // Filter out already linked products
-                                            const isLinked = linkedProducts.some(lp => {
-                                                const lpProdId = typeof lp.product_id === "object" ? (lp.product_id as Record<string, unknown>)?.product_id || (lp.product_id as Record<string, unknown>)?.id : lp.product_id;
-                                                return Number(lpProdId) === Number(rm.product_id);
-                                            });
-                                            if (isLinked) return false;
-                                            
-                                            // Filter by search query
-                                            const query = linkProductSearch.toLowerCase().trim();
-                                            if (!query) return true;
-                                            return rm.product_name.toLowerCase().includes(query) || (rm.product_code && rm.product_code.toLowerCase().includes(query));
-                                        }).length === 0 ? (
-                                            <div className="text-center py-4 text-xs text-muted-foreground italic">No products available to link</div>
-                                        ) : (
-                                            rawMaterials.filter(rm => {
-                                                const isLinked = linkedProducts.some(lp => {
-                                                    const lpProdId = typeof lp.product_id === "object" ? (lp.product_id as Record<string, unknown>)?.product_id || (lp.product_id as Record<string, unknown>)?.id : lp.product_id;
-                                                    return Number(lpProdId) === Number(rm.product_id);
-                                                });
-                                                if (isLinked) return false;
-                                                
-                                                const query = linkProductSearch.toLowerCase().trim();
-                                                if (!query) return true;
-                                                return rm.product_name.toLowerCase().includes(query) || (rm.product_code && rm.product_code.toLowerCase().includes(query));
-                                            }).map(rm => {
-                                                const isChecked = selectedProductIdsToLink.includes(String(rm.product_id));
-                                                return (
-                                                    <label 
-                                                        key={rm.product_id}
-                                                        className="flex items-center gap-2 py-1.5 hover:bg-muted/10 cursor-pointer select-none text-xs font-semibold text-foreground px-2"
+                            {/* Linking Drawer / Panel */}
+                            <AnimatePresence>
+                                {isLinkingOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, height: 0, y: -10 }}
+                                        animate={{ opacity: 1, height: "auto", y: 0 }}
+                                        exit={{ opacity: 0, height: 0, y: -10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="bg-muted/20 p-4 rounded-2xl border border-primary/20 w-full space-y-3.5 shadow-xs overflow-hidden"
+                                    >
+                                        <div className="flex items-center justify-between border-b pb-2.5">
+                                            <div className="flex items-center gap-2">
+                                                <Globe className="h-4 w-4 text-primary shrink-0" />
+                                                <span className="text-xs font-extrabold text-foreground">
+                                                    Select Catalog Items to Associate
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {selectedProductIdsToLink.length > 0 && (
+                                                    <span className="text-[10px] bg-primary text-primary-foreground font-bold px-2.5 py-0.5 rounded-full shadow-xs">
+                                                        {selectedProductIdsToLink.length} Selected
+                                                    </span>
+                                                )}
+                                                <button
+                                                    onClick={() => {
+                                                        setIsLinkingOpen(false);
+                                                        setSelectedProductIdsToLink([]);
+                                                        setLinkProductSearch("");
+                                                    }}
+                                                    className="text-muted-foreground hover:text-foreground text-xs p-1 rounded-lg hover:bg-muted transition-all"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Search Bar and Quick Select Actions */}
+                                        <div className="flex flex-col sm:flex-row gap-2">
+                                            <div className="relative flex-1">
+                                                <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-muted-foreground" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Search unlinked raw materials by code or name..."
+                                                    value={linkProductSearch}
+                                                    onChange={e => setLinkProductSearch(e.target.value)}
+                                                    className="w-full rounded-xl border bg-background pl-9 pr-8 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
+                                                />
+                                                {linkProductSearch && (
+                                                    <button
+                                                        onClick={() => setLinkProductSearch("")}
+                                                        className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground"
                                                     >
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isChecked}
-                                                            onChange={() => {
+                                                        <X className="h-3.5 w-3.5" />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Quick Select All / Deselect buttons */}
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                {(() => {
+                                                    const availableRM = rawMaterials.filter(rm => {
+                                                        const isLinked = linkedProducts.some(lp => {
+                                                            const lpProdId = typeof lp.product_id === "object" ? (lp.product_id as Record<string, unknown>)?.product_id || (lp.product_id as Record<string, unknown>)?.id : lp.product_id;
+                                                            return Number(lpProdId) === Number(rm.product_id);
+                                                        });
+                                                        if (isLinked) return false;
+                                                        const query = linkProductSearch.toLowerCase().trim();
+                                                        if (!query) return true;
+                                                        return rm.product_name.toLowerCase().includes(query) || (rm.product_code && rm.product_code.toLowerCase().includes(query));
+                                                    });
+                                                    
+                                                    const allSelected = availableRM.length > 0 && availableRM.every(rm => selectedProductIdsToLink.includes(String(rm.product_id)));
+
+                                                    return (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (allSelected) {
+                                                                    const availIds = new Set(availableRM.map(rm => String(rm.product_id)));
+                                                                    setSelectedProductIdsToLink(prev => prev.filter(id => !availIds.has(id)));
+                                                                } else {
+                                                                    const availIds = availableRM.map(rm => String(rm.product_id));
+                                                                    setSelectedProductIdsToLink(prev => Array.from(new Set([...prev, ...availIds])));
+                                                                }
+                                                            }}
+                                                            disabled={availableRM.length === 0}
+                                                            className="text-[10px] font-bold text-muted-foreground hover:text-foreground border px-2.5 py-1.5 rounded-xl bg-background hover:bg-muted/50 disabled:opacity-50 transition-all cursor-pointer"
+                                                        >
+                                                            {allSelected ? "Deselect All" : "Select All Unlinked"}
+                                                        </button>
+                                                    );
+                                                })()}
+                                            </div>
+                                        </div>
+
+                                        {/* Available Products Grid List */}
+                                        <div className="border rounded-xl bg-background p-2 max-h-[220px] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                            {(() => {
+                                                const available = rawMaterials.filter(rm => {
+                                                    const isLinked = linkedProducts.some(lp => {
+                                                        const lpProdId = typeof lp.product_id === "object" ? (lp.product_id as Record<string, unknown>)?.product_id || (lp.product_id as Record<string, unknown>)?.id : lp.product_id;
+                                                        return Number(lpProdId) === Number(rm.product_id);
+                                                    });
+                                                    if (isLinked) return false;
+                                                    const query = linkProductSearch.toLowerCase().trim();
+                                                    if (!query) return true;
+                                                    return rm.product_name.toLowerCase().includes(query) || (rm.product_code && rm.product_code.toLowerCase().includes(query));
+                                                });
+
+                                                if (available.length === 0) {
+                                                    return (
+                                                        <div className="col-span-2 text-center py-6 text-xs text-muted-foreground italic flex flex-col items-center justify-center gap-1">
+                                                            <AlertCircle className="h-4 w-4 text-muted-foreground/40" />
+                                                            <span>No unlinked raw materials match your search</span>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                return available.map(rm => {
+                                                    const isChecked = selectedProductIdsToLink.includes(String(rm.product_id));
+                                                    const uomName = rm.unit_of_measurement?.unit_shortcut || rm.unit_of_measurement?.unit_name;
+                                                    return (
+                                                        <div
+                                                            key={rm.product_id}
+                                                            onClick={() => {
                                                                 const valStr = String(rm.product_id);
                                                                 if (isChecked) {
                                                                     setSelectedProductIdsToLink(prev => prev.filter(id => id !== valStr));
@@ -701,84 +811,171 @@ export default function SuppliersDirectory({
                                                                     setSelectedProductIdsToLink(prev => [...prev, valStr]);
                                                                 }
                                                             }}
-                                                            className="rounded text-primary focus:ring-0 h-3.5 w-3.5"
-                                                        />
-                                                        <span>
-                                                            {rm.product_code ? `[${rm.product_code}] ` : ""}{rm.product_name}
-                                                            {rm.unit_of_measurement?.unit_name && (
-                                                                <span className="text-[10px] text-muted-foreground font-normal ml-1 italic">
-                                                                    ({rm.unit_of_measurement.unit_name})
-                                                                </span>
-                                                            )}
-                                                        </span>
-                                                    </label>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                    
-                                    <div className="flex justify-end gap-2 pt-1">
+                                                            className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2 select-none ${
+                                                                isChecked
+                                                                    ? "border-primary bg-primary/5 shadow-xs"
+                                                                    : "border-border bg-card hover:bg-muted/40 hover:border-muted-foreground/30"
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isChecked}
+                                                                    onChange={() => {}} // Handled by container click
+                                                                    className="rounded text-primary focus:ring-0 h-4 w-4 shrink-0"
+                                                                />
+                                                                <div className="min-w-0 space-y-0.5">
+                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                        {rm.product_code && (
+                                                                            <span className="font-mono text-[9px] font-bold bg-muted px-1.5 py-0.5 rounded text-foreground border shrink-0">
+                                                                                {rm.product_code}
+                                                                            </span>
+                                                                        )}
+                                                                        <span className="text-xs font-bold text-foreground truncate">
+                                                                            {rm.product_name}
+                                                                        </span>
+                                                                    </div>
+                                                                    {uomName && (
+                                                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                                                            <span className="bg-primary/5 text-primary px-1.5 rounded font-semibold border border-primary/10">
+                                                                                {uomName}
+                                                                            </span>
+                                                                            {rm.cost_per_unit > 0 && (
+                                                                                <span className="font-mono text-[10px]">
+                                                                                    ₱{Number(rm.cost_per_unit).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
+                                        </div>
+                                        
+                                        {/* Footer Action Bar */}
+                                        <div className="flex items-center justify-between pt-1 border-t">
+                                            <span className="text-[11px] font-medium text-muted-foreground">
+                                                {selectedProductIdsToLink.length} material(s) selected
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        setIsLinkingOpen(false);
+                                                        setSelectedProductIdsToLink([]);
+                                                        setLinkProductSearch("");
+                                                    }}
+                                                    className="text-muted-foreground hover:text-foreground text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-muted transition-all"
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    onClick={handleLinkMultipleProducts}
+                                                    disabled={selectedProductIdsToLink.length === 0 || linkingLoading}
+                                                    className="bg-primary text-primary-foreground px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-primary/95 disabled:opacity-50 transition-all cursor-pointer shadow-xs inline-flex items-center gap-1.5"
+                                                >
+                                                    {linkingLoading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Linking...</> : `Link Selected Items (${selectedProductIdsToLink.length})`}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {/* Filter search bar for Linked Products if list is larger than 3 items */}
+                            {linkedProducts.length > 3 && (
+                                <div className="relative">
+                                    <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-muted-foreground" />
+                                    <input
+                                        type="text"
+                                        placeholder="Filter linked raw materials..."
+                                        value={linkedFilterSearch}
+                                        onChange={e => setLinkedFilterSearch(e.target.value)}
+                                        className="w-full rounded-xl border bg-background pl-9 pr-8 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
+                                    />
+                                    {linkedFilterSearch && (
                                         <button
-                                            onClick={() => {
-                                                setIsLinkingOpen(false);
-                                                setSelectedProductIdsToLink([]);
-                                                setLinkProductSearch("");
-                                            }}
-                                            className="text-muted-foreground hover:text-foreground text-xs font-semibold px-3 py-1.5"
+                                            onClick={() => setLinkedFilterSearch("")}
+                                            className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground"
                                         >
-                                            Cancel
+                                            <X className="h-3.5 w-3.5" />
                                         </button>
-                                        <button
-                                            onClick={handleLinkMultipleProducts}
-                                            disabled={selectedProductIdsToLink.length === 0 || linkingLoading}
-                                            className="bg-primary text-primary-foreground px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-primary/95 disabled:opacity-50 transition-all cursor-pointer shadow-sm inline-flex items-center gap-1.5"
-                                        >
-                                            {linkingLoading ? <><Loader2 className="h-3 w-3 animate-spin" /> Linking...</> : `Link Selected (${selectedProductIdsToLink.length})`}
-                                        </button>
-                                    </div>
+                                    )}
                                 </div>
                             )}
 
+                            {/* Linked Products Cards Display Grid */}
                             {loadingLinkedProducts ? (
-                                <div className="text-center text-xs text-muted-foreground py-4">
-                                    Loading associated products...
+                                <div className="text-center text-xs text-muted-foreground py-6 flex items-center justify-center gap-2">
+                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                    <span>Loading associated products...</span>
                                 </div>
                             ) : linkedProducts.length === 0 ? (
-                                <div className="text-center text-xs text-muted-foreground/60 py-6 border border-dashed rounded-xl bg-muted/5">
-                                    No raw materials linked to this supplier. Click &quot;+ Link Product&quot; to associate one.
+                                <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
+                                    <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
+                                        <Link className="h-6 w-6" />
+                                    </div>
+                                    <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
+                                    <p className="text-[11px] text-muted-foreground max-w-sm">
+                                        Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
+                                    </p>
+                                    {!isLinkingOpen && (
+                                        <button
+                                            onClick={() => setIsLinkingOpen(true)}
+                                            className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" /> Associate First Product
+                                        </button>
+                                    )}
                                 </div>
                             ) : (
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                    {linkedProducts.map((lp: LinkedProduct) => (
-                                        <div key={lp.id} className="border rounded-xl p-3 flex items-center justify-between bg-muted/10">
-                                            <div className="space-y-1 min-w-0 pr-2">
-                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <span className="font-mono text-[9px] text-muted-foreground bg-muted border px-1.5 py-0.5 rounded font-bold uppercase shrink-0">
-                                                        {lp.product_id?.product_code || "N/A"}
-                                                    </span>
-                                                    <span className="text-xs font-bold text-foreground truncate block">
-                                                        {lp.product_id?.product_name || "Unknown Product"}
-                                                        {lp.product_id?.unit_of_measurement?.unit_name && (
-                                                            <span className="text-[10px] text-muted-foreground font-normal ml-1 italic">
-                                                                ({lp.product_id.unit_of_measurement.unit_name})
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {linkedProducts.filter(lp => {
+                                        if (!linkedFilterSearch.trim()) return true;
+                                        const q = linkedFilterSearch.toLowerCase().trim();
+                                        const code = lp.product_id?.product_code || "";
+                                        const name = lp.product_id?.product_name || "";
+                                        return code.toLowerCase().includes(q) || name.toLowerCase().includes(q);
+                                    }).map((lp: LinkedProduct) => {
+                                        const uom = lp.product_id?.unit_of_measurement?.unit_shortcut || lp.product_id?.unit_of_measurement?.unit_name;
+                                        return (
+                                            <div 
+                                                key={lp.id} 
+                                                className="border border-border/80 hover:border-primary/40 rounded-2xl p-3.5 flex items-center justify-between bg-card hover:bg-muted/10 transition-all shadow-xs hover:shadow-sm group border-l-4 border-l-primary/60 hover:border-l-primary"
+                                            >
+                                                <div className="space-y-1 min-w-0 pr-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        {lp.product_id?.product_code && (
+                                                            <span className="font-mono text-[9px] text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-md font-bold uppercase shrink-0">
+                                                                {lp.product_id.product_code}
                                                             </span>
                                                         )}
-                                                    </span>
+                                                        <span className="text-xs font-bold text-foreground truncate block">
+                                                            {lp.product_id?.product_name || "Unknown Product"}
+                                                        </span>
+                                                        {uom && (
+                                                            <span className="text-[10px] text-muted-foreground font-semibold bg-muted px-1.5 py-0.5 rounded border italic">
+                                                                {uom}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[10px] text-muted-foreground truncate">
+                                                        {lp.product_id?.description || "No product description recorded"}
+                                                    </p>
                                                 </div>
-                                                <p className="text-[10px] text-muted-foreground truncate">
-                                                    {lp.product_id?.description || "No description"}
-                                                </p>
+                                                <button
+                                                    onClick={() => handleUnlinkProduct(lp.id)}
+                                                    disabled={unlinkingLinkId === lp.id}
+                                                    className="text-muted-foreground hover:text-red-600 p-2 rounded-xl hover:bg-red-500/10 transition-all cursor-pointer shrink-0 opacity-80 group-hover:opacity-100"
+                                                    title="Unlink Product"
+                                                >
+                                                    {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={() => handleUnlinkProduct(lp.id)}
-                                                disabled={unlinkingLinkId === lp.id}
-                                                className="text-muted-foreground hover:text-red-500 p-1.5 rounded-lg hover:bg-red-500/10 transition-all cursor-pointer"
-                                                title="Unlink Product"
-                                            >
-                                                {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                            </button>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -1039,13 +1236,91 @@ export default function SuppliersDirectory({
                                             value={supplierForm.country}
                                             onChange={e => {
                                                 const val = e.target.value;
-                                                setSupplierForm({...supplierForm, country: val, state_province: "", city: "", brgy: ""});
-                                                setSelectedProvinceCode("");
-                                                setSelectedCityCode("");
-                                                setSelectedBarangayCode("");
+                                                const isNonPH = Boolean(val.trim()) && val.trim().toLowerCase() !== "philippines" && val.trim().toLowerCase() !== "ph";
+                                                setSupplierForm(prev => ({
+                                                    ...prev,
+                                                    country: val,
+                                                    state_province: isNonPH ? prev.state_province : "",
+                                                    city: isNonPH ? prev.city : "",
+                                                    brgy: isNonPH ? prev.brgy : "",
+                                                    is_foreign: isNonPH ? 1 : prev.is_foreign,
+                                                    default_currency: isNonPH ? "USD" : prev.default_currency,
+                                                    currency: isNonPH ? "USD" : prev.currency
+                                                }));
+                                                if (isNonPH) {
+                                                    setSelectedProvinceCode("");
+                                                    setSelectedCityCode("");
+                                                    setSelectedBarangayCode("");
+                                                }
                                             }}
                                             className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
                                         />
+                                    </div>
+
+                                    {/* Supplier Classification & Currency */}
+                                    <div className="col-span-2 p-3 rounded-xl border bg-muted/20 space-y-2.5">
+                                        <label className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                            <Globe className="h-3.5 w-3.5 text-primary" /> Supplier Classification & Operating Currency
+                                        </label>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-semibold text-muted-foreground">Classification</label>
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSupplierForm(prev => ({
+                                                            ...prev,
+                                                            is_foreign: 0,
+                                                            default_currency: "PHP",
+                                                            currency: "PHP"
+                                                        }))}
+                                                        className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                                                            Number(supplierForm.is_foreign) === 0
+                                                                ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/40 shadow-sm"
+                                                                : "bg-background text-muted-foreground border-input hover:text-foreground"
+                                                        }`}
+                                                    >
+                                                        <Building2 className="h-3 w-3" /> Local (PHP)
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSupplierForm(prev => ({
+                                                            ...prev,
+                                                            is_foreign: 1,
+                                                            default_currency: "USD",
+                                                            currency: "USD"
+                                                        }))}
+                                                        className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                                                            Number(supplierForm.is_foreign) === 1
+                                                                ? "bg-amber-500/15 text-amber-700 border-amber-500/40 shadow-sm"
+                                                                : "bg-background text-muted-foreground border-input hover:text-foreground"
+                                                        }`}
+                                                    >
+                                                        <Globe className="h-3 w-3" /> Foreign Import (USD)
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-semibold text-muted-foreground">Default Currency</label>
+                                                <select
+                                                    value={supplierForm.default_currency || supplierForm.currency || "PHP"}
+                                                    onChange={e => {
+                                                        const curr = e.target.value;
+                                                        const isFor = curr === "USD" ? 1 : 0;
+                                                        setSupplierForm(prev => ({
+                                                            ...prev,
+                                                            default_currency: curr,
+                                                            currency: curr,
+                                                            is_foreign: isFor
+                                                        }));
+                                                    }}
+                                                    className="w-full rounded-lg border bg-background px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-primary text-foreground h-[31px]"
+                                                >
+                                                    <option value="PHP">PHP (Philippine Peso)</option>
+                                                    <option value="USD">USD (US Dollar)</option>
+                                                </select>
+                                            </div>
+                                        </div>
                                     </div>
 
                                     <AnimatePresence mode="wait">
@@ -1163,18 +1438,6 @@ export default function SuppliersDirectory({
                                             <option value="CIF (Cost, Insurance & Freight)">CIF (Cost, Insurance & Freight)</option>
                                             <option value="DDP (Delivered Duty Paid)">DDP (Delivered Duty Paid)</option>
                                             <option value="FOB / Delivery">FOB / Delivery</option>
-                                        </select>
-                                    </div>
-
-                                    <div className="space-y-1.5">
-                                        <label className="text-[11px] font-semibold text-muted-foreground">Preferred Currency</label>
-                                        <select
-                                            value={supplierForm.currency}
-                                            onChange={e => setSupplierForm({...supplierForm, currency: e.target.value})}
-                                            className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold"
-                                        >
-                                            <option value="PHP">PHP (Philippine Peso)</option>
-                                            <option value="USD">USD (US Dollar)</option>
                                         </select>
                                     </div>
 

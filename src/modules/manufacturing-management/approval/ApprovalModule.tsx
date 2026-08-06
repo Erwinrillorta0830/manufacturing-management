@@ -324,12 +324,63 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                             <div>
                                 <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold"><FileCheck2 className="h-4 w-4 text-primary" /> Purchase-order lines</h3>
                                 <div className="overflow-x-auto rounded-md border">
-                                    <table className="w-full min-w-[560px] text-xs">
-                                        <thead className="bg-muted/50 text-left text-[10px] uppercase text-muted-foreground"><tr><th className="p-2.5">Product</th><th className="p-2.5">Intent</th><th className="p-2.5 text-right">Quantity</th><th className="p-2.5 text-right">Unit price</th></tr></thead>
-                                        <tbody className="divide-y">{selectedShipmentLines.map(line => {
-                                            const product = typeof line.product_id === "object" ? line.product_id : null;
-                                            return <tr key={line.line_id}><td className="p-2.5 font-medium">{product?.product_name || `Product ${line.product_id}`}</td><td className="p-2.5 text-muted-foreground">{line.purchase_intent || "Buffer_Stock"}</td><td className="p-2.5 text-right">{Number(line.quantity_ordered || 0).toLocaleString()}</td><td className="p-2.5 text-right font-mono">{money(line.base_unit_cost_php)}</td></tr>;
-                                        })}</tbody>
+                                    <table className="w-full min-w-[600px] text-xs">
+                                        <thead className="bg-muted/50 text-left text-[10px] uppercase text-muted-foreground font-bold border-b">
+                                            <tr>
+                                                <th className="p-2.5">Product Name</th>
+                                                <th className="p-2.5 text-right">Qty</th>
+                                                <th className="p-2.5 text-right">Unit Price</th>
+                                                <th className="p-2.5">Discount Type</th>
+                                                <th className="p-2.5 text-right">Net ({approvalDetail?.order.currency_code || "PHP"})</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {selectedShipmentLines.map((line, idx) => {
+                                                const currency = approvalDetail?.order.currency_code || "PHP";
+                                                const product = typeof line.product_id === "object" ? line.product_id : null;
+                                                const productName = product?.product_name || `Product ${line.product_id}`;
+                                                const productCode = product?.product_code ? ` [${product.product_code}]` : "";
+                                                const qty = Number(line.quantity_ordered || 0);
+                                                const unitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
+                                                const gross = qty * unitPrice;
+
+                                                let discPercent = Number(line.discount_percent || 0);
+                                                let dtLabel = "No Discount";
+
+                                                if (line.discount_type && typeof line.discount_type === "object") {
+                                                    const dtObj = line.discount_type as { discount_type: string; total_percent: number };
+                                                    discPercent = Number(dtObj.total_percent || discPercent);
+                                                    dtLabel = `${dtObj.discount_type} (${discPercent.toFixed(1)}%)`;
+                                                } else if (discPercent > 0) {
+                                                    dtLabel = `${discPercent.toFixed(1)}%`;
+                                                }
+
+                                                const discAmount = (gross * discPercent) / 100;
+                                                const net = gross - discAmount;
+
+                                                return (
+                                                    <tr key={line.line_id || idx} className="hover:bg-muted/20">
+                                                        <td className="p-2.5 font-semibold text-foreground">
+                                                            {productName}{productCode}
+                                                        </td>
+                                                        <td className="p-2.5 text-right font-mono font-medium">
+                                                            {qty.toLocaleString()}
+                                                        </td>
+                                                        <td className="p-2.5 text-right font-mono font-medium">
+                                                            {money(unitPrice, currency)}
+                                                        </td>
+                                                        <td className="p-2.5 text-xs">
+                                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-muted border text-muted-foreground">
+                                                                {dtLabel}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-2.5 text-right font-mono font-black text-primary">
+                                                            {money(net, currency)}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
                                     </table>
                                 </div>
                             </div>

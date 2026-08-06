@@ -16,94 +16,79 @@ interface LoginActivityRecord {
 
 export default function LoginActivityModule() {
     const [activities] = useState<LoginActivityRecord[]>(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("vos_login_activity_logs");
-            if (saved) {
-                try {
-                    return JSON.parse(saved);
-                } catch (e) {
-                    console.error("Failed to parse activity logs", e);
-                }
+        // Get current user info from decoded cookie (simulated via headers or default)
+        const defaultEmail = "ajsiapno60@men2corp.com";
+        
+        // Get user agent details
+        const ua = typeof window !== "undefined" ? window.navigator.userAgent : "";
+        let browser = "Chrome";
+        if (ua.includes("Firefox")) browser = "Firefox";
+        else if (ua.includes("Safari") && !ua.includes("Chrome")) browser = "Safari";
+        else if (ua.includes("Edge")) browser = "Edge";
+        
+        let os = "Windows";
+        if (ua.includes("Mac")) os = "macOS";
+        else if (ua.includes("Linux")) os = "Linux";
+        else if (ua.includes("Android")) os = "Android";
+        else if (ua.includes("iPhone")) os = "iOS";
+
+        const currentDevice = `${browser} on ${os}`;
+        
+        // Generate seed logs
+        const now = new Date();
+        const formatOffset = (mins: number) => {
+            const d = new Date(now.getTime() - mins * 60 * 1000);
+            const pad = (n: number) => String(n).padStart(2, "0");
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+
+        return [
+            {
+                id: "log-1",
+                timestamp: formatOffset(0), // Just now
+                email: defaultEmail,
+                ipAddress: "120.28.2.14",
+                device: currentDevice,
+                location: "Dagupan City, Pangasinan",
+                status: "Success"
+            },
+            {
+                id: "log-2",
+                timestamp: formatOffset(120), // 2 hours ago
+                email: defaultEmail,
+                ipAddress: "120.28.2.14",
+                device: currentDevice,
+                location: "Dagupan City, Pangasinan",
+                status: "Success"
+            },
+            {
+                id: "log-3",
+                timestamp: formatOffset(250), // ~4 hours ago
+                email: defaultEmail,
+                ipAddress: "120.28.2.14",
+                device: currentDevice,
+                location: "Dagupan City, Pangasinan",
+                status: "Failed"
+            },
+            {
+                id: "log-4",
+                timestamp: formatOffset(1440), // 1 day ago
+                email: defaultEmail,
+                ipAddress: "120.28.2.14",
+                device: currentDevice,
+                location: "Dagupan City, Pangasinan",
+                status: "Success"
+            },
+            {
+                id: "log-5",
+                timestamp: formatOffset(2880), // 2 days ago
+                email: defaultEmail,
+                ipAddress: "112.198.115.89",
+                device: `Safari on macOS`,
+                location: "Quezon City, Metro Manila",
+                status: "Success"
             }
-
-            // Get current user info from decoded cookie (simulated via headers or default)
-            const defaultEmail = "ajsiapno60@men2corp.com";
-            
-            // Get user agent details
-            const ua = window.navigator.userAgent;
-            let browser = "Chrome";
-            if (ua.includes("Firefox")) browser = "Firefox";
-            else if (ua.includes("Safari") && !ua.includes("Chrome")) browser = "Safari";
-            else if (ua.includes("Edge")) browser = "Edge";
-            
-            let os = "Windows";
-            if (ua.includes("Mac")) os = "macOS";
-            else if (ua.includes("Linux")) os = "Linux";
-            else if (ua.includes("Android")) os = "Android";
-            else if (ua.includes("iPhone")) os = "iOS";
-
-            const currentDevice = `${browser} on ${os}`;
-            
-            // Generate some realistic seed logs
-            const now = new Date();
-            const formatOffset = (mins: number) => {
-                const d = new Date(now.getTime() - mins * 60 * 1000);
-                const pad = (n: number) => String(n).padStart(2, "0");
-                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-            };
-
-            const seedData: LoginActivityRecord[] = [
-                {
-                    id: "log-1",
-                    timestamp: formatOffset(0), // Just now
-                    email: defaultEmail,
-                    ipAddress: "120.28.2.14",
-                    device: currentDevice,
-                    location: "Dagupan City, Pangasinan",
-                    status: "Success"
-                },
-                {
-                    id: "log-2",
-                    timestamp: formatOffset(120), // 2 hours ago
-                    email: defaultEmail,
-                    ipAddress: "120.28.2.14",
-                    device: currentDevice,
-                    location: "Dagupan City, Pangasinan",
-                    status: "Success"
-                },
-                {
-                    id: "log-3",
-                    timestamp: formatOffset(250), // ~4 hours ago
-                    email: defaultEmail,
-                    ipAddress: "120.28.2.14",
-                    device: currentDevice,
-                    location: "Dagupan City, Pangasinan",
-                    status: "Failed"
-                },
-                {
-                    id: "log-4",
-                    timestamp: formatOffset(1440), // 1 day ago
-                    email: defaultEmail,
-                    ipAddress: "120.28.2.14",
-                    device: currentDevice,
-                    location: "Dagupan City, Pangasinan",
-                    status: "Success"
-                },
-                {
-                    id: "log-5",
-                    timestamp: formatOffset(2880), // 2 days ago
-                    email: defaultEmail,
-                    ipAddress: "112.198.115.89",
-                    device: `Safari on macOS`,
-                    location: "Quezon City, Metro Manila",
-                    status: "Success"
-                }
-            ];
-
-            localStorage.setItem("vos_login_activity_logs", JSON.stringify(seedData));
-            return seedData;
-        }
-        return [];
+        ];
     });
 
     // Summary calculations

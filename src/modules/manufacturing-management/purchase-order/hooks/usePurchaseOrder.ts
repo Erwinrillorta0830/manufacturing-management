@@ -143,11 +143,24 @@ export function usePurchaseOrder() {
             setShipmentLinesForm([blankLine()]);
             return;
         }
-        const lockedRate = typeof window === "undefined" ? "" : localStorage.getItem("vos_locked_forex_rate") || "";
-        setShipmentForm(previous => ({
-            ...previous,
-            exchange_rate: previous.currency_code === "USD" ? previous.exchange_rate || lockedRate : "1"
-        }));
+        fetch("/api/manufacturing/procurement/forex")
+            .then(res => res.json())
+            .then(data => {
+                const latestHistory = data?.rateHistory?.find((h: { currency_code: string; new_rate: number }) => h.currency_code === "USD");
+                const activeConfig = data?.activeRates?.find((r: { currency_code: string; exchange_rate: number }) => r.currency_code === "USD");
+                const rateVal = latestHistory?.new_rate || activeConfig?.exchange_rate || 58.50;
+                const rateStr = String(rateVal);
+                setShipmentForm(previous => ({
+                    ...previous,
+                    exchange_rate: previous.currency_code === "USD" ? previous.exchange_rate || rateStr : "1"
+                }));
+            })
+            .catch(() => {
+                setShipmentForm(previous => ({
+                    ...previous,
+                    exchange_rate: previous.currency_code === "USD" ? previous.exchange_rate || "58.50" : "1"
+                }));
+            });
     }, [isShipmentModalOpen]);
 
     const handleCreateShipment = async (event: React.FormEvent) => {

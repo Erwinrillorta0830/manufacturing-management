@@ -1,0 +1,70 @@
+export interface ChartOfAccount {
+    coa_id?: number;
+    id?: number;
+    account_code?: string;
+    gl_code?: string;
+    account_title?: string;
+    account_name?: string;
+    account_type?: number;
+}
+
+export interface POLineItem {
+    purchase_order_product_id: number;
+    product_id: number | { product_id: number; product_name?: string; category?: string; weight?: number };
+    product_name?: string;
+    product_category?: string;
+    received_quantity: number;
+    unit_price: number;
+    gross_weight?: number | null;
+    discount_type?: number;
+    discounted_amount?: number;
+    vat_amount?: number;
+    withholding_amount?: number;
+    total_amount?: number;
+    allocated_expense_php?: number;
+    final_landed_unit_cost?: number;
+}
+
+export interface LandedExpenseRow {
+    id: string;
+    chart_of_account_id: number;
+    amount: number;
+    allocation_method: string;
+}
+
+export interface PurchaseOrderHeader {
+    purchase_order_id: number;
+    purchase_order_no: string;
+    currency_code?: string;
+    exchange_rate?: number;
+    is_import?: number;
+    supplier_name?: number | { id?: number; supplier_name?: string; is_foreign?: number; country?: string };
+    total_amount?: number;
+    total_foreign_currency?: number;
+    is_posted_amounts?: number;
+}
+
+export interface LineCalculationItem extends POLineItem {
+    allocated_amount: number;
+    variance_adjustment: number;
+    allocated_expense_php: number;
+    final_landed_unit_cost: number;
+}
+
+export interface HybridCalculationResult {
+    lineCalculations: LineCalculationItem[];
+    rmSubPool: number;
+    pkgSubPool: number;
+    totalLandedFee: number;
+    roundingVariance: number;
+    hasMissingWeight: boolean;
+    missingWeightItems: string[];
+}
+
+import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
+
+export interface PurchaseAmountPostingModuleProps {
+    shipments?: (IncomingShipment | PurchaseOrderHeader)[];
+    selectedShipment?: IncomingShipment | PurchaseOrderHeader | null;
+    setSelectedShipment?: (shipment: IncomingShipment | PurchaseOrderHeader | null) => void;
+}
