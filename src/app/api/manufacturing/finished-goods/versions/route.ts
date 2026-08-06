@@ -96,6 +96,19 @@ export async function POST(request: Request) {
         }
 
         try {
+            // 0. Enforce global uniqueness of version_name
+            const dupCheckUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_name][_eq]=${encodeURIComponent(versionName)}&limit=1&fields=version_id`;
+            const dupRes = await fetch(dupCheckUrl, { headers, cache: "no-store" });
+            if (dupRes.ok) {
+                const dupJson = await dupRes.json();
+                if (dupJson.data && dupJson.data.length > 0) {
+                    return NextResponse.json(
+                        { error: "A version with this name already exists. Please choose a unique version name.", code: "VERSION_NAME_CONFLICT" },
+                        { status: 409 }
+                    );
+                }
+            }
+
             // 1. Create product manufacturing version
             const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
                 method: "POST",
