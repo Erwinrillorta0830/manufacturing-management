@@ -53,11 +53,14 @@ export default function RawMaterialsModule({
                 onStartEdit={formHook.handleStartEdit}
                 isItemPkg={dataHook.isItemPkg}
                 weightUnits={formHook.weightUnits}
+                categoriesList={formHook.categoriesList}
                 loadingBatches={dataHook.loadingBatches}
                 groupedByBranch={dataHook.groupedByBranch}
+                familyGroups={dataHook.familyGroups}
                 page={dataHook.page}
                 setPage={dataHook.setPage}
                 pageSize={dataHook.pageSize}
+                setPageSize={dataHook.setPageSize}
             />
 
             <RawMaterialModal
@@ -98,8 +101,11 @@ export default function RawMaterialsModule({
                 setSupplierSearch={formHook.setSupplierSearch}
                 packagingVariants={formHook.packagingVariants}
                 handleAddVariant={formHook.handleAddVariant}
+                handleAddPresetVariant={formHook.handleAddPresetVariant}
                 handleUpdateVariant={formHook.handleUpdateVariant}
                 handleRemoveVariant={formHook.handleRemoveVariant}
+                cascadeToChildren={formHook.cascadeToChildren}
+                setCascadeToChildren={formHook.setCascadeToChildren}
                 uomOptions={formHook.uomOptions}
                 weightUnitOptions={formHook.weightUnitOptions}
                 parentProductOptions={formHook.parentProductOptions}

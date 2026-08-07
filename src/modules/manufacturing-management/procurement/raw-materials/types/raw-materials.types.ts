@@ -16,6 +16,7 @@ export interface SelectOption {
 }
 
 export interface PackagingVariantPayload {
+    product_id?: number;
     product_name: string;
     product_code: string;
     unit_of_measurement: number;
@@ -26,6 +27,7 @@ export interface PackagingVariantPayload {
     product_brand?: number;
     product_category?: number;
     product_type?: number;
+    codeSuffix?: string;
 }
 
 export interface RegisterRawMaterialPayload {
@@ -42,6 +44,7 @@ export interface RegisterRawMaterialPayload {
     product_category?: number;
     product_type?: number;
     parent_id?: number | null;
+    cascadeToChildren?: boolean;
 }
 
 export interface RawMaterialItem {

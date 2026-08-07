@@ -3,6 +3,12 @@ import { toast } from "sonner";
 import { RawMaterialItem, TypeFilter, BranchGroupedBatches, BatchItem } from "../types/raw-materials.types";
 import { fetchProductInventoryDetails } from "../services/raw-materials.service";
 
+export interface FamilyGroup {
+    id: string;
+    parent: RawMaterialItem;
+    children: RawMaterialItem[];
+}
+
 export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
     const [search, setSearch] = useState("");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -35,27 +41,46 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
         });
     }, [rawMaterials, search, typeFilter]);
 
-    // Group child records directly beneath their parent records in tree list
-    const sortedFiltered = useMemo(() => {
+    // Group items into Family Groups (Parent + Children) so pagination never splits a family across pages
+    const familyGroups = useMemo<FamilyGroup[]>(() => {
         const parents = filtered.filter(rm => !rm.parent_id);
         const children = filtered.filter(rm => !!rm.parent_id);
 
-        const result: RawMaterialItem[] = [];
-        parents.forEach(parent => {
-            result.push(parent);
+        const groups: FamilyGroup[] = parents.map(parent => {
             const parentChildren = children.filter(child => Number(child.parent_id) === parent.product_id);
-            result.push(...parentChildren);
+            return {
+                id: `fam-${parent.product_id}`,
+                parent,
+                children: parentChildren
+            };
         });
 
-        // Add any orphans (children whose parents aren't matching current filters)
+        // Add orphan children (whose parents are filtered out or unlinked) as standalone family groups
         children.forEach(child => {
-            if (!result.some(r => r.product_id === child.product_id)) {
-                result.push(child);
+            const isAlreadyIncluded = groups.some(g => g.children.some(c => c.product_id === child.product_id));
+            if (!isAlreadyIncluded) {
+                groups.push({
+                    id: `orphan-${child.product_id}`,
+                    parent: child,
+                    children: []
+                });
             }
         });
 
-        return result;
+        return groups;
     }, [filtered]);
+
+    // Flatten family groups into single list while keeping family order intact
+    const sortedFiltered = useMemo(() => {
+        const result: RawMaterialItem[] = [];
+        familyGroups.forEach(fg => {
+            result.push(fg.parent);
+            if (fg.children.length > 0) {
+                result.push(...fg.children);
+            }
+        });
+        return result;
+    }, [familyGroups]);
 
     const handleToggleExpand = async (productId: number) => {
         if (expandedProductId === productId) {
@@ -116,6 +141,7 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
         setTypeFilter,
         expandedProductId,
         loadingBatches,
+        familyGroups,
         sortedFiltered,
         handleToggleExpand,
         groupedByBranch,
