@@ -311,11 +311,17 @@ export async function createSection(sectionName: string): Promise<{ success: boo
     return res.json();
 }
 
-export async function activateVersion(productId: number, versionId?: number, deactivateAll?: boolean): Promise<{ success: boolean }> {
+export async function activateVersion(
+    productId: number,
+    versionId?: number,
+    action: "set_active" | "set_primary" | "deactivate" | "deactivate_all" = "set_active",
+    deactivateAll?: boolean
+): Promise<{ success: boolean }> {
+    const effectiveAction = deactivateAll ? "deactivate_all" : action;
     const res = await fetch("/api/manufacturing/finished-goods/versions", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, versionId, deactivateAll })
+        body: JSON.stringify({ productId, versionId, action: effectiveAction, deactivateAll: deactivateAll || effectiveAction === "deactivate_all" })
     });
     if (!res.ok) {
         let msg = "Failed to update version status via BFF";
