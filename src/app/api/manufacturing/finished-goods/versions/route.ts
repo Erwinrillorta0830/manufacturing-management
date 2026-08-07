@@ -3,6 +3,19 @@ import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 
+interface VersionRecord {
+    version_id: number;
+    product_id?: number;
+    version_name?: string;
+    status?: string;
+    is_primary?: boolean;
+    expected_yield_percentage?: number;
+    base_quantity?: number;
+    uom_id?: number | null;
+    valid_from?: string | null;
+    valid_to?: string | null;
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -25,8 +38,13 @@ export async function GET(request: Request) {
         if (!res) throw new Error("Directus version request did not return a response");
         if (!res.ok) throw new Error(`Directus failed to fetch versions: ${res.status}`);
         const json = await res.json();
+        const rawData = json.data || [];
 
-        const versionsList = (json.data || []).map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null }) => ({
+        const activeVersions = rawData.filter((item: VersionRecord) => item.status === "Active");
+        const explicitPrimary = rawData.find((item: VersionRecord) => item.is_primary);
+        const primaryVersionId = explicitPrimary?.version_id ?? (activeVersions[0]?.version_id || rawData[0]?.version_id);
+
+        const versionsList = rawData.map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; is_primary?: boolean; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null }) => ({
             version_id: v.version_id,
             id: v.version_id, // compatibility
             product_id: productId,
@@ -37,7 +55,8 @@ export async function GET(request: Request) {
             status: v.status || "For Approval",
             valid_from: v.valid_from || null,
             valid_to: v.valid_to || null,
-            is_active: v.status === "Active" // compatibility
+            is_active: v.status === "Active",
+            is_primary: v.version_id === primaryVersionId
         }));
 
         return NextResponse.json(versionsList);
@@ -219,10 +238,31 @@ export async function POST(request: Request) {
     }
 }
 
+async function patchVersionItem(versionId: number, data: Record<string, unknown>) {
+    let res = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(data)
+    });
+    // Fallback if Directus rejects is_primary field because it hasn't been created in DB schema yet
+    if (!res.ok && "is_primary" in data) {
+        const fallbackData = { ...data };
+        delete fallbackData.is_primary;
+        if (Object.keys(fallbackData).length > 0) {
+            res = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify(fallbackData)
+            });
+        }
+    }
+    return res;
+}
+
 export async function PATCH(request: Request) {
     try {
         const body = await request.json();
-        const { productId, versionId, deactivateAll } = body;
+        const { productId, versionId, action, deactivateAll } = body;
 
         if (!productId) {
             return NextResponse.json({ error: "Missing required field (productId)" }, { status: 400 });
@@ -231,21 +271,24 @@ export async function PATCH(request: Request) {
         const numericProductId = parseInt(productId);
         const today = await getTodayDateString();
 
-        // Fetch all versions for this product
-        const getVersionsUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${numericProductId}&limit=-1&fields=version_id`;
+        // Fetch all versions for this product without restrictive field parameters
+        const getVersionsUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${numericProductId}&limit=-1`;
         const versionsRes = await fetch(getVersionsUrl, { headers, cache: "no-store" });
-        if (!versionsRes.ok) throw new Error("Failed to fetch product versions for deactivation");
+        if (!versionsRes.ok) {
+            const errText = await versionsRes.text().catch(() => "");
+            console.error(`Directus version fetch failed for productId=${numericProductId} [HTTP ${versionsRes.status}]:`, errText);
+            return NextResponse.json(
+                { error: `Directus failed to fetch product versions (HTTP ${versionsRes.status}): ${errText || versionsRes.statusText}` },
+                { status: versionsRes.status >= 400 && versionsRes.status < 600 ? versionsRes.status : 500 }
+            );
+        }
         const versionsJson = await versionsRes.json();
-        const versions = versionsJson.data || [];
+        const versions: VersionRecord[] = versionsJson.data || [];
 
-        if (deactivateAll) {
+        if (deactivateAll || action === "deactivate_all") {
             // Deactivate all versions
             for (const v of versions) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${v.version_id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: "Inactive", valid_to: today })
-                });
+                await patchVersionItem(v.version_id, { status: "Inactive", valid_to: today, is_primary: false });
             }
             return NextResponse.json({ success: true });
         }
@@ -255,29 +298,52 @@ export async function PATCH(request: Request) {
         }
         const numericVersionId = parseInt(versionId);
 
-        // Deactivate all other versions
-        for (const v of versions) {
-            if (v.version_id !== numericVersionId) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${v.version_id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: "Inactive", valid_to: today })
-                });
+        if (action === "set_primary") {
+            const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
+            if (targetVer && targetVer.status !== "Active" && targetVer.status !== "Approved") {
+                return NextResponse.json(
+                    { error: `Version is currently "${targetVer.status || 'Unapproved'}". Only approved or active versions can be set as Primary Default.` },
+                    { status: 400 }
+                );
             }
+            // 1. Unset primary on all other versions of this product
+            for (const v of versions) {
+                if (v.version_id !== numericVersionId) {
+                    await patchVersionItem(v.version_id, { is_primary: false });
+                }
+            }
+            // 2. Activate & set is_primary on target version
+            const actRes = await patchVersionItem(numericVersionId, { status: "Active", is_primary: true, valid_from: today, valid_to: null });
+            if (!actRes.ok) throw new Error("Failed to set primary version");
+            return NextResponse.json({ success: true });
+        } else if (action === "deactivate") {
+            // Deactivate specific version
+            const target = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
+            const wasPrimary = target?.is_primary;
+
+            await patchVersionItem(numericVersionId, { status: "Inactive", valid_to: today, is_primary: false });
+
+            // If the deactivated version was primary, auto-promote the next available active version
+            if (wasPrimary) {
+                const remainingActive = versions.find((v: VersionRecord) => v.version_id !== numericVersionId && v.status === "Active");
+                if (remainingActive) {
+                    await patchVersionItem(remainingActive.version_id, { is_primary: true });
+                }
+            }
+            return NextResponse.json({ success: true });
+        } else {
+            // Action "set_active": Activate version without deactivating other active versions
+            const hasPrimary = versions.some((v: VersionRecord) => v.is_primary);
+            const isPrimary = !hasPrimary;
+
+            const actRes = await patchVersionItem(numericVersionId, { status: "Active", is_primary: isPrimary, valid_from: today, valid_to: null });
+            if (!actRes.ok) throw new Error("Failed to activate version");
+            return NextResponse.json({ success: true });
         }
-
-        // Activate the selected version
-        const actRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${numericVersionId}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ status: "Active", valid_from: today, valid_to: null })
-        });
-        if (!actRes.ok) throw new Error("Failed to activate selected version");
-
-        return NextResponse.json({ success: true });
     } catch (e) {
         console.error("API Error activating version:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to activate version" }, { status: 500 });
     }
 }
+
 
