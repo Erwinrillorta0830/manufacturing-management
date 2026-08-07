@@ -14,6 +14,17 @@ export interface BOMItem {
     originalPrice?: number | null;
 }
 
+export interface ChildVariantForm {
+    id: string;
+    title: string;
+    sku: string;
+    baseUom: string;
+    uomCount: string;
+    targetSellingPrice: string;
+    costPerUnit: string;
+    barcode?: string;
+}
+
 
 export interface RoutingStep {
     id: string;

@@ -44,7 +44,8 @@ export async function uploadProductImage(file: File): Promise<string> {
     const payload = await response.json().catch(() => null);
 
     if (!response.ok) {
-        throw new Error(getUploadErrorMessage(payload) || "Failed to upload product image.");
+        const message = getUploadErrorMessage(payload) || `Image upload failed (HTTP ${response.status}: ${response.statusText || 'Server Error'}). Please verify image file format or server connection.`;
+        throw new Error(message);
     }
 
     const fileId = payload && typeof payload === "object"

@@ -265,7 +265,13 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 value={editedDetails.parent_id ? String(editedDetails.parent_id) : ""}
                                 onValueChange={(val) => handleDetailChange("parent_id", val ? Number(val) : null)}
                                 placeholder="Select parent product..."
+                                disabled={familyChildren.length > 0}
                             />
+                            {familyChildren.length > 0 && (
+                                <p className="text-[10px] text-amber-600 dark:text-amber-400 italic">
+                                    Parent assignment is locked because this product has {familyChildren.length} active child variant(s).
+                                </p>
+                            )}
                         </div>
 
                         <div className="grid grid-cols-3 gap-2">
@@ -519,11 +525,40 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
 
                     {/* Financial Configurations Card */}
                     <div className="bg-card/55 border border-border/80 rounded-xl p-5 shadow-sm space-y-4">
-                        <h3 className="text-sm font-semibold text-foreground border-b pb-2 flex items-center gap-2">
-                            <DollarSign className="h-4 w-4 text-primary/80" /> Financials & Overheads
+                        <h3 className="text-sm font-semibold text-foreground border-b pb-2 flex items-center justify-between">
+                            <span className="flex items-center gap-2">
+                                <DollarSign className="h-4 w-4 text-primary/80" /> Financials & Status
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                                ((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) === "Inactive"
+                                    ? "bg-rose-500/10 text-rose-600 border-rose-500/20"
+                                    : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                            }`}>
+                                {((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) || "Active"}
+                            </span>
                         </h3>
                         
                         <div className="grid grid-cols-3 gap-3">
+                            <div className="space-y-1 col-span-3">
+                                <label className="text-[11px] font-bold text-muted-foreground uppercase">Product Master Status</label>
+                                <select
+                                    value={((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) || "Active"}
+                                    onChange={e => {
+                                        const newStatus = e.target.value;
+                                        if (newStatus === "Inactive") {
+                                            if (!confirm("Are you sure you want to deactivate this master SKU? Deactivating will hide it from active inventory and manufacturing workflows.")) {
+                                                return;
+                                            }
+                                        }
+                                        handleDetailChange("status" as unknown as keyof Product, newStatus);
+                                    }}
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all font-semibold"
+                                >
+                                    <option value="Active">Active (Live inventory & manufacturing)</option>
+                                    <option value="Inactive">Inactive (Deactivated / Draft)</option>
+                                </select>
+                            </div>
+
                             <div className="space-y-1 col-span-3">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase">Cost Per Unit (₱)</label>
                                 <input 
@@ -589,7 +624,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                                     <p className="text-[9px] text-muted-foreground">SKU: {child.sku || "N/A"} • Variant UOM: {child.baseUom}</p>
                                                 </div>
                                                 <div className="text-[11px] font-bold text-foreground bg-muted px-2 py-0.5 rounded">
-                                                    ₱{child.targetSellingPrice.toFixed(2)}
+                                                    ₱{child.targetSellingPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </div>
                                             </div>
                                         ))

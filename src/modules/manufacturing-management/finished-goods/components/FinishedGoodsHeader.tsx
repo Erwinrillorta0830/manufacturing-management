@@ -89,26 +89,26 @@ export function FinishedGoodsHeader({
                     {(loadingBOM || savingBOM) && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
                 </div>
                 <div className="flex items-center gap-2">
-                    {/* Register Parent Good (Piece) */}
+                    {/* Register Parent Product */}
                     <button
                         type="button"
                         onClick={onOpenRegisterParent}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 shadow-2xs transition-all cursor-pointer"
-                        title="Register a Primary Manufactured Good (Piece / Individual Pouch)"
+                        title="Register a Primary Manufactured Good"
                     >
                         <Plus className="h-3.5 w-3.5" />
-                        Register Parent (Piece)
+                        Register Parent Product
                     </button>
 
-                    {/* Register Child Variant (Box / Case) */}
+                    {/* Register Child Variant */}
                     <button
                         type="button"
                         onClick={onOpenRegisterChild}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 shadow-2xs transition-all cursor-pointer"
-                        title="Register a Packaged Child Variant (Box / Case / Mother Bag)"
+                        title="Register a Packaged Child Variant"
                     >
                         <Layers className="h-3.5 w-3.5 text-primary" />
-                        Register Child (Box)
+                        Register Child Variant
                     </button>
 
                     <button
@@ -138,6 +138,13 @@ export function FinishedGoodsHeader({
                                     Parent Good
                                 </span>
                             )}
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border shrink-0 ${
+                                (selectedProduct as unknown as { status?: string }).status === "Inactive"
+                                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                                    : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                            }`}>
+                                Master Status: {(selectedProduct as unknown as { status?: string }).status || "Active"}
+                            </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
                             <span>SKU: <strong className="text-foreground font-semibold">{selectedProduct.sku || "N/A"}</strong></span>
@@ -165,7 +172,7 @@ export function FinishedGoodsHeader({
                                     >
                                         {versions.map((v, idx) => {
                                             const cost = versionCosts[v.version_id];
-                                            const costStr = cost !== undefined && cost > 0 ? ` (Est: ₱${cost.toFixed(2)})` : "";
+                                            const costStr = cost !== undefined && cost > 0 ? ` (Est: ₱${cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : "";
                                             const activeStr = v.is_active ? " [ACTIVE]" : "";
                                             return (
                                                 <option key={`${v.version_id}-${idx}`} value={v.version_id}>
@@ -178,7 +185,11 @@ export function FinishedGoodsHeader({
                                     {selectedVersionId && !versions.find(v => v.version_id === selectedVersionId)?.is_active && (
                                         <button
                                             type="button"
-                                            onClick={() => handleActivateVersion(selectedVersionId)}
+                                            onClick={() => {
+                                                if (confirm("Setting this version as active will deactivate the previously active version. Proceed?")) {
+                                                    handleActivateVersion(selectedVersionId);
+                                                }
+                                            }}
                                             className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 border-none px-2 py-1 text-xs font-bold text-white transition-all cursor-pointer shadow-sm shadow-emerald-950/20"
                                             title="Set this version as active"
                                         >
@@ -238,7 +249,7 @@ export function FinishedGoodsHeader({
                         )}
                         <div className="text-right">
                             <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Target Selling Price</span>
-                            <span className="text-sm font-extrabold text-foreground">₱{selectedProduct.targetSellingPrice.toFixed(2)}</span>
+                            <span className="text-sm font-extrabold text-foreground">₱{selectedProduct.targetSellingPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     </div>
                 </div>
