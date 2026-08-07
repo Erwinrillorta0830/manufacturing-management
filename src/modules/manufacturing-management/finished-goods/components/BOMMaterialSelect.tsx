@@ -23,6 +23,8 @@ import { MaterialType } from "../material-types";
 
 interface BOMMaterialSelectProps {
     value?: number;
+    productName?: string;
+    productCode?: string;
     onSelectProduct: (product: BFFCatalogProduct) => void;
     placeholder?: string;
     disabled?: boolean;
@@ -31,6 +33,8 @@ interface BOMMaterialSelectProps {
 
 export function BOMMaterialSelect({
     value,
+    productName,
+    productCode,
     onSelectProduct,
     placeholder = "Choose Material...",
     disabled = false,
@@ -108,14 +112,13 @@ export function BOMMaterialSelect({
                 }
             } catch (e: unknown) {
                 if ((e as Error)?.name !== "AbortError") {
-                    console.error("Failed to load default materials list:", e);
+                    console.error("Failed to fetch default materials:", e);
                 }
             } finally {
-                if (!controller.signal.aborted) {
-                    setLoading(false);
-                }
+                setLoading(false);
             }
         }
+
         loadDefaults();
 
         return () => {
@@ -123,7 +126,7 @@ export function BOMMaterialSelect({
         };
     }, [open]);
 
-    // Query matching materials as the user types
+    // Dynamic search effect
     React.useEffect(() => {
         if (!open || !debouncedSearch.trim()) return;
 
@@ -132,38 +135,33 @@ export function BOMMaterialSelect({
         async function searchMaterials() {
             setLoading(true);
             try {
-                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${encodeURIComponent(debouncedSearch.trim())}&limit=30&excludeRollup=true`, {
+                const res = await fetch(`/api/manufacturing/finished-goods/products?search=${encodeURIComponent(debouncedSearch.trim())}&limit=50&excludeRollup=true`, {
                     signal: controller.signal
                 });
                 if (res.ok) {
                     const data = await res.json();
                     if (Array.isArray(data)) {
-                        // Always guarantee the current selection is present in the list
-                        const union = [...data];
-                        if (selectedProduct && !union.some(u => u.product_id === selectedProduct.product_id)) {
-                            union.push(selectedProduct);
-                        }
-                        setOptions(union);
+                        setOptions(data);
                     }
                 }
             } catch (e: unknown) {
                 if ((e as Error)?.name !== "AbortError") {
-                    console.error("Failed searching materials dynamically:", e);
+                    console.error("Failed to search materials:", e);
                 }
             } finally {
-                if (!controller.signal.aborted) {
-                    setLoading(false);
-                }
+                setLoading(false);
             }
         }
+
         searchMaterials();
 
         return () => {
             controller.abort();
         };
-    }, [debouncedSearch, open, selectedProduct]);
+    }, [debouncedSearch, open]);
 
     const filteredOptions = React.useMemo(() => {
+        if (!type) return options;
         return options.filter(opt => {
             const pType = opt.product_type ? Number(opt.product_type) : null;
             
@@ -187,10 +185,18 @@ export function BOMMaterialSelect({
     }, [options, type]);
 
     const displayLabel = React.useMemo(() => {
-        if (!selectedProduct) return placeholder;
-        const uom = selectedProduct.unit_of_measurement?.unit_shortcut || "N/A";
-        return `${selectedProduct.product_name} (${selectedProduct.product_code || `ID-${selectedProduct.product_id}`}) [${uom}]`;
-    }, [selectedProduct, placeholder]);
+        if (selectedProduct) {
+            const uom = selectedProduct.unit_of_measurement?.unit_shortcut || "N/A";
+            return `${selectedProduct.product_name} (${selectedProduct.product_code || `ID-${selectedProduct.product_id}`}) [${uom}]`;
+        }
+        if (productName) {
+            return productCode ? `${productName} (${productCode})` : productName;
+        }
+        if (value) {
+            return `Component #${value}`;
+        }
+        return placeholder;
+    }, [selectedProduct, productName, productCode, value, placeholder]);
 
     return (
         <Popover open={open} onOpenChange={setOpen}>

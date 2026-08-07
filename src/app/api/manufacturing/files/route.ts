@@ -71,8 +71,8 @@ async function requestDirectusFile(
             const requestBody = file
                 ? (() => {
                     const formData = new FormData();
-                    formData.append("file", file, file.name);
-                    formData.append("public", "true");
+                    formData.set("file", file, file.name);
+                    formData.set("title", file.name);
                     return formData;
                 })()
                 : undefined;

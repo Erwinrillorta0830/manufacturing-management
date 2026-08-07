@@ -5,7 +5,7 @@ import { GitFork, Briefcase, Calculator, Activity } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
-import { ProductVersion, RouteStep, OperationType, OverheadType, WorkCenter, QATemplate, Unit } from "../types";
+import { ProductVersion, RouteStep, OperationType, OverheadType, WorkCenter, QATemplate, Unit, BFFCatalogProduct } from "../types";
 
 export interface VersionManagementTabProps {
     selectedProductId: string;
@@ -22,6 +22,7 @@ export interface VersionManagementTabProps {
     workCenters: WorkCenter[];
     qaTemplates: QATemplate[];
     units: Unit[];
+    allCatalogProducts?: BFFCatalogProduct[];
     setHasUnsavedChanges: (val: boolean) => void;
     isSyncingYield: boolean;
     handleSyncHistoricalYield: () => Promise<void>;
@@ -42,6 +43,7 @@ export function VersionManagementTab({
     workCenters,
     qaTemplates,
     units,
+    allCatalogProducts,
     setHasUnsavedChanges,
     isSyncingYield,
     handleSyncHistoricalYield
@@ -131,6 +133,7 @@ export function VersionManagementTab({
                     workCenters={workCenters}
                     qaTemplates={qaTemplates}
                     units={units}
+                    catalogProducts={allCatalogProducts}
                     setHasUnsavedChanges={setHasUnsavedChanges}
                     setOperationTypes={setOperationTypes}
                     editedVersionDetails={editedVersionDetails}

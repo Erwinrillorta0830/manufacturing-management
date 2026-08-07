@@ -3,12 +3,14 @@
 
 import React from "react";
 import { Plus, Trash2, Shield, Settings, Clock, Layers, Users, Briefcase } from "lucide-react";
-import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit, VersionLaborPosition } from "../types";
+import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit, VersionLaborPosition, BFFCatalogProduct } from "../types";
 import { BOMMaterialSelect } from "./BOMMaterialSelect";
 import { MaterialTypeSelect } from "./MaterialTypeSelect";
 import { CreatableSelect } from "./CreatableSelect";
 import { Button } from "@/components/ui/button";
 import { calculateMaterialCost } from "../costing";
+import { getProductFamilyUOMOptions, extractProductUomShortcut } from "../utils/uom-rules";
+import { formatNumberWithCommas } from "../utils/formatters";
 import {
     MATERIAL_TYPE_OPTIONS,
     MaterialType,
@@ -40,6 +42,7 @@ interface RoutesBOMTabProps {
     workCenters: WorkCenter[];
     qaTemplates: QATemplate[];
     units: Unit[];
+    catalogProducts?: BFFCatalogProduct[];
     setHasUnsavedChanges: (val: boolean) => void;
     setOperationTypes?: React.Dispatch<React.SetStateAction<OperationType[]>>;
     editedVersionDetails?: any;
@@ -53,6 +56,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     workCenters,
     qaTemplates,
     units,
+    catalogProducts,
     setHasUnsavedChanges,
     setOperationTypes,
     editedVersionDetails,
@@ -285,6 +289,31 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
         setHasUnsavedChanges(true);
     };
 
+    const handleSelectProduct = (routeId: number, bomItemId: number, prod: BFFCatalogProduct, materialType: MaterialType | null) => {
+        const initialUom = extractProductUomShortcut(prod, units) || "";
+        setEditedRoutes(prev => prev.map(r => {
+            if (r.route_id !== routeId) return r;
+            return {
+                ...r,
+                bom_items: (r.bom_items || []).map(b => {
+                    if (b.id !== bomItemId) return b;
+                    return {
+                        ...b,
+                        product_id: Number(prod.product_id),
+                        product_name: prod.product_name,
+                        product_code: prod.product_code || "",
+                        product_type: prod.product_type ?? null,
+                        has_versions: Boolean(prod.has_versions),
+                        material_type: materialType,
+                        cost_per_unit: Number(prod.cost_per_unit || prod.price_per_unit || 0),
+                        unit_of_measurement: initialUom
+                    };
+                })
+            };
+        }));
+        setHasUnsavedChanges(true);
+    };
+
     const unitOptions = React.useMemo(() => {
         return units.map(u => ({
             value: u.unit_shortcut,
@@ -492,9 +521,13 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 }
                                             }}
                                             placeholder="Select Work Center..."
-                                            className="h-9 text-xs"
+                                            className={`h-9 text-xs ${!r.work_center_id ? "border-red-500 focus:ring-red-500" : ""}`}
                                         />
-                                        {(() => {
+                                        {!r.work_center_id ? (
+                                            <span className="text-[10px] font-semibold text-red-600 block">
+                                                Work Center is required for this route step.
+                                            </span>
+                                        ) : (() => {
                                             const selectedWorkCenter = workCenters.find(wc => wc.work_center_id === r.work_center_id);
                                             return selectedWorkCenter ? (
                                                 <span className="text-[10px] text-muted-foreground">
@@ -725,19 +758,12 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                 <td className="p-1.5 align-middle">
                                                                     <BOMMaterialSelect
                                                                         value={b.product_id || undefined}
+                                                                        productName={b.product_name}
+                                                                        productCode={b.product_code}
                                                                         type={selectedMaterialType}
                                                                         disabled={!selectedMaterialType}
                                                                         placeholder={selectedMaterialType ? "Choose Material..." : "Select material type first"}
-                                                                        onSelectProduct={(prod) => {
-                                                                            handleUpdateIngredient(r.route_id, b.id, "product_id", prod.product_id);
-                                                                            handleUpdateIngredient(r.route_id, b.id, "product_name", prod.product_name);
-                                                                            handleUpdateIngredient(r.route_id, b.id, "product_code", prod.product_code);
-                                                                            handleUpdateIngredient(r.route_id, b.id, "product_type", prod.product_type ?? null);
-                                                                            handleUpdateIngredient(r.route_id, b.id, "has_versions", Boolean(prod.has_versions));
-                                                                            handleUpdateIngredient(r.route_id, b.id, "material_type", selectedMaterialType);
-                                                                            handleUpdateIngredient(r.route_id, b.id, "cost_per_unit", Number(prod.cost_per_unit || prod.price_per_unit || 0));
-                                                                            handleUpdateIngredient(r.route_id, b.id, "unit_of_measurement", prod.unit_of_measurement?.unit_shortcut || "PCS");
-                                                                        }}
+                                                                        onSelectProduct={(prod) => handleSelectProduct(r.route_id, b.id, prod, selectedMaterialType)}
                                                                     />
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
@@ -753,14 +779,17 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
                                                                     {(() => {
-                                                                        const matched = units.find(u => u.unit_id === b.unit_of_measurement || u.unit_shortcut === b.unit_of_measurement);
+                                                                        const isMaterialSelected = Boolean(b.product_id && Number(b.product_id) > 0);
+                                                                        const matched = units.find(u => Number(u.unit_id) === Number(b.unit_of_measurement) || u.unit_shortcut === b.unit_of_measurement);
                                                                         const selectValue = matched ? matched.unit_shortcut : String(b.unit_of_measurement || "");
+                                                                        const categoryOptions = getProductFamilyUOMOptions(b.product_id, selectValue, catalogProducts || [], units);
                                                                         return (
                                                                             <CreatableSelect
-                                                                                options={unitOptions}
+                                                                                options={categoryOptions}
                                                                                 value={selectValue}
+                                                                                disabled={!isMaterialSelected}
                                                                                 onValueChange={(val) => handleUpdateIngredient(r.route_id, b.id, "unit_of_measurement", val)}
-                                                                                placeholder="UOM"
+                                                                                placeholder={isMaterialSelected ? "Select UOM..." : "Select material first"}
                                                                                 className="h-8 py-0 px-2 text-xs"
                                                                             />
                                                                         );
