@@ -1,6 +1,7 @@
 import React from "react";
-import { ChevronDown, ChevronUp, Loader2, Tag } from "lucide-react";
-import { RawMaterialItem, WeightUnitOption, BranchGroupedBatches } from "../types/raw-materials.types";
+import { ChevronDown, ChevronUp, Loader2, Tag, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { FamilyGroup } from "../hooks/useRawMaterialsData";
+import { RawMaterialItem, WeightUnitOption, BranchGroupedBatches, SelectOption } from "../types/raw-materials.types";
 import { BatchLocationsTree } from "./BatchLocationsTree";
 
 interface RawMaterialsTableProps {
@@ -12,11 +13,14 @@ interface RawMaterialsTableProps {
     onStartEdit: (item: RawMaterialItem) => void;
     isItemPkg: (item: RawMaterialItem) => boolean;
     weightUnits: WeightUnitOption[];
+    categoriesList?: SelectOption[];
     loadingBatches: boolean;
     groupedByBranch: BranchGroupedBatches[];
+    familyGroups?: FamilyGroup[];
     page: number;
     setPage: (p: number) => void;
     pageSize: number;
+    setPageSize?: (ps: number) => void;
 }
 
 export function RawMaterialsTable({
@@ -28,14 +32,32 @@ export function RawMaterialsTable({
     onStartEdit,
     isItemPkg,
     weightUnits,
+    categoriesList,
     loadingBatches,
     groupedByBranch,
+    familyGroups,
     page,
     setPage,
-    pageSize
+    pageSize,
+    setPageSize
 }: RawMaterialsTableProps) {
-    const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
-    const paginatedItems = sortedFiltered.slice((page - 1) * pageSize, page * pageSize);
+    const totalFamilies = familyGroups ? familyGroups.length : sortedFiltered.length;
+    const totalPages = Math.max(1, Math.ceil(totalFamilies / pageSize));
+
+    const paginatedItems = React.useMemo(() => {
+        if (familyGroups && familyGroups.length > 0) {
+            const pagedGroups = familyGroups.slice((page - 1) * pageSize, page * pageSize);
+            const flat: RawMaterialItem[] = [];
+            pagedGroups.forEach(fg => {
+                flat.push(fg.parent);
+                if (fg.children && fg.children.length > 0) {
+                    flat.push(...fg.children);
+                }
+            });
+            return flat;
+        }
+        return sortedFiltered.slice((page - 1) * pageSize, page * pageSize);
+    }, [familyGroups, sortedFiltered, page, pageSize]);
 
     return (
         <div className="border rounded-xl bg-card overflow-x-auto shadow-sm">
@@ -82,9 +104,15 @@ export function RawMaterialsTable({
                             const isChild = !!m.parent_id;
 
                             // Compute category name string
-                            const categoryName = typeof m.product_category === "object" && m.product_category
-                                ? (m.product_category as { category_name?: string }).category_name || "Unassigned"
-                                : (m.category_name || "Unassigned");
+                            let categoryName = "Unassigned";
+                            if (typeof m.product_category === "object" && m.product_category) {
+                                categoryName = (m.product_category as { category_name?: string }).category_name || "Unassigned";
+                            } else if (m.category_name) {
+                                categoryName = m.category_name;
+                            } else if (m.product_category && categoriesList) {
+                                const catOpt = categoriesList.find(c => String(c.value) === String(m.product_category));
+                                if (catOpt) categoryName = catOpt.label;
+                            }
 
                             // Compute tree connector and parent count details
                             let connector = "";
@@ -136,12 +164,12 @@ export function RawMaterialsTable({
                                                         </span>
                                                         {isChild && (
                                                             <span className="text-[8px] font-bold uppercase tracking-wider text-blue-600 bg-blue-500/10 px-1.5 py-0.5 rounded">
-                                                                UOM factor: 1:{m.unit_of_measurement_count}
+                                                                Family Child (1:{m.unit_of_measurement_count})
                                                             </span>
                                                         )}
                                                         {childrenCount > 0 && (
-                                                            <span className="text-[8px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">
-                                                                {childrenCount} variant{childrenCount > 1 ? "s" : ""}
+                                                            <span className="text-[8px] font-black uppercase tracking-wider text-primary bg-primary/15 px-2 py-0.5 rounded-full border border-primary/20">
+                                                                Product Family ({childrenCount + 1} SKUs)
                                                             </span>
                                                         )}
                                                     </div>
@@ -189,7 +217,7 @@ export function RawMaterialsTable({
                                                 onClick={() => onStartEdit(m)}
                                                 className="px-2.5 py-1 text-[10px] font-bold text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 hover:border-primary/45 rounded-lg transition-all cursor-pointer"
                                             >
-                                                Edit
+                                                {childrenCount > 0 ? "Edit Family" : "Edit"}
                                             </button>
                                         </td>
                                     </tr>
@@ -213,27 +241,105 @@ export function RawMaterialsTable({
                 </tbody>
             </table>
 
-            {/* Pagination Controls */}
-            {sortedFiltered.length > pageSize && (
-                <div className="flex items-center justify-between p-3 border-t bg-muted/20 text-xs font-semibold text-muted-foreground">
-                    <div>
-                        Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, sortedFiltered.length)} of {sortedFiltered.length} items
-                    </div>
+            {/* Enterprise Family-Aware Pagination Toolbar */}
+            {sortedFiltered.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-4 p-3 border-t bg-muted/20 text-xs font-semibold text-muted-foreground">
+                    {/* Left: Summary Info */}
                     <div className="flex items-center gap-2">
+                        <span className="text-foreground font-medium">
+                            Showing families <span className="font-bold text-foreground">{(page - 1) * pageSize + 1}</span>–<span className="font-bold text-foreground">{Math.min(page * pageSize, totalFamilies)}</span> of <span className="font-bold text-foreground">{totalFamilies}</span>
+                        </span>
+                        <span className="bg-muted px-2 py-0.5 rounded text-[10px] text-muted-foreground font-mono">
+                            ({sortedFiltered.length} Total SKUs)
+                        </span>
+                    </div>
+
+                    {/* Center: Page Size Selector */}
+                    {setPageSize && (
+                        <div className="flex items-center gap-2">
+                            <span>Families per page:</span>
+                            <select
+                                value={pageSize}
+                                onChange={e => {
+                                    setPageSize(Number(e.target.value));
+                                    setPage(1);
+                                }}
+                                className="bg-background border border-input text-foreground text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                            >
+                                <option value={10}>10</option>
+                                <option value={25}>25</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                        </div>
+                    )}
+
+                    {/* Right: Full Navigation Controls */}
+                    <div className="flex items-center gap-1.5">
                         <button
+                            type="button"
+                            title="First Page"
+                            disabled={page <= 1}
+                            onClick={() => setPage(1)}
+                            className="p-1.5 rounded-md border bg-background text-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                        >
+                            <ChevronsLeft className="h-4 w-4" />
+                        </button>
+
+                        <button
+                            type="button"
+                            title="Previous Page"
                             disabled={page <= 1}
                             onClick={() => setPage(page - 1)}
-                            className="px-3 py-1 rounded border bg-background text-foreground disabled:opacity-50 cursor-pointer"
+                            className="p-1.5 rounded-md border bg-background text-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
                         >
-                            Previous
+                            <ChevronLeft className="h-4 w-4" />
                         </button>
-                        <span>Page {page} of {totalPages}</span>
+
+                        {/* Page Number Pills */}
+                        <div className="flex items-center gap-1 px-1">
+                            {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                .filter(pNum => pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1)
+                                .map((pNum, idx, arr) => {
+                                    const prev = arr[idx - 1];
+                                    const showEllipsis = prev && pNum - prev > 1;
+                                    return (
+                                        <React.Fragment key={pNum}>
+                                            {showEllipsis && <span className="px-1 text-muted-foreground select-none">…</span>}
+                                            <button
+                                                type="button"
+                                                onClick={() => setPage(pNum)}
+                                                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                                    pNum === page
+                                                        ? "bg-primary text-primary-foreground shadow-sm"
+                                                        : "bg-background text-foreground hover:bg-accent border border-input"
+                                                }`}
+                                            >
+                                                {pNum}
+                                            </button>
+                                        </React.Fragment>
+                                    );
+                                })}
+                        </div>
+
                         <button
+                            type="button"
+                            title="Next Page"
                             disabled={page >= totalPages}
                             onClick={() => setPage(page + 1)}
-                            className="px-3 py-1 rounded border bg-background text-foreground disabled:opacity-50 cursor-pointer"
+                            className="p-1.5 rounded-md border bg-background text-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
                         >
-                            Next
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+
+                        <button
+                            type="button"
+                            title="Last Page"
+                            disabled={page >= totalPages}
+                            onClick={() => setPage(totalPages)}
+                            className="p-1.5 rounded-md border bg-background text-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                        >
+                            <ChevronsRight className="h-4 w-4" />
                         </button>
                     </div>
                 </div>

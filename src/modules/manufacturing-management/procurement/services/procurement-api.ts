@@ -131,6 +131,22 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
     return rawItems.map((p: BFFCatalogProduct) => {
         const parentIdValue = p.parent_id ? (typeof p.parent_id === "object" ? (p.parent_id as { product_id: number }).product_id : p.parent_id) : null;
         const parentItem = parentIdValue ? products.find((x: BFFCatalogProduct) => Number(x.product_id) === Number(parentIdValue)) : null;
+
+        let catId: number | null = null;
+        let catName: string | undefined = undefined;
+        if (p.product_category) {
+            if (typeof p.product_category === "object") {
+                const pCatObj = p.product_category as { category_id?: number; id?: number; category_name?: string };
+                catId = Number(pCatObj.category_id || pCatObj.id) || null;
+                catName = pCatObj.category_name;
+            } else if (typeof p.product_category === "number" || typeof p.product_category === "string") {
+                catId = Number(p.product_category) || null;
+            }
+        }
+        if (!catName && (p as { category_name?: string }).category_name) {
+            catName = (p as { category_name?: string }).category_name;
+        }
+
         return {
             product_id: p.product_id,
             parent_id: parentIdValue ? Number(parentIdValue) : null,
@@ -150,7 +166,8 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             density_factor: Number(p.density_factor || 1.0),
             weight: Number(p.weight || 0),
             weight_unit_id: p.weight_unit_id ? (typeof p.weight_unit_id === "object" ? p.weight_unit_id : Number(p.weight_unit_id)) : null,
-            product_category: p.product_category ? (typeof p.product_category === "object" ? Number((p.product_category as { category_id?: number; id?: number }).category_id || (p.product_category as { category_id?: number; id?: number }).id) : Number(p.product_category)) : null,
+            product_category: catId,
+            category_name: catName,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,
             date_added: p.date_added,

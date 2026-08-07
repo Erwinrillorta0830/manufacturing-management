@@ -14,9 +14,10 @@ import { CreatableSelect } from "../finished-goods/components/CreatableSelect";
 
 interface ProcurementModuleProps {
     initialTab?: string;
+    hideNavTabs?: boolean;
 }
 
-export default function ProcurementModule({ initialTab = "suppliers" }: ProcurementModuleProps) {
+export default function ProcurementModule({ initialTab = "suppliers", hideNavTabs = false }: ProcurementModuleProps) {
 
     const {
         activeTab,
@@ -77,26 +78,28 @@ export default function ProcurementModule({ initialTab = "suppliers" }: Procurem
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
             {/* Procurement Navigation Toolbar */}
-            <div className="flex items-center gap-1 border-b pb-2 shrink-0 overflow-x-auto">
-                {navTabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const isActive = activeTab === tab.id;
-                    return (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                                isActive
-                                    ? "bg-primary text-primary-foreground shadow-xs"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                            }`}
-                        >
-                            <Icon className="h-3.5 w-3.5" />
-                            {tab.label}
-                        </button>
-                    );
-                })}
-            </div>
+            {!hideNavTabs && (
+                <div className="flex items-center gap-1 border-b pb-2 shrink-0 overflow-x-auto">
+                    {navTabs.map((tab) => {
+                        const Icon = tab.icon;
+                        const isActive = activeTab === tab.id;
+                        return (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                                    isActive
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                }`}
+                            >
+                                <Icon className="h-3.5 w-3.5" />
+                                {tab.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
 
             {/* Tab Content window */}
             <div className={`flex-1 min-h-0 relative flex flex-col ${activeTab === "raw-materials" || activeTab === "forex" ? "overflow-y-auto pr-1" : ""}`}>

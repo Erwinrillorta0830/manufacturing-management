@@ -43,10 +43,13 @@ interface RawMaterialModalProps {
     handleToggleSupplier: (id: number) => void;
     supplierSearch: string;
     setSupplierSearch: (v: string) => void;
-    packagingVariants: Array<{ uomId: number | ""; count: string; codeSuffix: string }>;
+    packagingVariants: Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>;
     handleAddVariant: () => void;
+    handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
     handleUpdateVariant: (idx: number, field: string, value: string | number) => void;
     handleRemoveVariant: (idx: number) => void;
+    cascadeToChildren?: boolean;
+    setCascadeToChildren?: (v: boolean) => void;
     uomOptions: SelectOption[];
     weightUnitOptions: SelectOption[];
     parentProductOptions: SelectOption[];
@@ -94,8 +97,11 @@ export function RawMaterialModal({
     setSupplierSearch,
     packagingVariants,
     handleAddVariant,
+    handleAddPresetVariant,
     handleUpdateVariant,
     handleRemoveVariant,
+    cascadeToChildren = true,
+    setCascadeToChildren,
     uomOptions,
     weightUnitOptions,
     parentProductOptions,
@@ -123,9 +129,9 @@ export function RawMaterialModal({
                         </div>
                         <div>
                             <h3 className="font-extrabold text-sm text-foreground">
-                                {editingItem ? `Edit Material: ${editingItem.product_name}` : "Register Material / Packaging SKU"}
+                                {editingItem ? `Edit Family Product: ${editingItem.product_name}` : "Register Material / Packaging Family"}
                             </h3>
-                            <p className="text-[10px] text-muted-foreground">Manage raw material attributes, density, gross weight, and approved vendors.</p>
+                            <p className="text-[10px] text-muted-foreground">Manage base raw material specifications, packaging variants, density, and approved suppliers.</p>
                         </div>
                     </div>
                     <button
@@ -311,7 +317,7 @@ export function RawMaterialModal({
                                     options={parentProductOptions}
                                     value={formParentId}
                                     onValueChange={(val: string) => setFormParentId(val)}
-                                    placeholder="None (Standalone Parent)"
+                                    placeholder="None (Standalone Base Parent)"
                                     className="h-8 text-xs"
                                 />
                             </div>
@@ -360,70 +366,182 @@ export function RawMaterialModal({
                         </div>
                     </div>
 
-                    {/* Packaging Variants Inline Row (If Registering & Added) */}
-                    {!editingItem && packagingVariants.length > 0 && (
-                        <div className="border rounded-xl p-2.5 bg-card space-y-2">
-                            <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-black uppercase tracking-wider text-primary">Packaging Variants to Auto-Generate ({packagingVariants.length})</span>
-                                <button
-                                    type="button"
-                                    onClick={handleAddVariant}
-                                    className="bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded border-none cursor-pointer"
-                                >
-                                    + Add Variant
-                                </button>
+                    {/* Section: Child Packaging & Material Family Variants */}
+                    {!formParentId && (
+                        <div className="bg-muted/10 border border-border/40 rounded-xl p-3.5 space-y-3">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b pb-2">
+                                <div className="space-y-0.5">
+                                    <h4 className="text-xs font-extrabold text-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                                        <Layers className="h-3.5 w-3.5 text-primary" /> Family Packaging Variants Matrix
+                                    </h4>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        Define packaged outer variants (e.g. Sacks of 25kg, Drums of 200L, Totes of 1000L) linked directly to this base parent material.
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {editingItem && setCascadeToChildren && (
+                                        <label className="flex items-center gap-1.5 bg-primary/5 px-2.5 py-1 rounded-lg border border-primary/20 text-[10px] font-bold text-primary cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={cascadeToChildren}
+                                                onChange={e => setCascadeToChildren(e.target.checked)}
+                                                className="rounded border-border text-primary focus:ring-primary h-3 w-3"
+                                            />
+                                            Sync Base Category/Brand to Family SKUs
+                                        </label>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        onClick={handleAddVariant}
+                                        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 cursor-pointer"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" /> Add Custom Variant
+                                    </button>
+                                </div>
                             </div>
-                            <div className="space-y-1.5 max-h-24 overflow-y-auto">
-                                {packagingVariants.map((v, vIdx) => (
-                                    <div key={vIdx} className="grid grid-cols-4 gap-2 items-center bg-muted/20 p-1.5 rounded-lg border text-[10px]">
-                                        <CreatableSelect
-                                            options={uomOptions}
-                                            value={String(v.uomId)}
-                                            onValueChange={(val: string) => handleUpdateVariant(vIdx, "uomId", Number(val))}
-                                            placeholder="UOM..."
-                                            className="h-7 text-[10px]"
-                                        />
-                                        <input
-                                            type="number"
-                                            step="any"
-                                            placeholder="Count ratio"
-                                            value={v.count}
-                                            onChange={e => handleUpdateVariant(vIdx, "count", e.target.value)}
-                                            className="p-1 border rounded text-[10px] bg-background outline-none font-bold"
-                                        />
-                                        <input
-                                            type="text"
-                                            placeholder="Suffix"
-                                            value={v.codeSuffix}
-                                            onChange={e => handleUpdateVariant(vIdx, "codeSuffix", e.target.value)}
-                                            className="p-1 border rounded text-[10px] bg-background outline-none font-mono"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveVariant(vIdx)}
-                                            className="p-1 text-rose-500 hover:bg-rose-500/10 rounded cursor-pointer border-none bg-transparent justify-self-end"
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
+
+                            {/* Quick Industrial Presets Toolbar */}
+                            {handleAddPresetVariant && (
+                                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider shrink-0 mr-1">Quick Presets:</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("bag25")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + 25kg Bag
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("sack50")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + 50kg Sack
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("drum200")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + 200L Drum
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("ibc1000")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + 1000L IBC
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("fibc1000")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + 1MT FIBC
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddPresetVariant("case12")}
+                                        className="px-2 py-1 bg-card hover:bg-muted border rounded-md text-[10px] font-bold text-foreground transition-all cursor-pointer shrink-0"
+                                    >
+                                        + Case of 12
+                                    </button>
+                                </div>
+                            )}
+
+                            {packagingVariants.length === 0 ? (
+                                <div className="p-3 border border-dashed rounded-xl bg-background/50 text-center space-y-1">
+                                    <p className="text-xs text-muted-foreground italic font-medium">No child variants added yet.</p>
+                                    <p className="text-[10px] text-muted-foreground/80">
+                                        If this material is supplied or stocked in outer containers (e.g. Sacks, Drums, Totes), select a preset above or click <strong>&quot;+ Add Custom Variant&quot;</strong> to generate family child SKUs.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                                    {packagingVariants.map((v, vIdx) => {
+                                        const matchedUom = uomOptions.find(u => u.value === String(v.uomId));
+                                        const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
+                                        const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
+                                        const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
+                                        const variantNamePreview = `${formName.trim() || "Material"} (${uomShortcut} of ${v.count} ${baseUomShortcut})`;
+                                        const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
+                                        const calculatedWeight = formWeight && parseFloat(formWeight) > 0 ? (parseFloat(formWeight) * (parseFloat(v.count) || 1)).toFixed(2) : null;
+                                        const weightUnitName = weightUnitOptions.find(w => w.value === String(formWeightUnitId))?.label.split("(")[0]?.trim() || "";
+
+                                        return (
+                                            <div key={vIdx} className="p-3 rounded-xl border border-border bg-background space-y-2 shadow-2xs">
+                                                <div className="flex items-center justify-between border-b pb-1.5">
+                                                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                                                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-extrabold ${v.isExisting ? "bg-emerald-500/10 text-emerald-600" : "bg-primary/10 text-primary"}`}>
+                                                            {v.isExisting ? `Existing Family SKU #${v.productId}` : `New Variant #${vIdx + 1}`}
+                                                        </span>
+                                                        {variantNamePreview}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveVariant(vIdx)}
+                                                        className="text-red-500 hover:text-red-600 text-xs font-semibold px-2 py-0.5 hover:bg-red-500/10 rounded transition-colors flex items-center gap-1 cursor-pointer border-none bg-transparent"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" /> Remove
+                                                    </button>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Outer Package UOM *</label>
+                                                        <CreatableSelect
+                                                            options={uomOptions}
+                                                            value={String(v.uomId)}
+                                                            onValueChange={(val: string) => handleUpdateVariant(vIdx, "uomId", Number(val))}
+                                                            placeholder="Select Outer UOM..."
+                                                            className="h-8 text-xs"
+                                                        />
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Conversion Ratio ({baseUomShortcut}/Outer) *</label>
+                                                        <input
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. 25"
+                                                            value={v.count}
+                                                            onChange={e => handleUpdateVariant(vIdx, "count", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">SKU Suffix *</label>
+                                                        <input
+                                                            type="text"
+                                                            placeholder={`e.g. ${cleanSuffix}`}
+                                                            value={v.codeSuffix}
+                                                            onChange={e => handleUpdateVariant(vIdx, "codeSuffix", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-mono font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <div className="bg-muted/30 p-1.5 rounded-lg border text-[10px] flex flex-col justify-center">
+                                                        <span className="text-muted-foreground font-bold uppercase block text-[9px]">Generated Family SKU:</span>
+                                                        <span className="font-mono font-extrabold text-foreground truncate">{variantCodePreview}</span>
+                                                        {calculatedWeight && (
+                                                            <span className="text-muted-foreground text-[9px] mt-0.5">Est. Weight: {calculatedWeight} {weightUnitName}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {/* Footer Action Buttons */}
                     <div className="flex items-center justify-between pt-2 border-t">
-                        <div>
-                            {!editingItem && packagingVariants.length === 0 && (
-                                <button
-                                    type="button"
-                                    onClick={handleAddVariant}
-                                    className="text-[10px] font-bold text-primary hover:underline bg-transparent border-none cursor-pointer flex items-center gap-1"
-                                >
-                                    <Plus className="h-3 w-3" /> Auto-generate packaging variants (e.g. Sacks, Drums)
-                                </button>
-                            )}
-                        </div>
+                        <div></div>
                         <div className="flex items-center gap-2">
                             <button
                                 type="button"
@@ -443,7 +561,7 @@ export function RawMaterialModal({
                                     </>
                                 ) : (
                                     <>
-                                        <Plus className="h-3.5 w-3.5" /> Save Material
+                                        <Plus className="h-3.5 w-3.5" /> Save Family Material
                                     </>
                                 )}
                             </button>
