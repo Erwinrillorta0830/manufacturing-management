@@ -232,7 +232,94 @@ export async function PATCH(request: Request) {
             throw new Error(`Directus failed to update raw material: ${prodRes.status} - ${errText}`);
         }
 
-        // Update supplier links: delete old ones first, then create new ones for parent and children
+        // If cascadeToChildren option is selected, sync category, brand, and density down to existing family children
+        if (productDetails.cascadeToChildren) {
+            try {
+                const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
+                if (childrenRes.ok) {
+                    const children = (await childrenRes.json()).data || [];
+                    const cascadePayload: Record<string, unknown> = {};
+                    if (productDetails.product_brand !== undefined) cascadePayload.product_brand = productDetails.product_brand;
+                    if (productDetails.product_category !== undefined) cascadePayload.product_category = productDetails.product_category;
+                    if (productDetails.density_factor !== undefined) cascadePayload.density_factor = productDetails.density_factor;
+
+                    if (Object.keys(cascadePayload).length > 0) {
+                        for (const child of children) {
+                            await fetch(`${DIRECTUS_URL}/items/products/${child.product_id}`, {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify(cascadePayload)
+                            }).catch(() => { });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error cascading properties to family children:", err);
+            }
+        }
+
+        // Handle packaging variants (update existing ones if product_id is provided, create new ones if not)
+        if (packagingVariants && Array.isArray(packagingVariants) && packagingVariants.length > 0) {
+            try {
+                for (const variant of packagingVariants) {
+                    const variantPayload = {
+                        ...variant,
+                        product_weight: variant.weight !== undefined ? variant.weight : undefined,
+                        product_brand: variant.product_brand !== undefined ? variant.product_brand : (productDetails.product_brand !== undefined ? productDetails.product_brand : null),
+                        product_category: variant.product_category !== undefined ? variant.product_category : (productDetails.product_category !== undefined ? productDetails.product_category : null),
+                        product_class: variant.product_class !== undefined ? variant.product_class : null,
+                        product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
+                        product_section: variant.product_section !== undefined ? variant.product_section : null,
+                        parent_id: productId,
+                        isActive: 1,
+                        status: "Approved",
+                        item_type: "regular",
+                    };
+
+                    if (variant.product_id) {
+                        // Update existing child variant
+                        await fetch(`${DIRECTUS_URL}/items/products/${variant.product_id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify(variantPayload)
+                        });
+                    } else {
+                        // Create new child variant
+                        const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify({
+                                ...variantPayload,
+                                date_added: await getTodayDateString()
+                            })
+                        });
+
+                        if (varRes.ok) {
+                            const varJson = await varRes.json();
+                            const childId = varJson.data?.product_id;
+
+                            // Link child to the same suppliers
+                            if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
+                                for (const supId of supplierIds) {
+                                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
+                                        method: "POST",
+                                        headers,
+                                        body: JSON.stringify({
+                                            product_id: childId,
+                                            supplier_id: Number(supId)
+                                        })
+                                    }).catch(() => { });
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error processing variants during update:", err);
+            }
+        }
+
+        // Update supplier links: delete old ones first, then create new ones for parent and all children
         if (supplierIds && Array.isArray(supplierIds)) {
             // 1. Get all child products of this parent
             const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
@@ -262,55 +349,6 @@ export async function PATCH(request: Request) {
                         })
                     }).catch(() => { });
                 }
-            }
-        }
-
-        // Create new child packaging variants if passed during update
-        if (packagingVariants && Array.isArray(packagingVariants) && packagingVariants.length > 0) {
-            try {
-                for (const variant of packagingVariants) {
-                    const variantPayload = {
-                        ...variant,
-                        product_weight: variant.weight !== undefined ? variant.weight : undefined,
-                        product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
-                        product_category: variant.product_category !== undefined ? variant.product_category : null,
-                        product_class: variant.product_class !== undefined ? variant.product_class : null,
-                        product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
-                        product_section: variant.product_section !== undefined ? variant.product_section : null,
-                        parent_id: productId,
-                        isActive: 1,
-                        status: "Approved",
-                        item_type: "regular",
-                        date_added: await getTodayDateString()
-                    };
-
-                    const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify(variantPayload)
-                    });
-
-                    if (varRes.ok) {
-                        const varJson = await varRes.json();
-                        const childId = varJson.data?.product_id;
-
-                        // Link child to the same suppliers
-                        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                            for (const supId of supplierIds) {
-                                await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify({
-                                        product_id: childId,
-                                        supplier_id: Number(supId)
-                                    })
-                                }).catch(() => { });
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error("Error creating variants during update:", err);
             }
         }
 

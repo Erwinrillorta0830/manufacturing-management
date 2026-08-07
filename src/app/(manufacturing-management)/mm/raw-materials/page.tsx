@@ -108,7 +108,7 @@ export default async function RawMaterialsPage() {
 
             {/* Scrollable Content */}
             <main className="min-h-0 min-w-0 flex-1 flex flex-col p-2 sm:p-4 bg-background overflow-hidden">
-                <ProcurementModule initialTab="raw-materials" />
+                <ProcurementModule initialTab="raw-materials" hideNavTabs={true} />
             </main>
         </div>
     );
