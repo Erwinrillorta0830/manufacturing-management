@@ -1,8 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getManilaTimeString, getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 import {
     ProductIdentityError,
@@ -173,25 +173,8 @@ export async function POST(request: Request) {
             }
         }
 
-        // Get logged in user ID from secure access token cookie
-        let userId: number | null = null;
-        try {
-            const cookieStore = await cookies();
-            const token = cookieStore.get("vos_access_token")?.value;
-            if (token) {
-                const parts = token.split(".");
-                if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                    while (base64.length % 4) base64 += "=";
-                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    userId = payload?.id || payload?.user_id || payload?.sub || null;
-                }
-            }
-        } catch (err) {
-            console.error("Error parsing user token in POST raw-materials route:", err);
-        }
+        // Get logged in user ID from the secure access token cookie
+        const userId = await getUserIdFromToken();
 
         // Check if a product with the same name already exists in Directus
         const checkRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_name][_eq]=${encodeURIComponent(productDetails.product_name)}&limit=1`, { headers });
@@ -342,6 +325,16 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
+        const userId = await getUserIdFromToken();
+        if (!userId || !Number.isInteger(userId) || userId <= 0) {
+            return NextResponse.json({ error: "A valid authenticated user is required to update raw materials." }, { status: 401 });
+        }
+        const updatedAt = await getManilaTimeString();
+        const auditFields = {
+            updated_by: userId,
+            updated_at: updatedAt
+        };
+
         const hasWeightField = Object.prototype.hasOwnProperty.call(productDetails, "weight");
         const hasWeightUnitField = Object.prototype.hasOwnProperty.call(productDetails, "weight_unit_id");
         const rawWeight = hasWeightField
@@ -369,6 +362,7 @@ export async function PATCH(request: Request) {
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
+            ...auditFields,
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
@@ -392,12 +386,13 @@ export async function PATCH(request: Request) {
                 const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
                 if (childrenRes.ok) {
                     const children = (await childrenRes.json()).data || [];
-                    const cascadePayload: Record<string, unknown> = {};
-                    if (productDetails.product_brand !== undefined) cascadePayload.product_brand = productDetails.product_brand;
-                    if (productDetails.product_category !== undefined) cascadePayload.product_category = productDetails.product_category;
-                    if (productDetails.density_factor !== undefined) cascadePayload.density_factor = productDetails.density_factor;
+                    const cascadeFields: Record<string, unknown> = {};
+                    if (productDetails.product_brand !== undefined) cascadeFields.product_brand = productDetails.product_brand;
+                    if (productDetails.product_category !== undefined) cascadeFields.product_category = productDetails.product_category;
+                    if (productDetails.density_factor !== undefined) cascadeFields.density_factor = productDetails.density_factor;
 
-                    if (Object.keys(cascadePayload).length > 0) {
+                    if (Object.keys(cascadeFields).length > 0) {
+                        const cascadePayload = { ...cascadeFields, ...auditFields };
                         for (const child of children) {
                             await fetch(`${DIRECTUS_URL}/items/products/${child.product_id}`, {
                                 method: "PATCH",
@@ -430,6 +425,7 @@ export async function PATCH(request: Request) {
                         isActive: 1,
                         status: "Approved",
                         item_type: "regular",
+                        ...auditFields,
                     };
 
                     if (variant.product_id) {
@@ -450,7 +446,9 @@ export async function PATCH(request: Request) {
                             headers,
                             body: JSON.stringify({
                                 ...variantPayload,
-                                date_added: await getTodayDateString()
+                                date_added: await getTodayDateString(),
+                                created_by: userId,
+                                created_at: updatedAt
                             })
                         });
 
