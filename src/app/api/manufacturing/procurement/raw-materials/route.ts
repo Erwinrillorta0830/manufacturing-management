@@ -21,6 +21,23 @@ function hasProvidedValue(value: unknown): boolean {
     return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
 }
 
+function hasProvidedActiveFlag(value: unknown): boolean {
+    return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
+}
+
+function isValidActiveFlag(value: unknown): boolean {
+    if (!hasProvidedActiveFlag(value)) return true;
+    if (typeof value === "boolean") return true;
+    if (typeof value === "number") return value === 0 || value === 1;
+    return typeof value === "string" && (value.trim() === "0" || value.trim() === "1");
+}
+
+function normalizeActiveFlag(value: unknown, fallback = 1): number {
+    if (!hasProvidedActiveFlag(value)) return fallback;
+    if (typeof value === "boolean") return value ? 1 : 0;
+    return Number(value);
+}
+
 function validateMeasurementFields(productDetails: Record<string, unknown>, requireAll: boolean): string | null {
     const fields: Array<{ name: string; label: string }> = [
         { name: "unit_of_measurement", label: "UOM is required." },
@@ -149,6 +166,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing required fields (product_name, product_code)" }, { status: 400 });
         }
 
+        if (!isValidActiveFlag(productDetails.isActive)) {
+            return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
+        }
+
         const measurementError = validateMeasurementFields(productDetails, true);
         if (measurementError) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
@@ -157,6 +178,12 @@ export async function POST(request: Request) {
         const variantsError = validatePackagingVariants(packagingVariants);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
+        }
+
+        if (Array.isArray(packagingVariants) && packagingVariants.some(variant => {
+            return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
+        })) {
+            return NextResponse.json({ error: "Packaging variant isActive must be either 0 or 1." }, { status: 400 });
         }
 
         const resolvedVariants = await resolvePackagingVariantIdentities(packagingVariants, {
@@ -198,7 +225,7 @@ export async function POST(request: Request) {
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
-            isActive: 1,
+            isActive: normalizeActiveFlag(productDetails.isActive),
             status: "Approved",
             item_type: "regular", // Must be regular due to DB enum constraint
             date_added: productDetails.date_added || todayStr,
@@ -251,7 +278,7 @@ export async function POST(request: Request) {
                         product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
                         product_section: variant.product_section !== undefined ? variant.product_section : null,
                         parent_id: productId,
-                        isActive: 1,
+                        isActive: normalizeActiveFlag(variant.isActive),
                         status: "Approved",
                         item_type: "regular",
                         date_added: todayStr,
@@ -325,6 +352,12 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
+        if (!isValidActiveFlag(productDetails.isActive) || (Array.isArray(packagingVariants) && packagingVariants.some(variant => {
+            return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
+        }))) {
+            return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
+        }
+
         const userId = await getUserIdFromToken();
         if (!userId || !Number.isInteger(userId) || userId <= 0) {
             return NextResponse.json({ error: "A valid authenticated user is required to update raw materials." }, { status: 401 });
@@ -362,6 +395,7 @@ export async function PATCH(request: Request) {
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
+            ...(hasProvidedActiveFlag(productDetails.isActive) ? { isActive: normalizeActiveFlag(productDetails.isActive) } : {}),
             ...auditFields,
         };
 
@@ -410,6 +444,8 @@ export async function PATCH(request: Request) {
         // Handle packaging variants (update existing ones if product_id is provided, create new ones if not)
         if (resolvedVariants.length > 0) {
             for (const { variant, identity } of resolvedVariants) {
+                    const variantHasActiveFlag = hasProvidedActiveFlag(variant.isActive);
+                    const variantActive = normalizeActiveFlag(variant.isActive);
                     const variantPayload = {
                         ...variant,
                         product_name: identity.productName,
@@ -422,7 +458,7 @@ export async function PATCH(request: Request) {
                         product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
                         product_section: variant.product_section !== undefined ? variant.product_section : null,
                         parent_id: productId,
-                        isActive: 1,
+                        ...(variantHasActiveFlag ? { isActive: variantActive } : {}),
                         status: "Approved",
                         item_type: "regular",
                         ...auditFields,
@@ -446,6 +482,7 @@ export async function PATCH(request: Request) {
                             headers,
                             body: JSON.stringify({
                                 ...variantPayload,
+                                isActive: variantHasActiveFlag ? variantActive : 1,
                                 date_added: await getTodayDateString(),
                                 created_by: userId,
                                 created_at: updatedAt

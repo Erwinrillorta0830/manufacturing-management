@@ -91,6 +91,8 @@ export default function RawMaterialsModule({
                 setFormCategory={formHook.setFormCategory}
                 formProductType={formHook.formProductType}
                 setFormProductType={formHook.setFormProductType}
+                formIsActive={formHook.formIsActive}
+                setFormIsActive={formHook.setFormIsActive}
                 formParentId={formHook.formParentId}
                 setFormParentId={formHook.setFormParentId}
                 formUomCount={formHook.formUomCount}

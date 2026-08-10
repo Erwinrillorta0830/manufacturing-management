@@ -27,6 +27,7 @@ export interface PackagingVariantPayload {
     product_brand?: number;
     product_category?: number;
     product_type?: number;
+    isActive?: number;
     codeSuffix?: string;
 }
 
@@ -45,6 +46,7 @@ export interface RegisterRawMaterialPayload {
     product_type?: number;
     parent_id?: number | null;
     cascadeToChildren?: boolean;
+    isActive?: number;
 }
 
 export interface RawMaterialItem {
@@ -71,6 +73,7 @@ export interface RawMaterialItem {
     product_brand?: number | string | { brand_id?: number; brand_name?: string } | null;
     brand_name?: string;
     product_type?: number | null;
+    isActive?: number;
     date_added?: string;
     last_updated?: string;
 }
