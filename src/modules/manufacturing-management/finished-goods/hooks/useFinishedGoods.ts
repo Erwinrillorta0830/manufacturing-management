@@ -43,7 +43,8 @@ import {
     activateVersion,
     fetchQATemplates,
     createQATemplate,
-    saveQATemplate
+    saveQATemplate,
+    normalizeProductActiveState
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
@@ -255,6 +256,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 targetSellingPrice: Number(p.price_per_unit || 0),
                 parentProduct: parentId === null,
                 parent_id: parentId,
+                isActive: normalizeProductActiveState(p.isActive),
                 bom: [],
                 routings: [],
                 densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
@@ -687,6 +689,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         targetSellingPrice: Number(p.price_per_unit || 0),
                         parentProduct: parentId === null,
                         parent_id: parentId,
+                        isActive: normalizeProductActiveState(p.isActive),
                         bom: [],
                         routings: [],
                         densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,

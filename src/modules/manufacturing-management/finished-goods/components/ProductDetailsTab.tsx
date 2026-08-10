@@ -106,7 +106,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     const isParent = !selectedProduct.parent_id;
     
     const familyChildren = React.useMemo(() => {
-        return products.filter(p => String(p.parent_id) === String(selectedProduct.id));
+        return products.filter(p => String(p.parent_id) === String(selectedProduct.id) && p.isActive !== false);
     }, [products, selectedProduct.id]);
     
     const parentProductObj = React.useMemo(() => {
@@ -259,7 +259,9 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase">Parent Product (Optional)</label>
+                            <label className="text-[11px] font-bold text-muted-foreground uppercase">
+                                Parent Product {familyChildren.length === 0 && "(Optional)"}
+                            </label>
                             <CreatableSelect
                                 options={parentOptions}
                                 value={editedDetails.parent_id ? String(editedDetails.parent_id) : ""}
