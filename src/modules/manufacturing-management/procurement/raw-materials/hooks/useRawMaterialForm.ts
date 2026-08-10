@@ -36,14 +36,14 @@ export function useRawMaterialForm(
     const [formCode, setFormCode] = useState("");
     const [formDesc, setFormDesc] = useState("");
     const [formUom, setFormUom] = useState<number | "">("");
-    const [formDensity, setFormDensity] = useState("1.000");
+    const [formDensity, setFormDensity] = useState("");
     const [formWeight, setFormWeight] = useState("");
     const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
     const [formProductType, setFormProductType] = useState<number>(389);
     const [formParentId, setFormParentId] = useState<string>("");
-    const [formUomCount, setFormUomCount] = useState<string>("1");
+    const [formUomCount, setFormUomCount] = useState<string>("");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [supplierSearch, setSupplierSearch] = useState("");
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
@@ -76,13 +76,7 @@ export function useRawMaterialForm(
     }, [rawMaterials, editingItem]);
 
     const handleAddVariant = () => {
-        const defaultUomObj = units.find(u => {
-            const sc = (u.unit_shortcut || "").toLowerCase();
-            const name = (u.unit_name || "").toLowerCase();
-            return sc === "bag" || sc === "box" || sc === "pck" || sc === "ib" || name.includes("bag") || name.includes("box") || name.includes("pack");
-        });
-        const defaultUom = defaultUomObj ? defaultUomObj.unit_id : (units.length > 1 ? units[1].unit_id : (formUom || ""));
-        setPackagingVariants([...packagingVariants, { uomId: defaultUom, count: "25", codeSuffix: "" }]);
+        setPackagingVariants([...packagingVariants, { uomId: "", count: "", codeSuffix: "" }]);
     };
 
     const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
@@ -160,13 +154,6 @@ export function useRawMaterialForm(
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
 
-                if (!editingItem) {
-                    if (meta.units && meta.units.length > 0) setFormUom(meta.units[0].unit_id);
-                    if (meta.weightUnits && meta.weightUnits.length > 0) {
-                        const kgUnit = meta.weightUnits.find(u => u.code.toLowerCase() === "kg" || u.name.toLowerCase().includes("kilo"));
-                        setFormWeightUnitId(kgUnit ? kgUnit.id : meta.weightUnits[0].id);
-                    }
-                }
             } catch (err) {
                 console.error("Failed to load raw material metadata:", err);
                 toast.error("Failed to load options metadata");
@@ -186,14 +173,15 @@ export function useRawMaterialForm(
         setFormName("");
         setFormCode("");
         setFormDesc("");
-        setFormDensity("1.000");
+        setFormUom("");
+        setFormDensity("");
         setFormWeight("");
         setFormWeightUnitId("");
         setFormBrand("");
         setFormCategory("");
         setFormProductType(389);
         setFormParentId("");
-        setFormUomCount("1");
+        setFormUomCount("");
         setSelectedSupplierIds([]);
         setSupplierSearch("");
         setShowValidationErrors(false);
@@ -341,10 +329,10 @@ export function useRawMaterialForm(
         const isCodeEmpty = !formCode.trim();
         const isUomEmpty = !formUom;
         const isCategoryEmpty = !formCategory;
-        const isDensityInvalid = !formDensity || parseFloat(formDensity) <= 0;
+        const isDensityInvalid = !formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0;
         const isWeightInvalid = !formWeight || parseFloat(formWeight) <= 0 || isNaN(parseFloat(formWeight));
         const isWeightUnitInvalid = !formWeightUnitId;
-        const isUomCountInvalid = !formUomCount || Number(formUomCount) <= 0;
+        const isUomCountInvalid = !formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0;
 
         if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isWeightUnitInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
@@ -388,7 +376,12 @@ export function useRawMaterialForm(
         }
 
         // Check variants validation
-        const hasInvalidVariant = packagingVariants.some(v => !v.uomId || !v.count || parseFloat(v.count) <= 0);
+        const hasInvalidVariant = packagingVariants.some(v =>
+            !v.uomId ||
+            !v.count ||
+            !Number.isFinite(Number(v.count)) ||
+            Number(v.count) <= 0
+        );
         if (hasInvalidVariant) {
             toast.error("Please fill out all packaging variant fields with valid units and conversion counts.");
             return;
@@ -397,18 +390,20 @@ export function useRawMaterialForm(
         const selectedUomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "pcs";
         const parsedBaseWeight = parseFloat(formWeight) || 0;
         const selectedWeightUnitIdNum = Number(formWeightUnitId);
+        const parsedDensity = Number(formDensity);
+        const parsedUomCount = Number(formUomCount);
 
         const variantsPayload = packagingVariants.map(v => {
             const vUomShortcut = units.find(u => u.unit_id === Number(v.uomId))?.unit_shortcut || "Unit";
             const cleanSuffix = v.codeSuffix.trim() || `${vUomShortcut.toUpperCase()}${v.count}`;
-            const variantCount = parseFloat(v.count) || 1.0;
+            const variantCount = parseFloat(v.count);
             return {
                 product_id: v.productId,
                 product_name: `${formName.trim()} (${vUomShortcut} of ${v.count} ${selectedUomShortcut})`,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
-                density_factor: parseFloat(formDensity) || 1.0,
+                density_factor: parsedDensity,
                 weight: parsedBaseWeight * variantCount,
                 weight_unit_id: selectedWeightUnitIdNum,
                 product_brand: formBrand ? Number(formBrand) : undefined,
@@ -436,14 +431,14 @@ export function useRawMaterialForm(
             product_code: normalizedCode,
             description: formDesc.trim() || undefined,
             unit_of_measurement: Number(formUom),
-            density_factor: parseFloat(formDensity) || 1.0,
+            density_factor: parsedDensity,
             weight: parsedBaseWeight,
             weight_unit_id: selectedWeightUnitIdNum,
             product_brand: formBrand ? Number(formBrand) : undefined,
             product_category: formCategory ? Number(formCategory) : undefined,
             product_type: formProductType,
             parent_id: formParentId ? Number(formParentId) : null,
-            unit_of_measurement_count: parseFloat(formUomCount) || 1.0,
+            unit_of_measurement_count: parsedUomCount,
             cascadeToChildren
         };
 

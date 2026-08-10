@@ -5,6 +5,31 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 
+function isPositiveNumber(value: unknown): boolean {
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) && numberValue > 0;
+}
+
+function validateMeasurementFields(productDetails: Record<string, unknown>, requireAll: boolean): string | null {
+    const fields: Array<{ name: string; label: string }> = [
+        { name: "unit_of_measurement", label: "UOM is required." },
+        { name: "unit_of_measurement_count", label: "UOM ratio is required and must be greater than 0." },
+        { name: "density_factor", label: "Density is required and must be greater than 0." },
+        { name: "weight", label: "Gross weight is required and must be greater than 0." },
+        { name: "weight_unit_id", label: "Weight unit is required." }
+    ];
+
+    for (const field of fields) {
+        const isPresent = Object.prototype.hasOwnProperty.call(productDetails, field.name);
+        if ((requireAll || isPresent) && !isPositiveNumber(productDetails[field.name])) {
+            return field.label;
+        }
+    }
+
+    return null;
+}
+
 
 export async function GET(request: Request) {
     try {
@@ -38,15 +63,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing required fields (product_name, product_code)" }, { status: 400 });
         }
 
-        const rawWeight = Number(productDetails.weight);
-        if (productDetails.weight === undefined || productDetails.weight === null || isNaN(rawWeight) || rawWeight <= 0) {
-            return NextResponse.json({ error: "Gross weight is required and must be greater than 0." }, { status: 400 });
+        const measurementError = validateMeasurementFields(productDetails, true);
+        if (measurementError) {
+            return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const rawWeightUnitId = productDetails.weight_unit_id ? Number(productDetails.weight_unit_id) : null;
-        if (!rawWeightUnitId) {
-            return NextResponse.json({ error: "Weight unit is required." }, { status: 400 });
-        }
+        const rawWeight = Number(productDetails.weight);
+
+        const rawWeightUnitId = Number(productDetails.weight_unit_id);
         const verifiedWeightUnitId = await verifyOrGetValidWeightUnitId(rawWeightUnitId);
         if (!verifiedWeightUnitId) {
             return NextResponse.json({ error: "Selected weight unit is invalid." }, { status: 400 });
@@ -198,16 +222,26 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
         }
 
-        const rawWeight = productDetails.weight !== undefined ? Number(productDetails.weight) : null;
-        if (productDetails.weight !== undefined && (rawWeight === null || isNaN(rawWeight) || rawWeight <= 0)) {
-            return NextResponse.json({ error: "Gross weight is required and must be greater than 0." }, { status: 400 });
+        if (!productDetails || typeof productDetails !== "object") {
+            return NextResponse.json({ error: "productDetails is required." }, { status: 400 });
         }
 
-        const rawWeightUnitId = productDetails.weight_unit_id !== undefined ? (productDetails.weight_unit_id ? Number(productDetails.weight_unit_id) : null) : undefined;
-        if (productDetails.weight_unit_id !== undefined && !rawWeightUnitId) {
-            return NextResponse.json({ error: "Weight unit is required." }, { status: 400 });
+        const measurementError = validateMeasurementFields(productDetails, false);
+        if (measurementError) {
+            return NextResponse.json({ error: measurementError }, { status: 400 });
         }
+
+        const rawWeight = Object.prototype.hasOwnProperty.call(productDetails, "weight")
+            ? Number(productDetails.weight)
+            : null;
+
+        const rawWeightUnitId = Object.prototype.hasOwnProperty.call(productDetails, "weight_unit_id")
+            ? Number(productDetails.weight_unit_id)
+            : undefined;
         const verifiedWeightUnitId = rawWeightUnitId !== undefined ? await verifyOrGetValidWeightUnitId(rawWeightUnitId) : undefined;
+        if (rawWeightUnitId !== undefined && !verifiedWeightUnitId) {
+            return NextResponse.json({ error: "Selected weight unit is invalid." }, { status: 400 });
+        }
 
         // Clean product brand, category, etc., if they are undefined to map to null
         const productPayload = {
