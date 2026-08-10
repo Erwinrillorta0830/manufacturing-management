@@ -155,6 +155,10 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             product_name: p.product_name,
             description: p.description || "",
             barcode: p.barcode || "",
+            product_image: p.product_image || null,
+            maintaining_quantity: p.maintaining_quantity === null || p.maintaining_quantity === undefined
+                ? 0
+                : Number(p.maintaining_quantity),
             unit_of_measurement: p.unit_of_measurement ? {
                 unit_id: p.unit_of_measurement.unit_id,
                 unit_shortcut: p.unit_of_measurement.unit_shortcut,

@@ -1,7 +1,9 @@
 import { 
     UnitOption, 
     WeightUnitOption, 
-    SelectOption 
+    SelectOption,
+    PurchaseQaConfig,
+    PurchaseQaParameter
 } from "../types/raw-materials.types";
 
 export async function fetchProductInventoryDetails(productId: number) {
@@ -64,4 +66,35 @@ export async function fetchLinkedSuppliers(productId: number): Promise<number[]>
     const res = await fetch(`/api/manufacturing/procurement/raw-materials?productId=${productId}`);
     if (!res.ok) return [];
     return res.json();
+}
+
+export async function fetchPurchaseQaParameters(): Promise<PurchaseQaParameter[]> {
+    const res = await fetch("/api/manufacturing/qa/parameters");
+    if (!res.ok) throw new Error("Failed to load purchase QA parameters.");
+    const body = await res.json();
+    return Array.isArray(body?.data) ? body.data : [];
+}
+
+export async function fetchProductPurchaseQa(productId: number): Promise<PurchaseQaConfig> {
+    const res = await fetch(`/api/manufacturing/qa/specifications?productId=${encodeURIComponent(productId)}`);
+    if (!res.ok) throw new Error("Failed to load product purchase QA configuration.");
+    const body = await res.json();
+    const specifications = Array.isArray(body?.data)
+        ? body.data.map((specification: {
+            specId: number;
+            parameterId: number;
+            targetMin: number | null;
+            targetMax: number | null;
+            expectedText: string | null;
+            isCritical: boolean;
+        }) => ({
+            specId: specification.specId,
+            parameterId: specification.parameterId,
+            targetMin: specification.targetMin,
+            targetMax: specification.targetMax,
+            expectedText: specification.expectedText,
+            isCritical: specification.isCritical
+        }))
+        : [];
+    return { inspectionRequired: specifications.length > 0, specifications };
 }

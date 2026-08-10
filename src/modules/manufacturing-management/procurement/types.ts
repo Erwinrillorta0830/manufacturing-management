@@ -131,6 +131,8 @@ export interface RawMaterial {
     product_name: string;
     description?: string;
     barcode?: string;
+    product_image?: string | null;
+    maintaining_quantity?: number | null;
     unit_of_measurement?: {
         unit_id: number;
         unit_shortcut: string;
@@ -186,6 +188,9 @@ export interface RegisterRawMaterialPayload {
     product_type?: number | null;
     parent_id?: number | null;
     unit_of_measurement_count?: number | null;
+    maintaining_quantity?: number;
+    product_image?: string | null;
+    purchaseQa?: import("./raw-materials/types/raw-materials.types").PurchaseQaConfig;
     isActive?: number;
 }
 
@@ -274,6 +279,10 @@ export interface PackagingVariant {
     product_category?: number | null;
     product_type?: number | null;
     parent_id?: number | null;
+    barcode?: string | null;
+    maintaining_quantity?: number;
+    product_image?: string | null;
+    purchaseQa?: import("./raw-materials/types/raw-materials.types").PurchaseQaConfig;
     isActive?: number;
     uomId?: number | "";
     count?: string | number;
@@ -314,6 +323,8 @@ export interface BFFCatalogProduct {
     product_name: string;
     description?: string;
     barcode?: string;
+    product_image?: string | null;
+    maintaining_quantity?: number | string | null;
     unit_of_measurement?: {
         unit_id: number;
         unit_shortcut: string;

@@ -15,6 +15,43 @@ export interface SelectOption {
     label: string;
 }
 
+export type PurchaseQaParameterDataType = "Numeric" | "Boolean" | "Text";
+
+export interface PurchaseQaParameter {
+    parameterId: number;
+    parameterName: string;
+    dataType: PurchaseQaParameterDataType;
+    unitOfMeasure: string | null;
+    description: string | null;
+}
+
+export interface PurchaseQaSpecificationInput {
+    specId?: number;
+    parameterId: number;
+    targetMin: number | null;
+    targetMax: number | null;
+    expectedText: string | null;
+    isCritical: boolean;
+}
+
+export interface PurchaseQaConfig {
+    inspectionRequired: boolean;
+    specifications: PurchaseQaSpecificationInput[];
+}
+
+export interface PackagingVariantFormState {
+    productId?: number;
+    uomId: number | "";
+    count: string;
+    codeSuffix: string;
+    isExisting?: boolean;
+    isActive: boolean;
+    barcode: string;
+    maintainingQuantity: string;
+    productImage: string | null;
+    purchaseQa: PurchaseQaConfig;
+}
+
 export interface PackagingVariantPayload {
     product_id?: number;
     product_name?: string;
@@ -27,6 +64,10 @@ export interface PackagingVariantPayload {
     product_brand?: number;
     product_category?: number;
     product_type?: number;
+    barcode?: string | null;
+    maintaining_quantity?: number;
+    product_image?: string | null;
+    purchaseQa?: PurchaseQaConfig;
     isActive?: number;
     codeSuffix?: string;
 }
@@ -45,6 +86,9 @@ export interface RegisterRawMaterialPayload {
     product_category?: number;
     product_type?: number;
     parent_id?: number | null;
+    maintaining_quantity?: number;
+    product_image?: string | null;
+    purchaseQa?: PurchaseQaConfig;
     cascadeToChildren?: boolean;
     isActive?: number;
 }
@@ -73,6 +117,9 @@ export interface RawMaterialItem {
     product_brand?: number | string | { brand_id?: number; brand_name?: string } | null;
     brand_name?: string;
     product_type?: number | null;
+    maintaining_quantity?: number | null;
+    product_image?: string | null;
+    purchaseQa?: PurchaseQaConfig;
     isActive?: number;
     date_added?: string;
     last_updated?: string;

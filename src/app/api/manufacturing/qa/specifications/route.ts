@@ -19,7 +19,9 @@ const querySchema = z.object({
 
 export async function GET(request: Request) {
     try {
-        await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
+        await requirePurchaseOrderModuleAccess({
+            modulePaths: [PURCHASE_ORDER_MODULE_PATHS.receiving, PURCHASE_ORDER_MODULE_PATHS.rawMaterials]
+        });
         const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams.entries()));
         if (!parsed.success) {
             return NextResponse.json({ error: "A valid productId is required." }, { status: 400 });
