@@ -38,8 +38,8 @@ export interface RegisterRawMaterialPayload {
     unit_of_measurement: number;
     unit_of_measurement_count: number;
     density_factor: number;
-    weight: number;
-    weight_unit_id: number;
+    weight?: number | null;
+    weight_unit_id?: number | null;
     product_brand?: number;
     product_category?: number;
     product_type?: number;

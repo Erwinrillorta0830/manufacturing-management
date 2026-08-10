@@ -117,6 +117,22 @@ export function RawMaterialModal({
         s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
         s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
     );
+    const isPackagingMaterial = Number(formProductType) === 390;
+    const hasWeightValue = formWeight.trim() !== "";
+    const hasWeightUnitValue = formWeightUnitId !== "";
+    const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(Number(formWeight)) || Number(formWeight) <= 0);
+    const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(Number(formWeightUnitId)) || Number(formWeightUnitId) <= 0);
+    const weightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
+    const weightValueHasError = showValidationErrors && (
+        isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+    );
+    const weightUnitHasError = showValidationErrors && (
+        isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+    );
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-background/80 backdrop-blur-xs animate-in fade-in duration-200">
@@ -264,7 +280,7 @@ export function RawMaterialModal({
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Gross Weight <span className="text-red-500">*</span>
+                                Gross Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                             </label>
                             <input
                                 type="number"
@@ -272,21 +288,21 @@ export function RawMaterialModal({
                                 placeholder="25.00"
                                 value={formWeight}
                                 onChange={e => setFormWeight(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formWeight || parseFloat(formWeight) <= 0) ? "border-red-500" : ""}`}
-                                required
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightValueHasError ? "border-red-500" : ""}`}
+                                required={isPackagingMaterial}
                             />
                         </div>
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Weight Unit <span className="text-red-500">*</span>
+                                Weight Unit {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                             </label>
                             <CreatableSelect
                                 options={weightUnitOptions}
                                 value={String(formWeightUnitId)}
                                 onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
                                 placeholder="Unit..."
-                                className={`h-8 text-xs ${showValidationErrors && !formWeightUnitId ? "border-red-500" : ""}`}
+                                className={`h-8 text-xs ${weightUnitHasError ? "border-red-500" : ""}`}
                             />
                         </div>
 
