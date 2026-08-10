@@ -26,7 +26,7 @@ export interface RegisterProductModalProps {
     setRegisterForm: ReturnType<typeof useFinishedGoods>["setRegisterForm"];
     registerFormErrors: RegisterFormErrors;
     clearRegisterFormError: (field: RegisterFormField) => void;
-    handleRegisterProduct: (e: React.FormEvent) => Promise<void>;
+    handleRegisterProduct: (e: React.FormEvent, registrationType: "parent" | "child") => Promise<void>;
     savingBOM: boolean;
     products: Product[];
     suppliers: Supplier[];
@@ -158,14 +158,15 @@ export function RegisterProductModal({
                             type="button"
                             onClick={() => {
                                 setRegistrationType("child");
-                                const defaultParentId = products.find(p => !p.parent_id)?.id || "";
-                                const parentProd = products.find(p => String(p.id) === String(defaultParentId));
                                 setRegisterForm(prev => ({
                                     ...prev,
-                                    parentId: defaultParentId,
-                                    title: prev.title || (parentProd ? `${parentProd.title} (Box of 20)` : ""),
-                                    baseUom: "Case",
-                                    uomCount: prev.uomCount && prev.uomCount !== "1" ? prev.uomCount : "20"
+                                    parentId: "",
+                                    title: "",
+                                    sku: "",
+                                    baseUom: "",
+                                    targetSellingPrice: "",
+                                    costPerUnit: "",
+                                    uomCount: ""
                                 }));
                             }}
                             className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
@@ -180,7 +181,11 @@ export function RegisterProductModal({
                 </div>
 
                 {/* Form */}
-                <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 space-y-6">
+                <form
+                    noValidate
+                    onSubmit={(event) => handleRegisterProduct(event, registrationType)}
+                    className="flex-1 overflow-y-auto p-6 space-y-6"
+                >
                     {/* Mode Informational Banner */}
                     <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
                         registrationType === "parent"
@@ -307,16 +312,18 @@ export function RegisterProductModal({
                                             const parentProd = products.find(p => p.id === selectedId);
                                             setRegisterForm(prev => {
                                                 if (parentProd) {
-                                                    const count = Number(prev.uomCount) || 20;
                                                     return {
                                                         ...prev,
                                                         parentId: selectedId,
-                                                        title: `${parentProd.title} (Box of ${count})`,
+                                                        title: "",
                                                         sku: "",
-                                                        baseUom: "Case",
-                                                        targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
-                                                        uomCount: String(count),
-                                                        expectedYield: "100",
+                                                        baseUom: "",
+                                                        targetSellingPrice: "",
+                                                        costPerUnit: "",
+                                                        uomCount: "",
+                                                        expectedYield: parentProd.expectedYieldPercent !== undefined
+                                                            ? String(parentProd.expectedYieldPercent)
+                                                            : prev.expectedYield,
                                                         description: parentProd.description || prev.description,
                                                         brandId: parentProd.product_brand ? String(parentProd.product_brand) : prev.brandId,
                                                         categoryId: parentProd.product_category ? String(parentProd.product_category) : prev.categoryId,
@@ -324,15 +331,20 @@ export function RegisterProductModal({
                                                         segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
                                                         sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
                                                         shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
-                                                        densityFactor: String(parentProd.densityFactor || "1.0")
+                                                        densityFactor: parentProd.densityFactor !== undefined
+                                                            ? String(parentProd.densityFactor)
+                                                            : prev.densityFactor
                                                     };
                                                 }
                                                 return {
                                                     ...prev,
                                                     parentId: selectedId,
+                                                    title: "",
                                                     sku: "",
-                                                    baseUom: "Case",
-                                                    expectedYield: "100"
+                                                    baseUom: "",
+                                                    targetSellingPrice: "",
+                                                    costPerUnit: "",
+                                                    uomCount: "",
                                                 };
                                             });
                                         }}
