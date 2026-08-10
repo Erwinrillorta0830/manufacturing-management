@@ -325,18 +325,29 @@ export function useRawMaterialForm(
         e.preventDefault();
 
         // Validation Checks
+        const isPackagingMaterial = Number(formProductType) === 390;
         const isNameEmpty = !formName.trim();
         const isCodeEmpty = !formCode.trim();
         const isUomEmpty = !formUom;
         const isCategoryEmpty = !formCategory;
         const isDensityInvalid = !formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0;
-        const isWeightInvalid = !formWeight || parseFloat(formWeight) <= 0 || isNaN(parseFloat(formWeight));
-        const isWeightUnitInvalid = !formWeightUnitId;
         const isUomCountInvalid = !formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0;
+        const hasWeightValue = formWeight.trim() !== "";
+        const hasWeightUnitValue = formWeightUnitId !== "";
+        const parsedWeight = hasWeightValue ? Number(formWeight) : null;
+        const parsedWeightUnitId = hasWeightUnitValue ? Number(formWeightUnitId) : null;
+        const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(parsedWeight) || (parsedWeight as number) <= 0);
+        const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(parsedWeightUnitId) || (parsedWeightUnitId as number) <= 0);
+        const isWeightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
+        const isWeightInvalid = isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : isWeightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid;
 
-        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isWeightUnitInvalid || isUomCountInvalid) {
+        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
-            toast.error("Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit.");
+            toast.error(isPackagingMaterial
+                ? "Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit."
+                : "Please fill out all mandatory fields correctly.");
             return;
         }
 
@@ -387,9 +398,15 @@ export function useRawMaterialForm(
             return;
         }
 
+        if (packagingVariants.length > 0 && (!hasWeightValue || !hasWeightUnitValue)) {
+            toast.error("Gross Weight and Weight Unit are required when packaging variants are added.");
+            setShowValidationErrors(true);
+            return;
+        }
+
         const selectedUomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "pcs";
-        const parsedBaseWeight = parseFloat(formWeight) || 0;
-        const selectedWeightUnitIdNum = Number(formWeightUnitId);
+        const parsedBaseWeight = parsedWeight;
+        const selectedWeightUnitIdNum = parsedWeightUnitId;
         const parsedDensity = Number(formDensity);
         const parsedUomCount = Number(formUomCount);
 
@@ -404,8 +421,8 @@ export function useRawMaterialForm(
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
                 density_factor: parsedDensity,
-                weight: parsedBaseWeight * variantCount,
-                weight_unit_id: selectedWeightUnitIdNum,
+                weight: (parsedBaseWeight as number) * variantCount,
+                weight_unit_id: selectedWeightUnitIdNum as number,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
                 product_type: Number(formProductType),
