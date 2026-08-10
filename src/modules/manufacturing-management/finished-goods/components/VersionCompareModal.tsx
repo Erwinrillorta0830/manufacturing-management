@@ -70,6 +70,13 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
     useEffect(() => {
         if (!isOpen || !targetVersionId) return;
 
+        if (baseVersionId && String(baseVersionId) === String(targetVersionId)) {
+            setLoading(false);
+            setCompareData(null);
+            setError("Base version and Target version cannot be identical. Please select different versions to compare.");
+            return;
+        }
+
         async function fetchComparison() {
             setLoading(true);
             setError(null);
@@ -153,8 +160,8 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
                             >
                                 <option value="">Select Base Version...</option>
                                 {versions.map((v) => (
-                                    <option key={`base-${v.version_id}`} value={v.version_id}>
-                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"})
+                                    <option key={`base-${v.version_id}`} value={v.version_id} disabled={v.version_id === targetVersionId}>
+                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){v.version_id === targetVersionId ? " (Selected Target)" : ""}
                                     </option>
                                 ))}
                             </select>
@@ -174,8 +181,8 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
                                 className="rounded-lg border border-primary/50 px-3 py-1.5 bg-background text-xs font-bold text-foreground outline-none focus:ring-1 focus:ring-primary"
                             >
                                 {versions.map((v) => (
-                                    <option key={`target-${v.version_id}`} value={v.version_id}>
-                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"})
+                                    <option key={`target-${v.version_id}`} value={v.version_id} disabled={v.version_id === baseVersionId}>
+                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){v.version_id === baseVersionId ? " (Selected Base)" : ""}
                                     </option>
                                 ))}
                             </select>

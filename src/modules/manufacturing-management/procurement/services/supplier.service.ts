@@ -1,0 +1,41 @@
+import { Supplier } from "../types";
+import {
+    fetchSuppliers,
+    createSupplier,
+    updateSupplier,
+    fetchLinkedProducts,
+    linkProductToSupplier,
+    unlinkProductFromSupplier,
+    fetchPHProvinces,
+    fetchPHCities,
+    fetchPHBarangays
+} from "./procurement-api";
+
+export {
+    fetchSuppliers,
+    createSupplier,
+    updateSupplier,
+    fetchLinkedProducts,
+    linkProductToSupplier,
+    unlinkProductFromSupplier,
+    fetchPHProvinces,
+    fetchPHCities,
+    fetchPHBarangays
+};
+
+export const isSupplierActive = (supplier: Supplier): boolean => Number(supplier.isActive) !== 0;
+
+export const isSupplierNonBuy = (supplier: Supplier): boolean => supplier.nonBuy === true || Number(supplier.nonBuy) === 1;
+
+export const isSupplierForeign = (s: Supplier | null | undefined): boolean => {
+    if (!s) return false;
+    if (Number(s.is_foreign) === 1 || (s.is_foreign as unknown) === true) return true;
+    const curr = String(s.currency || s.default_currency || "").toUpperCase();
+    if (curr === "USD") return true;
+    return Boolean(s.country) && s.country?.toLowerCase() !== "philippines" && s.country?.toLowerCase() !== "ph";
+};
+
+export const cleanNotes = (notes: string | null | undefined): string => {
+    if (!notes) return "";
+    return notes.replace(/\[Currency:\s*\w+\]/, "").trim();
+};

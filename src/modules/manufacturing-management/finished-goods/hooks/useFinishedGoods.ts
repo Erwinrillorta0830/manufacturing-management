@@ -1062,31 +1062,47 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
     };
 
-    const handleActivateVersion = async (bomId?: number, deactivateAll?: boolean) => {
+    const handleActivateVersion = async (
+        bomId?: number,
+        action: "set_active" | "set_primary" | "deactivate" | "deactivate_all" = "set_active",
+        deactivateAll?: boolean
+    ) => {
         if (!selectedProductId) return;
         const numericProductId = Number(selectedProductId);
+        const isDeactivate = deactivateAll || action === "deactivate_all";
         setSavingBOM(true);
         setSaveProgress(10);
-        setSaveStatus(deactivateAll ? "Deactivating product versions..." : "Activating selected version...");
+        setSaveStatus(
+            isDeactivate
+                ? "Deactivating product versions..."
+                : action === "set_primary"
+                ? "Setting primary default version..."
+                : "Activating selected version..."
+        );
         
         let progress = 10;
         const interval = setInterval(() => {
             if (progress < 90) {
                 progress += 5;
-                setSaveStatus(deactivateAll ? "Updating status records..." : "Setting version active status...");
+                setSaveStatus(isDeactivate ? "Updating status records..." : "Setting version active status...");
                 setSaveProgress(Math.min(progress, 90));
             }
         }, 120);
 
         try {
-            const res = await activateVersion(numericProductId, bomId, deactivateAll);
+            const res = await activateVersion(numericProductId, bomId, action, deactivateAll);
             if (res.success) {
                 clearInterval(interval);
                 setSaveProgress(100);
                 setSaveStatus("Status updated successfully!");
                 await new Promise(resolve => setTimeout(resolve, 650));
 
-                toast.success(deactivateAll ? "All versions deactivated successfully!" : "BOM version activated successfully!");
+                const msg = isDeactivate
+                    ? "Version deactivated successfully!"
+                    : action === "set_primary"
+                    ? "Version set as Primary Default!"
+                    : "BOM version activated as Alternate!";
+                toast.success(msg);
                 const list = await fetchVersions(numericProductId);
                 setVersions(list);
             }

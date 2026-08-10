@@ -6,37 +6,24 @@ import { useSearchParams, useRouter } from "next/navigation";
 import {
     Search,
     Plus,
-    Save,
-    Layers,
-    FileText,
-    Sliders,
-    AlertCircle,
     Loader2,
-    Briefcase,
-    ChevronLeft,
-    ChevronDown,
-    Image as ImageIcon,
     Package,
-    Shield,
-    Calculator,
-    GitFork,
-    GitCompare,
-    Activity
+    Layers,
+    AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
-import { RoutesBOMTab } from "./components/RoutesBOMTab";
-import { DirectLaborStandardsTab } from "./components/DirectLaborStandardsTab";
-import { OverheadManagementTab } from "./components/OverheadManagementTab";
 import { QATemplatesTab } from "./components/QATemplatesTab";
 import { CostRollupTab } from "./components/CostRollupTab";
 import { ImportationTab } from "./components/ImportationTab";
 import { VersionCompareModal } from "./components/VersionCompareModal";
-import { useFinishedGoods, type RegisterFormField } from "./hooks/useFinishedGoods";
+import { FinishedGoodsHeader } from "./components/FinishedGoodsHeader";
+import { VersionManagementTab } from "./components/VersionManagementTab";
+import { RegisterProductModal } from "./components/RegisterProductModal";
+import { fetchHistoricalYield, applyHistoricalYield } from "./services/historical-yield.service";
+import { useFinishedGoods } from "./hooks/useFinishedGoods";
 import { Product, BOMItem, RoutingStep } from "./types";
-import { CreatableSelect } from "./components/CreatableSelect";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
-import { getProductImageUrl, uploadProductImage } from "./services/product-image";
 
 export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
@@ -44,54 +31,8 @@ export default function FinishedGoodsModule() {
     const requestedTab = searchParams.get("tab");
     const validTabs = ["details", "version_management", "routes_bom", "costing", "qa_templates", "importation"];
     const initialTab = requestedTab && validTabs.includes(requestedTab) ? (requestedTab === "routes_bom" ? "version_management" : requestedTab) : "details";
-    const [uploadingRegImage, setUploadingRegImage] = useState(false);
-    const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
-    const [registerImageError, setRegisterImageError] = useState<string | null>(null);
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [versionSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
     const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
     const [isSyncingYield, setIsSyncingYield] = useState(false);
-
-    const handleSyncHistoricalYield = async () => {
-        if (!selectedProductId || !selectedVersionId) {
-            toast.error("Please select a product and version first.");
-            return;
-        }
-        setIsSyncingYield(true);
-        try {
-            const res = await fetch(`/api/manufacturing/finished-goods/versions/historical-yield?productId=${selectedProductId}`);
-            if (!res.ok) throw new Error("Failed to fetch historical yield data");
-            const data = await res.json();
-            
-            if (data.totalJobsAnalyzed === 0) {
-                toast.info("No completed Job Orders found for this product yet. Defaulting to 98.5%.");
-            }
-
-            const applyRes = await fetch(`/api/manufacturing/finished-goods/versions/historical-yield`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    versionId: selectedVersionId,
-                    expectedYieldPercentage: data.averageActualYield
-                })
-            });
-
-            if (!applyRes.ok) throw new Error("Failed to apply historical yield to version");
-
-            setEditedVersionDetails((prev: any) => ({
-                ...prev,
-                expected_yield_percentage: data.averageActualYield
-            }));
-            setHasUnsavedChanges(true);
-
-            toast.success(`Applied historical yield of ${data.averageActualYield}% from ${data.totalJobsAnalyzed} completed Job Orders!`);
-        } catch (err: any) {
-            console.error("Historical yield error:", err);
-            toast.error(err.message || "Failed to sync historical yield");
-        } finally {
-            setIsSyncingYield(false);
-        }
-    };
 
     const {
         handleCreateBrand,
@@ -127,6 +68,7 @@ export default function FinishedGoodsModule() {
         versionCosts,
         selectedVersionId,
         setSelectedVersionId,
+        selectedVersion,
         editedRoutes,
         setEditedRoutes,
         isVersionModalOpen,
@@ -169,17 +111,35 @@ export default function FinishedGoodsModule() {
         allCatalogProducts
     } = useFinishedGoods(initialTab);
 
-    useEffect(() => {
-        if (isRegisterModalOpen) return;
-        setRegisterImagePreview(null);
-        setRegisterImageError(null);
-    }, [isRegisterModalOpen]);
+    const handleSyncHistoricalYield = async () => {
+        if (!selectedProductId || !selectedVersionId) {
+            toast.error("Please select a product and version first.");
+            return;
+        }
+        setIsSyncingYield(true);
+        try {
+            const data = await fetchHistoricalYield(selectedProductId);
 
-    useEffect(() => {
-        return () => {
-            if (registerImagePreview) URL.revokeObjectURL(registerImagePreview);
-        };
-    }, [registerImagePreview]);
+            if (data.totalJobsAnalyzed === 0) {
+                toast.info("No completed Job Orders found for this product yet. Defaulting to 98.5%.");
+            }
+
+            await applyHistoricalYield(selectedVersionId, data.averageActualYield);
+
+            setEditedVersionDetails((prev: any) => ({
+                ...prev,
+                expected_yield_percentage: data.averageActualYield
+            }));
+            setHasUnsavedChanges(true);
+
+            toast.success(`Applied historical yield of ${data.averageActualYield}% from ${data.totalJobsAnalyzed} completed Job Orders!`);
+        } catch (err: any) {
+            console.error("Historical yield error:", err);
+            toast.error(err.message || "Failed to sync historical yield");
+        } finally {
+            setIsSyncingYield(false);
+        }
+    };
 
     // Synchronize new editedRoutes state to legacy editedBOM and editedRoutings for costing simulation
     useEffect(() => {
@@ -247,7 +207,7 @@ export default function FinishedGoodsModule() {
 
     // Sidebar Pagination State
     const [sidebarPage, setSidebarPage] = useState(1);
-    const [sidebarPageSize, setSidebarPageSize] = useState(10);
+    const [sidebarPageSize] = useState(10);
 
     useEffect(() => {
         setSidebarPage(1);
@@ -342,7 +302,6 @@ export default function FinishedGoodsModule() {
         }
     };
 
-
     useEffect(() => {
         const expectedYield = editedVersionDetails.expected_yield_percentage;
         if (expectedYield !== undefined) {
@@ -350,7 +309,6 @@ export default function FinishedGoodsModule() {
                 ? current
                 : { ...current, expectedYieldPercent: expectedYield });
         }
-
     }, [editedVersionDetails.expected_yield_percentage]);
 
     // Importation Derived Calculations
@@ -363,14 +321,11 @@ export default function FinishedGoodsModule() {
     let finalOtherPortFees = importOtherPortFees;
 
     if (automateCustoms) {
-        // 1. Insurance in freight (typically 2% of invoice custom value)
         const insurance = importForeignPeso * 0.02;
         const cud = importForeignPeso + insurance;
 
-        // 2. Customs Duty (e.g. 3% standard rate on Canola/Soya)
         finalCustomDuty = cud * 0.03;
 
-        // 3. Brokerage Fee slide-rate schedule
         let brokerage = 2000;
         if (cud <= 10000) brokerage = 500;
         else if (cud <= 50000) brokerage = 1000;
@@ -380,7 +335,6 @@ export default function FinishedGoodsModule() {
         else if (cud <= 2000000) brokerage = 7500;
         else brokerage = 10000;
 
-        // 4. Import Processing Fee (IPF) slide-rate schedule
         let ipf = 250;
         if (cud <= 250000) ipf = 250;
         else if (cud <= 500000) ipf = 500;
@@ -388,17 +342,11 @@ export default function FinishedGoodsModule() {
         else if (cud <= 1000000) ipf = 1000;
         else ipf = 1500;
 
-        // 5. Fixed CDS (Doc Stamp) & CSF (Container Security)
         const cds = 280;
         const csf = 277;
 
-        // Combined CSF & IPF field
         finalIpf = ipf + csf;
-
-        // Formulate other port fees with Arrastre (₱5,888.23) + Wharfage (₱581.67) + CDS (₱280)
         finalOtherPortFees = 5888.23 + 581.67 + cds;
-
-        // 6. 12% Import VAT Formula
         finalVat = (cud + finalCustomDuty + brokerage + 5888.23 + 581.67 + cds + ipf + csf) * 0.12;
     }
 
@@ -574,22 +522,6 @@ export default function FinishedGoodsModule() {
         return { roots, childrenMap };
     }, [products, searchQuery]);
 
-    // disabled-lint-next-line @typescript-eslint/no-unused-vars
-    const existingRoutingNames = useMemo(() => {
-        const names = new Set<string>();
-        products.forEach(p => {
-            if (p.routings) {
-                p.routings.forEach(r => {
-                    if (r.name) {
-                        names.add(r.name.trim());
-                    }
-                });
-            }
-        });
-        return Array.from(names);
-    }, [products]);
-
-    // Searchable Select Option Maps
     const parentOptions = useMemo(() => {
         return products
             .filter(p => !p.parent_id)
@@ -641,137 +573,94 @@ export default function FinishedGoodsModule() {
         }));
     }, [units]);
 
-    const updateRegisterField = (field: RegisterFormField, value: string) => {
-        setRegisterForm(prev => ({ ...prev, [field]: value }));
-        clearRegisterFormError(field);
-        if (field === "baseUom") clearRegisterFormError("parentId");
+    const handleOpenRegisterParent = () => {
+        setRegistrationType("parent");
+        setRegisterForm({
+            title: "",
+            sku: "",
+            baseUom: "Pcs",
+            targetSellingPrice: "",
+            barcode: "",
+            densityFactor: "1.0",
+            expectedYield: "100",
+            versionName: "v1.0",
+            brandId: "",
+            categoryId: "",
+            description: "",
+            costPerUnit: "",
+            uomCount: "1",
+            classId: "",
+            segmentId: "",
+            sectionId: "",
+            shelfLife: "",
+            productImage: "",
+            parentId: "",
+            supplierIds: [] as string[]
+        });
+        resetRegisterFormErrors();
+        setIsRegisterModalOpen(true);
     };
 
-    const registerError = (field: RegisterFormField) => registerFormErrors[field];
-    const registerInputClass = (field: RegisterFormField) =>
-        `w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all ${
-            registerError(field) ? "border-red-500 focus:ring-red-500" : "border-border"
-        }`;
-    const registerErrorMessage = (field: RegisterFormField) => {
-        const message = registerError(field);
-        return message ? (
-            <p id={`register-${field}-error`} className="mt-1 text-[11px] font-medium text-red-600" role="alert">
-                {message}
-            </p>
-        ) : null;
+    const handleOpenRegisterChild = () => {
+        setRegistrationType("child");
+        const defaultParentId = selectedProduct && !selectedProduct.parent_id
+            ? selectedProduct.id
+            : (products.find(p => !p.parent_id)?.id || "");
+        
+        const parentProd = products.find(p => String(p.id) === String(defaultParentId));
+        
+        setRegisterForm({
+            title: parentProd ? `${parentProd.title} (Box of 20)` : "",
+            sku: "",
+            baseUom: "Case",
+            targetSellingPrice: parentProd ? String((parentProd.targetSellingPrice || 0) * 20) : "",
+            barcode: "",
+            densityFactor: String(parentProd?.densityFactor || "1.0"),
+            expectedYield: "100",
+            versionName: "v1.0",
+            brandId: parentProd?.product_brand ? String(parentProd.product_brand) : "",
+            categoryId: parentProd?.product_category ? String(parentProd.product_category) : "",
+            description: parentProd?.description || "",
+            costPerUnit: "",
+            uomCount: "20",
+            classId: parentProd?.product_class ? String(parentProd.product_class) : "",
+            segmentId: parentProd?.product_segment ? String(parentProd.product_segment) : "",
+            sectionId: parentProd?.product_section ? String(parentProd.product_section) : "",
+            shelfLife: parentProd?.product_shelf_life ? String(parentProd.product_shelf_life) : "",
+            productImage: "",
+            parentId: defaultParentId,
+            supplierIds: [] as string[]
+        });
+        resetRegisterFormErrors();
+        setIsRegisterModalOpen(true);
     };
 
     return (
         <div className="flex h-full min-h-[calc(100vh-120px)] flex-1 flex-col overflow-hidden bg-background">
-            {/* Topbar */}
-            <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 bg-muted/10 rounded-t-xl">
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                        className="inline-flex items-center justify-center p-1.5 rounded-lg border bg-background hover:bg-muted text-muted-foreground transition-all mr-1.5"
-                        title={isSidebarCollapsed ? "Expand Product Catalog" : "Collapse Product Catalog"}
-                    >
-                        <ChevronLeft className={`h-4 w-4 transform transition-transform duration-200 ${isSidebarCollapsed ? "rotate-180" : ""}`} />
-                    </button>
-                    <Layers className="h-5 w-5 text-primary" />
-                    <h1 className="text-base font-bold tracking-tight">Finished Goods Master</h1>
-                    {(loadingBOM || savingBOM) && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
-                </div>
-                <div className="flex items-center gap-2">
-                    {/* Register Parent Good (Piece) */}
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setRegistrationType("parent");
-                            setRegisterForm({
-                                title: "",
-                                sku: "",
-                                baseUom: "Pcs",
-                                targetSellingPrice: "",
-                                barcode: "",
-                                densityFactor: "1.0",
-                                expectedYield: "100",
-                                versionName: "v1.0",
-                                brandId: "",
-                                categoryId: "",
-                                description: "",
-                                costPerUnit: "",
-                                uomCount: "1",
-                                classId: "",
-                                segmentId: "",
-                                sectionId: "",
-                                shelfLife: "",
-                                productImage: "",
-                                parentId: "",
-                                supplierIds: [] as string[]
-                            });
-                            resetRegisterFormErrors();
-                            setIsRegisterModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 shadow-2xs transition-all cursor-pointer"
-                        title="Register a Primary Manufactured Good (Piece / Individual Pouch)"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Register Parent (Piece)
-                    </button>
-
-                    {/* Register Child Variant (Box / Case) */}
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setRegistrationType("child");
-                            const defaultParentId = selectedProduct && !selectedProduct.parent_id
-                                ? selectedProduct.id
-                                : (products.find(p => !p.parent_id)?.id || "");
-                            
-                            const parentProd = products.find(p => String(p.id) === String(defaultParentId));
-                            
-                            setRegisterForm({
-                                title: parentProd ? `${parentProd.title} (Box of 20)` : "",
-                                sku: "",
-                                baseUom: "Case",
-                                targetSellingPrice: parentProd ? String((parentProd.targetSellingPrice || 0) * 20) : "",
-                                barcode: "",
-                                densityFactor: String(parentProd?.densityFactor || "1.0"),
-                                expectedYield: "100",
-                                versionName: "v1.0",
-                                brandId: parentProd?.product_brand ? String(parentProd.product_brand) : "",
-                                categoryId: parentProd?.product_category ? String(parentProd.product_category) : "",
-                                description: parentProd?.description || "",
-                                costPerUnit: "",
-                                uomCount: "20",
-                                classId: parentProd?.product_class ? String(parentProd.product_class) : "",
-                                segmentId: parentProd?.product_segment ? String(parentProd.product_segment) : "",
-                                sectionId: parentProd?.product_section ? String(parentProd.product_section) : "",
-                                shelfLife: parentProd?.product_shelf_life ? String(parentProd.product_shelf_life) : "",
-                                productImage: "",
-                                parentId: defaultParentId,
-                                supplierIds: [] as string[]
-                            });
-                            resetRegisterFormErrors();
-                            setIsRegisterModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 shadow-2xs transition-all cursor-pointer"
-                        title="Register a Packaged Child Variant (Box / Case / Mother Bag)"
-                    >
-                        <Layers className="h-3.5 w-3.5 text-primary" />
-                        Register Child (Box)
-                    </button>
-
-                    <button
-                        onClick={handleSave}
-                        disabled={savingBOM || !selectedProduct}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                        {savingBOM ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                            <Save className="h-3.5 w-3.5" />
-                        )}
-                        {savingBOM ? "Saving..." : "Save Changes"}
-                    </button>
-                </div>
-            </div>
+            {/* Header Bar & Tab Controls */}
+            <FinishedGoodsHeader
+                isSidebarCollapsed={isSidebarCollapsed}
+                setIsSidebarCollapsed={setIsSidebarCollapsed}
+                loadingBOM={loadingBOM}
+                savingBOM={savingBOM}
+                onOpenRegisterParent={handleOpenRegisterParent}
+                onOpenRegisterChild={handleOpenRegisterChild}
+                handleSave={handleSave}
+                selectedProduct={selectedProduct}
+                versions={versions}
+                versionCosts={versionCosts}
+                selectedVersionId={selectedVersionId}
+                setSelectedVersionId={setSelectedVersionId}
+                hasUnsavedChanges={hasUnsavedChanges}
+                setHasUnsavedChanges={setHasUnsavedChanges}
+                handleActivateVersion={handleActivateVersion}
+                handleOpenVersionModal={handleOpenVersionModal}
+                setIsCompareModalOpen={setIsCompareModalOpen}
+                isSyncingYield={isSyncingYield}
+                handleSyncHistoricalYield={handleSyncHistoricalYield}
+                activeTab={activeTab}
+                handleTabChange={handleTabChange}
+            />
 
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
                 {!isSidebarCollapsed && (
@@ -802,87 +691,87 @@ export default function FinishedGoodsModule() {
                                     const totalSidebarPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
                                     const paginatedRoots = treeProducts.roots.slice((sidebarPage - 1) * sidebarPageSize, sidebarPage * sidebarPageSize);
                                     return paginatedRoots.map((root) => {
-                                    const children = treeProducts.childrenMap.get(root.id) || [];
-                                    const displayedChildren = searchQuery.trim()
-                                        ? children.filter(c => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.sku.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.barcode.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-                                        : children;
+                                        const children = treeProducts.childrenMap.get(root.id) || [];
+                                        const displayedChildren = searchQuery.trim()
+                                            ? children.filter(c => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.sku.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.barcode.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+                                            : children;
 
-                                    return (
-                                        <div key={root.id} className="space-y-1 mb-1">
-                                            {/* Render Parent */}
-                                            <button
-                                                onClick={() => {
-                                                    if (hasUnsavedChanges) {
-                                                        if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
-                                                        setHasUnsavedChanges(false);
-                                                    }
-                                                    setSelectedProductId(root.id);
-                                                }}
-                                                className={`w-full flex flex-col text-left p-3 rounded-lg border transition-all ${selectedProductId === root.id
-                                                        ? "bg-card border-primary shadow-sm ring-1 ring-primary/20"
-                                                        : "bg-transparent border-transparent hover:bg-muted"
-                                                    }`}
-                                            >
-                                                <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                    <span className="text-sm font-semibold truncate flex-1 min-w-0 flex items-center gap-1.5">
-                                                        <Package className="h-3.5 w-3.5 text-primary/70 shrink-0" />
-                                                        {root.title}
-                                                    </span>
-                                                    <span className="shrink-0 bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-[4px] text-[9px] font-bold tracking-wider uppercase border border-blue-500/20">
-                                                        Parent
-                                                    </span>
-                                                </div>
-                                                <div className="mt-1.5 flex items-center justify-between w-full text-xs text-muted-foreground pl-5">
-                                                    <span className="truncate pr-1">SKU: {root.sku || "N/A"} [{root.baseUom}]</span>
-                                                    <span className="font-semibold bg-muted px-1.5 py-0.5 rounded text-foreground shrink-0">
-                                                        ₱{root.targetSellingPrice.toFixed(2)}
-                                                    </span>
-                                                </div>
-                                            </button>
+                                        return (
+                                            <div key={root.id} className="space-y-1 mb-1">
+                                                {/* Render Parent */}
+                                                <button
+                                                    onClick={() => {
+                                                        if (hasUnsavedChanges) {
+                                                            if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
+                                                            setHasUnsavedChanges(false);
+                                                        }
+                                                        setSelectedProductId(root.id);
+                                                    }}
+                                                    className={`w-full flex flex-col text-left p-3 rounded-lg border transition-all cursor-pointer ${selectedProductId === root.id
+                                                            ? "bg-card border-primary shadow-sm ring-1 ring-primary/20"
+                                                            : "bg-transparent border-transparent hover:bg-muted"
+                                                        }`}
+                                                >
+                                                    <div className="flex items-start justify-between w-full gap-2 min-w-0">
+                                                        <span className="text-sm font-semibold truncate flex-1 min-w-0 flex items-center gap-1.5">
+                                                            <Package className="h-3.5 w-3.5 text-primary/70 shrink-0" />
+                                                            {root.title}
+                                                        </span>
+                                                        <span className="shrink-0 bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-[4px] text-[9px] font-bold tracking-wider uppercase border border-blue-500/20">
+                                                            Parent
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1.5 flex items-center justify-between w-full text-xs text-muted-foreground pl-5">
+                                                        <span className="truncate pr-1">SKU: {root.sku || "N/A"} [{root.baseUom}]</span>
+                                                        <span className="font-semibold bg-muted px-1.5 py-0.5 rounded text-foreground shrink-0">
+                                                            ₱{root.targetSellingPrice.toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                </button>
 
-                                            {/* Render Children */}
-                                            {displayedChildren.length > 0 && (
-                                                <div className="pl-4 ml-3 border-l border-border/60 space-y-1 mt-1">
-                                                    {displayedChildren.map(child => (
-                                                        <button
-                                                            key={child.id}
-                                                            onClick={() => {
-                                                                if (hasUnsavedChanges) {
-                                                                    if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
-                                                                    setHasUnsavedChanges(false);
-                                                                }
-                                                                setSelectedProductId(child.id);
-                                                            }}
-                                                            className={`w-full flex flex-col text-left p-2.5 rounded-lg border transition-all relative ${selectedProductId === child.id
-                                                                    ? "bg-card border-primary/70 shadow-sm ring-1 ring-primary/10"
-                                                                    : "bg-transparent border-transparent hover:bg-muted/70"
-                                                                }`}
-                                                        >
-                                                            {/* Connection line indicator */}
-                                                            <div className="absolute left-[-16px] top-1/2 -translate-y-1/2 w-3 border-t border-border/60" />
+                                                {/* Render Children */}
+                                                {displayedChildren.length > 0 && (
+                                                    <div className="pl-4 ml-3 border-l border-border/60 space-y-1 mt-1">
+                                                        {displayedChildren.map(child => (
+                                                            <button
+                                                                key={child.id}
+                                                                onClick={() => {
+                                                                    if (hasUnsavedChanges) {
+                                                                        if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
+                                                                        setHasUnsavedChanges(false);
+                                                                    }
+                                                                    setSelectedProductId(child.id);
+                                                                }}
+                                                                className={`w-full flex flex-col text-left p-2.5 rounded-lg border transition-all relative cursor-pointer ${selectedProductId === child.id
+                                                                        ? "bg-card border-primary/70 shadow-sm ring-1 ring-primary/10"
+                                                                        : "bg-transparent border-transparent hover:bg-muted/70"
+                                                                    }`}
+                                                            >
+                                                                {/* Connection line indicator */}
+                                                                <div className="absolute left-[-16px] top-1/2 -translate-y-1/2 w-3 border-t border-border/60" />
 
-                                                            <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                                <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
-                                                                    <Layers className="h-3 w-3 text-muted-foreground shrink-0" />
-                                                                    {child.title}
-                                                                </span>
-                                                                <span className="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
-                                                                    Child
-                                                                </span>
-                                                            </div>
-                                                            <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5">
-                                                                <span className="truncate pr-1">SKU: {child.sku || "N/A"} [{child.baseUom}]</span>
-                                                                <span className="font-semibold text-foreground">
-                                                                    ₱{child.targetSellingPrice.toFixed(2)}
-                                                                </span>
-                                                            </div>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                });
+                                                                <div className="flex items-start justify-between w-full gap-2 min-w-0">
+                                                                    <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
+                                                                        <Layers className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                                        {child.title}
+                                                                    </span>
+                                                                    <span className="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
+                                                                        Child
+                                                                    </span>
+                                                                </div>
+                                                                <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5">
+                                                                    <span className="truncate pr-1">SKU: {child.sku || "N/A"} [{child.baseUom}]</span>
+                                                                    <span className="font-semibold text-foreground">
+                                                                        ₱{child.targetSellingPrice.toFixed(2)}
+                                                                    </span>
+                                                                </div>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    });
                                 })()
                             )}
                             {!loadingProducts && treeProducts.roots.length === 0 && (
@@ -924,146 +813,6 @@ export default function FinishedGoodsModule() {
 
                 {/* Right Side: Product Detail Tabs */}
                 <div className="flex-1 overflow-hidden flex flex-col bg-background">
-                    {selectedProduct && (
-                        <div className="px-6 py-4 border-b bg-card flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0 shadow-sm">
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <h2 className="text-base font-bold text-foreground truncate">{selectedProduct.title}</h2>
-                                    {selectedProduct.parentProduct && (
-                                        <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border border-blue-500/20 shrink-0">
-                                            Parent Good
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
-                                    <span>SKU: <strong className="text-foreground font-semibold">{selectedProduct.sku || "N/A"}</strong></span>
-                                    <span>Base UOM: <strong className="text-foreground font-semibold">{selectedProduct.baseUom}</strong></span>
-                                    {selectedProduct.barcode && (
-                                        <span>Barcode: <strong className="text-foreground font-semibold">{selectedProduct.barcode}</strong></span>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-4 self-start sm:self-center shrink-0 border-l pl-4 border-muted">
-                                {versions.length > 0 && (
-                                    <div className="flex flex-col gap-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Viewing Version</label>
-                                        <div className="flex items-center gap-2">
-                                            <select
-                                                value={selectedVersionId || ""}
-                                                onChange={e => {
-                                                    if (hasUnsavedChanges) {
-                                                        if (!confirm("You have unsaved changes. Are you sure you want to switch versions?")) return;
-                                                        setHasUnsavedChanges(false);
-                                                    }
-                                                    setSelectedVersionId(Number(e.target.value) || null);
-                                                }}
-                                                className="rounded border px-2 py-1 bg-background text-xs font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
-                                            >
-                                                {versions.map((v, idx) => {
-                                                    const cost = versionCosts[v.version_id];
-                                                    const costStr = cost !== undefined && cost > 0 ? ` (Est: ₱${cost.toFixed(2)})` : "";
-                                                    const activeStr = v.is_active ? " [ACTIVE]" : "";
-                                                    return (
-                                                        <option key={`${v.version_id}-${idx}`} value={v.version_id}>
-                                                            {v.version_name}{activeStr}{costStr}
-                                                        </option>
-                                                    );
-                                                })}
-                                            </select>
-
-                                            {selectedVersionId && !versions.find(v => v.version_id === selectedVersionId)?.is_active && (
-                                                <button
-                                                    onClick={() => handleActivateVersion(selectedVersionId)}
-                                                    className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 border-none px-2 py-1 text-xs font-bold text-white transition-all cursor-pointer shadow-sm shadow-emerald-950/20"
-                                                    title="Set this version as active"
-                                                >
-                                                    Set Active
-                                                </button>
-                                            )}
-
-                                            {selectedVersionId && versions.find(v => v.version_id === selectedVersionId)?.is_active && (
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider">
-                                                        Active
-                                                    </span>
-                                                    <button
-                                                        onClick={() => {
-                                                            if (confirm("Are you sure you want to deactivate all BOM versions for this product?")) {
-                                                                handleActivateVersion(undefined, true);
-                                                            }
-                                                        }}
-                                                        className="inline-flex items-center gap-1 rounded bg-destructive/10 hover:bg-destructive/20 border border-destructive/20 px-2 py-1 text-xs font-bold text-destructive transition-all cursor-pointer"
-                                                        title="Deactivate this version"
-                                                    >
-                                                        Deactivate
-                                                    </button>
-                                                </div>
-                                            )}
-
-                                            <button
-                                                onClick={handleOpenVersionModal}
-                                                className="inline-flex items-center gap-1 rounded bg-muted border px-2 py-1 text-xs font-semibold hover:bg-accent transition-colors text-foreground cursor-pointer"
-                                                title="Register New Version"
-                                            >
-                                                <Plus className="h-3 w-3" /> New
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => setIsCompareModalOpen(true)}
-                                                className="inline-flex items-center gap-1 rounded bg-primary/10 border border-primary/20 px-2 py-1 text-xs font-semibold hover:bg-primary/20 transition-colors text-primary cursor-pointer"
-                                                title="Compare BOM versions side-by-side"
-                                            >
-                                                <GitCompare className="h-3 w-3" /> Compare Matrix
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                disabled={isSyncingYield}
-                                                onClick={handleSyncHistoricalYield}
-                                                className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/20 px-2 py-1 text-xs font-semibold hover:bg-amber-500/20 transition-colors text-amber-700 dark:text-amber-300 cursor-pointer disabled:opacity-50"
-                                                title="Sync expected yield from completed Job Order production records"
-                                            >
-                                                <Activity className={`h-3 w-3 ${isSyncingYield ? "animate-spin" : ""}`} /> Sync Yield
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                                <div className="text-right">
-                                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Target Selling Price</span>
-                                    <span className="text-sm font-extrabold text-foreground">₱{selectedProduct.targetSellingPrice.toFixed(2)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Tab Navigation */}
-                    <div className="flex border-b px-4 bg-muted/10 shrink-0">
-                        {[
-                            { id: "details", label: "Product Details", icon: FileText },
-                            { id: "version_management", label: "Version Management", icon: Layers },
-                            { id: "costing", label: "Live Costing & Simulator", icon: Sliders },
-                            { id: "qa_templates", label: "QA Checklist Templates", icon: Shield },
-                            { id: "importation", label: "Importation & Landed Cost", icon: Briefcase }
-                        ].map((t) => {
-                            const Icon = t.icon;
-                            const isActive = activeTab === t.id || (t.id === "version_management" && activeTab === "routes_bom");
-                            return (
-                                <button
-                                    key={t.id}
-                                    onClick={() => handleTabChange(t.id === "version_management" ? "version_management" : t.id)}
-                                    className={`flex items-center gap-1.5 px-4 py-3 text-xs font-semibold border-b-2 transition-all -mb-[1px] ${isActive
-                                            ? "border-primary text-primary"
-                                            : "border-transparent text-muted-foreground hover:text-foreground"
-                                        }`}
-                                >
-                                    <Icon className="h-4 w-4" />
-                                    {t.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-
                     {Object.keys(editFieldErrors).length > 0 && (
                         <div className="mx-6 mt-4 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-700" role="alert">
                             <p className="font-semibold">Please correct the highlighted fields before saving.</p>
@@ -1117,7 +866,7 @@ export default function FinishedGoodsModule() {
                                         </p>
                                         <button
                                             onClick={handleOpenVersionModal}
-                                            className="inline-flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all text-xs"
+                                            className="inline-flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all text-xs cursor-pointer"
                                         >
                                             <Plus className="h-4 w-4" /> Register Initial Version
                                         </button>
@@ -1125,76 +874,25 @@ export default function FinishedGoodsModule() {
                                 ) : (
                                     <>
                                         {(activeTab === "version_management" || activeTab === "routes_bom") && (
-                                            <div className="space-y-6">
-                                                {/* Inner Sub-tab Navigation under Version Management */}
-                                                <div className="flex border-b border-border/60 gap-2 bg-muted/20 px-3 pt-2 rounded-t-xl shrink-0">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setVersionSubTab("routes_bom")}
-                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                                                            versionSubTab === "routes_bom"
-                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
-                                                                : "border-transparent text-muted-foreground hover:text-foreground"
-                                                        }`}
-                                                    >
-                                                        <GitFork className="h-3.5 w-3.5" />
-                                                        Routes &amp; BOM
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setVersionSubTab("direct_labor")}
-                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                                                            versionSubTab === "direct_labor"
-                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
-                                                                : "border-transparent text-muted-foreground hover:text-foreground"
-                                                        }`}
-                                                    >
-                                                        <Briefcase className="h-3.5 w-3.5 text-primary" />
-                                                        Direct Labor Standards
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setVersionSubTab("overheads")}
-                                                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                                                            versionSubTab === "overheads"
-                                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
-                                                                : "border-transparent text-muted-foreground hover:text-foreground"
-                                                        }`}
-                                                    >
-                                                        <Calculator className="h-3.5 w-3.5" />
-                                                        Overhead Management
-                                                    </button>
-                                                </div>
-
-                                                {versionSubTab === "routes_bom" ? (
-                                                    <RoutesBOMTab
-                                                        editedRoutes={editedRoutes}
-                                                        setEditedRoutes={setEditedRoutes}
-                                                        operationTypes={operationTypes}
-                                                        workCenters={workCenters}
-                                                        qaTemplates={qaTemplates}
-                                                        units={units}
-                                                        setHasUnsavedChanges={setHasUnsavedChanges}
-                                                        setOperationTypes={setOperationTypes}
-                                                        editedVersionDetails={editedVersionDetails}
-                                                        setEditedVersionDetails={setEditedVersionDetails}
-                                                    />
-                                                ) : versionSubTab === "direct_labor" ? (
-                                                    <DirectLaborStandardsTab
-                                                        editedVersionDetails={editedVersionDetails}
-                                                        setEditedVersionDetails={setEditedVersionDetails}
-                                                        setHasUnsavedChanges={setHasUnsavedChanges}
-                                                    />
-                                                ) : (
-                                                    <OverheadManagementTab
-                                                        overheadTypes={overheadTypes}
-                                                        setOverheadTypes={setOverheadTypes}
-                                                        editedVersionDetails={editedVersionDetails}
-                                                        setEditedVersionDetails={setEditedVersionDetails}
-                                                        setHasUnsavedChanges={setHasUnsavedChanges}
-                                                    />
-                                                )}
-                                            </div>
+                                            <VersionManagementTab
+                                                selectedProductId={selectedProductId}
+                                                selectedVersionId={selectedVersionId}
+                                                selectedVersion={selectedVersion}
+                                                editedVersionDetails={editedVersionDetails}
+                                                setEditedVersionDetails={setEditedVersionDetails}
+                                                editedRoutes={editedRoutes}
+                                                setEditedRoutes={setEditedRoutes}
+                                                operationTypes={operationTypes}
+                                                setOperationTypes={setOperationTypes}
+                                                overheadTypes={overheadTypes}
+                                                setOverheadTypes={setOverheadTypes}
+                                                workCenters={workCenters}
+                                                qaTemplates={qaTemplates}
+                                                units={units}
+                                                setHasUnsavedChanges={setHasUnsavedChanges}
+                                                isSyncingYield={isSyncingYield}
+                                                handleSyncHistoricalYield={handleSyncHistoricalYield}
+                                            />
                                         )}
 
                                         {activeTab === "qa_templates" && (
@@ -1342,7 +1040,7 @@ export default function FinishedGoodsModule() {
                             <button
                                 type="button"
                                 onClick={() => setIsVersionModalOpen(false)}
-                                className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg"
+                                className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
                             >
                                 Close
                             </button>
@@ -1419,7 +1117,7 @@ export default function FinishedGoodsModule() {
                                     >
                                         <option value="">Start Blank (No Clone)</option>
                                         {versions.map(v => (
-                                            <option key={v.id} value={String(v.id)}>{v.version_name}</option>
+                                            <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -1430,14 +1128,14 @@ export default function FinishedGoodsModule() {
                                 <button
                                     type="button"
                                     onClick={() => setIsVersionModalOpen(false)}
-                                    className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground"
+                                    className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground cursor-pointer"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={savingBOM}
-                                    className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5"
+                                    className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
                                 >
                                     {savingBOM && (
                                         <div className="h-3 w-3 animate-spin border border-current border-t-transparent rounded-full" />
@@ -1451,586 +1149,32 @@ export default function FinishedGoodsModule() {
             )}
 
             {/* Product Registration Modal Popup */}
-            {isRegisterModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-                        {/* Header */}
-                        <div className="flex flex-col gap-3 px-6 py-4 border-b shrink-0 bg-muted/20">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <Plus className="h-5 w-5 text-primary" />
-                                    <div>
-                                        <h3 className="text-base font-bold text-foreground">
-                                            {registrationType === "parent" ? "Register Parent Good (Piece)" : "Register Child Variant (Box / Case)"}
-                                        </h3>
-                                        <p className="text-xs text-muted-foreground">
-                                            {registrationType === "parent"
-                                                ? "Add a master manufactured good (piece/pouch) with core BOM recipe and workstation routings."
-                                                : "Add a packaged outer variant (box/case) containing multiple parent pieces."}
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => setIsRegisterModalOpen(false)}
-                                    className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
-                                >
-                                    Close
-                                </button>
-                            </div>
-
-                            {/* Mode Segment Switcher */}
-                            <div className="flex items-center gap-2 p-1 bg-muted/40 rounded-lg border border-border/60">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setRegistrationType("parent");
-                                        setRegisterForm(prev => ({ ...prev, parentId: "", uomCount: "1" }));
-                                    }}
-                                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                        registrationType === "parent"
-                                            ? "bg-primary text-primary-foreground shadow-xs"
-                                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                                    }`}
-                                >
-                                    <Package className="h-3.5 w-3.5" /> Parent Good (Piece / Individual Pouch)
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setRegistrationType("child");
-                                        const defaultParentId = selectedProduct && !selectedProduct.parent_id
-                                            ? selectedProduct.id
-                                            : (products.find(p => !p.parent_id)?.id || "");
-                                        const parentProd = products.find(p => String(p.id) === String(defaultParentId));
-                                        setRegisterForm(prev => ({
-                                            ...prev,
-                                            parentId: defaultParentId,
-                                            title: prev.title || (parentProd ? `${parentProd.title} (Box of 20)` : ""),
-                                            baseUom: "Case",
-                                            uomCount: prev.uomCount && prev.uomCount !== "1" ? prev.uomCount : "20"
-                                        }));
-                                    }}
-                                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                        registrationType === "child"
-                                            ? "bg-primary text-primary-foreground shadow-xs"
-                                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                                    }`}
-                                >
-                                    <Layers className="h-3.5 w-3.5" /> Child Variant (Box / Case / Mother Bag)
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Form */}
-                        <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 space-y-6">
-                            {/* Mode Informational Banner */}
-                            <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
-                                registrationType === "parent"
-                                    ? "bg-primary/5 border-primary/20 text-primary"
-                                    : "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300"
-                            }`}>
-                                {registrationType === "parent" ? (
-                                    <>
-                                        <Package className="h-4 w-4 shrink-0" />
-                                        <span><strong>Parent Product Mode:</strong> Registers the primary manufactured unit (Piece/Pouch). Holds the core BOM materials, workstation routings, and direct labor standards.</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Layers className="h-4 w-4 shrink-0" />
-                                        <span><strong>Child Variant Mode:</strong> Registers a packaged outer container (Box/Case). Linked to a Parent Good and inherits its master recipe.</span>
-                                    </>
-                                )}
-                            </div>
-                            {/* Group 1: General Info */}
-                            <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                    <FileText className="h-3.5 w-3.5" /> 1. Identity & Details
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="col-span-2">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Product Name <span className="text-red-500">*</span></label>
-                                        <input
-                                            id="register-title"
-                                            type="text"
-                                            required
-                                            placeholder="e.g. Mama Pina's Soya Oil 2L x 6"
-                                            value={registerForm.title}
-                                            onChange={e => updateRegisterField("title", e.target.value)}
-                                            aria-invalid={!!registerError("title")}
-                                            aria-describedby={registerError("title") ? "register-title-error" : undefined}
-                                            className={registerInputClass("title")}
-                                        />
-                                        {registerErrorMessage("title")}
-                                    </div>
-                                    <div className="col-span-2">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Short Description</label>
-                                        <textarea
-                                            placeholder="Optional human-readable product description..."
-                                            value={registerForm.description}
-                                            onChange={e => setRegisterForm(prev => ({ ...prev, description: e.target.value }))}
-                                            rows={2}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary resize-none transition-all"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">SKU / Code <span className="text-red-500">*</span></label>
-                                        <input
-                                            id="register-sku"
-                                            type="text"
-                                            required
-                                            placeholder="e.g. FG-SOYA-2L"
-                                            value={registerForm.sku}
-                                            onChange={e => updateRegisterField("sku", e.target.value)}
-                                            aria-invalid={!!registerError("sku")}
-                                            aria-describedby={registerError("sku") ? "register-sku-error" : undefined}
-                                            className={registerInputClass("sku")}
-                                        />
-                                        {registerErrorMessage("sku")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Barcode (Optional)</label>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. 4800110229..."
-                                            value={registerForm.barcode}
-                                            onChange={e => setRegisterForm(prev => ({ ...prev, barcode: e.target.value }))}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Brand <span className="text-red-500">*</span></label>
-                                        <CreatableSelect
-                                            id="register-brand"
-                                            options={brandOptions}
-                                            value={registerForm.brandId}
-                                            onValueChange={(val) => updateRegisterField("brandId", val)}
-                                            placeholder="Select brand..."
-                                            aria-invalid={!!registerError("brandId")}
-                                            aria-describedby={registerError("brandId") ? "register-brandId-error" : undefined}
-                                            className={registerError("brandId") ? "border-red-500 focus:ring-red-500" : undefined}
-                                            onCreateOption={async (name) => {
-                                                const newId = await handleCreateBrand(name);
-                                                if (newId) updateRegisterField("brandId", String(newId));
-                                            }}
-                                        />
-                                        {registerErrorMessage("brandId")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Category <span className="text-red-500">*</span></label>
-                                        <CreatableSelect
-                                            id="register-category"
-                                            options={categoryOptions}
-                                            value={registerForm.categoryId}
-                                            onValueChange={(val) => updateRegisterField("categoryId", val)}
-                                            placeholder="Select category..."
-                                            aria-invalid={!!registerError("categoryId")}
-                                            aria-describedby={registerError("categoryId") ? "register-categoryId-error" : undefined}
-                                            className={registerError("categoryId") ? "border-red-500 focus:ring-red-500" : undefined}
-                                            onCreateOption={async (name) => {
-                                                const newId = await handleCreateCategory(name);
-                                                if (newId) updateRegisterField("categoryId", String(newId));
-                                            }}
-                                        />
-                                        {registerErrorMessage("categoryId")}
-                                    </div>
-                                    {registrationType === "child" && (
-                                        <div className="col-span-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-                                            <label className="text-[11px] font-bold text-amber-700 dark:text-amber-300 uppercase block">
-                                                Select Parent Manufactured Good (Piece / Individual Pouch) <span className="text-red-500">*</span>
-                                            </label>
-                                            <CreatableSelect
-                                                id="register-parent"
-                                                options={parentOptions}
-                                                value={registerForm.parentId}
-                                                onValueChange={(val) => {
-                                                    const selectedId = val;
-                                                    clearRegisterFormError("parentId");
-                                                    clearRegisterFormError("baseUom");
-                                                    const parentProd = products.find(p => p.id === selectedId);
-                                                    setRegisterForm(prev => {
-                                                        if (parentProd) {
-                                                            const count = Number(prev.uomCount) || 20;
-                                                            return {
-                                                                ...prev,
-                                                                parentId: selectedId,
-                                                                title: `${parentProd.title} (Box of ${count})`,
-                                                                sku: "",
-                                                                baseUom: "Case",
-                                                                targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
-                                                                uomCount: String(count),
-                                                                expectedYield: "100",
-                                                                description: parentProd.description || prev.description,
-                                                                brandId: parentProd.product_brand ? String(parentProd.product_brand) : prev.brandId,
-                                                                categoryId: parentProd.product_category ? String(parentProd.product_category) : prev.categoryId,
-                                                                classId: parentProd.product_class ? String(parentProd.product_class) : prev.classId,
-                                                                segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
-                                                                sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
-                                                                shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
-                                                                densityFactor: String(parentProd.densityFactor || "1.0")
-                                                            };
-                                                        }
-                                                        return {
-                                                            ...prev,
-                                                            parentId: selectedId,
-                                                            sku: "",
-                                                            baseUom: "Case",
-                                                            expectedYield: "100"
-                                                        };
-                                                    });
-                                                }}
-                                                placeholder="Select parent piece product..."
-                                                aria-invalid={!!registerError("parentId")}
-                                                aria-describedby={registerError("parentId") ? "register-parentId-error" : undefined}
-                                                className={registerError("parentId") ? "border-red-500 focus:ring-red-500" : undefined}
-                                            />
-                                            {registerErrorMessage("parentId")}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Group 2: Measurements & Life */}
-                            <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                    <Sliders className="h-3.5 w-3.5" /> 2. Physicals &amp; Inventory
-                                </h4>
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base UOM <span className="text-red-500">*</span></label>
-                                        <CreatableSelect
-                                            id="register-base-uom"
-                                            options={uomOptions}
-                                            value={registerForm.baseUom}
-                                            onValueChange={(val) => updateRegisterField("baseUom", val)}
-                                            placeholder="Select Base UOM..."
-                                            aria-invalid={!!registerError("baseUom")}
-                                            aria-describedby={registerError("baseUom") ? "register-baseUom-error" : undefined}
-                                            className={registerError("baseUom") ? "border-red-500 focus:ring-red-500" : undefined}
-                                        />
-                                        {registerErrorMessage("baseUom")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
-                                            {registrationType === "child" ? "Pieces per Box / Case *" : "Pack Multiplier *"}
-                                        </label>
-                                        <input
-                                            id="register-uomCount"
-                                            type="number"
-                                            placeholder={registrationType === "child" ? "e.g. 20" : "1"}
-                                            value={registerForm.uomCount}
-                                            onChange={e => {
-                                                const val = e.target.value;
-                                                clearRegisterFormError("uomCount");
-                                                const count = Number(val) || 0;
-                                                setRegisterForm(prev => {
-                                                    const parent = products.find(p => p.id === prev.parentId);
-                                                    if (parent) {
-                                                        const targetSellingPrice = String((parent.targetSellingPrice || 0) * count);
-                                                        const costPerUnit = parent.cost_per_unit ? String(parent.cost_per_unit * count) : prev.costPerUnit;
-                                                        return {
-                                                            ...prev,
-                                                            uomCount: val,
-                                                            targetSellingPrice,
-                                                            costPerUnit
-                                                        };
-                                                    }
-                                                    return { ...prev, uomCount: val };
-                                                });
-                                            }}
-                                            aria-invalid={!!registerError("uomCount")}
-                                            aria-describedby={registerError("uomCount") ? "register-uomCount-error" : undefined}
-                                            className={registerInputClass("uomCount")}
-                                        />
-                                        {registerErrorMessage("uomCount")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Density conversion factor <span className="text-red-500">*</span></label>
-                                        <input
-                                            id="register-densityFactor"
-                                            type="number"
-                                            step="0.001"
-                                            placeholder="1.0"
-                                            value={registerForm.densityFactor}
-                                            onChange={e => updateRegisterField("densityFactor", e.target.value)}
-                                            aria-invalid={!!registerError("densityFactor")}
-                                            aria-describedby={registerError("densityFactor") ? "register-densityFactor-error" : undefined}
-                                            className={registerInputClass("densityFactor")}
-                                        />
-                                        {registerErrorMessage("densityFactor")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Expected Yield (%) <span className="text-red-500">*</span></label>
-                                        <input
-                                            id="register-expectedYield"
-                                            type="number"
-                                            required
-                                            placeholder="e.g. 100"
-                                            value={registerForm.expectedYield}
-                                            onChange={e => updateRegisterField("expectedYield", e.target.value)}
-                                            aria-invalid={!!registerError("expectedYield")}
-                                            aria-describedby={registerError("expectedYield") ? "register-expectedYield-error" : undefined}
-                                            className={registerInputClass("expectedYield")}
-                                        />
-                                        {registerErrorMessage("expectedYield")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Shelf Life (Days) <span className="text-red-500">*</span></label>
-                                        <input
-                                            id="register-shelfLife"
-                                            type="number"
-                                            placeholder="e.g. 365"
-                                            value={registerForm.shelfLife}
-                                            onChange={e => updateRegisterField("shelfLife", e.target.value)}
-                                            aria-invalid={!!registerError("shelfLife")}
-                                            aria-describedby={registerError("shelfLife") ? "register-shelfLife-error" : undefined}
-                                            className={registerInputClass("shelfLife")}
-                                        />
-                                        {registerErrorMessage("shelfLife")}
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Segment (Optional)</label>
-                                        <CreatableSelect
-                                            options={segmentOptions}
-                                            value={registerForm.segmentId}
-                                            onValueChange={(val) => setRegisterForm(prev => ({ ...prev, segmentId: val }))}
-                                            placeholder="Select segment..."
-                                            onCreateOption={async (name) => {
-                                                const newId = await handleCreateSegment(name);
-                                                if (newId) setRegisterForm(prev => ({ ...prev, segmentId: String(newId) }));
-                                            }}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Class (Optional)</label>
-                                        <CreatableSelect
-                                            options={classOptions}
-                                            value={registerForm.classId}
-                                            onValueChange={(val) => setRegisterForm(prev => ({ ...prev, classId: val }))}
-                                            placeholder="Select class..."
-                                            onCreateOption={async (name) => {
-                                                const newId = await handleCreateClass(name);
-                                                if (newId) setRegisterForm(prev => ({ ...prev, classId: String(newId) }));
-                                            }}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Section (Optional)</label>
-                                        <CreatableSelect
-                                            options={sectionOptions}
-                                            value={registerForm.sectionId}
-                                            onValueChange={(val) => setRegisterForm(prev => ({ ...prev, sectionId: val }))}
-                                            placeholder="Select section..."
-                                            onCreateOption={async (name) => {
-                                                const newId = await handleCreateSection(name);
-                                                if (newId) setRegisterForm(prev => ({ ...prev, sectionId: String(newId) }));
-                                            }}
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Product Image</label>
-                                        <div className="flex items-center gap-4 border border-dashed border-border rounded-xl p-4 bg-muted/5 hover:bg-muted/10 transition-all">
-                                            {registerForm.productImage ? (
-                                                <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
-                                                    {/* disabled-lint-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${registerForm.productImage}`}
-                                                        alt="Preview"
-                                                        className="w-full h-full object-cover"
-                                                        onError={(e) => {
-                                                            const target = e.target as HTMLImageElement;
-                                                            if (target.src.includes("/assets/")) {
-                                                                target.src = "/placeholder-image.png";
-                                                            }
-                                                        }}
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={async () => {
-                                                            const oldId = registerForm.productImage;
-                                                            setRegisterForm(prev => ({ ...prev, productImage: "" }));
-                                                            setRegisterImagePreview(null);
-                                                            setRegisterImageError(null);
-                                                            if (oldId && oldId.length > 10) {
-                                                                try {
-                                                                    await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
-                                                                } catch (err) {
-                                                                    console.error("Failed to delete file", err);
-                                                                }
-                                                            }
-                                                        }}
-                                                        className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all uppercase"
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <div className="w-16 h-16 rounded-lg bg-muted/20 border flex items-center justify-center text-muted-foreground/45">
-                                                    <ImageIcon className="h-5 w-5" />
-                                                </div>
-                                            )}
-
-                                            <div className="flex-1 space-y-1">
-                                                <p className="text-xs font-medium text-foreground">
-                                                    {registerForm.productImage ? "Image uploaded successfully" : "Select a product image"}
-                                                </p>
-                                                <label className="inline-flex items-center justify-center rounded-lg border bg-background hover:bg-muted text-foreground px-2.5 py-1 text-xs font-semibold cursor-pointer transition-all">
-                                                    <span>{uploadingRegImage ? "Uploading..." : "Choose File"}</span>
-                                                    <input
-                                                        type="file"
-                                                        accept="image/*"
-                                                        disabled={uploadingRegImage}
-                                                        onChange={async (e) => {
-                                                            const file = e.target.files?.[0];
-                                                            if (!file) return;
-                                                            const input = e.currentTarget;
-                                                            setUploadingRegImage(true);
-                                                            setRegisterImageError(null);
-                                                            try {
-                                                                const newFileId = await uploadProductImage(file);
-                                                                setRegisterForm(prev => ({ ...prev, productImage: newFileId }));
-                                                                setRegisterImagePreview(URL.createObjectURL(file));
-                                                                toast.success("Product image uploaded successfully.");
-                                                            } catch (err) {
-                                                                const message = err instanceof Error ? err.message : "Failed to upload product image.";
-                                                                setRegisterImageError(message);
-                                                                toast.error(message);
-                                                            } finally {
-                                                                setUploadingRegImage(false);
-                                                                input.value = "";
-                                                            }
-                                                        }}
-                                                        className="hidden"
-                                                    />
-                                                </label>
-                                                {registerImageError && (
-                                                    <p className="text-[10px] text-destructive" role="alert">
-                                                        {registerImageError}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Group 3: Financials & Suppliers */}
-                            <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                    <Briefcase className="h-3.5 w-3.5" /> 3. Financials & Suppliers
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Target Selling Price (₱)</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            placeholder="e.g. 150.00"
-                                            value={registerForm.targetSellingPrice}
-                                            onChange={e => setRegisterForm(prev => ({ ...prev, targetSellingPrice: e.target.value }))}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Cost Per Unit (₱)</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            placeholder="e.g. 110.00"
-                                            value={registerForm.costPerUnit}
-                                            onChange={e => setRegisterForm(prev => ({ ...prev, costPerUnit: e.target.value }))}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        />
-                                    </div>
-                                    <div className="col-span-2 space-y-2">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block">Suppliers (Select multiple)</label>
-                                        <div className="flex flex-wrap gap-1.5 mb-1.5 min-h-[32px] p-2 bg-background border border-dashed rounded-lg">
-                                            {registerForm.supplierIds.map(supId => {
-                                                const name = suppliers.find(s => String(s.id) === String(supId))?.supplier_name || `Supplier #${supId}`;
-                                                return (
-                                                    <span key={supId} className="bg-primary/10 text-primary border border-primary/20 rounded-full pl-2.5 pr-1 py-0.5 text-xs inline-flex items-center gap-1 font-semibold transition-all hover:bg-primary/15">
-                                                        {name}
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setRegisterForm(prev => ({
-                                                                ...prev,
-                                                                supplierIds: prev.supplierIds.filter(id => id !== supId)
-                                                            }))}
-                                                            className="text-primary hover:text-red-500 font-bold w-4 h-4 rounded-full flex items-center justify-center hover:bg-muted transition-colors"
-                                                        >
-                                                            &times;
-                                                        </button>
-                                                    </span>
-                                                );
-                                            })}
-                                            {registerForm.supplierIds.length === 0 && (
-                                                <span className="text-xs text-muted-foreground/60 italic self-center">No suppliers mapped to this product yet</span>
-                                            )}
-                                        </div>
-                                        <CreatableSelect
-                                            options={suppliers
-                                                .filter(s => !registerForm.supplierIds.includes(String(s.id)))
-                                                .map(s => ({
-                                                    value: String(s.id),
-                                                    label: s.supplier_name,
-                                                }))}
-                                            value=""
-                                            onValueChange={(val) => {
-                                                if (!registerForm.supplierIds.includes(val)) {
-                                                    setRegisterForm(prev => ({
-                                                        ...prev,
-                                                        supplierIds: [...prev.supplierIds, val]
-                                                    }));
-                                                }
-                                            }}
-                                            placeholder="Choose Supplier to Add..."
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Group 4: Version Name */}
-                            <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                    <Layers className="h-3.5 w-3.5" /> 4. BOM Initial Version
-                                </h4>
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Initial Version Name <span className="text-red-500">*</span></label>
-                                    <input
-                                        id="register-versionName"
-                                        type="text"
-                                        required
-                                        placeholder="e.g. OIL 1ST VERSION"
-                                        value={registerForm.versionName}
-                                        onChange={e => updateRegisterField("versionName", e.target.value)}
-                                        aria-invalid={!!registerError("versionName")}
-                                        aria-describedby={registerError("versionName") ? "register-versionName-error" : undefined}
-                                        className={registerInputClass("versionName")}
-                                    />
-                                    {registerErrorMessage("versionName")}
-                                </div>
-                            </div>
-
-                            {/* Footer Buttons */}
-                            <div className="flex justify-end gap-3 pt-3 border-t shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsRegisterModalOpen(false)}
-                                    className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={savingBOM}
-                                    className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20"
-                                >
-                                    {savingBOM ? "Registering..." : "Register Product"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <RegisterProductModal
+                isOpen={isRegisterModalOpen}
+                onClose={() => setIsRegisterModalOpen(false)}
+                registrationType={registrationType}
+                setRegistrationType={setRegistrationType}
+                registerForm={registerForm}
+                setRegisterForm={setRegisterForm}
+                registerFormErrors={registerFormErrors}
+                clearRegisterFormError={clearRegisterFormError}
+                handleRegisterProduct={handleRegisterProduct}
+                savingBOM={savingBOM}
+                products={products}
+                suppliers={suppliers}
+                brandOptions={brandOptions}
+                categoryOptions={categoryOptions}
+                parentOptions={parentOptions}
+                uomOptions={uomOptions}
+                segmentOptions={segmentOptions}
+                classOptions={classOptions}
+                sectionOptions={sectionOptions}
+                handleCreateBrand={handleCreateBrand}
+                handleCreateCategory={handleCreateCategory}
+                handleCreateSegment={handleCreateSegment}
+                handleCreateClass={handleCreateClass}
+                handleCreateSection={handleCreateSection}
+            />
 
             {/* Version Comparison Modal */}
             <VersionCompareModal

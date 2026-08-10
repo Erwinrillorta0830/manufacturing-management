@@ -1,7 +1,7 @@
 /* eslint-disable */
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,9 @@ import { ConsolidationPanel } from "./components/ConsolidationPanel";
 import { DemandLinesTable } from "./components/DemandLinesTable";
 import { ReleaseJODialog } from "./components/ReleaseJODialog";
 import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
+import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
+import { JOFilterBar } from "./components/JOFilterBar";
+import { JOTable } from "./components/JOTable";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -59,7 +62,6 @@ export default function PlanningEngineeringModule() {
         salesOrderLines,
         selectedLines,
         mergeValidation,
-        handleSelectAll,
         handleSelectLine,
         handleInitiateRelease,
         handleConfirmRelease,
@@ -78,13 +80,17 @@ export default function PlanningEngineeringModule() {
         releasingDraftId,
         handleReleaseDraftFromPlanning
     } = usePlanningEngineering();
-    const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
 
+    const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
     const [loadingMaterials, setLoadingMaterials] = useState(false);
     const [familyActiveTab, setFamilyActiveTab] = useState<string>("family-all");
     const [childJoMaterials, setChildJoMaterials] = useState<Record<string, any[]>>({});
+
+    // Filter bar state for JO Queue
+    const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
 
     const [confirmReserveData, setConfirmReserveData] = useState<{
         joId: string;
@@ -109,20 +115,33 @@ export default function PlanningEngineeringModule() {
         isSubAssembly?: boolean;
     } | null>(null);
 
-    const familyGroups = React.useMemo(() => {
-        if (!unreleasedJobs || unreleasedJobs.length === 0) return [];
+    // Filter unreleased jobs
+    const filteredUnreleasedJobs = useMemo(() => {
+        return unreleasedJobs.filter((jo: any) => {
+            const matchesStatus = statusFilter === "all" || jo.status === statusFilter;
+            const query = searchQuery.toLowerCase().trim();
+            const matchesQuery = !query ||
+                String(jo.jo_id || "").toLowerCase().includes(query) ||
+                String(jo.product_name || "").toLowerCase().includes(query) ||
+                String(jo.remarks || "").toLowerCase().includes(query);
+            return matchesStatus && matchesQuery;
+        });
+    }, [unreleasedJobs, statusFilter, searchQuery]);
+
+    const familyGroups = useMemo(() => {
+        if (!filteredUnreleasedJobs || filteredUnreleasedJobs.length === 0) return [];
 
         const childrenMap = new Map<string, any[]>();
-        const allNos = new Set(unreleasedJobs.map((j: any) => String(j.jo_id || j.job_order_no || "")));
-        const allIds = new Set(unreleasedJobs.map((j: any) => Number(j.job_order_id || j.id || 0)));
+        const allNos = new Set(filteredUnreleasedJobs.map((j: any) => String(j.jo_id || j.job_order_no || "")));
+        const allIds = new Set(filteredUnreleasedJobs.map((j: any) => Number(j.job_order_id || j.id || 0)));
 
-        unreleasedJobs.forEach((j: any) => {
+        filteredUnreleasedJobs.forEach((j: any) => {
             const joNo = String(j.jo_id || j.job_order_no || "");
             const pId = Number(j.parent_job_order_id || 0);
 
             let parentKey: string | null = null;
             if (pId > 0 && allIds.has(pId)) {
-                const parentObj = unreleasedJobs.find((p: any) => Number(p.job_order_id || p.id) === pId);
+                const parentObj = filteredUnreleasedJobs.find((p: any) => Number(p.job_order_id || p.id) === pId);
                 if (parentObj) parentKey = String(parentObj.jo_id || parentObj.job_order_no);
             } else if (joNo.includes("-SUB")) {
                 const pNo = joNo.split("-SUB")[0];
@@ -141,7 +160,7 @@ export default function PlanningEngineeringModule() {
         const groups: { familyId: string; parentJo: any; childJos: any[]; isFamily: boolean }[] = [];
         const processedNos = new Set<string>();
 
-        unreleasedJobs.forEach((j: any) => {
+        filteredUnreleasedJobs.forEach((j: any) => {
             const joNo = String(j.jo_id || j.job_order_no || "");
             const isChild = j.parent_job_order_id || joNo.includes("-SUB");
 
@@ -159,7 +178,7 @@ export default function PlanningEngineeringModule() {
             }
         });
 
-        unreleasedJobs.forEach((j: any) => {
+        filteredUnreleasedJobs.forEach((j: any) => {
             const joNo = String(j.jo_id || j.job_order_no || "");
             if (!processedNos.has(joNo)) {
                 processedNos.add(joNo);
@@ -173,9 +192,9 @@ export default function PlanningEngineeringModule() {
         });
 
         return groups;
-    }, [unreleasedJobs]);
+    }, [filteredUnreleasedJobs]);
 
-    const familyChildJobs = React.useMemo(() => {
+    const familyChildJobs = useMemo(() => {
         if (!selectedUnreleasedJo) return [];
         const joNo = String(selectedUnreleasedJo.jo_id || selectedUnreleasedJo.job_order_no || "");
         const parentNo = joNo.includes("-SUB") ? joNo.split("-SUB")[0] : joNo;
@@ -314,7 +333,6 @@ export default function PlanningEngineeringModule() {
         const isFamily = familyChildJobs.length > 0 && familyActiveTab === "family-all";
         const shortfallItems: any[] = [];
 
-        // Parent materials
         joMaterials.forEach((m: any) => {
             const needed = Number(m.allocated_quantity || 0);
             const reserved = Number(m.reserved_quantity || 0);
@@ -333,7 +351,6 @@ export default function PlanningEngineeringModule() {
             }
         });
 
-        // Child materials if family view
         if (isFamily) {
             familyChildJobs.forEach((child: any) => {
                 const cMats = childJoMaterials[child.jo_id] || [];
@@ -561,8 +578,18 @@ export default function PlanningEngineeringModule() {
         printWin.document.close();
     };
 
+    const shortfallCount = netRequirements.filter((n: any) => n.net_shortfall > 0).length;
+
     return (
         <div className="space-y-6 p-1 sm:p-2">
+            {/* Summary Cards */}
+            <PlanningSummaryCards
+                demandLinesCount={salesOrderLines.length}
+                shortfallItemsCount={shortfallCount}
+                unreleasedJobsCount={unreleasedJobs.length}
+                familyGroupsCount={familyGroups.length}
+            />
+
             {/* Header banner */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-card border rounded-xl p-6 shadow-sm">
                 <div className="space-y-1">
@@ -629,7 +656,7 @@ export default function PlanningEngineeringModule() {
                 {/* TAB 1: Demand Harvesting & Consolidation */}
                 <TabsContent value="demand" className="space-y-6 outline-none">
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                        {/* Left Column: Demand Lines Table (8 cols for maximum width) */}
+                        {/* Left Column: Demand Lines Table */}
                         <div className="lg:col-span-8">
                             <DemandLinesTable
                                 loadingOrders={loadingOrders}
@@ -638,7 +665,7 @@ export default function PlanningEngineeringModule() {
                                 handleSelectLine={handleSelectLine}
                             />
                         </div>
-                        {/* Right Column: Consolidation Action Panel (4 cols) */}
+                        {/* Right Column: Consolidation Action Panel */}
                         <div className="lg:col-span-4">
                             <ConsolidationPanel
                                 selectedLines={selectedLines}
@@ -685,161 +712,23 @@ export default function PlanningEngineeringModule() {
                             )}
                         </div>
 
-                        {unreleasedJobs.length === 0 ? (
-                            <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg bg-muted/20">
-                                No unreleased (Draft or Planned) job orders found in this branch.
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto border rounded-lg">
-                                <table className="w-full text-sm text-left text-muted-foreground border-collapse">
-                                    <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
-                                        <tr>
-                                            <th className="px-4 py-3">Job Order ID</th>
-                                            <th className="px-4 py-3">Product Name</th>
-                                            <th className="px-4 py-3 text-right">Target Qty</th>
-                                            <th className="px-4 py-3">Status</th>
-                                            <th className="px-4 py-3">Remarks / Constraints</th>
-                                            <th className="px-4 py-3 text-center">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y text-foreground/90">
-                                        {familyGroups.map((fg) => {
-                                            if (!fg.isFamily) {
-                                                const jo = fg.parentJo;
-                                                return (
-                                                    <tr key={jo.jo_id} className="hover:bg-muted/10">
-                                                        <td className="px-4 py-3 font-semibold text-primary">{jo.jo_id}</td>
-                                                        <td className="px-4 py-3 font-medium">{jo.product_name}</td>
-                                                        <td className="px-4 py-3 text-right font-semibold">{jo.quantity?.toLocaleString()} pcs</td>
-                                                        <td className="px-4 py-3">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                                jo.status === "Draft" 
-                                                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                                    : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                                            }`}>
-                                                                {jo.status}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={jo.remarks || ""}>
-                                                            {jo.remarks || "No planning constraints logged."}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline"
-                                                                onClick={() => handleOpenDetails(jo)}
-                                                                className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
-                                                            >
-                                                                Manage / View Details
-                                                            </Button>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            }
+                        {/* Filter Bar */}
+                        <JOFilterBar
+                            searchQuery={searchQuery}
+                            setSearchQuery={setSearchQuery}
+                            statusFilter={statusFilter}
+                            setStatusFilter={setStatusFilter}
+                            totalCount={unreleasedJobs.length}
+                            filteredCount={filteredUnreleasedJobs.length}
+                        />
 
-                                            return (
-                                                <React.Fragment key={`family-group-${fg.familyId}`}>
-                                                    {/* Family Header Banner */}
-                                                    <tr className="bg-sky-500/10 dark:bg-sky-950/40 border-t-2 border-b border-sky-500/30">
-                                                        <td colSpan={6} className="px-4 py-2.5">
-                                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                                                <div className="flex items-center gap-2 text-xs font-bold text-sky-700 dark:text-sky-300">
-                                                                    <span className="bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                                                                        <Layers className="h-3 w-3" /> Family JO Group
-                                                                    </span>
-                                                                    <span className="font-mono text-foreground font-extrabold">{fg.familyId}</span>
-                                                                    <span className="text-[11px] text-muted-foreground font-medium">
-                                                                        ({1 + fg.childJos.length} Jobs in Family: 1 Parent Assembly + {fg.childJos.length} Sub-Assembly Runs)
-                                                                    </span>
-                                                                </div>
-                                                                <Button
-                                                                    size="sm"
-                                                                    onClick={() => handleOpenDetails(fg.parentJo)}
-                                                                    className="h-7 text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm px-3"
-                                                                >
-                                                                    Manage Entire Family ({1 + fg.childJos.length} JOs)
-                                                                </Button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-
-                                                    {/* Parent JO Row */}
-                                                    <tr className="hover:bg-muted/10 bg-card/60">
-                                                        <td className="px-4 py-3 font-semibold text-primary flex items-center gap-2">
-                                                            <span className="text-[9px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded uppercase font-black shrink-0">
-                                                                📦 Parent JO
-                                                            </span>
-                                                            <span>{fg.parentJo.jo_id}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 font-bold text-foreground">{fg.parentJo.product_name}</td>
-                                                        <td className="px-4 py-3 text-right font-semibold">{fg.parentJo.quantity?.toLocaleString()} pcs</td>
-                                                        <td className="px-4 py-3">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                                fg.parentJo.status === "Draft" 
-                                                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                                    : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                                            }`}>
-                                                                {fg.parentJo.status}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={fg.parentJo.remarks || ""}>
-                                                            {fg.parentJo.remarks || "No planning constraints logged."}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline"
-                                                                onClick={() => handleOpenDetails(fg.parentJo)}
-                                                                className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
-                                                            >
-                                                                Manage Family
-                                                            </Button>
-                                                        </td>
-                                                    </tr>
-
-                                                    {/* Child Sub-Assembly JO Rows */}
-                                                    {fg.childJos.map((cJo: any) => (
-                                                        <tr key={cJo.jo_id} className="hover:bg-sky-500/5 bg-sky-500/[0.02]">
-                                                            <td className="px-4 py-3 font-semibold text-sky-600 dark:text-sky-400 pl-8 flex items-center gap-2">
-                                                                <span className="text-muted-foreground font-normal">↳</span>
-                                                                <span className="text-[9px] bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 px-1.5 py-0.5 rounded uppercase font-black shrink-0">
-                                                                    🧩 Sub-Assembly
-                                                                </span>
-                                                                <span>{cJo.jo_id}</span>
-                                                            </td>
-                                                            <td className="px-4 py-3 font-medium text-foreground">{cJo.product_name}</td>
-                                                            <td className="px-4 py-3 text-right font-semibold">{cJo.quantity?.toLocaleString()} pcs</td>
-                                                            <td className="px-4 py-3">
-                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                                    cJo.status === "Draft" 
-                                                                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                                        : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                                                }`}>
-                                                                    {cJo.status}
-                                                                </span>
-                                                            </td>
-                                                            <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>
-                                                                {cJo.remarks || "Auto-spawned for sub-assembly shortfall."}
-                                                            </td>
-                                                            <td className="px-4 py-3 text-center">
-                                                                <Button
-                                                                    size="sm"
-                                                                    variant="ghost"
-                                                                    onClick={() => handleOpenDetails(cJo)}
-                                                                    className="text-sky-600 hover:text-sky-700 hover:bg-sky-500/10 font-bold h-8 text-xs px-3 transition-all duration-200"
-                                                                >
-                                                                    View Details
-                                                                </Button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </React.Fragment>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
+                        {/* Job Orders Table */}
+                        <JOTable
+                            unreleasedJobs={filteredUnreleasedJobs}
+                            familyGroups={familyGroups}
+                            loadingJobs={loadingJobs}
+                            handleOpenDetails={handleOpenDetails}
+                        />
                     </div>
                 </TabsContent>
             </Tabs>
@@ -1416,10 +1305,6 @@ export default function PlanningEngineeringModule() {
                                                         const shortfall = needed - reserved;
                                                         const isMet = shortfall <= 0;
 
-                                                        const totalAvailSubStock = mat.is_sub_assembly 
-                                                            ? (mat.candidate_lots || []).reduce((acc: number, c: any) => acc + Number(c.available || 0), 0)
-                                                            : 0;
-
                                                         return (
                                                             <tr key={mat.id || mat.jo_material_id} className="hover:bg-muted/5 align-top">
                                                                 <td className="px-4 py-4 font-semibold text-foreground">
@@ -1507,17 +1392,15 @@ export default function PlanningEngineeringModule() {
                                                                                                     >
                                                                                                         Unreserve
                                                                                                     </Button>
-                                                                                                ) : (
-                                                                                                    shortfall > 0 && lot.available > 0 && (
-                                                                                                        <Button
-                                                                                                            size="xs"
-                                                                                                            onClick={() => setConfirmReserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
-                                                                                                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
-                                                                                                        >
-                                                                                                            Reserve
-                                                                                                        </Button>
-                                                                                                    )
-                                                                                                )
+                                                                                                ) : shortfall > 0 && lot.available > 0 ? (
+                                                                                                    <Button
+                                                                                                        size="xs"
+                                                                                                        onClick={() => setConfirmReserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
+                                                                                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
+                                                                                                    >
+                                                                                                        Reserve
+                                                                                                    </Button>
+                                                                                                ) : null
                                                                                             )}
                                                                                         </div>
                                                                                     </div>
@@ -1570,31 +1453,29 @@ export default function PlanningEngineeringModule() {
                             >
                                 Close Details
                             </Button>
-                        <Button
-                            onClick={async () => {
-                                const parentId = selectedUnreleasedJo.order_id;
-                                setSelectedUnreleasedJo(null);
-                                setJoMaterials([]);
-                                
-                                // Release parent JO
-                                await handleReleaseDraftFromPlanning(parentId);
+                            <Button
+                                onClick={async () => {
+                                    const parentId = selectedUnreleasedJo.order_id;
+                                    setSelectedUnreleasedJo(null);
+                                    setJoMaterials([]);
+                                    
+                                    await handleReleaseDraftFromPlanning(parentId);
 
-                                // If family view, also release all child JOs in family
-                                for (const child of familyChildJobs) {
-                                    if (child.order_id) {
-                                        await handleReleaseDraftFromPlanning(child.order_id);
+                                    for (const child of familyChildJobs) {
+                                        if (child.order_id) {
+                                            await handleReleaseDraftFromPlanning(child.order_id);
+                                        }
                                     }
-                                }
-                            }}
-                            disabled={releasingDraftId === selectedUnreleasedJo?.order_id || loadingMaterials}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
-                        >
-                            {releasingDraftId === selectedUnreleasedJo?.order_id 
-                                ? "Releasing..." 
-                                : familyChildJobs.length > 0 
-                                    ? `Release Entire Family (${1 + familyChildJobs.length} Job Orders)`
-                                    : "Release to Shop Floor"}
-                        </Button>
+                                }}
+                                disabled={releasingDraftId === selectedUnreleasedJo?.order_id || loadingMaterials}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
+                            >
+                                {releasingDraftId === selectedUnreleasedJo?.order_id 
+                                    ? "Releasing..." 
+                                    : familyChildJobs.length > 0 
+                                        ? `Release Entire Family (${1 + familyChildJobs.length} Job Orders)`
+                                        : "Release to Shop Floor"}
+                            </Button>
                         </div>
                     </div>
                 </DialogContent>

@@ -46,7 +46,8 @@ export function useRawMaterialForm(
     const [formUomCount, setFormUomCount] = useState<string>("1");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [supplierSearch, setSupplierSearch] = useState("");
-    const [packagingVariants, setPackagingVariants] = useState<Array<{ uomId: number | ""; count: string; codeSuffix: string }>>([]);
+    const [cascadeToChildren, setCascadeToChildren] = useState(true);
+    const [packagingVariants, setPackagingVariants] = useState<Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>>([]);
 
     const uomOptions = useMemo(() => {
         return units.map(u => ({
@@ -75,7 +76,63 @@ export function useRawMaterialForm(
     }, [rawMaterials, editingItem]);
 
     const handleAddVariant = () => {
-        setPackagingVariants([...packagingVariants, { uomId: formUom || "", count: "1", codeSuffix: "" }]);
+        const defaultUomObj = units.find(u => {
+            const sc = (u.unit_shortcut || "").toLowerCase();
+            const name = (u.unit_name || "").toLowerCase();
+            return sc === "bag" || sc === "box" || sc === "pck" || sc === "ib" || name.includes("bag") || name.includes("box") || name.includes("pack");
+        });
+        const defaultUom = defaultUomObj ? defaultUomObj.unit_id : (units.length > 1 ? units[1].unit_id : (formUom || ""));
+        setPackagingVariants([...packagingVariants, { uomId: defaultUom, count: "25", codeSuffix: "" }]);
+    };
+
+    const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
+        const findUom = (keywords: string[]) => {
+            return units.find(u => {
+                const sc = (u.unit_shortcut || "").toLowerCase();
+                const nm = (u.unit_name || "").toLowerCase();
+                return keywords.some(k => sc.includes(k) || nm.includes(k));
+            })?.unit_id || (units.length > 0 ? units[0].unit_id : (formUom || ""));
+        };
+
+        let uomId: number | "" = "";
+        let count = "1";
+        let codeSuffix = "";
+
+        switch (presetType) {
+            case "bag25":
+                uomId = findUom(["bag", "pck", "sack"]);
+                count = "25";
+                codeSuffix = "BAG25";
+                break;
+            case "sack50":
+                uomId = findUom(["sack", "bag"]);
+                count = "50";
+                codeSuffix = "SACK50";
+                break;
+            case "drum200":
+                uomId = findUom(["drum", "bbl", "barrel"]);
+                count = "200";
+                codeSuffix = "DRUM200";
+                break;
+            case "ibc1000":
+                uomId = findUom(["tote", "ibc", "tnk", "tank"]);
+                count = "1000";
+                codeSuffix = "IBC1000";
+                break;
+            case "fibc1000":
+                uomId = findUom(["sack", "tote", "bag"]);
+                count = "1000";
+                codeSuffix = "FIBC1000";
+                break;
+            case "case12":
+                uomId = findUom(["box", "case", "ctn", "pack"]);
+                count = "12";
+                codeSuffix = "CASE12";
+                break;
+        }
+
+        setPackagingVariants([...packagingVariants, { uomId, count, codeSuffix }]);
+        toast.info(`Added preset variant "${codeSuffix}"`);
     };
 
     const handleUpdateVariant = (index: number, field: string, value: string | number) => {
@@ -141,6 +198,7 @@ export function useRawMaterialForm(
         setSupplierSearch("");
         setShowValidationErrors(false);
         setPackagingVariants([]);
+        setCascadeToChildren(true);
     }, []);
 
     const populateForm = useCallback((item: RawMaterialItem) => {
@@ -182,10 +240,36 @@ export function useRawMaterialForm(
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
 
+        // Load existing child variants of this family item
+        const existingChildren = rawMaterials.filter(rm => Number(rm.parent_id) === Number(item.product_id));
+        if (existingChildren.length > 0) {
+            setPackagingVariants(existingChildren.map(c => {
+                const parentCodeNorm = (item.product_code || "").trim().toUpperCase();
+                const childCodeNorm = (c.product_code || "").trim().toUpperCase();
+                let suffix = "";
+                if (childCodeNorm.startsWith(`${parentCodeNorm}-`)) {
+                    suffix = childCodeNorm.slice(parentCodeNorm.length + 1);
+                } else {
+                    const parts = childCodeNorm.split("-");
+                    suffix = parts.length > 1 ? parts[parts.length - 1] : "";
+                }
+
+                return {
+                    productId: c.product_id,
+                    uomId: c.unit_of_measurement?.unit_id || "",
+                    count: String(c.unit_of_measurement_count || "1"),
+                    codeSuffix: suffix,
+                    isExisting: true
+                };
+            }));
+        } else {
+            setPackagingVariants([]);
+        }
+
         fetchLinkedSuppliers(item.product_id)
             .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
             .catch(err => console.error("Failed to load item suppliers:", err));
-    }, []);
+    }, [rawMaterials]);
 
     const handleStartEdit = (item: RawMaterialItem) => {
         setEditingItem(item);
@@ -319,6 +403,7 @@ export function useRawMaterialForm(
             const cleanSuffix = v.codeSuffix.trim() || `${vUomShortcut.toUpperCase()}${v.count}`;
             const variantCount = parseFloat(v.count) || 1.0;
             return {
+                product_id: v.productId,
                 product_name: `${formName.trim()} (${vUomShortcut} of ${v.count} ${selectedUomShortcut})`,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
@@ -329,12 +414,16 @@ export function useRawMaterialForm(
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
                 product_type: Number(formProductType),
+                codeSuffix: cleanSuffix
             };
         });
 
         // Check variant code uniqueness
         for (const variant of variantsPayload) {
-            const exists = rawMaterials.some(rm => rm.product_code?.trim().toUpperCase() === variant.product_code.toUpperCase());
+            const exists = rawMaterials.some(rm => {
+                if (variant.product_id && Number(rm.product_id) === Number(variant.product_id)) return false;
+                return rm.product_code?.trim().toUpperCase() === variant.product_code.toUpperCase();
+            });
             if (exists) {
                 toast.error(`The packaging variant code "${variant.product_code}" already exists in the catalog.`);
                 return;
@@ -354,7 +443,8 @@ export function useRawMaterialForm(
             product_category: formCategory ? Number(formCategory) : undefined,
             product_type: formProductType,
             parent_id: formParentId ? Number(formParentId) : null,
-            unit_of_measurement_count: parseFloat(formUomCount) || 1.0
+            unit_of_measurement_count: parseFloat(formUomCount) || 1.0,
+            cascadeToChildren
         };
 
         let success = false;
@@ -414,8 +504,11 @@ export function useRawMaterialForm(
         setSupplierSearch,
         packagingVariants,
         handleAddVariant,
+        handleAddPresetVariant,
         handleUpdateVariant,
         handleRemoveVariant,
+        cascadeToChildren,
+        setCascadeToChildren,
         uomOptions,
         weightUnitOptions,
         parentProductOptions,
