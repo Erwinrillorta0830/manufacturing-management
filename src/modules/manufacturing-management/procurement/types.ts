@@ -176,7 +176,7 @@ export interface RegisterRawMaterialPayload {
     barcode?: string;
     cost_per_unit?: number;
     density_factor?: number;
-    weight?: number;
+    weight?: number | null;
     weight_unit_id?: number | null;
     unit_of_measurement?: number;
     price_per_unit?: number;
