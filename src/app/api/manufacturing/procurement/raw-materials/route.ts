@@ -4,6 +4,12 @@ import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
+import {
+    ProductIdentityError,
+    ensureProductIdentityAvailable,
+    resolveProductIdentity,
+    type ProductIdentity
+} from "@/app/api/manufacturing/finished-goods/products/product-identity";
 
 function isPositiveNumber(value: unknown): boolean {
     if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
@@ -75,6 +81,41 @@ function validatePackagingVariants(packagingVariants: unknown): string | null {
         : null;
 }
 
+type ResolvedPackagingVariant = {
+    variant: Record<string, unknown>;
+    identity: ProductIdentity;
+};
+
+async function resolvePackagingVariantIdentities(
+    packagingVariants: unknown,
+    options: { parentId?: number; parentName?: string }
+): Promise<ResolvedPackagingVariant[]> {
+    if (!Array.isArray(packagingVariants) || packagingVariants.length === 0) return [];
+
+    return Promise.all(packagingVariants.map(async (rawVariant) => {
+        if (!rawVariant || typeof rawVariant !== "object") {
+            throw new ProductIdentityError("Packaging variant data is invalid.");
+        }
+
+        const variant = rawVariant as Record<string, unknown>;
+        const identity = await resolveProductIdentity({
+            parentId: options.parentId,
+            productName: options.parentName,
+            unitId: variant.unit_of_measurement as number | string | null | undefined
+        });
+        const currentProductId = variant.product_id === undefined || variant.product_id === null
+            ? undefined
+            : Number(variant.product_id);
+
+        await ensureProductIdentityAvailable(
+            identity.descriptionKey,
+            Number.isFinite(currentProductId) ? currentProductId : undefined
+        );
+
+        return { variant, identity };
+    }));
+}
+
 
 export async function GET(request: Request) {
     try {
@@ -117,6 +158,10 @@ export async function POST(request: Request) {
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
+
+        const resolvedVariants = await resolvePackagingVariantIdentities(packagingVariants, {
+            parentName: productDetails.product_name
+        });
 
         const rawWeight = hasProvidedValue(productDetails.weight) ? Number(productDetails.weight) : null;
         const rawWeightUnitId = hasProvidedValue(productDetails.weight_unit_id) ? Number(productDetails.weight_unit_id) : null;
@@ -209,11 +254,13 @@ export async function POST(request: Request) {
         }
 
         // Create child packaging variants if passed
-        if (packagingVariants && Array.isArray(packagingVariants) && packagingVariants.length > 0) {
-            try {
-                for (const variant of packagingVariants) {
+        if (resolvedVariants.length > 0) {
+            for (const { variant, identity } of resolvedVariants) {
                     const variantPayload = {
                         ...variant,
+                        product_name: identity.productName,
+                        description: identity.descriptionKey,
+                        short_description: identity.descriptionKey,
                         product_weight: variant.weight !== undefined ? variant.weight : undefined,
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
@@ -238,6 +285,10 @@ export async function POST(request: Request) {
                         const varJson = await varRes.json();
                         const childId = varJson.data?.product_id;
 
+                        if (!childId) {
+                            throw new Error("Directus did not return the created packaging variant ID.");
+                        }
+
                         // Link child to the same suppliers
                         if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
                             for (const supId of supplierIds) {
@@ -251,15 +302,18 @@ export async function POST(request: Request) {
                                 }).catch(() => { });
                             }
                         }
+                    } else {
+                        const errText = await varRes.text();
+                        throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
                     }
-                }
-            } catch (err) {
-                console.error("Error creating child variants:", err);
             }
         }
 
         return NextResponse.json({ success: true, productId });
     } catch (e) {
+        if (e instanceof ProductIdentityError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
         console.error("API Error registering raw material:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to register raw material" }, { status: 500 });
     }
@@ -328,6 +382,10 @@ export async function PATCH(request: Request) {
             throw new Error(`Directus failed to update raw material: ${prodRes.status} - ${errText}`);
         }
 
+        const resolvedVariants = await resolvePackagingVariantIdentities(packagingVariants, {
+            parentId: Number(productId)
+        });
+
         // If cascadeToChildren option is selected, sync category, brand, and density down to existing family children
         if (productDetails.cascadeToChildren) {
             try {
@@ -355,11 +413,13 @@ export async function PATCH(request: Request) {
         }
 
         // Handle packaging variants (update existing ones if product_id is provided, create new ones if not)
-        if (packagingVariants && Array.isArray(packagingVariants) && packagingVariants.length > 0) {
-            try {
-                for (const variant of packagingVariants) {
+        if (resolvedVariants.length > 0) {
+            for (const { variant, identity } of resolvedVariants) {
                     const variantPayload = {
                         ...variant,
+                        product_name: identity.productName,
+                        description: identity.descriptionKey,
+                        short_description: identity.descriptionKey,
                         product_weight: variant.weight !== undefined ? variant.weight : undefined,
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : (productDetails.product_brand !== undefined ? productDetails.product_brand : null),
                         product_category: variant.product_category !== undefined ? variant.product_category : (productDetails.product_category !== undefined ? productDetails.product_category : null),
@@ -374,11 +434,15 @@ export async function PATCH(request: Request) {
 
                     if (variant.product_id) {
                         // Update existing child variant
-                        await fetch(`${DIRECTUS_URL}/items/products/${variant.product_id}`, {
+                        const variantRes = await fetch(`${DIRECTUS_URL}/items/products/${variant.product_id}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify(variantPayload)
                         });
+                        if (!variantRes.ok) {
+                            const errText = await variantRes.text();
+                            throw new Error(`Directus failed to update packaging variant: ${variantRes.status} - ${errText}`);
+                        }
                     } else {
                         // Create new child variant
                         const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -394,6 +458,10 @@ export async function PATCH(request: Request) {
                             const varJson = await varRes.json();
                             const childId = varJson.data?.product_id;
 
+                            if (!childId) {
+                                throw new Error("Directus did not return the created packaging variant ID.");
+                            }
+
                             // Link child to the same suppliers
                             if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
                                 for (const supId of supplierIds) {
@@ -407,11 +475,11 @@ export async function PATCH(request: Request) {
                                     }).catch(() => { });
                                 }
                             }
+                        } else {
+                            const errText = await varRes.text();
+                            throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
                         }
                     }
-                }
-            } catch (err) {
-                console.error("Error processing variants during update:", err);
             }
         }
 
@@ -450,6 +518,9 @@ export async function PATCH(request: Request) {
 
         return NextResponse.json({ success: true });
     } catch (e) {
+        if (e instanceof ProductIdentityError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
         console.error("API Error updating raw material:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update raw material" }, { status: 500 });
     }

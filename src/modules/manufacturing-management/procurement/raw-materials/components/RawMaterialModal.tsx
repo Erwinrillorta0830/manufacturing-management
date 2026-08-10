@@ -481,7 +481,8 @@ export function RawMaterialModal({
                                         const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
                                         const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
-                                        const variantNamePreview = `${formName.trim() || "Material"} (${uomShortcut} of ${v.count} ${baseUomShortcut})`;
+                                        const variantNamePreview = formName.trim() || "Material";
+                                        const variantIdentityPreview = `${variantNamePreview} - ${uomShortcut.toUpperCase()}`;
                                         const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
                                         const calculatedWeight = formWeight && parseFloat(formWeight) > 0 ? (parseFloat(formWeight) * (parseFloat(v.count) || 1)).toFixed(2) : null;
                                         const weightUnitName = weightUnitOptions.find(w => w.value === String(formWeightUnitId))?.label.split("(")[0]?.trim() || "";
@@ -502,6 +503,10 @@ export function RawMaterialModal({
                                                     >
                                                         <Trash2 className="h-3.5 w-3.5" /> Remove
                                                     </button>
+                                                </div>
+
+                                                <div className="text-[10px] text-muted-foreground">
+                                                    Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span>
                                                 </div>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">

@@ -17,7 +17,7 @@ export interface SelectOption {
 
 export interface PackagingVariantPayload {
     product_id?: number;
-    product_name: string;
+    product_name?: string;
     product_code: string;
     unit_of_measurement: number;
     unit_of_measurement_count: number;

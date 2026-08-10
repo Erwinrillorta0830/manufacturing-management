@@ -404,7 +404,6 @@ export function useRawMaterialForm(
             return;
         }
 
-        const selectedUomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "pcs";
         const parsedBaseWeight = parsedWeight;
         const selectedWeightUnitIdNum = parsedWeightUnitId;
         const parsedDensity = Number(formDensity);
@@ -416,7 +415,6 @@ export function useRawMaterialForm(
             const variantCount = parseFloat(v.count);
             return {
                 product_id: v.productId,
-                product_name: `${formName.trim()} (${vUomShortcut} of ${v.count} ${selectedUomShortcut})`,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
