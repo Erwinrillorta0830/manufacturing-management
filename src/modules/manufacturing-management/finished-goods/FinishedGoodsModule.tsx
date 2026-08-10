@@ -603,32 +603,27 @@ export default function FinishedGoodsModule() {
 
     const handleOpenRegisterChild = () => {
         setRegistrationType("child");
-        const defaultParentId = selectedProduct && !selectedProduct.parent_id
-            ? selectedProduct.id
-            : (products.find(p => !p.parent_id)?.id || "");
-        
-        const parentProd = products.find(p => String(p.id) === String(defaultParentId));
-        
+
         setRegisterForm({
-            title: parentProd ? `${parentProd.title} (Box of 20)` : "",
+            title: "",
             sku: "",
-            baseUom: "Case",
-            targetSellingPrice: parentProd ? String((parentProd.targetSellingPrice || 0) * 20) : "",
+            baseUom: "",
+            targetSellingPrice: "",
             barcode: "",
-            densityFactor: String(parentProd?.densityFactor || "1.0"),
+            densityFactor: "1.0",
             expectedYield: "100",
             versionName: "v1.0",
-            brandId: parentProd?.product_brand ? String(parentProd.product_brand) : "",
-            categoryId: parentProd?.product_category ? String(parentProd.product_category) : "",
-            description: parentProd?.description || "",
+            brandId: "",
+            categoryId: "",
+            description: "",
             costPerUnit: "",
-            uomCount: "20",
-            classId: parentProd?.product_class ? String(parentProd.product_class) : "",
-            segmentId: parentProd?.product_segment ? String(parentProd.product_segment) : "",
-            sectionId: parentProd?.product_section ? String(parentProd.product_section) : "",
-            shelfLife: parentProd?.product_shelf_life ? String(parentProd.product_shelf_life) : "",
+            uomCount: "",
+            classId: "",
+            segmentId: "",
+            sectionId: "",
+            shelfLife: "",
             productImage: "",
-            parentId: defaultParentId,
+            parentId: "",
             supplierIds: [] as string[]
         });
         resetRegisterFormErrors();
