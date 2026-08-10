@@ -57,6 +57,7 @@ export interface Product {
     targetSellingPrice: number;
     parentProduct?: boolean;
     parent_id?: number | null;
+    isActive?: boolean;
     bom: BOMItem[];
     routings: RoutingStep[];
     densityFactor?: number;
@@ -316,6 +317,7 @@ export interface BFFCatalogProduct {
     unit_of_measurement_count?: number | null;
     product_image?: string | null;
     product_type?: number;
+    isActive?: boolean | number | string | null;
     has_versions?: boolean;
 }
 
@@ -360,6 +362,7 @@ export interface DirectusProduct {
     price_per_unit: number;
     barcode?: string | null;
     parent_id?: number | null;
+    isActive?: boolean | number | string | null;
     density_factor?: number | null;
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;

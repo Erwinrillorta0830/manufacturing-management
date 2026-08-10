@@ -102,6 +102,53 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Custom overhead must be 0 or greater." }, { status: 400 });
         }
 
+        const normalizeRelationId = (value: unknown): number | null => {
+            if (value === null || value === undefined || value === "") return null;
+            if (typeof value === "object") {
+                const relation = value as Record<string, unknown>;
+                const nestedId = Number(relation.product_id ?? relation.id);
+                return Number.isFinite(nestedId) && nestedId > 0 ? nestedId : null;
+            }
+            const id = Number(value);
+            return Number.isFinite(id) && id > 0 ? id : null;
+        };
+        const isActiveValue = (value: unknown): boolean => {
+            if (value === undefined || value === null) return true;
+            if (typeof value === "boolean") return value;
+            if (typeof value === "number") return value !== 0;
+            if (typeof value === "string") {
+                return value.trim().toLowerCase() !== "false" && value.trim() !== "0";
+            }
+            return true;
+        };
+
+        const currentProductRes = await fetch(
+            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=parent_id`,
+            { headers, cache: "no-store" }
+        );
+        if (!currentProductRes.ok) {
+            return NextResponse.json({ error: "The finished good could not be verified." }, { status: 503 });
+        }
+        const currentProductData = (await currentProductRes.json()).data as { parent_id?: unknown } | undefined;
+        const currentParentId = normalizeRelationId(currentProductData?.parent_id);
+        const requestedParentId = normalizeRelationId(details?.parent_id);
+
+        const childrenRes = await fetch(
+            `${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${numericProductId}&fields=product_id,isActive&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!childrenRes.ok) {
+            return NextResponse.json({ error: "The finished good hierarchy could not be verified." }, { status: 503 });
+        }
+        const childrenData = (await childrenRes.json()).data as Array<{ isActive?: unknown }> | undefined;
+        const hasActiveChildren = (childrenData || []).some(child => isActiveValue(child.isActive));
+        if (hasActiveChildren && requestedParentId !== currentParentId) {
+            return NextResponse.json(
+                { error: "Parent assignment is locked while active child variants are linked to this product." },
+                { status: 409 }
+            );
+        }
+
         const productCode = await ensureProductSkuAvailable(validatedDetails.sku, numericProductId);
 
         const identity = await resolveProductIdentity({

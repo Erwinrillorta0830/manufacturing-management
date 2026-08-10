@@ -22,6 +22,16 @@ import {
  * Client-side services for Finished Goods interacting with the Next.js API BFF.
  */
 
+export function normalizeProductActiveState(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+        return value.trim().toLowerCase() !== "false" && value.trim() !== "0";
+    }
+    return true;
+}
+
 export async function fetchProducts(search?: string, limit: number = 100): Promise<Product[]> {
     const query = new URLSearchParams();
     if (search) query.append("search", search);
@@ -51,6 +61,7 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
             targetSellingPrice: Number(p.price_per_unit || 0),
             parentProduct: parentId === null,
             parent_id: parentId,
+            isActive: normalizeProductActiveState(p.isActive),
             bom: [],
             routings: [],
             densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
