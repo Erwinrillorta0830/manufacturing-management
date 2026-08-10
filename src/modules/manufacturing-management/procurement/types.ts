@@ -145,6 +145,7 @@ export interface RawMaterial {
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
+    isActive?: number;
     date_added?: string;
     last_updated?: string;
 }
@@ -185,6 +186,7 @@ export interface RegisterRawMaterialPayload {
     product_type?: number | null;
     parent_id?: number | null;
     unit_of_measurement_count?: number | null;
+    isActive?: number;
 }
 
 // ─── Directus API-layer types (used by API route helpers) ───────────────────
@@ -272,6 +274,7 @@ export interface PackagingVariant {
     product_category?: number | null;
     product_type?: number | null;
     parent_id?: number | null;
+    isActive?: number;
     uomId?: number | "";
     count?: string | number;
     codeSuffix?: string;
@@ -325,6 +328,7 @@ export interface BFFCatalogProduct {
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;
+    isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;
 }

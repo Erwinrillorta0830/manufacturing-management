@@ -42,12 +42,13 @@ export function useRawMaterialForm(
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
     const [formProductType, setFormProductType] = useState<number>(389);
+    const [formIsActive, setFormIsActive] = useState(true);
     const [formParentId, setFormParentId] = useState<string>("");
     const [formUomCount, setFormUomCount] = useState<string>("");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [supplierSearch, setSupplierSearch] = useState("");
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
-    const [packagingVariants, setPackagingVariants] = useState<Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>>([]);
+    const [packagingVariants, setPackagingVariants] = useState<Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean; isActive: boolean }>>([]);
 
     const uomOptions = useMemo(() => {
         return units.map(u => ({
@@ -76,7 +77,7 @@ export function useRawMaterialForm(
     }, [rawMaterials, editingItem]);
 
     const handleAddVariant = () => {
-        setPackagingVariants([...packagingVariants, { uomId: "", count: "", codeSuffix: "" }]);
+        setPackagingVariants([...packagingVariants, { uomId: "", count: "", codeSuffix: "", isActive: true }]);
     };
 
     const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
@@ -125,11 +126,11 @@ export function useRawMaterialForm(
                 break;
         }
 
-        setPackagingVariants([...packagingVariants, { uomId, count, codeSuffix }]);
+        setPackagingVariants([...packagingVariants, { uomId, count, codeSuffix, isActive: true }]);
         toast.info(`Added preset variant "${codeSuffix}"`);
     };
 
-    const handleUpdateVariant = (index: number, field: string, value: string | number) => {
+    const handleUpdateVariant = (index: number, field: string, value: string | number | boolean) => {
         const copy = [...packagingVariants];
         copy[index] = { ...copy[index], [field]: value };
         setPackagingVariants(copy);
@@ -180,6 +181,7 @@ export function useRawMaterialForm(
         setFormBrand("");
         setFormCategory("");
         setFormProductType(389);
+        setFormIsActive(true);
         setFormParentId("");
         setFormUomCount("");
         setSelectedSupplierIds([]);
@@ -225,6 +227,7 @@ export function useRawMaterialForm(
         setFormCategory(catVal);
 
         setFormProductType(item.product_type || 389);
+        setFormIsActive(item.isActive !== 0);
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
 
@@ -247,7 +250,8 @@ export function useRawMaterialForm(
                     uomId: c.unit_of_measurement?.unit_id || "",
                     count: String(c.unit_of_measurement_count || "1"),
                     codeSuffix: suffix,
-                    isExisting: true
+                    isExisting: true,
+                    isActive: c.isActive !== 0
                 };
             }));
         } else {
@@ -424,6 +428,7 @@ export function useRawMaterialForm(
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
                 product_type: Number(formProductType),
+                isActive: v.isActive ? 1 : 0,
                 codeSuffix: cleanSuffix
             };
         });
@@ -454,6 +459,7 @@ export function useRawMaterialForm(
             product_type: formProductType,
             parent_id: formParentId ? Number(formParentId) : null,
             unit_of_measurement_count: parsedUomCount,
+            isActive: formIsActive ? 1 : 0,
             cascadeToChildren
         };
 
@@ -504,6 +510,8 @@ export function useRawMaterialForm(
         setFormCategory,
         formProductType,
         setFormProductType,
+        formIsActive,
+        setFormIsActive,
         formParentId,
         setFormParentId: handleParentChange,
         formUomCount,

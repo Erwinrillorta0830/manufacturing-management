@@ -35,6 +35,8 @@ interface RawMaterialModalProps {
     setFormCategory: (v: string) => void;
     formProductType: number;
     setFormProductType: (v: number) => void;
+    formIsActive: boolean;
+    setFormIsActive: (v: boolean) => void;
     formParentId: string;
     setFormParentId: (v: string) => void;
     formUomCount: string;
@@ -43,10 +45,10 @@ interface RawMaterialModalProps {
     handleToggleSupplier: (id: number) => void;
     supplierSearch: string;
     setSupplierSearch: (v: string) => void;
-    packagingVariants: Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>;
+    packagingVariants: Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean; isActive: boolean }>;
     handleAddVariant: () => void;
     handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
-    handleUpdateVariant: (idx: number, field: string, value: string | number) => void;
+    handleUpdateVariant: (idx: number, field: string, value: string | number | boolean) => void;
     handleRemoveVariant: (idx: number) => void;
     cascadeToChildren?: boolean;
     setCascadeToChildren?: (v: boolean) => void;
@@ -87,6 +89,8 @@ export function RawMaterialModal({
     setFormCategory,
     formProductType,
     setFormProductType,
+    formIsActive,
+    setFormIsActive,
     formParentId,
     setFormParentId,
     formUomCount,
@@ -162,7 +166,7 @@ export function RawMaterialModal({
                 {/* Single Page Form Container */}
                 <form onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
                     {/* Item Classification Pill Buttons */}
-                    <div className="flex items-center justify-between bg-muted/20 border p-2 rounded-xl">
+                    <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/20 border p-2 rounded-xl">
                         <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider pl-1">Classification:</span>
                         <div className="flex gap-2">
                             <button
@@ -188,6 +192,15 @@ export function RawMaterialModal({
                                 Packaging Material
                             </button>
                         </div>
+                        <label className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-extrabold cursor-pointer ${formIsActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
+                            <input
+                                type="checkbox"
+                                checked={formIsActive}
+                                onChange={e => setFormIsActive(e.target.checked)}
+                                className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                            />
+                            {formIsActive ? "Active SKU" : "Inactive SKU"}
+                        </label>
                     </div>
 
                     {/* Core Identifiers Row */}
@@ -505,8 +518,17 @@ export function RawMaterialModal({
                                                     </button>
                                                 </div>
 
-                                                <div className="text-[10px] text-muted-foreground">
-                                                    Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span>
+                                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                                    <span>Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span></span>
+                                                    <label className={`flex items-center gap-1.5 px-2 py-1 rounded-md border font-bold cursor-pointer ${v.isActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={v.isActive}
+                                                            onChange={e => handleUpdateVariant(vIdx, "isActive", e.target.checked)}
+                                                            className="rounded border-border text-primary focus:ring-primary h-3 w-3"
+                                                        />
+                                                        {v.isActive ? "Active SKU" : "Inactive SKU"}
+                                                    </label>
                                                 </div>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
