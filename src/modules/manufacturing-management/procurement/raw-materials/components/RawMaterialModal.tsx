@@ -230,7 +230,7 @@ export function RawMaterialModal({
                                 value={String(formUom)}
                                 onValueChange={(val: string) => setFormUom(Number(val))}
                                 placeholder="UOM..."
-                                className="h-8 text-xs"
+                                className={`h-8 text-xs ${showValidationErrors && !formUom ? "border-red-500" : ""}`}
                             />
                         </div>
 
@@ -243,7 +243,7 @@ export function RawMaterialModal({
                                 step="any"
                                 value={formUomCount}
                                 onChange={e => setFormUomCount(e.target.value)}
-                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0) ? "border-red-500" : ""}`}
                                 required
                             />
                         </div>
@@ -257,7 +257,7 @@ export function RawMaterialModal({
                                 step="any"
                                 value={formDensity}
                                 onChange={e => setFormDensity(e.target.value)}
-                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0) ? "border-red-500" : ""}`}
                                 required
                             />
                         </div>
@@ -286,7 +286,7 @@ export function RawMaterialModal({
                                 value={String(formWeightUnitId)}
                                 onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
                                 placeholder="Unit..."
-                                className="h-8 text-xs"
+                                className={`h-8 text-xs ${showValidationErrors && !formWeightUnitId ? "border-red-500" : ""}`}
                             />
                         </div>
 

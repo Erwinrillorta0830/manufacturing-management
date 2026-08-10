@@ -36,10 +36,10 @@ export interface RegisterRawMaterialPayload {
     description?: string;
     barcode?: string;
     unit_of_measurement: number;
-    unit_of_measurement_count?: number;
-    density_factor?: number;
-    weight?: number;
-    weight_unit_id?: number;
+    unit_of_measurement_count: number;
+    density_factor: number;
+    weight: number;
+    weight_unit_id: number;
     product_brand?: number;
     product_category?: number;
     product_type?: number;
