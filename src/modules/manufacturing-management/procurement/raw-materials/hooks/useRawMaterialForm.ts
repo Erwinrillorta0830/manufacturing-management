@@ -6,14 +6,73 @@ import {
     WeightUnitOption, 
     SelectOption, 
     RegisterRawMaterialPayload, 
-    PackagingVariantPayload 
+    PackagingVariantPayload,
+    PackagingVariantFormState,
+    PurchaseQaConfig,
+    PurchaseQaParameter,
+    PurchaseQaSpecificationInput
 } from "../types/raw-materials.types";
 import { 
     fetchRawMaterialMetadata, 
     fetchLinkedSuppliers, 
     createBrandOnTheFly, 
-    createCategoryOnTheFly 
+    createCategoryOnTheFly,
+    fetchProductPurchaseQa,
+    fetchPurchaseQaParameters
 } from "../services/raw-materials.service";
+
+function emptyPurchaseQaConfig(): PurchaseQaConfig {
+    return { inspectionRequired: false, specifications: [] };
+}
+
+function validatePurchaseQaConfig(
+    config: PurchaseQaConfig,
+    parameters: PurchaseQaParameter[],
+    label: string
+): string | null {
+    if (!config.inspectionRequired) {
+        return config.specifications.length > 0
+            ? `${label}: remove all specifications or enable Inspection Required.`
+            : null;
+    }
+
+    if (config.specifications.length === 0) {
+        return `${label}: add at least one QA check when Inspection Required is enabled.`;
+    }
+
+    const seen = new Set<number>();
+    for (const specification of config.specifications as PurchaseQaSpecificationInput[]) {
+        const parameter = parameters.find(item => item.parameterId === specification.parameterId);
+        if (!parameter) return `${label}: select a valid QA parameter for every check.`;
+        if (seen.has(specification.parameterId)) return `${label}: each QA parameter may only be selected once.`;
+        seen.add(specification.parameterId);
+
+        if (parameter.dataType === "Numeric") {
+            const minimum = specification.targetMin;
+            const maximum = specification.targetMax;
+            if (minimum === null && maximum === null) {
+                return `${label}: ${parameter.parameterName} needs a minimum or maximum threshold.`;
+            }
+            if (minimum !== null && (!Number.isFinite(minimum))) {
+                return `${label}: ${parameter.parameterName} has an invalid minimum threshold.`;
+            }
+            if (maximum !== null && (!Number.isFinite(maximum))) {
+                return `${label}: ${parameter.parameterName} has an invalid maximum threshold.`;
+            }
+            if (minimum !== null && maximum !== null && minimum > maximum) {
+                return `${label}: ${parameter.parameterName} minimum cannot exceed its maximum.`;
+            }
+        } else if (parameter.dataType === "Boolean") {
+            if (specification.expectedText !== "true" && specification.expectedText !== "false") {
+                return `${label}: ${parameter.parameterName} needs an expected Yes or No value.`;
+            }
+        } else if (!specification.expectedText?.trim()) {
+            return `${label}: ${parameter.parameterName} needs an expected value.`;
+        }
+    }
+
+    return null;
+}
 
 export function useRawMaterialForm(
     rawMaterials: RawMaterialItem[],
@@ -30,6 +89,10 @@ export function useRawMaterialForm(
     const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
     const [categoriesList, setCategoriesList] = useState<SelectOption[]>([]);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
+    const [purchaseQaParameters, setPurchaseQaParameters] = useState<PurchaseQaParameter[]>([]);
+    const [loadingPurchaseQa, setLoadingPurchaseQa] = useState(false);
+    const [purchaseQaReady, setPurchaseQaReady] = useState(true);
+    const [purchaseQaError, setPurchaseQaError] = useState<string | null>(null);
 
     // Form fields
     const [formName, setFormName] = useState("");
@@ -41,6 +104,10 @@ export function useRawMaterialForm(
     const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
+    const [formBarcode, setFormBarcode] = useState("");
+    const [formMaintainingQuantity, setFormMaintainingQuantity] = useState("0");
+    const [formProductImage, setFormProductImage] = useState<string | null>(null);
+    const [formPurchaseQa, setFormPurchaseQa] = useState<PurchaseQaConfig>(emptyPurchaseQaConfig());
     const [formProductType, setFormProductType] = useState<number>(389);
     const [formIsActive, setFormIsActive] = useState(true);
     const [formParentId, setFormParentId] = useState<string>("");
@@ -48,7 +115,7 @@ export function useRawMaterialForm(
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [supplierSearch, setSupplierSearch] = useState("");
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
-    const [packagingVariants, setPackagingVariants] = useState<Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean; isActive: boolean }>>([]);
+    const [packagingVariants, setPackagingVariants] = useState<PackagingVariantFormState[]>([]);
 
     const uomOptions = useMemo(() => {
         return units.map(u => ({
@@ -77,7 +144,16 @@ export function useRawMaterialForm(
     }, [rawMaterials, editingItem]);
 
     const handleAddVariant = () => {
-        setPackagingVariants([...packagingVariants, { uomId: "", count: "", codeSuffix: "", isActive: true }]);
+        setPackagingVariants([...packagingVariants, {
+            uomId: "",
+            count: "",
+            codeSuffix: "",
+            isActive: true,
+            barcode: "",
+            maintainingQuantity: "0",
+            productImage: null,
+            purchaseQa: emptyPurchaseQaConfig()
+        }]);
     };
 
     const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
@@ -126,11 +202,20 @@ export function useRawMaterialForm(
                 break;
         }
 
-        setPackagingVariants([...packagingVariants, { uomId, count, codeSuffix, isActive: true }]);
+        setPackagingVariants([...packagingVariants, {
+            uomId,
+            count,
+            codeSuffix,
+            isActive: true,
+            barcode: "",
+            maintainingQuantity: "0",
+            productImage: null,
+            purchaseQa: emptyPurchaseQaConfig()
+        }]);
         toast.info(`Added preset variant "${codeSuffix}"`);
     };
 
-    const handleUpdateVariant = (index: number, field: string, value: string | number | boolean) => {
+    const handleUpdateVariant = (index: number, field: string, value: unknown) => {
         const copy = [...packagingVariants];
         copy[index] = { ...copy[index], [field]: value };
         setPackagingVariants(copy);
@@ -154,6 +239,18 @@ export function useRawMaterialForm(
                 setWeightUnits(meta.weightUnits);
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
+
+                try {
+                    setLoadingPurchaseQa(true);
+                    setPurchaseQaParameters(await fetchPurchaseQaParameters());
+                    setPurchaseQaError(null);
+                } catch (qaError) {
+                    const message = qaError instanceof Error ? qaError.message : "Failed to load purchase QA parameters.";
+                    setPurchaseQaError(message);
+                    toast.error(message);
+                } finally {
+                    setLoadingPurchaseQa(false);
+                }
 
             } catch (err) {
                 console.error("Failed to load raw material metadata:", err);
@@ -180,6 +277,10 @@ export function useRawMaterialForm(
         setFormWeightUnitId("");
         setFormBrand("");
         setFormCategory("");
+        setFormBarcode("");
+        setFormMaintainingQuantity("0");
+        setFormProductImage(null);
+        setFormPurchaseQa(emptyPurchaseQaConfig());
         setFormProductType(389);
         setFormIsActive(true);
         setFormParentId("");
@@ -187,14 +288,45 @@ export function useRawMaterialForm(
         setSelectedSupplierIds([]);
         setSupplierSearch("");
         setShowValidationErrors(false);
+        setPurchaseQaReady(true);
+        setPurchaseQaError(null);
         setPackagingVariants([]);
         setCascadeToChildren(true);
+    }, []);
+
+    const loadPurchaseQaForFamily = useCallback(async (parentId: number, childIds: number[]) => {
+        setLoadingPurchaseQa(true);
+        setPurchaseQaReady(false);
+        setPurchaseQaError(null);
+        try {
+            const ids = [parentId, ...childIds];
+            const configs = await Promise.all(ids.map(id => fetchProductPurchaseQa(id)));
+            const configByProductId = new Map(childIds.map((id, index) => [id, configs[index + 1]]));
+            setFormPurchaseQa(configs[0] || emptyPurchaseQaConfig());
+            setPackagingVariants(previous => previous.map(variant => ({
+                ...variant,
+                purchaseQa: variant.productId ? (configByProductId.get(variant.productId) || emptyPurchaseQaConfig()) : emptyPurchaseQaConfig()
+            })));
+            setPurchaseQaReady(true);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load purchase QA configuration.";
+            setPurchaseQaError(message);
+            toast.error(message);
+        } finally {
+            setLoadingPurchaseQa(false);
+        }
     }, []);
 
     const populateForm = useCallback((item: RawMaterialItem) => {
         setFormName(item.product_name || "");
         setFormCode(item.product_code || "");
         setFormDesc(item.description || "");
+        setFormBarcode(item.barcode || "");
+        setFormMaintainingQuantity(String(item.maintaining_quantity ?? 0));
+        setFormProductImage(item.product_image || null);
+        setFormPurchaseQa(emptyPurchaseQaConfig());
+        setPurchaseQaReady(false);
+        setPurchaseQaError(null);
         setFormUom(item.unit_of_measurement?.unit_id || "");
         setFormDensity(String(item.density_factor || "1.000"));
         setFormWeight(item.weight && Number(item.weight) > 0 ? String(item.weight) : "");
@@ -251,17 +383,23 @@ export function useRawMaterialForm(
                     count: String(c.unit_of_measurement_count || "1"),
                     codeSuffix: suffix,
                     isExisting: true,
-                    isActive: c.isActive !== 0
+                    isActive: c.isActive !== 0,
+                    barcode: c.barcode || "",
+                    maintainingQuantity: String(c.maintaining_quantity ?? 0),
+                    productImage: c.product_image || null,
+                    purchaseQa: emptyPurchaseQaConfig()
                 };
             }));
         } else {
             setPackagingVariants([]);
         }
 
+        void loadPurchaseQaForFamily(item.product_id, existingChildren.map(child => child.product_id));
+
         fetchLinkedSuppliers(item.product_id)
             .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
             .catch(err => console.error("Failed to load item suppliers:", err));
-    }, [rawMaterials]);
+    }, [loadPurchaseQaForFamily, rawMaterials]);
 
     const handleStartEdit = (item: RawMaterialItem) => {
         setEditingItem(item);
@@ -355,6 +493,26 @@ export function useRawMaterialForm(
             return;
         }
 
+        if (editingItem && !purchaseQaReady) {
+            setShowValidationErrors(true);
+            toast.error(purchaseQaError || "Purchase QA configuration is still loading. Please try again.");
+            return;
+        }
+
+        const parsedSafetyStock = Number(formMaintainingQuantity);
+        if (!Number.isSafeInteger(parsedSafetyStock) || parsedSafetyStock < 0) {
+            setShowValidationErrors(true);
+            toast.error("Safety Stock must be a whole number greater than or equal to 0.");
+            return;
+        }
+
+        const purchaseQaErrorMessage = validatePurchaseQaConfig(formPurchaseQa, purchaseQaParameters, "Base material QA");
+        if (purchaseQaErrorMessage) {
+            setShowValidationErrors(true);
+            toast.error(purchaseQaErrorMessage);
+            return;
+        }
+
         // Uniqueness validation on Product Code
         const normalizedCode = formCode.trim().toUpperCase();
         const originalCode = editingItem?.product_code?.trim().toUpperCase() || "";
@@ -402,6 +560,21 @@ export function useRawMaterialForm(
             return;
         }
 
+        for (const [index, variant] of packagingVariants.entries()) {
+            const variantSafetyStock = Number(variant.maintainingQuantity);
+            if (!Number.isSafeInteger(variantSafetyStock) || variantSafetyStock < 0) {
+                setShowValidationErrors(true);
+                toast.error(`Variant ${index + 1}: Safety Stock must be a whole number greater than or equal to 0.`);
+                return;
+            }
+            const variantQaError = validatePurchaseQaConfig(variant.purchaseQa, purchaseQaParameters, `Variant ${index + 1} QA`);
+            if (variantQaError) {
+                setShowValidationErrors(true);
+                toast.error(variantQaError);
+                return;
+            }
+        }
+
         if (packagingVariants.length > 0 && (!hasWeightValue || !hasWeightUnitValue)) {
             toast.error("Gross Weight and Weight Unit are required when packaging variants are added.");
             setShowValidationErrors(true);
@@ -429,6 +602,10 @@ export function useRawMaterialForm(
                 product_category: formCategory ? Number(formCategory) : undefined,
                 product_type: Number(formProductType),
                 isActive: v.isActive ? 1 : 0,
+                barcode: v.barcode.trim() || undefined,
+                maintaining_quantity: Number(v.maintainingQuantity),
+                product_image: v.productImage,
+                purchaseQa: v.purchaseQa,
                 codeSuffix: cleanSuffix
             };
         });
@@ -460,6 +637,10 @@ export function useRawMaterialForm(
             parent_id: formParentId ? Number(formParentId) : null,
             unit_of_measurement_count: parsedUomCount,
             isActive: formIsActive ? 1 : 0,
+            barcode: formBarcode.trim() || undefined,
+            maintaining_quantity: parsedSafetyStock,
+            product_image: formProductImage,
+            purchaseQa: formPurchaseQa,
             cascadeToChildren
         };
 
@@ -508,6 +689,18 @@ export function useRawMaterialForm(
         setFormBrand,
         formCategory,
         setFormCategory,
+        formBarcode,
+        setFormBarcode,
+        formMaintainingQuantity,
+        setFormMaintainingQuantity,
+        formProductImage,
+        setFormProductImage,
+        formPurchaseQa,
+        setFormPurchaseQa,
+        purchaseQaParameters,
+        loadingPurchaseQa,
+        purchaseQaReady,
+        purchaseQaError,
         formProductType,
         setFormProductType,
         formIsActive,

@@ -10,6 +10,12 @@ import {
     resolveProductIdentity,
     type ProductIdentity
 } from "@/app/api/manufacturing/finished-goods/products/product-identity";
+import {
+    RawMaterialQaError,
+    normalizePurchaseQaConfig,
+    syncProductQaSpecifications
+} from "./_purchase-qa";
+import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
 
 function isPositiveNumber(value: unknown): boolean {
     if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
@@ -19,6 +25,65 @@ function isPositiveNumber(value: unknown): boolean {
 
 function hasProvidedValue(value: unknown): boolean {
     return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
+}
+
+function normalizeBarcode(value: unknown, defaultNull: boolean): string | null | undefined {
+    if (value === undefined) return defaultNull ? null : undefined;
+    if (value === null) return null;
+    if (typeof value !== "string") throw new RawMaterialQaError(400, "Barcode must be a text value.");
+    const normalized = value.trim();
+    return normalized || null;
+}
+
+function normalizeProductImage(value: unknown, defaultNull: boolean): string | null | undefined {
+    if (value === undefined) return defaultNull ? null : undefined;
+    if (value === null) return null;
+    if (typeof value !== "string" && typeof value !== "number") {
+        throw new RawMaterialQaError(400, "Product image must be a valid uploaded file ID.");
+    }
+    const normalized = String(value).trim();
+    return normalized || null;
+}
+
+function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | undefined {
+    if (value === undefined || value === null || value === "") return defaultZero ? 0 : undefined;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+        throw new RawMaterialQaError(400, "Safety Stock must be a whole number greater than or equal to 0.");
+    }
+    return parsed;
+}
+
+function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa"));
+}
+
+async function ensureBarcodeAvailable(value: string | null | undefined, productId?: number): Promise<void> {
+    if (!value) return;
+    const params = new URLSearchParams({
+        "filter[barcode][_eq]": value,
+        fields: "product_id",
+        limit: "1"
+    });
+    if (productId) params.set("filter[product_id][_neq]", String(productId));
+    const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) throw new RawMaterialQaError(503, "Unable to verify barcode uniqueness.");
+    const body = await response.json();
+    if (Array.isArray(body.data) && body.data.length > 0) {
+        throw new RawMaterialQaError(400, `Barcode "${value}" is already assigned to another product.`);
+    }
+}
+
+async function ensureUniqueSubmittedBarcodes(entries: Array<{ value: string | null | undefined; productId?: number }>): Promise<void> {
+    const seen = new Set<string>();
+    for (const entry of entries) {
+        const value = entry.value;
+        if (!value) continue;
+        const normalized = value.toLowerCase();
+        if (seen.has(normalized)) throw new RawMaterialQaError(400, `Barcode "${value}" is duplicated in this submission.`);
+        seen.add(normalized);
+        await ensureBarcodeAvailable(value, entry.productId);
+    }
 }
 
 function hasProvidedActiveFlag(value: unknown): boolean {
@@ -170,23 +235,49 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
         }
 
+        const purchaseQa = await normalizePurchaseQaConfig(productDetails.purchaseQa);
+        const normalizedProductBarcode = normalizeBarcode(productDetails.barcode, true);
+        const normalizedProductImage = normalizeProductImage(productDetails.product_image, true);
+        const normalizedSafetyStock = normalizeSafetyStock(productDetails.maintaining_quantity, true);
+        const submittedVariants = Array.isArray(packagingVariants) ? packagingVariants : [];
+        const normalizedVariants = await Promise.all(submittedVariants.map(async (rawVariant) => {
+            if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
+            const variant = rawVariant as Record<string, unknown>;
+            return {
+                ...variant,
+                barcode: normalizeBarcode(variant.barcode, true),
+                maintaining_quantity: normalizeSafetyStock(variant.maintaining_quantity, true),
+                product_image: normalizeProductImage(variant.product_image, true),
+                purchaseQa: await normalizePurchaseQaConfig(variant.purchaseQa)
+            };
+        }));
+
         const measurementError = validateMeasurementFields(productDetails, true);
         if (measurementError) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const variantsError = validatePackagingVariants(packagingVariants);
+        const variantsError = validatePackagingVariants(normalizedVariants);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
-        if (Array.isArray(packagingVariants) && packagingVariants.some(variant => {
+        if (normalizedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
             return NextResponse.json({ error: "Packaging variant isActive must be either 0 or 1." }, { status: 400 });
         }
 
-        const resolvedVariants = await resolvePackagingVariantIdentities(packagingVariants, {
+        await ensureUniqueSubmittedBarcodes([
+            { value: normalizedProductBarcode },
+            ...normalizedVariants.map(variant => ({
+                value: variant && typeof variant === "object"
+                    ? (variant as Record<string, unknown>).barcode as string | null | undefined
+                    : undefined
+            }))
+        ]);
+
+        const resolvedVariants = await resolvePackagingVariantIdentities(normalizedVariants, {
             parentName: productDetails.product_name
         });
 
@@ -216,10 +307,13 @@ export async function POST(request: Request) {
 
         // Create Raw Material / Packaging Product with explicit null overrides for foreign keys to bypass invalid database defaults
         const productPayload = {
-            ...productDetails,
+            ...withoutPurchaseQa(productDetails),
             weight: rawWeight,
             product_weight: rawWeight,
             weight_unit_id: verifiedWeightUnitId,
+            barcode: normalizedProductBarcode,
+            maintaining_quantity: normalizedSafetyStock,
+            product_image: normalizedProductImage,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -245,6 +339,12 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
+        if (!productId) {
+            throw new Error("Directus did not return the created raw material ID.");
+        }
+
+        await syncProductQaSpecifications(Number(productId), purchaseQa);
+
         // Link selected suppliers in product_per_supplier junction table
         if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
             try {
@@ -267,7 +367,7 @@ export async function POST(request: Request) {
         if (resolvedVariants.length > 0) {
             for (const { variant, identity } of resolvedVariants) {
                     const variantPayload = {
-                        ...variant,
+                        ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
@@ -299,6 +399,11 @@ export async function POST(request: Request) {
                             throw new Error("Directus did not return the created packaging variant ID.");
                         }
 
+                        await syncProductQaSpecifications(
+                            Number(childId),
+                            variant.purchaseQa as PurchaseQaConfig | undefined
+                        );
+
                         // Link child to the same suppliers
                         if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
                             for (const supId of supplierIds) {
@@ -324,6 +429,9 @@ export async function POST(request: Request) {
         if (e instanceof ProductIdentityError) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }
+        if (e instanceof RawMaterialQaError) {
+            return NextResponse.json({ error: e.message }, { status: e.status });
+        }
         console.error("API Error registering raw material:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to register raw material" }, { status: 500 });
     }
@@ -342,21 +450,69 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "productDetails is required." }, { status: 400 });
         }
 
+        const hasBarcodeField = Object.prototype.hasOwnProperty.call(productDetails, "barcode");
+        const hasSafetyStockField = Object.prototype.hasOwnProperty.call(productDetails, "maintaining_quantity");
+        const hasProductImageField = Object.prototype.hasOwnProperty.call(productDetails, "product_image");
+        const hasPurchaseQaField = Object.prototype.hasOwnProperty.call(productDetails, "purchaseQa");
+        const normalizedProductBarcode = hasBarcodeField
+            ? normalizeBarcode(productDetails.barcode, false)
+            : undefined;
+        const normalizedProductImage = hasProductImageField
+            ? normalizeProductImage(productDetails.product_image, false)
+            : undefined;
+        const normalizedSafetyStock = hasSafetyStockField
+            ? normalizeSafetyStock(productDetails.maintaining_quantity, false)
+            : undefined;
+        const purchaseQa = hasPurchaseQaField
+            ? await normalizePurchaseQaConfig(productDetails.purchaseQa, Number(productId))
+            : undefined;
+        const submittedVariants = Array.isArray(packagingVariants) ? packagingVariants : [];
+        const normalizedVariants = await Promise.all(submittedVariants.map(async (rawVariant) => {
+            if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
+            const variant = rawVariant as Record<string, unknown>;
+            const hasVariantBarcode = Object.prototype.hasOwnProperty.call(variant, "barcode");
+            const hasVariantSafetyStock = Object.prototype.hasOwnProperty.call(variant, "maintaining_quantity");
+            const hasVariantImage = Object.prototype.hasOwnProperty.call(variant, "product_image");
+            const hasVariantQa = Object.prototype.hasOwnProperty.call(variant, "purchaseQa");
+            return {
+                ...variant,
+                ...(hasVariantBarcode ? { barcode: normalizeBarcode(variant.barcode, false) } : {}),
+                ...(hasVariantSafetyStock ? { maintaining_quantity: normalizeSafetyStock(variant.maintaining_quantity, false) } : {}),
+                ...(hasVariantImage ? { product_image: normalizeProductImage(variant.product_image, false) } : {}),
+                ...(hasVariantQa ? { purchaseQa: await normalizePurchaseQaConfig(variant.purchaseQa, Number(variant.product_id || 0)) } : {})
+            };
+        }));
+
         const measurementError = validateMeasurementFields(productDetails, false);
         if (measurementError) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const variantsError = validatePackagingVariants(packagingVariants);
+        const variantsError = validatePackagingVariants(normalizedVariants);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
-        if (!isValidActiveFlag(productDetails.isActive) || (Array.isArray(packagingVariants) && packagingVariants.some(variant => {
+        if (!isValidActiveFlag(productDetails.isActive) || normalizedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
-        }))) {
+        })) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
         }
+
+        await ensureUniqueSubmittedBarcodes([
+            ...(hasBarcodeField ? [{ value: normalizedProductBarcode, productId: Number(productId) }] : []),
+            ...normalizedVariants.flatMap(variant => {
+                if (!variant || typeof variant !== "object") return [];
+                const record = variant as Record<string, unknown>;
+                return Object.prototype.hasOwnProperty.call(record, "barcode")
+                    ? [{ value: record.barcode as string | null | undefined, productId: record.product_id ? Number(record.product_id) : undefined }]
+                    : [];
+            })
+        ]);
+
+        const resolvedVariants = await resolvePackagingVariantIdentities(normalizedVariants, {
+            parentId: Number(productId)
+        });
 
         const userId = await getUserIdFromToken();
         if (!userId || !Number.isInteger(userId) || userId <= 0) {
@@ -387,9 +543,12 @@ export async function PATCH(request: Request) {
 
         // Clean product brand, category, etc., if they are undefined to map to null
         const productPayload = {
-            ...productDetails,
+            ...withoutPurchaseQa(productDetails),
             ...(hasWeightField ? { weight: rawWeight, product_weight: rawWeight } : {}),
             ...(hasWeightUnitField ? { weight_unit_id: verifiedWeightUnitId ?? null } : {}),
+            ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
+            ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
+            ...(hasProductImageField ? { product_image: normalizedProductImage } : {}),
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -410,9 +569,7 @@ export async function PATCH(request: Request) {
             throw new Error(`Directus failed to update raw material: ${prodRes.status} - ${errText}`);
         }
 
-        const resolvedVariants = await resolvePackagingVariantIdentities(packagingVariants, {
-            parentId: Number(productId)
-        });
+        await syncProductQaSpecifications(Number(productId), purchaseQa);
 
         // If cascadeToChildren option is selected, sync category, brand, and density down to existing family children
         if (productDetails.cascadeToChildren) {
@@ -447,7 +604,7 @@ export async function PATCH(request: Request) {
                     const variantHasActiveFlag = hasProvidedActiveFlag(variant.isActive);
                     const variantActive = normalizeActiveFlag(variant.isActive);
                     const variantPayload = {
-                        ...variant,
+                        ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
@@ -475,6 +632,10 @@ export async function PATCH(request: Request) {
                             const errText = await variantRes.text();
                             throw new Error(`Directus failed to update packaging variant: ${variantRes.status} - ${errText}`);
                         }
+                        await syncProductQaSpecifications(
+                            Number(variant.product_id),
+                            variant.purchaseQa as PurchaseQaConfig | undefined
+                        );
                     } else {
                         // Create new child variant
                         const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -496,6 +657,11 @@ export async function PATCH(request: Request) {
                             if (!childId) {
                                 throw new Error("Directus did not return the created packaging variant ID.");
                             }
+
+                            await syncProductQaSpecifications(
+                                Number(childId),
+                                variant.purchaseQa as PurchaseQaConfig | undefined
+                            );
 
                             // Link child to the same suppliers
                             if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
@@ -555,6 +721,9 @@ export async function PATCH(request: Request) {
     } catch (e) {
         if (e instanceof ProductIdentityError) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
+        if (e instanceof RawMaterialQaError) {
+            return NextResponse.json({ error: e.message }, { status: e.status });
         }
         console.error("API Error updating raw material:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update raw material" }, { status: 500 });

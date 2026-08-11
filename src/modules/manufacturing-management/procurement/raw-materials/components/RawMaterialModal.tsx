@@ -3,9 +3,14 @@ import { X, Plus, Trash2, Loader2, Layers } from "lucide-react";
 import { 
     RawMaterialItem, 
     SupplierItem, 
-    SelectOption 
+    SelectOption,
+    PackagingVariantFormState,
+    PurchaseQaConfig,
+    PurchaseQaParameter
 } from "../types/raw-materials.types";
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
+import { ProductImageField } from "./ProductImageField";
+import { PurchaseQaEditor } from "./PurchaseQaEditor";
 
 interface RawMaterialModalProps {
     isOpen: boolean;
@@ -33,6 +38,18 @@ interface RawMaterialModalProps {
     setFormBrand: (v: string) => void;
     formCategory: string;
     setFormCategory: (v: string) => void;
+    formBarcode: string;
+    setFormBarcode: (v: string) => void;
+    formMaintainingQuantity: string;
+    setFormMaintainingQuantity: (v: string) => void;
+    formProductImage: string | null;
+    setFormProductImage: (v: string | null) => void;
+    formPurchaseQa: PurchaseQaConfig;
+    setFormPurchaseQa: (v: PurchaseQaConfig) => void;
+    purchaseQaParameters: PurchaseQaParameter[];
+    loadingPurchaseQa: boolean;
+    purchaseQaReady: boolean;
+    purchaseQaError: string | null;
     formProductType: number;
     setFormProductType: (v: number) => void;
     formIsActive: boolean;
@@ -45,10 +62,10 @@ interface RawMaterialModalProps {
     handleToggleSupplier: (id: number) => void;
     supplierSearch: string;
     setSupplierSearch: (v: string) => void;
-    packagingVariants: Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean; isActive: boolean }>;
+    packagingVariants: PackagingVariantFormState[];
     handleAddVariant: () => void;
     handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
-    handleUpdateVariant: (idx: number, field: string, value: string | number | boolean) => void;
+    handleUpdateVariant: (idx: number, field: string, value: unknown) => void;
     handleRemoveVariant: (idx: number) => void;
     cascadeToChildren?: boolean;
     setCascadeToChildren?: (v: boolean) => void;
@@ -87,6 +104,18 @@ export function RawMaterialModal({
     setFormBrand,
     formCategory,
     setFormCategory,
+    formBarcode,
+    setFormBarcode,
+    formMaintainingQuantity,
+    setFormMaintainingQuantity,
+    formProductImage,
+    setFormProductImage,
+    formPurchaseQa,
+    setFormPurchaseQa,
+    purchaseQaParameters,
+    loadingPurchaseQa,
+    purchaseQaReady,
+    purchaseQaError,
     formProductType,
     setFormProductType,
     formIsActive,
@@ -247,6 +276,46 @@ export function RawMaterialModal({
                             />
                         </div>
                     </div>
+
+                    {/* Operational Controls */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-muted/10 p-3 rounded-xl border">
+                        <div className="space-y-1 sm:col-span-2">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Barcode <span className="text-muted-foreground normal-case font-medium">(Optional)</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={formBarcode}
+                                onChange={event => setFormBarcode(event.target.value)}
+                                placeholder="Scan or enter barcode"
+                                className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Safety Stock
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={formMaintainingQuantity}
+                                onChange={event => setFormMaintainingQuantity(event.target.value)}
+                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+
+                        <ProductImageField value={formProductImage} onChange={setFormProductImage} />
+                    </div>
+
+                    <PurchaseQaEditor
+                        config={formPurchaseQa}
+                        parameters={purchaseQaParameters}
+                        loading={loadingPurchaseQa}
+                        error={purchaseQaError}
+                        onChange={setFormPurchaseQa}
+                    />
 
                     {/* Measurements & Properties 6-Column Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-muted/10 p-3 rounded-xl border">
@@ -574,6 +643,47 @@ export function RawMaterialModal({
                                                         )}
                                                     </div>
                                                 </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 border-t pt-2">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                            Barcode <span className="text-muted-foreground normal-case font-medium">(Optional)</span>
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            value={v.barcode}
+                                                            onChange={event => handleUpdateVariant(vIdx, "barcode", event.target.value)}
+                                                            placeholder="Scan or enter barcode"
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <div className="space-y-1">
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Safety Stock</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            value={v.maintainingQuantity}
+                                                            onChange={event => handleUpdateVariant(vIdx, "maintainingQuantity", event.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <ProductImageField
+                                                        value={v.productImage}
+                                                        onChange={value => handleUpdateVariant(vIdx, "productImage", value)}
+                                                        label="Variant Image (Optional)"
+                                                    />
+                                                </div>
+
+                                                <PurchaseQaEditor
+                                                    config={v.purchaseQa}
+                                                    parameters={purchaseQaParameters}
+                                                    loading={loadingPurchaseQa}
+                                                    error={purchaseQaError}
+                                                    onChange={config => handleUpdateVariant(vIdx, "purchaseQa", config)}
+                                                />
                                             </div>
                                         );
                                     })}
@@ -595,8 +705,8 @@ export function RawMaterialModal({
                             </button>
                             <button
                                 type="submit"
-                                disabled={saving}
-                                className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                                disabled={saving || loadingPurchaseQa || !purchaseQaReady}
+                                className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {saving ? (
                                     <>
