@@ -1,0 +1,240 @@
+import { DIRECTUS_URL, headers } from "../_directus";
+
+export const RAW_MATERIAL_PRODUCT_TYPE = 389;
+export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
+
+type ProductRecord = {
+    product_id?: unknown;
+    product_type?: unknown;
+    parent_id?: unknown;
+};
+
+type ClassificationOperation = "create" | "update";
+
+export class RawMaterialClassificationError extends Error {
+    constructor(
+        public readonly status: 400 | 409 | 503,
+        public readonly code: string,
+        message: string,
+        public readonly details: Record<string, unknown> = {}
+    ) {
+        super(message);
+    }
+}
+
+function asPositiveId(value: unknown): number | null {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        return asPositiveId(record.product_id ?? record.id ?? record.value);
+    }
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function hasField(value: Record<string, unknown>, field: string): boolean {
+    return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+function parseClassification(value: unknown, field: string): number | undefined {
+    if (value === undefined || value === null || value === "") return undefined;
+    const parsed = Number(value);
+    if (parsed !== RAW_MATERIAL_PRODUCT_TYPE && parsed !== PACKAGING_MATERIAL_PRODUCT_TYPE) {
+        throw new RawMaterialClassificationError(
+            400,
+            "INVALID_PRODUCT_TYPE",
+            `${field} must be Raw Material / Ingredient or Packaging Material.`,
+            { receivedProductType: value }
+        );
+    }
+    return parsed;
+}
+
+function productIdOf(product: ProductRecord): number {
+    const productId = asPositiveId(product.product_id);
+    if (!productId) throw new RawMaterialClassificationError(503, "INVALID_PRODUCT_DATA", "A product returned an invalid product ID.");
+    return productId;
+}
+
+function parentIdOf(product: ProductRecord): number | null {
+    return asPositiveId(product.parent_id);
+}
+
+function productTypeOf(product: ProductRecord, label: string): number {
+    const productType = parseClassification(product.product_type, label);
+    if (!productType) {
+        throw new RawMaterialClassificationError(
+            409,
+            "PARENT_CLASSIFICATION_CONFLICT",
+            `${label} does not have a supported classification.`,
+            { productId: productIdOf(product) }
+        );
+    }
+    return productType;
+}
+
+async function fetchProduct(productId: number): Promise<ProductRecord> {
+    const response = await fetch(
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,parent_id`,
+        { headers, cache: "no-store" }
+    );
+    if (response.status === 404) {
+        throw new RawMaterialClassificationError(409, "INVALID_PARENT_RELATIONSHIP", `Product ${productId} does not exist.`, { productId });
+    }
+    if (!response.ok) {
+        throw new RawMaterialClassificationError(503, "CLASSIFICATION_LOOKUP_FAILED", "Unable to validate the product classification relationship.");
+    }
+    const body = await response.json();
+    if (!body?.data || typeof body.data !== "object") {
+        throw new RawMaterialClassificationError(503, "INVALID_PRODUCT_DATA", "The product classification response was invalid.");
+    }
+    return body.data as ProductRecord;
+}
+
+async function fetchChildren(parentId: number): Promise<ProductRecord[]> {
+    const params = new URLSearchParams({
+        "filter[parent_id][_eq]": String(parentId),
+        fields: "product_id,product_type,parent_id",
+        limit: "-1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new RawMaterialClassificationError(503, "CLASSIFICATION_LOOKUP_FAILED", "Unable to validate existing child classifications.");
+    }
+    const body = await response.json();
+    if (!Array.isArray(body?.data)) {
+        throw new RawMaterialClassificationError(503, "INVALID_PRODUCT_DATA", "The child classification response was invalid.");
+    }
+    return body.data as ProductRecord[];
+}
+
+function conflict(
+    message: string,
+    details: { productId?: number; parentId?: number | null; expectedProductType?: number; receivedProductType?: unknown } = {}
+): RawMaterialClassificationError {
+    return new RawMaterialClassificationError(409, "PARENT_CLASSIFICATION_CONFLICT", message, details);
+}
+
+function ensureParentIsRoot(parent: ProductRecord, parentId: number): void {
+    if (parentIdOf(parent)) {
+        throw conflict("A child variant cannot be used as the parent of another raw-material family.", { parentId });
+    }
+}
+
+export async function enforceClassificationIntegrity({
+    operation,
+    productId,
+    productDetails,
+    packagingVariants
+}: {
+    operation: ClassificationOperation;
+    productId?: number;
+    productDetails: Record<string, unknown>;
+    packagingVariants: unknown[];
+}): Promise<{
+    productDetails: Record<string, unknown>;
+    packagingVariants: Record<string, unknown>[];
+}> {
+    const currentProduct = operation === "update" && productId ? await fetchProduct(productId) : null;
+    const currentParentId = currentProduct ? parentIdOf(currentProduct) : null;
+    const existingChildren = operation === "update" && productId ? await fetchChildren(productId) : [];
+
+    const hasParentField = hasField(productDetails, "parent_id");
+    const requestedParentId = hasParentField ? asPositiveId(productDetails.parent_id) : currentParentId;
+    if (requestedParentId && productId && requestedParentId === productId) {
+        throw conflict("A product cannot be its own parent.", { productId, parentId: requestedParentId });
+    }
+
+    const requestedParent = requestedParentId ? await fetchProduct(requestedParentId) : null;
+    if (requestedParent && requestedParentId) ensureParentIsRoot(requestedParent, requestedParentId);
+
+    const currentProductType = currentProduct
+        ? productTypeOf(currentProduct, "The current product")
+        : undefined;
+    const parentProductType = requestedParent
+        ? productTypeOf(requestedParent, "The selected parent")
+        : undefined;
+    const explicitProductType = parseClassification(productDetails.product_type, "product_type");
+    const authoritativeProductType = parentProductType ?? explicitProductType ?? currentProductType;
+
+    if (!authoritativeProductType) {
+        throw new RawMaterialClassificationError(
+            400,
+            "INVALID_PRODUCT_TYPE",
+            "A valid product classification is required."
+        );
+    }
+
+    if (explicitProductType !== undefined && explicitProductType !== authoritativeProductType) {
+        throw conflict("The child classification must match its parent classification.", {
+            productId,
+            parentId: requestedParentId,
+            expectedProductType: authoritativeProductType,
+            receivedProductType: explicitProductType
+        });
+    }
+
+    if (currentProduct && existingChildren.length > 0 && currentProductType !== authoritativeProductType) {
+        throw conflict("A parent classification cannot be changed while child variants exist.", {
+            productId,
+            expectedProductType: currentProductType,
+            receivedProductType: authoritativeProductType
+        });
+    }
+
+    for (const child of existingChildren) {
+        const childProductType = productTypeOf(child, "An existing child variant");
+        if (childProductType !== authoritativeProductType) {
+            throw conflict("Existing child variants must match the parent classification before this family can be updated.", {
+                productId: productIdOf(child),
+                parentId: productId,
+                expectedProductType: authoritativeProductType,
+                receivedProductType: childProductType
+            });
+        }
+    }
+
+    const existingChildIds = new Set(existingChildren.map(productIdOf));
+    const normalizedVariants = packagingVariants.map((rawVariant) => {
+        if (!rawVariant || typeof rawVariant !== "object" || Array.isArray(rawVariant)) {
+            throw new RawMaterialClassificationError(400, "INVALID_PRODUCT_DATA", "Packaging variant data is invalid.");
+        }
+
+        const variant = rawVariant as Record<string, unknown>;
+        const variantProductId = asPositiveId(variant.product_id);
+        const explicitVariantType = parseClassification(variant.product_type, "variant product_type");
+        if (explicitVariantType !== undefined && explicitVariantType !== authoritativeProductType) {
+            throw conflict("The child classification must match its parent classification.", {
+                productId: variantProductId ?? undefined,
+                parentId: productId ?? requestedParentId ?? undefined,
+                expectedProductType: authoritativeProductType,
+                receivedProductType: explicitVariantType
+            });
+        }
+
+        if (operation === "create" && variantProductId) {
+            throw new RawMaterialClassificationError(
+                409,
+                "INVALID_PARENT_RELATIONSHIP",
+                "New family registration cannot update an existing child variant.",
+                { productId: variantProductId }
+            );
+        }
+
+        if (operation === "update" && variantProductId && !existingChildIds.has(variantProductId)) {
+            throw new RawMaterialClassificationError(
+                409,
+                "INVALID_PARENT_RELATIONSHIP",
+                "A packaging variant does not belong to the family being updated.",
+                { productId: variantProductId, parentId: productId }
+            );
+        }
+
+        return { ...variant, product_type: authoritativeProductType };
+    });
+
+    return {
+        productDetails: { ...productDetails, product_type: authoritativeProductType },
+        packagingVariants: normalizedVariants
+    };
+}

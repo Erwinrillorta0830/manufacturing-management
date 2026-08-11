@@ -15,6 +15,10 @@ import {
     normalizePurchaseQaConfig,
     syncProductQaSpecifications
 } from "./_purchase-qa";
+import {
+    enforceClassificationIntegrity,
+    RawMaterialClassificationError
+} from "./_classification-integrity";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
 
 function isPositiveNumber(value: unknown): boolean {
@@ -252,17 +256,25 @@ export async function POST(request: Request) {
             };
         }));
 
+        const classification = await enforceClassificationIntegrity({
+            operation: "create",
+            productDetails,
+            packagingVariants: normalizedVariants
+        });
+        Object.assign(productDetails, classification.productDetails);
+        const classifiedVariants = classification.packagingVariants;
+
         const measurementError = validateMeasurementFields(productDetails, true);
         if (measurementError) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const variantsError = validatePackagingVariants(normalizedVariants);
+        const variantsError = validatePackagingVariants(classifiedVariants);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
-        if (normalizedVariants.some(variant => {
+        if (classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
             return NextResponse.json({ error: "Packaging variant isActive must be either 0 or 1." }, { status: 400 });
@@ -270,14 +282,14 @@ export async function POST(request: Request) {
 
         await ensureUniqueSubmittedBarcodes([
             { value: normalizedProductBarcode },
-            ...normalizedVariants.map(variant => ({
+            ...classifiedVariants.map(variant => ({
                 value: variant && typeof variant === "object"
                     ? (variant as Record<string, unknown>).barcode as string | null | undefined
                     : undefined
             }))
         ]);
 
-        const resolvedVariants = await resolvePackagingVariantIdentities(normalizedVariants, {
+        const resolvedVariants = await resolvePackagingVariantIdentities(classifiedVariants, {
             parentName: productDetails.product_name
         });
 
@@ -426,6 +438,12 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ success: true, productId });
     } catch (e) {
+        if (e instanceof RawMaterialClassificationError) {
+            return NextResponse.json(
+                { error: e.message, code: e.code, ...e.details },
+                { status: e.status }
+            );
+        }
         if (e instanceof ProductIdentityError) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }
@@ -444,6 +462,11 @@ export async function PATCH(request: Request) {
 
         if (!productId) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
+        }
+
+        const numericProductId = Number(productId);
+        if (!Number.isInteger(numericProductId) || numericProductId <= 0) {
+            return NextResponse.json({ error: "productId must be a positive integer" }, { status: 400 });
         }
 
         if (!productDetails || typeof productDetails !== "object") {
@@ -483,17 +506,26 @@ export async function PATCH(request: Request) {
             };
         }));
 
+        const classification = await enforceClassificationIntegrity({
+            operation: "update",
+            productId: numericProductId,
+            productDetails,
+            packagingVariants: normalizedVariants
+        });
+        Object.assign(productDetails, classification.productDetails);
+        const classifiedVariants = classification.packagingVariants;
+
         const measurementError = validateMeasurementFields(productDetails, false);
         if (measurementError) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const variantsError = validatePackagingVariants(normalizedVariants);
+        const variantsError = validatePackagingVariants(classifiedVariants);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
-        if (!isValidActiveFlag(productDetails.isActive) || normalizedVariants.some(variant => {
+        if (!isValidActiveFlag(productDetails.isActive) || classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
@@ -501,7 +533,7 @@ export async function PATCH(request: Request) {
 
         await ensureUniqueSubmittedBarcodes([
             ...(hasBarcodeField ? [{ value: normalizedProductBarcode, productId: Number(productId) }] : []),
-            ...normalizedVariants.flatMap(variant => {
+            ...classifiedVariants.flatMap(variant => {
                 if (!variant || typeof variant !== "object") return [];
                 const record = variant as Record<string, unknown>;
                 return Object.prototype.hasOwnProperty.call(record, "barcode")
@@ -510,8 +542,8 @@ export async function PATCH(request: Request) {
             })
         ]);
 
-        const resolvedVariants = await resolvePackagingVariantIdentities(normalizedVariants, {
-            parentId: Number(productId)
+        const resolvedVariants = await resolvePackagingVariantIdentities(classifiedVariants, {
+            parentId: numericProductId
         });
 
         const userId = await getUserIdFromToken();
@@ -719,6 +751,12 @@ export async function PATCH(request: Request) {
 
         return NextResponse.json({ success: true });
     } catch (e) {
+        if (e instanceof RawMaterialClassificationError) {
+            return NextResponse.json(
+                { error: e.message, code: e.code, ...e.details },
+                { status: e.status }
+            );
+        }
         if (e instanceof ProductIdentityError) {
             return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
         }

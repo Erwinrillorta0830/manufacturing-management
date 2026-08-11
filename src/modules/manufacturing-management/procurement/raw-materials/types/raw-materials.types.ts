@@ -63,7 +63,6 @@ export interface PackagingVariantPayload {
     weight_unit_id: number;
     product_brand?: number;
     product_category?: number;
-    product_type?: number;
     barcode?: string | null;
     maintaining_quantity?: number;
     product_image?: string | null;
