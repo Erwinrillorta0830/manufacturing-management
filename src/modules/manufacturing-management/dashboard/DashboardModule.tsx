@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Loader2, TrendingUp, Layers, Boxes, ClipboardList, ShoppingBag, Search } from "lucide-react";
+import { Loader2, Search } from "lucide-react";
 import { useDashboard } from "./hooks/useDashboard";
 import { DashboardHeader } from "./components/DashboardHeader";
 import { DashboardControls } from "./components/DashboardControls";
@@ -75,49 +75,52 @@ export default function DashboardModule() {
 
             {/* View navigation Tab Bar */}
             <div className="border border-slate-200 dark:border-slate-800 rounded-xl bg-card p-4 space-y-4">
-                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <div className="flex flex-wrap bg-slate-100 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-1 rounded-lg gap-1 w-full lg:w-auto justify-start">
-                        <button
-                            onClick={() => { setActiveTab("production"); setSearchQuery(""); }}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                                activeTab === "production" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                        >
-                            <TrendingUp className="h-4 w-4" /> Production & Wastage
-                        </button>
-                        <button
-                            onClick={() => { setActiveTab("raw"); setSearchQuery(""); }}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                                activeTab === "raw" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                        >
-                            <Layers className="h-4 w-4" /> Raw Materials Inventory
-                        </button>
-                        <button
-                            onClick={() => { setActiveTab("finished"); setSearchQuery(""); }}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                                activeTab === "finished" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                        >
-                            <Boxes className="h-4 w-4" /> Finished Goods Inventory
-                        </button>
-                        <button
-                            onClick={() => { setActiveTab("producible"); setSearchQuery(""); }}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                                activeTab === "producible" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                        >
-                            <ClipboardList className="h-4 w-4" /> Producible Right Now
-                        </button>
-                        <button
-                            onClick={() => { setActiveTab("sellout"); setSearchQuery(""); }}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                                activeTab === "sellout" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                        >
-                            <ShoppingBag className="h-4 w-4" /> Sellout Reports
-                        </button>
-                    </div>
+                <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-2 pt-2 rounded-t-xl shrink-0 overflow-x-auto">
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("production")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            activeTab === "production" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Production &amp; Yield
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("raw")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            activeTab === "raw" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Raw Materials
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("finished")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            activeTab === "finished" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Finished Goods
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("producible")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            activeTab === "producible" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Producible Capacity
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("sellout")}
+                        className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            activeTab === "sellout" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Sellout Reports
+                    </button>
                 </div>
 
                 {/* Search Bar for inventory tabs */}

@@ -89,19 +89,50 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
         ];
     }, [products, selectedProduct.id]);
 
+    const getUnitOrderValue = (u: { value: string; label: string; order?: number }): number => {
+        if (typeof u.order === "number") return u.order;
+
+        const shortcut = (u.value || "").trim().toUpperCase();
+        const label = (u.label || "").trim().toUpperCase();
+
+        if (["PCS", "PC", "PIECE", "POUCH", "BOT", "BOTTLE", "CAN", "BAG", "KG", "L", "G", "ML", "UNIT"].includes(shortcut) || label.includes("PIECE") || label.includes("POUCH")) {
+            return 0;
+        }
+        if (["BNDL", "BUNDLE", "PACK", "PK", "SET", "DOZEN", "DZ"].includes(shortcut) || label.includes("BUNDLE") || label.includes("PACK")) {
+            return 1;
+        }
+        return 2;
+    };
+
     const uomOptions = React.useMemo(() => {
         if (!units || units.length === 0) {
             return [
-                { value: "L", label: "Liter (L)" },
-                { value: "KG", label: "Kilogram (KG)" },
-                { value: "PCS", label: "Piece (PCS)" }
+                { value: "L", label: "Liter (L)", order: 0 },
+                { value: "KG", label: "Kilogram (KG)", order: 0 },
+                { value: "PCS", label: "Piece (PCS)", order: 0 }
             ];
         }
-        return units.map((u) => ({
-            value: u.unit_shortcut,
-            label: `${u.unit_name} (${u.unit_shortcut})`
-        }));
+        return units.map((u) => {
+            const uObj = u as Unit & { unit_order?: number; order?: number; sort?: number };
+            return {
+                value: u.unit_shortcut,
+                label: `${u.unit_name} (${u.unit_shortcut})`,
+                order: typeof uObj.unit_order === "number" ? uObj.unit_order : typeof uObj.order === "number" ? uObj.order : typeof uObj.sort === "number" ? uObj.sort : undefined
+            };
+        });
     }, [units]);
+
+    const filteredUomOptions = React.useMemo(() => {
+        const isParentProduct = selectedProduct.parent_id === null || selectedProduct.parent_id === undefined || selectedProduct.parentProduct === true;
+        return uomOptions.filter(u => {
+            const order = getUnitOrderValue(u);
+            if (isParentProduct) {
+                return order <= 1;
+            } else {
+                return order > 1;
+            }
+        });
+    }, [uomOptions, selectedProduct.parent_id, selectedProduct.parentProduct]);
 
     const isParent = !selectedProduct.parent_id;
     
@@ -226,7 +257,12 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase">Brand <span className="text-red-500">*</span></label>
                                 <CreatableSelect
                                     options={brandOptions}
-                                    value={editedDetails.product_brand ? String(editedDetails.product_brand) : ""}
+                                    value={(() => {
+                                        const b = editedDetails.product_brand ?? selectedProduct.product_brand;
+                                        if (!b) return "";
+                                        const bObj = b as { brand_id?: number | string; id?: number | string };
+                                        return typeof b === "object" ? String(bObj.brand_id ?? bObj.id ?? "") : String(b);
+                                    })()}
                                     onValueChange={(val) => handleDetailChange("product_brand", val ? Number(val) : undefined)}
                                     placeholder="Select brand..."
                                     aria-invalid={!!fieldError("productBrand")}
@@ -243,7 +279,12 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase">Category <span className="text-red-500">*</span></label>
                                 <CreatableSelect
                                     options={categoryOptions}
-                                    value={editedDetails.product_category ? String(editedDetails.product_category) : ""}
+                                    value={(() => {
+                                        const c = editedDetails.product_category ?? selectedProduct.product_category;
+                                        if (!c) return "";
+                                        const cObj = c as { category_id?: number | string; id?: number | string };
+                                        return typeof c === "object" ? String(cObj.category_id ?? cObj.id ?? "") : String(c);
+                                    })()}
                                     onValueChange={(val) => handleDetailChange("product_category", val ? Number(val) : undefined)}
                                     placeholder="Select category..."
                                     aria-invalid={!!fieldError("productCategory")}
@@ -433,7 +474,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                             <div className="space-y-1">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase">Base UOM <span className="text-red-500">*</span></label>
                                 <CreatableSelect
-                                    options={uomOptions}
+                                    options={filteredUomOptions}
                                     value={editedDetails.baseUom || ""}
                                     onValueChange={(val) => handleDetailChange("baseUom", val)}
                                     placeholder="Select Base UOM..."

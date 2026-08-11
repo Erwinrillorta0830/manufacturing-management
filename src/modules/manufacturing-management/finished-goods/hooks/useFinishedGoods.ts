@@ -260,11 +260,11 @@ export function useFinishedGoods(initialTab: string = "details") {
                 bom: [],
                 routings: [],
                 densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
-                product_brand: p.product_brand ? Number(p.product_brand) : undefined,
-                product_category: p.product_category ? Number(p.product_category) : undefined,
-                product_class: p.product_class ? Number(p.product_class) : undefined,
-                product_segment: p.product_segment ? Number(p.product_segment) : undefined,
-                product_section: p.product_section ? Number(p.product_section) : undefined,
+                product_brand: typeof p.product_brand === "object" && p.product_brand !== null ? Number((p.product_brand as any).brand_id ?? (p.product_brand as any).id) : (p.product_brand ? Number(p.product_brand) : undefined),
+                product_category: typeof p.product_category === "object" && p.product_category !== null ? Number((p.product_category as any).category_id ?? (p.product_category as any).id) : (p.product_category ? Number(p.product_category) : undefined),
+                product_class: typeof p.product_class === "object" && p.product_class !== null ? Number((p.product_class as any).class_id ?? (p.product_class as any).id) : (p.product_class ? Number(p.product_class) : undefined),
+                product_segment: typeof p.product_segment === "object" && p.product_segment !== null ? Number((p.product_segment as any).segment_id ?? (p.product_segment as any).id) : (p.product_segment ? Number(p.product_segment) : undefined),
+                product_section: typeof p.product_section === "object" && p.product_section !== null ? Number((p.product_section as any).section_id ?? (p.product_section as any).id) : (p.product_section ? Number(p.product_section) : undefined),
                 product_shelf_life: p.product_shelf_life ? Number(p.product_shelf_life) : undefined,
                 cost_per_unit: p.cost_per_unit ? Number(p.cost_per_unit) : undefined,
                 unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : undefined,
@@ -740,16 +740,14 @@ export function useFinishedGoods(initialTab: string = "details") {
                 toast.error("Please complete the highlighted fields.");
                 return;
             }
-            if (apiError.code === "PRODUCT_SKU_CONFLICT") {
-                const message = "A product with this SKU already exists. Please choose a unique SKU.";
-                setRegisterFormErrors({ sku: message });
-                document.getElementById("register-sku")?.focus();
+            if (apiError.code === "VERSION_NAME_CONFLICT") {
+                const message = apiError.message || "A version with this name already exists. Please choose a unique version name.";
                 toast.error(message);
                 return;
             }
-            if (apiError.code === "PRODUCT_PARENT_UOM_CONFLICT" || apiError.status === 409) {
-                const message = "This parent product already has a variant using this UOM. Choose another UOM.";
-                setRegisterFormErrors({ parentId: message, baseUom: message });
+            if (apiError.code === "PRODUCT_PARENT_UOM_CONFLICT") {
+                const message = apiError.message || "A product with this Product Name and Unit of Measurement already exists.";
+                setRegisterFormErrors({ title: message, baseUom: message, parentId: message });
                 document.getElementById("register-base-uom")?.focus();
                 toast.error(message);
                 return;
@@ -878,16 +876,37 @@ export function useFinishedGoods(initialTab: string = "details") {
 
         const validatedDetails = validateProductEditDetails(editValidationInput);
 
-        const normalizedSku = validatedDetails.sku.trim().toLowerCase();
-        const duplicateSku = allCatalogProducts.some(product =>
-            String(product.product_id) !== selectedProductId &&
-            String(product.product_code || "").trim().toLowerCase() === normalizedSku
-        );
-        if (duplicateSku) {
-            const message = "A product with this SKU already exists. Please choose a unique SKU.";
-            setEditFieldErrors({ sku: message });
-            toast.error(message);
-            return;
+        const targetParentId = editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : (selectedProduct?.parent_id ? Number(selectedProduct.parent_id) : null);
+
+        if (targetParentId) {
+            const duplicateUom = allCatalogProducts.some(p => {
+                if (String(p.product_id) === selectedProductId) return false;
+                const pParentId = p.parent_id && typeof p.parent_id === "object" ? Number((p.parent_id as any).product_id) : (p.parent_id ? Number(p.parent_id) : null);
+                const pUomId = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null ? Number((p.unit_of_measurement as any).unit_id) : Number(p.unit_of_measurement);
+                return pParentId === targetParentId && pUomId === uomId;
+            });
+            if (duplicateUom) {
+                const message = "This parent product already has a variant using this UOM. Choose another UOM.";
+                setEditFieldErrors({ baseUom: message });
+                toast.error(message);
+                return;
+            }
+        } else {
+            const normalizedTitle = validatedDetails.title.trim().toLowerCase();
+            const duplicateIdentity = allCatalogProducts.some(p => {
+                if (String(p.product_id) === selectedProductId) return false;
+                const pParentId = p.parent_id && typeof p.parent_id === "object" ? Number((p.parent_id as any).product_id) : (p.parent_id ? Number(p.parent_id) : null);
+                if (pParentId !== null) return false;
+                const pName = String(p.product_name || "").trim().toLowerCase();
+                const pUomId = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null ? Number((p.unit_of_measurement as any).unit_id) : Number(p.unit_of_measurement);
+                return pName === normalizedTitle && pUomId === uomId;
+            });
+            if (duplicateIdentity) {
+                const message = "A product with this Product Name and Unit of Measurement already exists.";
+                setEditFieldErrors({ title: message, baseUom: message });
+                toast.error(message);
+                return;
+            }
         }
 
         const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
@@ -945,7 +964,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 custom_overhead: Number(editedVersionDetails.custom_overhead ?? 0),
                 overhead_items: editedVersionDetails.overhead_items || [],
                 labor_positions: editedVersionDetails.labor_positions || [],
-                status: editedVersionDetails.status || "For Approval",
+                version_status: editedVersionDetails.status || "For Approval",
                 valid_from: editedVersionDetails.valid_from || null,
                 valid_to: editedVersionDetails.valid_to || null,
 
@@ -966,7 +985,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                 productShelfLife: validatedDetails.productShelfLife,
                 productImage: editedDetails.product_image,
                 parent_id: editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : null,
-                unit_of_measurement: validatedDetails.unitOfMeasurement
+                unit_of_measurement: validatedDetails.unitOfMeasurement,
+                status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
             };
 
             const res = await saveBOMDetails(
@@ -989,6 +1009,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         const identityParent = updatedParentId ? products.find(parent => parent.id === String(updatedParentId)) : null;
                         const identityName = identityParent?.title || editedDetails.title || p.title;
                         const identityUom = matchedUnit?.unit_shortcut || editedDetails.baseUom || p.baseUom;
+                        const updatedStatus = (editedDetails as unknown as { status?: string }).status || (p as unknown as { status?: string }).status || "Active";
                         return {
                             ...p,
                             sku: editedDetails.sku || p.sku,
@@ -1010,7 +1031,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                             product_image: editedDetails.product_image,
                             parent_id: updatedParentId,
                             parentProduct: updatedParentId === null,
-
+                            status: updatedStatus,
+                            isActive: updatedStatus !== "Inactive"
                         };
                     }
                     return p;
@@ -1024,8 +1046,11 @@ export function useFinishedGoods(initialTab: string = "details") {
                             unit_name: matchedUnit.unit_name,
                             unit_shortcut: matchedUnit.unit_shortcut
                         } : p.unit_of_measurement;
+                        const updatedStatus = (editedDetails as unknown as { status?: string }).status || (p as unknown as { status?: string }).status || "Active";
                         return {
                             ...p,
+                            status: updatedStatus,
+                            isActive: updatedStatus === "Inactive" ? 0 : 1,
                             product_code: editedDetails.sku || p.product_code,
                             product_name: editedDetails.title || p.product_name,
                             description: editedDetails.description || p.description,
@@ -1063,8 +1088,8 @@ export function useFinishedGoods(initialTab: string = "details") {
             const error = err as Error & { code?: string; fields?: Record<string, string> };
             if (error.fields && Object.keys(error.fields).length > 0) {
                 setEditFieldErrors(error.fields);
-            } else if (error.code === "PRODUCT_SKU_CONFLICT") {
-                setEditFieldErrors({ sku: error.message });
+            } else if (error.code === "PRODUCT_PARENT_UOM_CONFLICT") {
+                setEditFieldErrors({ baseUom: error.message || "A product with this Product Name and Unit of Measurement already exists." });
             } else {
                 console.error("Save error:", err);
             }

@@ -12,7 +12,6 @@ import {
     FileText,
     Sliders,
     Shield,
-    Briefcase,
     Star
 } from "lucide-react";
 import { Product, ProductVersion } from "../types";
@@ -71,10 +70,9 @@ export function FinishedGoodsHeader({
 }: FinishedGoodsHeaderProps) {
     const tabs = [
         { id: "details", label: "Product Details", icon: FileText },
-        { id: "version_management", label: "Version Management", icon: Layers },
+        { id: "version_management", label: "Version Recipe & Routings", icon: Layers },
         { id: "costing", label: "Live Costing & Simulator", icon: Sliders },
-        { id: "qa_templates", label: "QA Checklist Templates", icon: Shield },
-        { id: "importation", label: "Importation & Landed Cost", icon: Briefcase }
+        { id: "quality_importation", label: "Quality & Importation", icon: Shield }
     ];
 
     const versionOptions = React.useMemo(() => {
@@ -332,24 +330,31 @@ export function FinishedGoodsHeader({
                 </div>
             )}
 
-            {/* Tab Navigation Controls */}
-            <div className="flex border-b px-4 bg-muted/10 shrink-0">
-                {tabs.map((t) => {
-                    const Icon = t.icon;
-                    const isActive = activeTab === t.id || (t.id === "version_management" && activeTab === "routes_bom");
+
+            {/* Module Tab Navigation Bar */}
+            <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-6 pt-2 shrink-0 overflow-x-auto">
+                {tabs.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
                     return (
                         <button
-                            key={t.id}
+                            key={tab.id}
                             type="button"
-                            onClick={() => handleTabChange(t.id === "version_management" ? "version_management" : t.id)}
-                            className={`flex items-center gap-1.5 px-4 py-3 text-xs font-semibold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                            onClick={() => {
+                                if (hasUnsavedChanges) {
+                                    if (!confirm("You have unsaved changes. Are you sure you want to switch tabs?")) return;
+                                    setHasUnsavedChanges(false);
+                                }
+                                handleTabChange(tab.id);
+                            }}
+                            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer whitespace-nowrap ${
                                 isActive
-                                    ? "border-primary text-primary"
-                                    : "border-transparent text-muted-foreground hover:text-foreground"
+                                    ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-t-lg"
                             }`}
                         >
-                            <Icon className="h-4 w-4" />
-                            {t.label}
+                            <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                            <span>{tab.label}</span>
                         </button>
                     );
                 })}

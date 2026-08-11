@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Plus, Search, RefreshCw, Loader2 } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useItemManagement } from "./hooks/useItemManagement";
@@ -72,17 +72,7 @@ export default function ItemManagementModule() {
                                 className="pl-9 h-9 text-xs"
                             />
                         </div>
-                        <TabsList className="bg-muted border border-border shrink-0">
-                            <TabsTrigger value="items" className="text-xs">
-                                Catalog Items ({filteredItems.length})
-                            </TabsTrigger>
-                            <TabsTrigger value="types" className="text-xs">
-                                Item Types ({filteredItemTypes.length})
-                            </TabsTrigger>
-                            <TabsTrigger value="classifications" className="text-xs">
-                                Classifications ({filteredItemClassifications.length})
-                            </TabsTrigger>
-                        </TabsList>
+
                     </div>
 
                     {/* Action Bar */}

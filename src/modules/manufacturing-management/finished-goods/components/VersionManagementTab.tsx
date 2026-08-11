@@ -23,12 +23,14 @@ export interface VersionManagementTabProps {
     qaTemplates: QATemplate[];
     units: Unit[];
     allCatalogProducts?: BFFCatalogProduct[];
+    activeTab?: string;
     setHasUnsavedChanges: (val: boolean) => void;
     isSyncingYield: boolean;
     handleSyncHistoricalYield: () => Promise<void>;
 }
 
 export function VersionManagementTab({
+    activeTab,
     selectedProductId,
     selectedVersionId,
     selectedVersion,
@@ -48,7 +50,8 @@ export function VersionManagementTab({
     isSyncingYield,
     handleSyncHistoricalYield
 }: VersionManagementTabProps) {
-    const [versionSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
+    const [userSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
+    const versionSubTab = activeTab === "routes_bom" ? "routes_bom" : userSubTab;
 
     return (
         <div className="space-y-6">

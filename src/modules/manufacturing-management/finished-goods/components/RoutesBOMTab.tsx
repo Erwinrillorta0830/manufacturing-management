@@ -413,24 +413,35 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                 />
                             </div>
                         </div>
-                        {editedRoutes.length > 0 && (
-                            <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                                <div>
-                                    <span className="font-semibold text-foreground">Line Bottleneck Capacity: </span>
-                                    <span className="font-mono text-primary bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
-                                        {Math.min(...editedRoutes.map(r => Number(r.step_batch_size || 1))).toFixed(4)}{" "}
-                                        {unitShortcut}/hour
-                                    </span>
+                        {editedRoutes.length > 0 && (() => {
+                            const stepRates = editedRoutes.map(r => {
+                                const batchQty = Number(r.step_batch_size || 1);
+                                const totalHours = Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0);
+                                const validHours = totalHours > 0 ? totalHours : 1;
+                                return batchQty / validHours;
+                            });
+                            const bottleneckRate = Math.min(...stepRates);
+                            const avgRate = stepRates.reduce((sum, rate) => sum + rate, 0) / stepRates.length;
+
+                            return (
+                                <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+                                    <div>
+                                        <span className="font-semibold text-foreground">Line Bottleneck Capacity: </span>
+                                        <span className="font-mono text-primary bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
+                                            {bottleneckRate.toFixed(4)}{" "}
+                                            {unitShortcut}/hour
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold text-foreground">Average Work Center Capacity: </span>
+                                        <span className="font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/30">
+                                            {avgRate.toFixed(4)}{" "}
+                                            {unitShortcut}/hour
+                                        </span>
+                                    </div>
                                 </div>
-                                <div>
-                                    <span className="font-semibold text-foreground">Average Work Center Capacity: </span>
-                                    <span className="font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/30">
-                                        {(editedRoutes.reduce((sum, r) => sum + Number(r.step_batch_size || 1), 0) / editedRoutes.length).toFixed(4)}{" "}
-                                        {unitShortcut}/hour
-                                    </span>
-                                </div>
-                            </div>
-                        )}
+                            );
+                        })()}
                     </div>
                 </div>
             )}

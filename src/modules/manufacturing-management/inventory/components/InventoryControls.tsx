@@ -1,14 +1,10 @@
 import React from "react";
 import {
     Boxes,
-    Calendar,
-    History,
-    ArrowUpRight,
-    ArrowDownLeft,
     Sliders,
     RefreshCw,
-    Layers,
-    Search
+    Search,
+    Layers
 } from "lucide-react";
 import { InventoryTab, LedgerType, ExpiryFilter, InventoryData } from "../types/inventory.types";
 
@@ -72,41 +68,27 @@ export function InventoryControls({
     return (
         <div className="border border-border rounded-xl bg-card p-4 space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-border pb-3">
-                <div className="flex bg-muted/40 border border-border p-1 rounded-lg gap-1 overflow-x-auto max-w-full">
+                <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-2 pt-1 rounded-t-xl shrink-0 overflow-x-auto">
                     <button
-                        onClick={() => { setActiveTab("stock"); setSearchQuery(""); }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 shrink-0 ${activeTab === "stock" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
+                        type="button"
+                        onClick={() => setActiveTab("stock")}
+                        className={`px-3 py-1.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "stock" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                     >
-                        <Boxes className="h-4 w-4" /> Stock Balances
+                        Stock Summary
                     </button>
                     <button
-                        onClick={() => { setActiveTab("batches"); setSearchQuery(""); }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 shrink-0 ${activeTab === "batches" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
+                        type="button"
+                        onClick={() => setActiveTab("batches")}
+                        className={`px-3 py-1.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "batches" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                     >
-                        <Calendar className="h-4 w-4" /> FIFO Batches
+                        Lot &amp; Batches
                     </button>
                     <button
-                        onClick={() => { setActiveTab("ledger"); setSearchQuery(""); }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 shrink-0 ${activeTab === "ledger" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
+                        type="button"
+                        onClick={() => setActiveTab("ledger")}
+                        className={`px-3 py-1.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "ledger" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                     >
-                        <History className="h-4 w-4" /> Audit Ledger
-                    </button>
-                    <button
-                        onClick={() => { setActiveTab("picking"); setSearchQuery(""); }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 shrink-0 ${activeTab === "picking" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                    >
-                        <ArrowUpRight className="h-4 w-4" /> Material Picking
-                    </button>
-                    <button
-                        onClick={() => { setActiveTab("receiving"); setSearchQuery(""); }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border-none cursor-pointer flex items-center gap-1.5 shrink-0 ${activeTab === "receiving" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground bg-transparent"
-                            }`}
-                    >
-                        <ArrowDownLeft className="h-4 w-4" /> Yield Receiving
+                        Movement Ledger
                     </button>
                 </div>
 
