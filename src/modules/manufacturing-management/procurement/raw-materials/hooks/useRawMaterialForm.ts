@@ -6,14 +6,73 @@ import {
     WeightUnitOption, 
     SelectOption, 
     RegisterRawMaterialPayload, 
-    PackagingVariantPayload 
+    PackagingVariantPayload,
+    PackagingVariantFormState,
+    PurchaseQaConfig,
+    PurchaseQaParameter,
+    PurchaseQaSpecificationInput
 } from "../types/raw-materials.types";
 import { 
     fetchRawMaterialMetadata, 
     fetchLinkedSuppliers, 
     createBrandOnTheFly, 
-    createCategoryOnTheFly 
+    createCategoryOnTheFly,
+    fetchProductPurchaseQa,
+    fetchPurchaseQaParameters
 } from "../services/raw-materials.service";
+
+function emptyPurchaseQaConfig(): PurchaseQaConfig {
+    return { inspectionRequired: false, specifications: [] };
+}
+
+function validatePurchaseQaConfig(
+    config: PurchaseQaConfig,
+    parameters: PurchaseQaParameter[],
+    label: string
+): string | null {
+    if (!config.inspectionRequired) {
+        return config.specifications.length > 0
+            ? `${label}: remove all specifications or enable Inspection Required.`
+            : null;
+    }
+
+    if (config.specifications.length === 0) {
+        return `${label}: add at least one QA check when Inspection Required is enabled.`;
+    }
+
+    const seen = new Set<number>();
+    for (const specification of config.specifications as PurchaseQaSpecificationInput[]) {
+        const parameter = parameters.find(item => item.parameterId === specification.parameterId);
+        if (!parameter) return `${label}: select a valid QA parameter for every check.`;
+        if (seen.has(specification.parameterId)) return `${label}: each QA parameter may only be selected once.`;
+        seen.add(specification.parameterId);
+
+        if (parameter.dataType === "Numeric") {
+            const minimum = specification.targetMin;
+            const maximum = specification.targetMax;
+            if (minimum === null && maximum === null) {
+                return `${label}: ${parameter.parameterName} needs a minimum or maximum threshold.`;
+            }
+            if (minimum !== null && (!Number.isFinite(minimum))) {
+                return `${label}: ${parameter.parameterName} has an invalid minimum threshold.`;
+            }
+            if (maximum !== null && (!Number.isFinite(maximum))) {
+                return `${label}: ${parameter.parameterName} has an invalid maximum threshold.`;
+            }
+            if (minimum !== null && maximum !== null && minimum > maximum) {
+                return `${label}: ${parameter.parameterName} minimum cannot exceed its maximum.`;
+            }
+        } else if (parameter.dataType === "Boolean") {
+            if (specification.expectedText !== "true" && specification.expectedText !== "false") {
+                return `${label}: ${parameter.parameterName} needs an expected Yes or No value.`;
+            }
+        } else if (!specification.expectedText?.trim()) {
+            return `${label}: ${parameter.parameterName} needs an expected value.`;
+        }
+    }
+
+    return null;
+}
 
 export function useRawMaterialForm(
     rawMaterials: RawMaterialItem[],
@@ -23,6 +82,7 @@ export function useRawMaterialForm(
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<RawMaterialItem | null>(null);
     const [saving, setSaving] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
     const [units, setUnits] = useState<UnitOption[]>([]);
     const [weightUnits, setWeightUnits] = useState<WeightUnitOption[]>([]);
@@ -30,24 +90,33 @@ export function useRawMaterialForm(
     const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
     const [categoriesList, setCategoriesList] = useState<SelectOption[]>([]);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
+    const [purchaseQaParameters, setPurchaseQaParameters] = useState<PurchaseQaParameter[]>([]);
+    const [loadingPurchaseQa, setLoadingPurchaseQa] = useState(false);
+    const [purchaseQaReady, setPurchaseQaReady] = useState(true);
+    const [purchaseQaError, setPurchaseQaError] = useState<string | null>(null);
 
     // Form fields
     const [formName, setFormName] = useState("");
     const [formCode, setFormCode] = useState("");
     const [formDesc, setFormDesc] = useState("");
     const [formUom, setFormUom] = useState<number | "">("");
-    const [formDensity, setFormDensity] = useState("1.000");
+    const [formDensity, setFormDensity] = useState("");
     const [formWeight, setFormWeight] = useState("");
     const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
+    const [formBarcode, setFormBarcode] = useState("");
+    const [formMaintainingQuantity, setFormMaintainingQuantity] = useState("0");
+    const [formProductImage, setFormProductImage] = useState<string | null>(null);
+    const [formPurchaseQa, setFormPurchaseQa] = useState<PurchaseQaConfig>(emptyPurchaseQaConfig());
     const [formProductType, setFormProductType] = useState<number>(389);
+    const [formIsActive, setFormIsActive] = useState(true);
     const [formParentId, setFormParentId] = useState<string>("");
-    const [formUomCount, setFormUomCount] = useState<string>("1");
+    const [formUomCount, setFormUomCount] = useState<string>("");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [supplierSearch, setSupplierSearch] = useState("");
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
-    const [packagingVariants, setPackagingVariants] = useState<Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>>([]);
+    const [packagingVariants, setPackagingVariants] = useState<PackagingVariantFormState[]>([]);
 
     const uomOptions = useMemo(() => {
         return units.map(u => ({
@@ -75,14 +144,46 @@ export function useRawMaterialForm(
             }));
     }, [rawMaterials, editingItem]);
 
+    const selectedParent = useMemo(
+        () => formParentId
+            ? rawMaterials.find(rm => String(rm.product_id) === String(formParentId))
+            : undefined,
+        [formParentId, rawMaterials]
+    );
+    const existingFamilyChildren = useMemo(
+        () => editingItem
+            ? rawMaterials.filter(rm => Number(rm.parent_id) === Number(editingItem.product_id))
+            : [],
+        [editingItem, rawMaterials]
+    );
+    const isEditingChild = Boolean(editingItem?.parent_id);
+    const classificationLocked = Boolean(formParentId || isEditingChild || existingFamilyChildren.length > 0);
+    const inheritedProductType = selectedParent?.product_type
+        ?? (isEditingChild
+            ? rawMaterials.find(rm => Number(rm.product_id) === Number(editingItem?.parent_id))?.product_type
+            : undefined)
+        ?? (existingFamilyChildren.length > 0 ? formProductType : undefined);
+    const classificationLockMessage = formParentId
+        ? "Classification is inherited from the selected parent material."
+        : existingFamilyChildren.length > 0
+            ? "Classification is locked while child variants exist in this family."
+            : "Classification is inherited from the parent material.";
+
+    const handleProductTypeChange = (value: number) => {
+        if (!classificationLocked) setFormProductType(value);
+    };
+
     const handleAddVariant = () => {
-        const defaultUomObj = units.find(u => {
-            const sc = (u.unit_shortcut || "").toLowerCase();
-            const name = (u.unit_name || "").toLowerCase();
-            return sc === "bag" || sc === "box" || sc === "pck" || sc === "ib" || name.includes("bag") || name.includes("box") || name.includes("pack");
-        });
-        const defaultUom = defaultUomObj ? defaultUomObj.unit_id : (units.length > 1 ? units[1].unit_id : (formUom || ""));
-        setPackagingVariants([...packagingVariants, { uomId: defaultUom, count: "25", codeSuffix: "" }]);
+        setPackagingVariants([...packagingVariants, {
+            uomId: "",
+            count: "",
+            codeSuffix: "",
+            isActive: true,
+            barcode: "",
+            maintainingQuantity: "0",
+            productImage: null,
+            purchaseQa: emptyPurchaseQaConfig()
+        }]);
     };
 
     const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
@@ -131,11 +232,20 @@ export function useRawMaterialForm(
                 break;
         }
 
-        setPackagingVariants([...packagingVariants, { uomId, count, codeSuffix }]);
+        setPackagingVariants([...packagingVariants, {
+            uomId,
+            count,
+            codeSuffix,
+            isActive: true,
+            barcode: "",
+            maintainingQuantity: "0",
+            productImage: null,
+            purchaseQa: emptyPurchaseQaConfig()
+        }]);
         toast.info(`Added preset variant "${codeSuffix}"`);
     };
 
-    const handleUpdateVariant = (index: number, field: string, value: string | number) => {
+    const handleUpdateVariant = (index: number, field: string, value: unknown) => {
         const copy = [...packagingVariants];
         copy[index] = { ...copy[index], [field]: value };
         setPackagingVariants(copy);
@@ -160,13 +270,18 @@ export function useRawMaterialForm(
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
 
-                if (!editingItem) {
-                    if (meta.units && meta.units.length > 0) setFormUom(meta.units[0].unit_id);
-                    if (meta.weightUnits && meta.weightUnits.length > 0) {
-                        const kgUnit = meta.weightUnits.find(u => u.code.toLowerCase() === "kg" || u.name.toLowerCase().includes("kilo"));
-                        setFormWeightUnitId(kgUnit ? kgUnit.id : meta.weightUnits[0].id);
-                    }
+                try {
+                    setLoadingPurchaseQa(true);
+                    setPurchaseQaParameters(await fetchPurchaseQaParameters());
+                    setPurchaseQaError(null);
+                } catch (qaError) {
+                    const message = qaError instanceof Error ? qaError.message : "Failed to load purchase QA parameters.";
+                    setPurchaseQaError(message);
+                    toast.error(message);
+                } finally {
+                    setLoadingPurchaseQa(false);
                 }
+
             } catch (err) {
                 console.error("Failed to load raw material metadata:", err);
                 toast.error("Failed to load options metadata");
@@ -186,25 +301,62 @@ export function useRawMaterialForm(
         setFormName("");
         setFormCode("");
         setFormDesc("");
-        setFormDensity("1.000");
+        setFormUom("");
+        setFormDensity("");
         setFormWeight("");
         setFormWeightUnitId("");
         setFormBrand("");
         setFormCategory("");
+        setFormBarcode("");
+        setFormMaintainingQuantity("0");
+        setFormProductImage(null);
+        setFormPurchaseQa(emptyPurchaseQaConfig());
         setFormProductType(389);
+        setFormIsActive(true);
         setFormParentId("");
-        setFormUomCount("1");
+        setFormUomCount("");
         setSelectedSupplierIds([]);
         setSupplierSearch("");
         setShowValidationErrors(false);
+        setPurchaseQaReady(true);
+        setPurchaseQaError(null);
         setPackagingVariants([]);
         setCascadeToChildren(true);
+    }, []);
+
+    const loadPurchaseQaForFamily = useCallback(async (parentId: number, childIds: number[]) => {
+        setLoadingPurchaseQa(true);
+        setPurchaseQaReady(false);
+        setPurchaseQaError(null);
+        try {
+            const ids = [parentId, ...childIds];
+            const configs = await Promise.all(ids.map(id => fetchProductPurchaseQa(id)));
+            const configByProductId = new Map(childIds.map((id, index) => [id, configs[index + 1]]));
+            setFormPurchaseQa(configs[0] || emptyPurchaseQaConfig());
+            setPackagingVariants(previous => previous.map(variant => ({
+                ...variant,
+                purchaseQa: variant.productId ? (configByProductId.get(variant.productId) || emptyPurchaseQaConfig()) : emptyPurchaseQaConfig()
+            })));
+            setPurchaseQaReady(true);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load purchase QA configuration.";
+            setPurchaseQaError(message);
+            toast.error(message);
+        } finally {
+            setLoadingPurchaseQa(false);
+        }
     }, []);
 
     const populateForm = useCallback((item: RawMaterialItem) => {
         setFormName(item.product_name || "");
         setFormCode(item.product_code || "");
         setFormDesc(item.description || "");
+        setFormBarcode(item.barcode || "");
+        setFormMaintainingQuantity(String(item.maintaining_quantity ?? 0));
+        setFormProductImage(item.product_image || null);
+        setFormPurchaseQa(emptyPurchaseQaConfig());
+        setPurchaseQaReady(false);
+        setPurchaseQaError(null);
         setFormUom(item.unit_of_measurement?.unit_id || "");
         setFormDensity(String(item.density_factor || "1.000"));
         setFormWeight(item.weight && Number(item.weight) > 0 ? String(item.weight) : "");
@@ -236,7 +388,11 @@ export function useRawMaterialForm(
         }
         setFormCategory(catVal);
 
-        setFormProductType(item.product_type || 389);
+        const parentItem = item.parent_id
+            ? rawMaterials.find(rm => Number(rm.product_id) === Number(item.parent_id))
+            : undefined;
+        setFormProductType(parentItem?.product_type || item.product_type || 389);
+        setFormIsActive(item.isActive !== 0);
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
 
@@ -259,26 +415,35 @@ export function useRawMaterialForm(
                     uomId: c.unit_of_measurement?.unit_id || "",
                     count: String(c.unit_of_measurement_count || "1"),
                     codeSuffix: suffix,
-                    isExisting: true
+                    isExisting: true,
+                    isActive: c.isActive !== 0,
+                    barcode: c.barcode || "",
+                    maintainingQuantity: String(c.maintaining_quantity ?? 0),
+                    productImage: c.product_image || null,
+                    purchaseQa: emptyPurchaseQaConfig()
                 };
             }));
         } else {
             setPackagingVariants([]);
         }
 
+        void loadPurchaseQaForFamily(item.product_id, existingChildren.map(child => child.product_id));
+
         fetchLinkedSuppliers(item.product_id)
             .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
             .catch(err => console.error("Failed to load item suppliers:", err));
-    }, [rawMaterials]);
+    }, [loadPurchaseQaForFamily, rawMaterials]);
 
     const handleStartEdit = (item: RawMaterialItem) => {
         setEditingItem(item);
+        setSubmitError(null);
         populateForm(item);
         setIsModalOpen(true);
     };
 
     const handleOpenModal = () => {
         setEditingItem(null);
+        setSubmitError(null);
         resetForm();
         setIsModalOpen(true);
     };
@@ -286,13 +451,19 @@ export function useRawMaterialForm(
     const handleCloseModal = () => {
         setIsModalOpen(false);
         setEditingItem(null);
+        setSubmitError(null);
         resetForm();
     };
 
     const handleParentChange = (val: string) => {
         setFormParentId(val);
+        const parentItem = val
+            ? rawMaterials.find(rm => String(rm.product_id) === String(val))
+            : undefined;
+        if (parentItem?.product_type) {
+            setFormProductType(Number(parentItem.product_type));
+        }
         if (val && !editingItem) {
-            const parentItem = rawMaterials.find(rm => String(rm.product_id) === String(val));
             if (parentItem && parentItem.product_code) {
                 const parentCode = parentItem.product_code;
                 const uomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "UNIT";
@@ -335,20 +506,52 @@ export function useRawMaterialForm(
 
     const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setSubmitError(null);
 
         // Validation Checks
+        const isPackagingMaterial = Number(formProductType) === 390;
         const isNameEmpty = !formName.trim();
         const isCodeEmpty = !formCode.trim();
         const isUomEmpty = !formUom;
         const isCategoryEmpty = !formCategory;
-        const isDensityInvalid = !formDensity || parseFloat(formDensity) <= 0;
-        const isWeightInvalid = !formWeight || parseFloat(formWeight) <= 0 || isNaN(parseFloat(formWeight));
-        const isWeightUnitInvalid = !formWeightUnitId;
-        const isUomCountInvalid = !formUomCount || Number(formUomCount) <= 0;
+        const isDensityInvalid = !formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0;
+        const isUomCountInvalid = !formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0;
+        const hasWeightValue = formWeight.trim() !== "";
+        const hasWeightUnitValue = formWeightUnitId !== "";
+        const parsedWeight = hasWeightValue ? Number(formWeight) : null;
+        const parsedWeightUnitId = hasWeightUnitValue ? Number(formWeightUnitId) : null;
+        const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(parsedWeight) || (parsedWeight as number) <= 0);
+        const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(parsedWeightUnitId) || (parsedWeightUnitId as number) <= 0);
+        const isWeightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
+        const isWeightInvalid = isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : isWeightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid;
 
-        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isWeightUnitInvalid || isUomCountInvalid) {
+        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
-            toast.error("Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit.");
+            toast.error(isPackagingMaterial
+                ? "Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit."
+                : "Please fill out all mandatory fields correctly.");
+            return;
+        }
+
+        if (editingItem && !purchaseQaReady) {
+            setShowValidationErrors(true);
+            toast.error(purchaseQaError || "Purchase QA configuration is still loading. Please try again.");
+            return;
+        }
+
+        const parsedSafetyStock = Number(formMaintainingQuantity);
+        if (!Number.isSafeInteger(parsedSafetyStock) || parsedSafetyStock < 0) {
+            setShowValidationErrors(true);
+            toast.error("Safety Stock must be a whole number greater than or equal to 0.");
+            return;
+        }
+
+        const purchaseQaErrorMessage = validatePurchaseQaConfig(formPurchaseQa, purchaseQaParameters, "Base material QA");
+        if (purchaseQaErrorMessage) {
+            setShowValidationErrors(true);
+            toast.error(purchaseQaErrorMessage);
             return;
         }
 
@@ -388,32 +591,62 @@ export function useRawMaterialForm(
         }
 
         // Check variants validation
-        const hasInvalidVariant = packagingVariants.some(v => !v.uomId || !v.count || parseFloat(v.count) <= 0);
+        const hasInvalidVariant = packagingVariants.some(v =>
+            !v.uomId ||
+            !v.count ||
+            !Number.isFinite(Number(v.count)) ||
+            Number(v.count) <= 0
+        );
         if (hasInvalidVariant) {
             toast.error("Please fill out all packaging variant fields with valid units and conversion counts.");
             return;
         }
 
-        const selectedUomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "pcs";
-        const parsedBaseWeight = parseFloat(formWeight) || 0;
-        const selectedWeightUnitIdNum = Number(formWeightUnitId);
+        for (const [index, variant] of packagingVariants.entries()) {
+            const variantSafetyStock = Number(variant.maintainingQuantity);
+            if (!Number.isSafeInteger(variantSafetyStock) || variantSafetyStock < 0) {
+                setShowValidationErrors(true);
+                toast.error(`Variant ${index + 1}: Safety Stock must be a whole number greater than or equal to 0.`);
+                return;
+            }
+            const variantQaError = validatePurchaseQaConfig(variant.purchaseQa, purchaseQaParameters, `Variant ${index + 1} QA`);
+            if (variantQaError) {
+                setShowValidationErrors(true);
+                toast.error(variantQaError);
+                return;
+            }
+        }
+
+        if (packagingVariants.length > 0 && (!hasWeightValue || !hasWeightUnitValue)) {
+            toast.error("Gross Weight and Weight Unit are required when packaging variants are added.");
+            setShowValidationErrors(true);
+            return;
+        }
+
+        const parsedBaseWeight = parsedWeight;
+        const selectedWeightUnitIdNum = parsedWeightUnitId;
+        const parsedDensity = Number(formDensity);
+        const parsedUomCount = Number(formUomCount);
 
         const variantsPayload = packagingVariants.map(v => {
             const vUomShortcut = units.find(u => u.unit_id === Number(v.uomId))?.unit_shortcut || "Unit";
             const cleanSuffix = v.codeSuffix.trim() || `${vUomShortcut.toUpperCase()}${v.count}`;
-            const variantCount = parseFloat(v.count) || 1.0;
+            const variantCount = parseFloat(v.count);
             return {
                 product_id: v.productId,
-                product_name: `${formName.trim()} (${vUomShortcut} of ${v.count} ${selectedUomShortcut})`,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
-                density_factor: parseFloat(formDensity) || 1.0,
-                weight: parsedBaseWeight * variantCount,
-                weight_unit_id: selectedWeightUnitIdNum,
+                density_factor: parsedDensity,
+                weight: (parsedBaseWeight as number) * variantCount,
+                weight_unit_id: selectedWeightUnitIdNum as number,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
-                product_type: Number(formProductType),
+                isActive: v.isActive ? 1 : 0,
+                barcode: v.barcode.trim() || undefined,
+                maintaining_quantity: Number(v.maintainingQuantity),
+                product_image: v.productImage,
+                purchaseQa: v.purchaseQa,
                 codeSuffix: cleanSuffix
             };
         });
@@ -436,25 +669,37 @@ export function useRawMaterialForm(
             product_code: normalizedCode,
             description: formDesc.trim() || undefined,
             unit_of_measurement: Number(formUom),
-            density_factor: parseFloat(formDensity) || 1.0,
+            density_factor: parsedDensity,
             weight: parsedBaseWeight,
             weight_unit_id: selectedWeightUnitIdNum,
             product_brand: formBrand ? Number(formBrand) : undefined,
             product_category: formCategory ? Number(formCategory) : undefined,
             product_type: formProductType,
             parent_id: formParentId ? Number(formParentId) : null,
-            unit_of_measurement_count: parseFloat(formUomCount) || 1.0,
+            unit_of_measurement_count: parsedUomCount,
+            isActive: formIsActive ? 1 : 0,
+            barcode: formBarcode.trim() || undefined,
+            maintaining_quantity: parsedSafetyStock,
+            product_image: formProductImage,
+            purchaseQa: formPurchaseQa,
             cascadeToChildren
         };
 
         let success = false;
-        if (editingItem) {
-            success = await onUpdateRawMaterial(editingItem.product_id, payload, selectedSupplierIds, variantsPayload);
-        } else {
-            success = await onRegisterRawMaterial(payload, selectedSupplierIds, variantsPayload);
+        try {
+            if (editingItem) {
+                success = await onUpdateRawMaterial(editingItem.product_id, payload, selectedSupplierIds, variantsPayload);
+            } else {
+                success = await onRegisterRawMaterial(payload, selectedSupplierIds, variantsPayload);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to save raw material.";
+            setSubmitError(message);
+            toast.error(message);
+        } finally {
+            setSaving(false);
         }
 
-        setSaving(false);
         if (success) {
             handleCloseModal();
         }
@@ -468,6 +713,7 @@ export function useRawMaterialForm(
         editingItem,
         handleStartEdit,
         saving,
+        submitError,
         loadingUnits,
         units,
         weightUnits,
@@ -492,8 +738,25 @@ export function useRawMaterialForm(
         setFormBrand,
         formCategory,
         setFormCategory,
+        formBarcode,
+        setFormBarcode,
+        formMaintainingQuantity,
+        setFormMaintainingQuantity,
+        formProductImage,
+        setFormProductImage,
+        formPurchaseQa,
+        setFormPurchaseQa,
+        purchaseQaParameters,
+        loadingPurchaseQa,
+        purchaseQaReady,
+        purchaseQaError,
         formProductType,
-        setFormProductType,
+        setFormProductType: handleProductTypeChange,
+        classificationLocked,
+        inheritedProductType,
+        classificationLockMessage,
+        formIsActive,
+        setFormIsActive,
         formParentId,
         setFormParentId: handleParentChange,
         formUomCount,

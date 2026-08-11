@@ -26,7 +26,7 @@ export interface RegisterProductModalProps {
     setRegisterForm: ReturnType<typeof useFinishedGoods>["setRegisterForm"];
     registerFormErrors: RegisterFormErrors;
     clearRegisterFormError: (field: RegisterFormField) => void;
-    handleRegisterProduct: (e: React.FormEvent) => Promise<void>;
+    handleRegisterProduct: (e: React.FormEvent, registrationType: "parent" | "child") => Promise<void>;
     savingBOM: boolean;
     products: Product[];
     suppliers: Supplier[];
@@ -186,14 +186,15 @@ export function RegisterProductModal({
                             type="button"
                             onClick={() => {
                                 setRegistrationType("child");
-                                const defaultParentId = products.find(p => !p.parent_id)?.id || "";
-                                const parentProd = products.find(p => String(p.id) === String(defaultParentId));
                                 setRegisterForm(prev => ({
                                     ...prev,
-                                    parentId: defaultParentId,
-                                    title: prev.title || (parentProd ? `${parentProd.title} (Box of 20)` : ""),
-                                    baseUom: "Case",
-                                    uomCount: prev.uomCount && prev.uomCount !== "1" ? prev.uomCount : "20"
+                                    parentId: "",
+                                    title: "",
+                                    sku: "",
+                                    baseUom: "",
+                                    targetSellingPrice: "",
+                                    costPerUnit: "",
+                                    uomCount: ""
                                 }));
                             }}
                             className={`flex-1 py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
@@ -361,15 +362,20 @@ export function RegisterProductModal({
                                                         segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
                                                         sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
                                                         shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
-                                                        densityFactor: String(parentProd.densityFactor || "1.0")
+                                                        densityFactor: parentProd.densityFactor !== undefined
+                                                            ? String(parentProd.densityFactor)
+                                                            : prev.densityFactor
                                                     };
                                                 }
                                                 return {
                                                     ...prev,
                                                     parentId: selectedId,
+                                                    title: "",
                                                     sku: "",
-                                                    baseUom: "Case",
-                                                    expectedYield: "100"
+                                                    baseUom: "",
+                                                    targetSellingPrice: "",
+                                                    costPerUnit: "",
+                                                    uomCount: "",
                                                 };
                                             });
                                         }}

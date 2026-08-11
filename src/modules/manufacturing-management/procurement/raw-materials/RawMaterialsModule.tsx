@@ -41,7 +41,7 @@ export default function RawMaterialsModule({
                 setSearch={dataHook.setSearch}
                 typeFilter={dataHook.typeFilter}
                 setTypeFilter={dataHook.setTypeFilter}
-                onOpenModal={() => formHook.setIsModalOpen(true)}
+                onOpenModal={formHook.handleOpenModal}
             />
 
             <RawMaterialsTable
@@ -65,9 +65,10 @@ export default function RawMaterialsModule({
 
             <RawMaterialModal
                 isOpen={formHook.isModalOpen}
-                onClose={() => formHook.setIsModalOpen(false)}
+                onClose={formHook.handleCloseModal}
                 editingItem={formHook.editingItem}
                 saving={formHook.saving}
+                submitError={formHook.submitError}
                 loadingUnits={formHook.loadingUnits}
                 suppliers={suppliers}
                 showValidationErrors={formHook.showValidationErrors}
@@ -89,8 +90,25 @@ export default function RawMaterialsModule({
                 setFormBrand={formHook.setFormBrand}
                 formCategory={formHook.formCategory}
                 setFormCategory={formHook.setFormCategory}
+                formBarcode={formHook.formBarcode}
+                setFormBarcode={formHook.setFormBarcode}
+                formMaintainingQuantity={formHook.formMaintainingQuantity}
+                setFormMaintainingQuantity={formHook.setFormMaintainingQuantity}
+                formProductImage={formHook.formProductImage}
+                setFormProductImage={formHook.setFormProductImage}
+                formPurchaseQa={formHook.formPurchaseQa}
+                setFormPurchaseQa={formHook.setFormPurchaseQa}
+                purchaseQaParameters={formHook.purchaseQaParameters}
+                loadingPurchaseQa={formHook.loadingPurchaseQa}
+                purchaseQaReady={formHook.purchaseQaReady}
+                purchaseQaError={formHook.purchaseQaError}
                 formProductType={formHook.formProductType}
                 setFormProductType={formHook.setFormProductType}
+                classificationLocked={formHook.classificationLocked}
+                inheritedProductType={formHook.inheritedProductType}
+                classificationLockMessage={formHook.classificationLockMessage}
+                formIsActive={formHook.formIsActive}
+                setFormIsActive={formHook.setFormIsActive}
                 formParentId={formHook.formParentId}
                 setFormParentId={formHook.setFormParentId}
                 formUomCount={formHook.formUomCount}

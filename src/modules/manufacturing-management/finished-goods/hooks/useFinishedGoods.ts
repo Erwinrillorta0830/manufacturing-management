@@ -43,7 +43,8 @@ import {
     activateVersion,
     fetchQATemplates,
     createQATemplate,
-    saveQATemplate
+    saveQATemplate,
+    normalizeProductActiveState
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
@@ -255,6 +256,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 targetSellingPrice: Number(p.price_per_unit || 0),
                 parentProduct: parentId === null,
                 parent_id: parentId,
+                isActive: normalizeProductActiveState(p.isActive),
                 bom: [],
                 routings: [],
                 densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
@@ -525,7 +527,10 @@ export function useFinishedGoods(initialTab: string = "details") {
 
     const resetRegisterFormErrors = () => setRegisterFormErrors({});
 
-    const handleRegisterProduct = async (e: React.FormEvent) => {
+    const handleRegisterProduct = async (
+        e: React.FormEvent,
+        registrationType: "parent" | "child" = "parent"
+    ) => {
         e.preventDefault();
 
         const matchedUnit = units.find(u => u.unit_shortcut === registerForm.baseUom);
@@ -545,6 +550,10 @@ export function useFinishedGoods(initialTab: string = "details") {
             expectedYield: registerForm.expectedYield
         }) as RegisterFormErrors;
 
+        if (registrationType === "child" && !registerForm.parentId) {
+            errors.parentId = "Parent manufactured good is required for a child variant.";
+        }
+
         if (registerForm.baseUom.trim() && !matchedUnit) {
             errors.baseUom = "Base UOM is invalid. Please select a valid unit of measurement.";
         }
@@ -553,7 +562,10 @@ export function useFinishedGoods(initialTab: string = "details") {
             setRegisterFormErrors(errors);
             const firstInvalidField = Object.keys(errors)[0];
             window.requestAnimationFrame(() => {
-                document.getElementById(`register-${firstInvalidField}`)?.focus();
+                const firstInvalidElementId = firstInvalidField === "parentId"
+                    ? "register-parent"
+                    : `register-${firstInvalidField}`;
+                document.getElementById(firstInvalidElementId)?.focus();
             });
             toast.error("Please complete the highlighted fields.");
             return;
@@ -677,6 +689,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         targetSellingPrice: Number(p.price_per_unit || 0),
                         parentProduct: parentId === null,
                         parent_id: parentId,
+                        isActive: normalizeProductActiveState(p.isActive),
                         bom: [],
                         routings: [],
                         densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,

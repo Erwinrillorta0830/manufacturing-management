@@ -3,15 +3,21 @@ import { X, Plus, Trash2, Loader2, Layers } from "lucide-react";
 import { 
     RawMaterialItem, 
     SupplierItem, 
-    SelectOption 
+    SelectOption,
+    PackagingVariantFormState,
+    PurchaseQaConfig,
+    PurchaseQaParameter
 } from "../types/raw-materials.types";
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
+import { ProductImageField } from "./ProductImageField";
+import { PurchaseQaEditor } from "./PurchaseQaEditor";
 
 interface RawMaterialModalProps {
     isOpen: boolean;
     onClose: () => void;
     editingItem: RawMaterialItem | null;
     saving: boolean;
+    submitError: string | null;
     loadingUnits: boolean;
     suppliers: SupplierItem[];
     showValidationErrors: boolean;
@@ -33,8 +39,25 @@ interface RawMaterialModalProps {
     setFormBrand: (v: string) => void;
     formCategory: string;
     setFormCategory: (v: string) => void;
+    formBarcode: string;
+    setFormBarcode: (v: string) => void;
+    formMaintainingQuantity: string;
+    setFormMaintainingQuantity: (v: string) => void;
+    formProductImage: string | null;
+    setFormProductImage: (v: string | null) => void;
+    formPurchaseQa: PurchaseQaConfig;
+    setFormPurchaseQa: (v: PurchaseQaConfig) => void;
+    purchaseQaParameters: PurchaseQaParameter[];
+    loadingPurchaseQa: boolean;
+    purchaseQaReady: boolean;
+    purchaseQaError: string | null;
     formProductType: number;
     setFormProductType: (v: number) => void;
+    classificationLocked: boolean;
+    inheritedProductType?: number | null;
+    classificationLockMessage: string;
+    formIsActive: boolean;
+    setFormIsActive: (v: boolean) => void;
     formParentId: string;
     setFormParentId: (v: string) => void;
     formUomCount: string;
@@ -43,10 +66,10 @@ interface RawMaterialModalProps {
     handleToggleSupplier: (id: number) => void;
     supplierSearch: string;
     setSupplierSearch: (v: string) => void;
-    packagingVariants: Array<{ productId?: number; uomId: number | ""; count: string; codeSuffix: string; isExisting?: boolean }>;
+    packagingVariants: PackagingVariantFormState[];
     handleAddVariant: () => void;
     handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
-    handleUpdateVariant: (idx: number, field: string, value: string | number) => void;
+    handleUpdateVariant: (idx: number, field: string, value: unknown) => void;
     handleRemoveVariant: (idx: number) => void;
     cascadeToChildren?: boolean;
     setCascadeToChildren?: (v: boolean) => void;
@@ -65,6 +88,7 @@ export function RawMaterialModal({
     onClose,
     editingItem,
     saving,
+    submitError,
     suppliers,
     showValidationErrors,
     formName,
@@ -85,8 +109,25 @@ export function RawMaterialModal({
     setFormBrand,
     formCategory,
     setFormCategory,
+    formBarcode,
+    setFormBarcode,
+    formMaintainingQuantity,
+    setFormMaintainingQuantity,
+    formProductImage,
+    setFormProductImage,
+    formPurchaseQa,
+    setFormPurchaseQa,
+    purchaseQaParameters,
+    loadingPurchaseQa,
+    purchaseQaReady,
+    purchaseQaError,
     formProductType,
     setFormProductType,
+    classificationLocked,
+    inheritedProductType,
+    classificationLockMessage,
+    formIsActive,
+    setFormIsActive,
     formParentId,
     setFormParentId,
     formUomCount,
@@ -117,6 +158,23 @@ export function RawMaterialModal({
         s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
         s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
     );
+    const isPackagingMaterial = Number(formProductType) === 390;
+    const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
+    const hasWeightValue = formWeight.trim() !== "";
+    const hasWeightUnitValue = formWeightUnitId !== "";
+    const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(Number(formWeight)) || Number(formWeight) <= 0);
+    const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(Number(formWeightUnitId)) || Number(formWeightUnitId) <= 0);
+    const weightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
+    const weightValueHasError = showValidationErrors && (
+        isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+    );
+    const weightUnitHasError = showValidationErrors && (
+        isPackagingMaterial
+            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
+            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+    );
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-background/80 backdrop-blur-xs animate-in fade-in duration-200">
@@ -143,16 +201,25 @@ export function RawMaterialModal({
                     </button>
                 </div>
 
+                {submitError && (
+                    <div role="alert" className="mx-4 mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700">
+                        <p className="font-bold">Unable to save material</p>
+                        <p>{submitError}</p>
+                    </div>
+                )}
+
                 {/* Single Page Form Container */}
                 <form onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
                     {/* Item Classification Pill Buttons */}
-                    <div className="flex items-center justify-between bg-muted/20 border p-2 rounded-xl">
+                    <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/20 border p-2 rounded-xl">
                         <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider pl-1">Classification:</span>
                         <div className="flex gap-2">
                             <button
                                 type="button"
                                 onClick={() => setFormProductType(389)}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all cursor-pointer ${
+                                disabled={classificationLocked}
+                                aria-disabled={classificationLocked}
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
                                     formProductType === 389 
                                         ? "bg-amber-500/10 border-amber-500 text-amber-600 shadow-xs" 
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
@@ -163,7 +230,9 @@ export function RawMaterialModal({
                             <button
                                 type="button"
                                 onClick={() => setFormProductType(390)}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all cursor-pointer ${
+                                disabled={classificationLocked}
+                                aria-disabled={classificationLocked}
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
                                     formProductType === 390 
                                         ? "bg-purple-500/10 border-purple-500 text-purple-600 shadow-xs" 
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
@@ -172,6 +241,20 @@ export function RawMaterialModal({
                                 Packaging Material
                             </button>
                         </div>
+                        {classificationLocked && (
+                            <span className="basis-full text-[10px] font-semibold text-muted-foreground">
+                                {classificationLockMessage} {inheritedProductType ? `Current value: ${classificationLabel}.` : ""}
+                            </span>
+                        )}
+                        <label className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-extrabold cursor-pointer ${formIsActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
+                            <input
+                                type="checkbox"
+                                checked={formIsActive}
+                                onChange={e => setFormIsActive(e.target.checked)}
+                                className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                            />
+                            {formIsActive ? "Active SKU" : "Inactive SKU"}
+                        </label>
                     </div>
 
                     {/* Core Identifiers Row */}
@@ -219,6 +302,46 @@ export function RawMaterialModal({
                         </div>
                     </div>
 
+                    {/* Operational Controls */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-muted/10 p-3 rounded-xl border">
+                        <div className="space-y-1 sm:col-span-2">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Barcode <span className="text-muted-foreground normal-case font-medium">(Optional)</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={formBarcode}
+                                onChange={event => setFormBarcode(event.target.value)}
+                                placeholder="Scan or enter barcode"
+                                className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Safety Stock
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={formMaintainingQuantity}
+                                onChange={event => setFormMaintainingQuantity(event.target.value)}
+                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+
+                        <ProductImageField value={formProductImage} onChange={setFormProductImage} />
+                    </div>
+
+                    <PurchaseQaEditor
+                        config={formPurchaseQa}
+                        parameters={purchaseQaParameters}
+                        loading={loadingPurchaseQa}
+                        error={purchaseQaError}
+                        onChange={setFormPurchaseQa}
+                    />
+
                     {/* Measurements & Properties 6-Column Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-muted/10 p-3 rounded-xl border">
                         <div className="space-y-1">
@@ -230,7 +353,7 @@ export function RawMaterialModal({
                                 value={String(formUom)}
                                 onValueChange={(val: string) => setFormUom(Number(val))}
                                 placeholder="UOM..."
-                                className="h-8 text-xs"
+                                className={`h-8 text-xs ${showValidationErrors && !formUom ? "border-red-500" : ""}`}
                             />
                         </div>
 
@@ -243,7 +366,7 @@ export function RawMaterialModal({
                                 step="any"
                                 value={formUomCount}
                                 onChange={e => setFormUomCount(e.target.value)}
-                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0) ? "border-red-500" : ""}`}
                                 required
                             />
                         </div>
@@ -257,14 +380,14 @@ export function RawMaterialModal({
                                 step="any"
                                 value={formDensity}
                                 onChange={e => setFormDensity(e.target.value)}
-                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0) ? "border-red-500" : ""}`}
                                 required
                             />
                         </div>
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Gross Weight <span className="text-red-500">*</span>
+                                Gross Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                             </label>
                             <input
                                 type="number"
@@ -272,21 +395,21 @@ export function RawMaterialModal({
                                 placeholder="25.00"
                                 value={formWeight}
                                 onChange={e => setFormWeight(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formWeight || parseFloat(formWeight) <= 0) ? "border-red-500" : ""}`}
-                                required
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightValueHasError ? "border-red-500" : ""}`}
+                                required={isPackagingMaterial}
                             />
                         </div>
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Weight Unit <span className="text-red-500">*</span>
+                                Weight Unit {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                             </label>
                             <CreatableSelect
                                 options={weightUnitOptions}
                                 value={String(formWeightUnitId)}
                                 onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
                                 placeholder="Unit..."
-                                className="h-8 text-xs"
+                                className={`h-8 text-xs ${weightUnitHasError ? "border-red-500" : ""}`}
                             />
                         </div>
 
@@ -465,7 +588,8 @@ export function RawMaterialModal({
                                         const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
                                         const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
-                                        const variantNamePreview = `${formName.trim() || "Material"} (${uomShortcut} of ${v.count} ${baseUomShortcut})`;
+                                        const variantNamePreview = formName.trim() || "Material";
+                                        const variantIdentityPreview = `${variantNamePreview} - ${uomShortcut.toUpperCase()}`;
                                         const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
                                         const calculatedWeight = formWeight && parseFloat(formWeight) > 0 ? (parseFloat(formWeight) * (parseFloat(v.count) || 1)).toFixed(2) : null;
                                         const weightUnitName = weightUnitOptions.find(w => w.value === String(formWeightUnitId))?.label.split("(")[0]?.trim() || "";
@@ -486,6 +610,20 @@ export function RawMaterialModal({
                                                     >
                                                         <Trash2 className="h-3.5 w-3.5" /> Remove
                                                     </button>
+                                                </div>
+
+                                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                                    <span>Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span></span>
+                                                    <span className="font-semibold text-foreground">Classification: {classificationLabel} <span className="font-normal text-muted-foreground">(inherited)</span></span>
+                                                    <label className={`flex items-center gap-1.5 px-2 py-1 rounded-md border font-bold cursor-pointer ${v.isActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={v.isActive}
+                                                            onChange={e => handleUpdateVariant(vIdx, "isActive", e.target.checked)}
+                                                            className="rounded border-border text-primary focus:ring-primary h-3 w-3"
+                                                        />
+                                                        {v.isActive ? "Active SKU" : "Inactive SKU"}
+                                                    </label>
                                                 </div>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
@@ -531,6 +669,47 @@ export function RawMaterialModal({
                                                         )}
                                                     </div>
                                                 </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 border-t pt-2">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                                            Barcode <span className="text-muted-foreground normal-case font-medium">(Optional)</span>
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            value={v.barcode}
+                                                            onChange={event => handleUpdateVariant(vIdx, "barcode", event.target.value)}
+                                                            placeholder="Scan or enter barcode"
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <div className="space-y-1">
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Safety Stock</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            value={v.maintainingQuantity}
+                                                            onChange={event => handleUpdateVariant(vIdx, "maintainingQuantity", event.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <ProductImageField
+                                                        value={v.productImage}
+                                                        onChange={value => handleUpdateVariant(vIdx, "productImage", value)}
+                                                        label="Variant Image (Optional)"
+                                                    />
+                                                </div>
+
+                                                <PurchaseQaEditor
+                                                    config={v.purchaseQa}
+                                                    parameters={purchaseQaParameters}
+                                                    loading={loadingPurchaseQa}
+                                                    error={purchaseQaError}
+                                                    onChange={config => handleUpdateVariant(vIdx, "purchaseQa", config)}
+                                                />
                                             </div>
                                         );
                                     })}
@@ -552,8 +731,8 @@ export function RawMaterialModal({
                             </button>
                             <button
                                 type="submit"
-                                disabled={saving}
-                                className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                                disabled={saving || loadingPurchaseQa || !purchaseQaReady}
+                                className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {saving ? (
                                     <>

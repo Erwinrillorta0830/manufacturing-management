@@ -14,7 +14,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
     try {
-        await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
+        await requirePurchaseOrderModuleAccess({
+            modulePaths: [PURCHASE_ORDER_MODULE_PATHS.receiving, PURCHASE_ORDER_MODULE_PATHS.rawMaterials]
+        });
         return NextResponse.json({ data: await fetchPurchaseQaParameters() });
     } catch (error) {
         const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError
