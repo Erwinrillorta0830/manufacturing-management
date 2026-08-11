@@ -227,6 +227,15 @@ function specificationPayload(productId: number, specification: PurchaseQaSpecif
     };
 }
 
+function specificationUpdatePayload(specification: PurchaseQaSpecificationInput) {
+    return {
+        target_min: specification.targetMin,
+        target_max: specification.targetMax,
+        expected_text: specification.expectedText,
+        is_critical: specification.isCritical ? 1 : 0
+    };
+}
+
 export async function syncProductQaSpecifications(
     productId: number,
     config: PurchaseQaConfig | undefined
@@ -263,7 +272,11 @@ export async function syncProductQaSpecifications(
             {
                 method: current ? "PATCH" : "POST",
                 headers,
-                body: JSON.stringify(specificationPayload(productId, specification))
+                body: JSON.stringify(
+                    current
+                        ? specificationUpdatePayload(specification)
+                        : specificationPayload(productId, specification)
+                )
             }
         );
         if (!response.ok) throw new RawMaterialQaError(503, "Unable to save purchase QA specifications.");
