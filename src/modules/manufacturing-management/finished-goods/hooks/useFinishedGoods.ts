@@ -1032,7 +1032,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                             parent_id: updatedParentId,
                             parentProduct: updatedParentId === null,
                             status: updatedStatus,
-                            isActive: updatedStatus === "Inactive" ? 0 : 1
+                            isActive: updatedStatus !== "Inactive"
                         };
                     }
                     return p;

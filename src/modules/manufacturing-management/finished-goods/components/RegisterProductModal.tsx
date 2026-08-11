@@ -209,7 +209,7 @@ export function RegisterProductModal({
                 </div>
 
                 {/* Form */}
-                <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+                <form noValidate onSubmit={(e) => handleRegisterProduct(e, registrationType)} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
                     {/* Mode Informational Banner */}
                     <div className={`p-4 rounded-xl border text-xs font-semibold flex items-center gap-3 ${
                         registrationType === "parent"

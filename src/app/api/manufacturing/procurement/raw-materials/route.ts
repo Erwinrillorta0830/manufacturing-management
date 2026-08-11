@@ -194,7 +194,7 @@ async function resolvePackagingVariantIdentities(
             : Number(variant.product_id);
 
         await ensureProductIdentityAvailable(
-            identity.descriptionKey,
+            identity,
             Number.isFinite(currentProductId) ? currentProductId : undefined
         );
 
