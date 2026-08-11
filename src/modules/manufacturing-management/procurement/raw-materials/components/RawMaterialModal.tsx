@@ -52,6 +52,9 @@ interface RawMaterialModalProps {
     purchaseQaError: string | null;
     formProductType: number;
     setFormProductType: (v: number) => void;
+    classificationLocked: boolean;
+    inheritedProductType?: number | null;
+    classificationLockMessage: string;
     formIsActive: boolean;
     setFormIsActive: (v: boolean) => void;
     formParentId: string;
@@ -118,6 +121,9 @@ export function RawMaterialModal({
     purchaseQaError,
     formProductType,
     setFormProductType,
+    classificationLocked,
+    inheritedProductType,
+    classificationLockMessage,
     formIsActive,
     setFormIsActive,
     formParentId,
@@ -151,6 +157,7 @@ export function RawMaterialModal({
         s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
     );
     const isPackagingMaterial = Number(formProductType) === 390;
+    const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
     const hasWeightValue = formWeight.trim() !== "";
     const hasWeightUnitValue = formWeightUnitId !== "";
     const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(Number(formWeight)) || Number(formWeight) <= 0);
@@ -201,7 +208,9 @@ export function RawMaterialModal({
                             <button
                                 type="button"
                                 onClick={() => setFormProductType(389)}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all cursor-pointer ${
+                                disabled={classificationLocked}
+                                aria-disabled={classificationLocked}
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
                                     formProductType === 389 
                                         ? "bg-amber-500/10 border-amber-500 text-amber-600 shadow-xs" 
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
@@ -212,7 +221,9 @@ export function RawMaterialModal({
                             <button
                                 type="button"
                                 onClick={() => setFormProductType(390)}
-                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all cursor-pointer ${
+                                disabled={classificationLocked}
+                                aria-disabled={classificationLocked}
+                                className={`px-4 py-1.5 rounded-lg border text-xs font-extrabold transition-all ${classificationLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${
                                     formProductType === 390 
                                         ? "bg-purple-500/10 border-purple-500 text-purple-600 shadow-xs" 
                                         : "bg-card border-border text-muted-foreground hover:text-foreground"
@@ -221,6 +232,11 @@ export function RawMaterialModal({
                                 Packaging Material
                             </button>
                         </div>
+                        {classificationLocked && (
+                            <span className="basis-full text-[10px] font-semibold text-muted-foreground">
+                                {classificationLockMessage} {inheritedProductType ? `Current value: ${classificationLabel}.` : ""}
+                            </span>
+                        )}
                         <label className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-extrabold cursor-pointer ${formIsActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
                             <input
                                 type="checkbox"
@@ -589,6 +605,7 @@ export function RawMaterialModal({
 
                                                 <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
                                                     <span>Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span></span>
+                                                    <span className="font-semibold text-foreground">Classification: {classificationLabel} <span className="font-normal text-muted-foreground">(inherited)</span></span>
                                                     <label className={`flex items-center gap-1.5 px-2 py-1 rounded-md border font-bold cursor-pointer ${v.isActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
                                                         <input
                                                             type="checkbox"

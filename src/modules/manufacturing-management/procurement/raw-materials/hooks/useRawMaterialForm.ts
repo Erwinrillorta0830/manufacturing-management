@@ -143,6 +143,35 @@ export function useRawMaterialForm(
             }));
     }, [rawMaterials, editingItem]);
 
+    const selectedParent = useMemo(
+        () => formParentId
+            ? rawMaterials.find(rm => String(rm.product_id) === String(formParentId))
+            : undefined,
+        [formParentId, rawMaterials]
+    );
+    const existingFamilyChildren = useMemo(
+        () => editingItem
+            ? rawMaterials.filter(rm => Number(rm.parent_id) === Number(editingItem.product_id))
+            : [],
+        [editingItem, rawMaterials]
+    );
+    const isEditingChild = Boolean(editingItem?.parent_id);
+    const classificationLocked = Boolean(formParentId || isEditingChild || existingFamilyChildren.length > 0);
+    const inheritedProductType = selectedParent?.product_type
+        ?? (isEditingChild
+            ? rawMaterials.find(rm => Number(rm.product_id) === Number(editingItem?.parent_id))?.product_type
+            : undefined)
+        ?? (existingFamilyChildren.length > 0 ? formProductType : undefined);
+    const classificationLockMessage = formParentId
+        ? "Classification is inherited from the selected parent material."
+        : existingFamilyChildren.length > 0
+            ? "Classification is locked while child variants exist in this family."
+            : "Classification is inherited from the parent material.";
+
+    const handleProductTypeChange = (value: number) => {
+        if (!classificationLocked) setFormProductType(value);
+    };
+
     const handleAddVariant = () => {
         setPackagingVariants([...packagingVariants, {
             uomId: "",
@@ -358,7 +387,10 @@ export function useRawMaterialForm(
         }
         setFormCategory(catVal);
 
-        setFormProductType(item.product_type || 389);
+        const parentItem = item.parent_id
+            ? rawMaterials.find(rm => Number(rm.product_id) === Number(item.parent_id))
+            : undefined;
+        setFormProductType(parentItem?.product_type || item.product_type || 389);
         setFormIsActive(item.isActive !== 0);
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
@@ -421,8 +453,13 @@ export function useRawMaterialForm(
 
     const handleParentChange = (val: string) => {
         setFormParentId(val);
+        const parentItem = val
+            ? rawMaterials.find(rm => String(rm.product_id) === String(val))
+            : undefined;
+        if (parentItem?.product_type) {
+            setFormProductType(Number(parentItem.product_type));
+        }
         if (val && !editingItem) {
-            const parentItem = rawMaterials.find(rm => String(rm.product_id) === String(val));
             if (parentItem && parentItem.product_code) {
                 const parentCode = parentItem.product_code;
                 const uomShortcut = units.find(u => u.unit_id === Number(formUom))?.unit_shortcut || "UNIT";
@@ -600,7 +637,6 @@ export function useRawMaterialForm(
                 weight_unit_id: selectedWeightUnitIdNum as number,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
-                product_type: Number(formProductType),
                 isActive: v.isActive ? 1 : 0,
                 barcode: v.barcode.trim() || undefined,
                 maintaining_quantity: Number(v.maintainingQuantity),
@@ -702,7 +738,10 @@ export function useRawMaterialForm(
         purchaseQaReady,
         purchaseQaError,
         formProductType,
-        setFormProductType,
+        setFormProductType: handleProductTypeChange,
+        classificationLocked,
+        inheritedProductType,
+        classificationLockMessage,
         formIsActive,
         setFormIsActive,
         formParentId,

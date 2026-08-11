@@ -103,6 +103,9 @@ export default function RawMaterialsModule({
                 purchaseQaError={formHook.purchaseQaError}
                 formProductType={formHook.formProductType}
                 setFormProductType={formHook.setFormProductType}
+                classificationLocked={formHook.classificationLocked}
+                inheritedProductType={formHook.inheritedProductType}
+                classificationLockMessage={formHook.classificationLockMessage}
                 formIsActive={formHook.formIsActive}
                 setFormIsActive={formHook.setFormIsActive}
                 formParentId={formHook.formParentId}
