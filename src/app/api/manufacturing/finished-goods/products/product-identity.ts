@@ -153,37 +153,66 @@ export async function resolveProductIdentity(input: ProductIdentityInput): Promi
 }
 
 export async function ensureProductIdentityAvailable(
-    descriptionKey: string,
+    identity: ProductIdentity,
     currentProductId?: number
 ): Promise<void> {
-    const query = new URLSearchParams({
-        "filter[description][_eq]": descriptionKey,
-        fields: "product_id",
-        limit: "10"
-    });
-    const res = await fetch(`${DIRECTUS_URL}/items/products?${query.toString()}`, {
-        headers,
-        cache: "no-store"
-    });
-    if (!res.ok) {
-        throw new ProductIdentityError("Unable to verify whether the generated product identity is available.", 503);
-    }
-    const json = await res.json();
-    const conflict = (json.data || []).find(
-        (product: { product_id?: number | string }) => Number(product.product_id) !== Number(currentProductId)
-    );
-    if (conflict) {
-        throw new ProductIdentityError(
-            "A product with this parent product and unit of measurement already exists.",
-            409,
-            "PRODUCT_PARENT_UOM_CONFLICT"
+    const currentId = currentProductId === undefined || currentProductId === null ? null : Number(currentProductId);
+    
+    if (identity.parentId) {
+        const parentIdNum = Number(identity.parentId);
+        const query = new URLSearchParams({
+            "filter[_or][0][product_id][_eq]": String(parentIdNum),
+            "filter[_or][1][parent_id][_eq]": String(parentIdNum),
+            fields: "product_id,unit_of_measurement",
+            limit: "100"
+        });
+        const res = await fetch(`${DIRECTUS_URL}/items/products?${query.toString()}`, { headers, cache: "no-store" });
+        if (!res.ok) {
+            throw new ProductIdentityError("Unable to verify whether the generated product identity is available.", 503);
+        }
+        const json = await res.json();
+        const items = json.data || [];
+        const collision = items.find((p: { product_id?: number | string; unit_of_measurement?: unknown }) => {
+            if (Number(p.product_id) === currentId) return false;
+            const pUom = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null
+                ? Number((p.unit_of_measurement as { unit_id?: number | string }).unit_id)
+                : Number(p.unit_of_measurement);
+            return pUom === Number(identity.unitId);
+        });
+        if (collision) {
+            throw new ProductIdentityError(
+                "This parent product already has a variant using this UOM. Choose another UOM.",
+                409,
+                "PRODUCT_PARENT_UOM_CONFLICT"
+            );
+        }
+    } else {
+        const query = new URLSearchParams({
+            "filter[product_name][_eq]": identity.productName,
+            "filter[unit_of_measurement][_eq]": String(identity.unitId),
+            fields: "product_id,product_name,unit_of_measurement",
+            limit: "10"
+        });
+        const res = await fetch(`${DIRECTUS_URL}/items/products?${query.toString()}`, { headers, cache: "no-store" });
+        if (!res.ok) {
+            throw new ProductIdentityError("Unable to verify whether the generated product identity is available.", 503);
+        }
+        const json = await res.json();
+        const conflict = (json.data || []).find(
+            (product: { product_id?: number | string }) => Number(product.product_id) !== currentId
         );
+        if (conflict) {
+            throw new ProductIdentityError(
+                "A product with this Product Name and Unit of Measurement already exists.",
+                409,
+                "PRODUCT_PARENT_UOM_CONFLICT"
+            );
+        }
     }
 }
 
 export async function ensureProductSkuAvailable(
-    productCode: string | null | undefined,
-    currentProductId?: number
+    productCode: string | null | undefined
 ): Promise<string> {
     const normalizedSku = normalizeProductSku(productCode);
     if (!normalizedSku) {
@@ -193,32 +222,5 @@ export async function ensureProductSkuAvailable(
             "PRODUCT_SKU_REQUIRED"
         );
     }
-
-    const query = new URLSearchParams({
-        "filter[product_code][_eq]": normalizedSku,
-        fields: "product_id",
-        limit: "10"
-    });
-    const res = await fetch(`${DIRECTUS_URL}/items/products?${query.toString()}`, {
-        headers,
-        cache: "no-store"
-    });
-    if (!res.ok) {
-        throw new ProductIdentityError("Unable to verify whether the SKU is available.", 503);
-    }
-
-    const json = await res.json();
-    const currentId = currentProductId === undefined ? null : Number(currentProductId);
-    const conflict = (json.data || []).find(
-        (product: { product_id?: number | string }) => Number(product.product_id) !== currentId
-    );
-    if (conflict) {
-        throw new ProductIdentityError(
-            "A product with this SKU already exists. Please choose a unique SKU.",
-            409,
-            "PRODUCT_SKU_CONFLICT"
-        );
-    }
-
     return normalizedSku;
 }

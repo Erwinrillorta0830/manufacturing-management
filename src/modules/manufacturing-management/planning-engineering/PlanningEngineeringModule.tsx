@@ -638,20 +638,7 @@ export default function PlanningEngineeringModule() {
 
             {/* Tabs-based Layout Dashboard */}
             <Tabs defaultValue="demand" className="w-full space-y-6">
-                <TabsList className="grid grid-cols-3 max-w-[600px] h-10 bg-muted/60 p-1 border rounded-lg">
-                    <TabsTrigger value="demand" className="flex items-center gap-2 font-semibold text-sm">
-                        <ClipboardList className="h-4 w-4 text-primary" />
-                        Demand Harvesting
-                    </TabsTrigger>
-                    <TabsTrigger value="inventory" className="flex items-center gap-2 font-semibold text-sm">
-                        <Database className="h-4 w-4 text-primary" />
-                        Net Requirements
-                    </TabsTrigger>
-                    <TabsTrigger value="queue" className="flex items-center gap-2 font-semibold text-sm">
-                        <Layers className="h-4 w-4 text-primary" />
-                        Job Orders Queue
-                    </TabsTrigger>
-                </TabsList>
+
 
                 {/* TAB 1: Demand Harvesting & Consolidation */}
                 <TabsContent value="demand" className="space-y-6 outline-none">

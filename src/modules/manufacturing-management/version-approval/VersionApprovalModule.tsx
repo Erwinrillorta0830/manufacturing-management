@@ -10,7 +10,6 @@ import {
 import VersionApprovalTable from "./components/VersionApprovalTable";
 import VersionReviewModal from "./components/VersionReviewModal";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -258,28 +257,23 @@ export const VersionApprovalModule: React.FC = () => {
 
             {/* Filter Tabs & Search Control Bar */}
             <div className="va-controls">
-                <Tabs value={selectedTab} onValueChange={(val) => setSelectedTab(val as ApprovalStatus)} className="w-auto">
-                    <TabsList className="va-tabs bg-transparent p-0 h-auto flex flex-wrap gap-1.5 border-0">
-                        {(["All", "Pending Approval", "Approved", "Revision Required", "Rejected"] as ApprovalStatus[]).map((tab) => {
-                            let count = items.length;
-                            if (tab === "Pending Approval") count = kpi.pendingCount;
-                            else if (tab === "Approved") count = kpi.approvedMonthCount;
-                            else if (tab === "Revision Required") count = kpi.revisionCount;
-                            else if (tab === "Rejected") count = kpi.rejectedCount;
+                <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-2 pt-1 rounded-t-xl shrink-0 overflow-x-auto">
+                    {(["All", "Pending Approval", "Approved", "Rejected", "Revision Requested"] as ApprovalStatus[]).map((status) => (
+                        <button
+                            key={status}
+                            type="button"
+                            onClick={() => setSelectedTab(status)}
+                            className={`px-3 py-1.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                                selectedTab === status
+                                    ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                    : "border-transparent text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            {status}
+                        </button>
+                    ))}
+                </div>
 
-                            return (
-                                <TabsTrigger
-                                    key={tab}
-                                    value={tab}
-                                    className="va-tab-btn data-[state=active]:bg-blue-600 data-[state=active]:text-white"
-                                >
-                                    <span>{tab}</span>
-                                    <span className="va-tab-count">{count}</span>
-                                </TabsTrigger>
-                            );
-                        })}
-                    </TabsList>
-                </Tabs>
 
                 <div className="flex items-center gap-2">
                     <div className="relative flex items-center min-w-[280px]">

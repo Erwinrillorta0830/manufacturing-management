@@ -33,7 +33,7 @@ export interface RegisterProductModalProps {
     brandOptions: { value: string; label: string }[];
     categoryOptions: { value: string; label: string }[];
     parentOptions: { value: string; label: string }[];
-    uomOptions: { value: string; label: string }[];
+    uomOptions: { value: string; label: string; order?: number }[];
     segmentOptions: { value: string; label: string }[];
     classOptions: { value: string; label: string }[];
     sectionOptions: { value: string; label: string }[];
@@ -43,6 +43,21 @@ export interface RegisterProductModalProps {
     handleCreateClass: (name: string) => Promise<number | undefined>;
     handleCreateSection: (name: string) => Promise<number | undefined>;
 }
+
+const getUnitOrderValue = (u: { value: string; label: string; order?: number }): number => {
+    if (typeof u.order === "number") return u.order;
+
+    const shortcut = (u.value || "").trim().toUpperCase();
+    const label = (u.label || "").trim().toUpperCase();
+
+    if (["PCS", "PC", "PIECE", "POUCH", "BOT", "BOTTLE", "CAN", "BAG", "KG", "L", "G", "ML", "UNIT"].includes(shortcut) || label.includes("PIECE") || label.includes("POUCH")) {
+        return 0;
+    }
+    if (["BNDL", "BUNDLE", "PACK", "PK", "SET", "DOZEN", "DZ"].includes(shortcut) || label.includes("BUNDLE") || label.includes("PACK")) {
+        return 1;
+    }
+    return 2;
+};
 
 export function RegisterProductModal({
     isOpen,
@@ -73,6 +88,17 @@ export function RegisterProductModal({
     const [uploadingRegImage, setUploadingRegImage] = useState(false);
     const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
     const [registerImageError, setRegisterImageError] = useState<string | null>(null);
+
+    const filteredUomOptions = React.useMemo(() => {
+        return uomOptions.filter(u => {
+            const order = getUnitOrderValue(u);
+            if (registrationType === "parent") {
+                return order <= 1;
+            } else {
+                return order > 1;
+            }
+        });
+    }, [uomOptions, registrationType]);
 
     useEffect(() => {
         if (isOpen) return;
@@ -111,48 +137,50 @@ export function RegisterProductModal({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm animate-in fade-in duration-200 p-3 sm:p-6">
+            <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-[95vw] max-w-5xl xl:max-w-6xl max-h-[92vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                 {/* Header */}
-                <div className="flex flex-col gap-3 px-6 py-4 border-b shrink-0 bg-muted/20">
+                <div className="flex flex-col gap-4 px-6 md:px-8 py-5 border-b shrink-0 bg-muted/20">
                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Plus className="h-5 w-5 text-primary" />
+                        <div className="flex items-center gap-2.5">
+                            <div className="h-9 w-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+                                <Plus className="h-5 w-5" />
+                            </div>
                             <div>
-                                <h3 className="text-base font-bold text-foreground">
-                                    {registrationType === "parent" ? "Register Parent Good (Piece)" : "Register Child Variant (Box / Case)"}
+                                <h3 className="text-lg font-bold text-foreground">
+                                    {registrationType === "parent" ? "Register Parent Good (Piece / Individual Unit)" : "Register Child Variant (Box / Case / Mother Bag)"}
                                 </h3>
                                 <p className="text-xs text-muted-foreground">
                                     {registrationType === "parent"
-                                        ? "Add a master manufactured good (piece/pouch) with core BOM recipe and workstation routings."
-                                        : "Add a packaged outer variant (box/case) containing multiple parent pieces."}
+                                        ? "Add a master manufactured good with core BOM recipe and workstation routings."
+                                        : "Add a packaged outer variant linked to a parent good."}
                                 </p>
                             </div>
                         </div>
                         <button
                             type="button"
                             onClick={onClose}
-                            className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
+                            className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3.5 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
                         >
                             Close
                         </button>
                     </div>
 
                     {/* Mode Segment Switcher */}
-                    <div className="flex items-center gap-2 p-1 bg-muted/40 rounded-lg border border-border/60">
+                    <div className="flex items-center gap-2 p-1.5 bg-muted/40 rounded-xl border border-border/60">
                         <button
                             type="button"
                             onClick={() => {
                                 setRegistrationType("parent");
                                 setRegisterForm(prev => ({ ...prev, parentId: "", uomCount: "1" }));
                             }}
-                            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            className={`flex-1 py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                                 registrationType === "parent"
                                     ? "bg-primary text-primary-foreground shadow-xs"
                                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                             }`}
                         >
-                            <Package className="h-3.5 w-3.5" /> Parent Good (Piece / Individual Pouch)
+                            <Package className="h-4 w-4" /> Parent Good (Piece / Individual Pouch)
                         </button>
                         <button
                             type="button"
@@ -168,21 +196,21 @@ export function RegisterProductModal({
                                     uomCount: prev.uomCount && prev.uomCount !== "1" ? prev.uomCount : "20"
                                 }));
                             }}
-                            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            className={`flex-1 py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                                 registrationType === "child"
                                     ? "bg-primary text-primary-foreground shadow-xs"
                                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                             }`}
                         >
-                            <Layers className="h-3.5 w-3.5" /> Child Variant (Box / Case / Mother Bag)
+                            <Layers className="h-4 w-4" /> Child Variant (Box / Case / Mother Bag)
                         </button>
                     </div>
                 </div>
 
                 {/* Form */}
-                <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 space-y-6">
+                <form noValidate onSubmit={handleRegisterProduct} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
                     {/* Mode Informational Banner */}
-                    <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
+                    <div className={`p-4 rounded-xl border text-xs font-semibold flex items-center gap-3 ${
                         registrationType === "parent"
                             ? "bg-primary/5 border-primary/20 text-primary"
                             : "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300"
@@ -199,13 +227,14 @@ export function RegisterProductModal({
                             </>
                         )}
                     </div>
+
                     {/* Group 1: General Info */}
-                    <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
+                    <div className="bg-muted/10 border border-border/40 rounded-xl p-5 space-y-4">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                            <FileText className="h-3.5 w-3.5" /> 1. Identity & Details
+                            <FileText className="h-4 w-4" /> 1. Identity &amp; Details
                         </h4>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="col-span-2">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="md:col-span-2">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Product Name <span className="text-red-500">*</span></label>
                                 <input
                                     id="register-title"
@@ -219,16 +248,6 @@ export function RegisterProductModal({
                                     className={registerInputClass("title")}
                                 />
                                 {registerErrorMessage("title")}
-                            </div>
-                            <div className="col-span-2">
-                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Short Description</label>
-                                <textarea
-                                    placeholder="Optional human-readable product description..."
-                                    value={registerForm.description}
-                                    onChange={e => setRegisterForm(prev => ({ ...prev, description: e.target.value }))}
-                                    rows={2}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary resize-none transition-all"
-                                />
                             </div>
                             <div>
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">SKU / Code <span className="text-red-500">*</span></label>
@@ -244,6 +263,16 @@ export function RegisterProductModal({
                                     className={registerInputClass("sku")}
                                 />
                                 {registerErrorMessage("sku")}
+                            </div>
+                            <div className="md:col-span-3">
+                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Short Description</label>
+                                <textarea
+                                    placeholder="Optional human-readable product description..."
+                                    value={registerForm.description}
+                                    onChange={e => setRegisterForm(prev => ({ ...prev, description: e.target.value }))}
+                                    rows={2}
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary resize-none transition-all"
+                                />
                             </div>
                             <div>
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Barcode (Optional)</label>
@@ -292,7 +321,7 @@ export function RegisterProductModal({
                                 {registerErrorMessage("categoryId")}
                             </div>
                             {registrationType === "child" && (
-                                <div className="col-span-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                                <div className="md:col-span-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
                                     <label className="text-[11px] font-bold text-amber-700 dark:text-amber-300 uppercase block">
                                         Select Parent Manufactured Good (Piece / Individual Pouch) <span className="text-red-500">*</span>
                                     </label>
@@ -304,22 +333,30 @@ export function RegisterProductModal({
                                             const selectedId = val;
                                             clearRegisterFormError("parentId");
                                             clearRegisterFormError("baseUom");
+                                            clearRegisterFormError("sku");
                                             const parentProd = products.find(p => p.id === selectedId);
                                             setRegisterForm(prev => {
                                                 if (parentProd) {
                                                     const count = Number(prev.uomCount) || 20;
+                                                    const parentCatId = typeof parentProd.product_category === "object" && parentProd.product_category !== null
+                                                        ? (parentProd.product_category as any).category_id ?? (parentProd.product_category as any).id
+                                                        : parentProd.product_category;
+                                                    const parentBrandId = typeof parentProd.product_brand === "object" && parentProd.product_brand !== null
+                                                        ? (parentProd.product_brand as any).brand_id ?? (parentProd.product_brand as any).id
+                                                        : parentProd.product_brand;
+
                                                     return {
                                                         ...prev,
                                                         parentId: selectedId,
                                                         title: `${parentProd.title} (Box of ${count})`,
-                                                        sku: "",
+                                                        sku: parentProd.sku || "",
                                                         baseUom: "Case",
                                                         targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
                                                         uomCount: String(count),
                                                         expectedYield: "100",
                                                         description: parentProd.description || prev.description,
-                                                        brandId: parentProd.product_brand ? String(parentProd.product_brand) : prev.brandId,
-                                                        categoryId: parentProd.product_category ? String(parentProd.product_category) : prev.categoryId,
+                                                        brandId: parentBrandId ? String(parentBrandId) : prev.brandId,
+                                                        categoryId: parentCatId ? String(parentCatId) : prev.categoryId,
                                                         classId: parentProd.product_class ? String(parentProd.product_class) : prev.classId,
                                                         segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
                                                         sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
@@ -348,16 +385,16 @@ export function RegisterProductModal({
                     </div>
 
                     {/* Group 2: Measurements & Life */}
-                    <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
+                    <div className="bg-muted/10 border border-border/40 rounded-xl p-5 space-y-4">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                            <Sliders className="h-3.5 w-3.5" /> 2. Physicals &amp; Inventory
+                            <Sliders className="h-4 w-4" /> 2. Physicals &amp; Inventory
                         </h4>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                             <div>
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base UOM <span className="text-red-500">*</span></label>
                                 <CreatableSelect
                                     id="register-base-uom"
-                                    options={uomOptions}
+                                    options={filteredUomOptions}
                                     value={registerForm.baseUom}
                                     onValueChange={(val) => updateRegisterField("baseUom", val)}
                                     placeholder="Select Base UOM..."
@@ -402,7 +439,7 @@ export function RegisterProductModal({
                                 {registerErrorMessage("uomCount")}
                             </div>
                             <div>
-                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Density conversion factor <span className="text-red-500">*</span></label>
+                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Density factor <span className="text-red-500">*</span></label>
                                 <input
                                     id="register-densityFactor"
                                     type="number"
@@ -484,11 +521,11 @@ export function RegisterProductModal({
                                     }}
                                 />
                             </div>
-                            <div className="col-span-2">
+                            <div className="sm:col-span-2 md:col-span-4">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Product Image</label>
                                 <div className="flex items-center gap-4 border border-dashed border-border rounded-xl p-4 bg-muted/5 hover:bg-muted/10 transition-all">
                                     {registerForm.productImage ? (
-                                        <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
+                                        <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center shrink-0">
                                             <img
                                                 src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${registerForm.productImage}`}
                                                 alt="Preview"
@@ -521,7 +558,7 @@ export function RegisterProductModal({
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="w-16 h-16 rounded-lg bg-muted/20 border flex items-center justify-center text-muted-foreground/45">
+                                        <div className="w-16 h-16 rounded-lg bg-muted/20 border flex items-center justify-center text-muted-foreground/45 shrink-0">
                                             <ImageIcon className="h-5 w-5" />
                                         </div>
                                     )}
@@ -530,7 +567,7 @@ export function RegisterProductModal({
                                         <p className="text-xs font-medium text-foreground">
                                             {registerForm.productImage ? "Image uploaded successfully" : "Select a product image"}
                                         </p>
-                                        <label className="inline-flex items-center justify-center rounded-lg border bg-background hover:bg-muted text-foreground px-2.5 py-1 text-xs font-semibold cursor-pointer transition-all">
+                                        <label className="inline-flex items-center justify-center rounded-lg border bg-background hover:bg-muted text-foreground px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all">
                                             <span>{uploadingRegImage ? "Uploading..." : "Choose File"}</span>
                                             <input
                                                 type="file"
@@ -571,11 +608,11 @@ export function RegisterProductModal({
                     </div>
 
                     {/* Group 3: Financials & Suppliers */}
-                    <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
+                    <div className="bg-muted/10 border border-border/40 rounded-xl p-5 space-y-4">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                            <Briefcase className="h-3.5 w-3.5" /> 3. Financials &amp; Suppliers
+                            <Briefcase className="h-4 w-4" /> 3. Financials &amp; Suppliers
                         </h4>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Target Selling Price (₱)</label>
                                 <input
@@ -598,13 +635,13 @@ export function RegisterProductModal({
                                     className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
                                 />
                             </div>
-                            <div className="col-span-2 space-y-2">
+                            <div className="md:col-span-3 space-y-2">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block">Suppliers (Select multiple)</label>
-                                <div className="flex flex-wrap gap-1.5 mb-1.5 min-h-[32px] p-2 bg-background border border-dashed rounded-lg">
+                                <div className="flex flex-wrap gap-1.5 mb-1.5 min-h-[36px] p-2.5 bg-background border border-dashed rounded-xl">
                                     {registerForm.supplierIds.map(supId => {
                                         const name = suppliers.find(s => String(s.id) === String(supId))?.supplier_name || `Supplier #${supId}`;
                                         return (
-                                            <span key={supId} className="bg-primary/10 text-primary border border-primary/20 rounded-full pl-2.5 pr-1 py-0.5 text-xs inline-flex items-center gap-1 font-semibold transition-all hover:bg-primary/15">
+                                            <span key={supId} className="bg-primary/10 text-primary border border-primary/20 rounded-full pl-3 pr-1.5 py-1 text-xs inline-flex items-center gap-1.5 font-semibold transition-all hover:bg-primary/15">
                                                 {name}
                                                 <button
                                                     type="button"
@@ -612,7 +649,7 @@ export function RegisterProductModal({
                                                         ...prev,
                                                         supplierIds: prev.supplierIds.filter(id => id !== supId)
                                                     }))}
-                                                    className="text-primary hover:text-red-500 font-bold w-4 h-4 rounded-full flex items-center justify-center hover:bg-muted transition-colors"
+                                                    className="text-primary hover:text-red-500 font-bold w-4 h-4 rounded-full flex items-center justify-center hover:bg-muted transition-colors cursor-pointer"
                                                 >
                                                     &times;
                                                 </button>
@@ -646,42 +683,44 @@ export function RegisterProductModal({
                     </div>
 
                     {/* Group 4: Version Name */}
-                    <div className="bg-muted/10 border border-border/40 rounded-xl p-4 space-y-4">
+                    <div className="bg-muted/10 border border-border/40 rounded-xl p-5 space-y-4">
                         <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                            <Layers className="h-3.5 w-3.5" /> 4. BOM Initial Version
+                            <Layers className="h-4 w-4" /> 4. BOM Initial Version
                         </h4>
-                        <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Initial Version Name <span className="text-red-500">*</span></label>
-                            <input
-                                id="register-versionName"
-                                type="text"
-                                required
-                                placeholder="e.g. OIL 1ST VERSION"
-                                value={registerForm.versionName}
-                                onChange={e => updateRegisterField("versionName", e.target.value)}
-                                aria-invalid={!!registerError("versionName")}
-                                aria-describedby={registerError("versionName") ? "register-versionName-error" : undefined}
-                                className={registerInputClass("versionName")}
-                            />
-                            {registerErrorMessage("versionName")}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="md:col-span-2">
+                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Initial Version Name <span className="text-red-500">*</span></label>
+                                <input
+                                    id="register-versionName"
+                                    type="text"
+                                    required
+                                    placeholder="e.g. OIL 1ST VERSION"
+                                    value={registerForm.versionName}
+                                    onChange={e => updateRegisterField("versionName", e.target.value)}
+                                    aria-invalid={!!registerError("versionName")}
+                                    aria-describedby={registerError("versionName") ? "register-versionName-error" : undefined}
+                                    className={registerInputClass("versionName")}
+                                />
+                                {registerErrorMessage("versionName")}
+                            </div>
                         </div>
                     </div>
 
                     {/* Footer Buttons */}
-                    <div className="flex justify-end gap-3 pt-3 border-t shrink-0">
+                    <div className="flex items-center justify-end gap-3 pt-4 border-t shrink-0">
                         <button
                             type="button"
                             onClick={onClose}
-                            className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground"
+                            className="px-5 py-2.5 border border-border rounded-xl text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground cursor-pointer"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
                             disabled={savingBOM}
-                            className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20"
+                            className="px-6 py-2.5 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-xl text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 cursor-pointer"
                         >
-                            {savingBOM ? "Registering..." : "Register Product"}
+                            {savingBOM ? "Registering Product..." : "Register Product"}
                         </button>
                     </div>
                 </form>

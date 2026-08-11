@@ -1,7 +1,6 @@
 "use client";
 
-import React from "react";
-import { Building2, Anchor, Landmark, Layers, DollarSign } from "lucide-react";
+import { Landmark } from "lucide-react";
 import SuppliersDirectory from "./components/SuppliersDirectory";
 import IncomingShipments from "./components/IncomingShipments";
 import ShipmentExpenses from "./components/ShipmentExpenses";
@@ -17,7 +16,7 @@ interface ProcurementModuleProps {
     hideNavTabs?: boolean;
 }
 
-export default function ProcurementModule({ initialTab = "suppliers", hideNavTabs = false }: ProcurementModuleProps) {
+export default function ProcurementModule({ initialTab = "suppliers" }: ProcurementModuleProps) {
 
     const {
         activeTab,
@@ -66,40 +65,53 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         setIsExpenseModalOpen(true);
     };
 
-    const navTabs = [
-        { id: "suppliers", label: "Suppliers Directory", icon: Building2 },
-        { id: "incoming-shipments", label: "Incoming Shipments", icon: Anchor },
-        { id: "shipment-expenses", label: "Landed Expenses", icon: Landmark },
-        { id: "purchase-amount", label: "Purchase Amount Posting", icon: DollarSign },
-        { id: "raw-materials", label: "Raw Materials", icon: Layers },
-        { id: "forex", label: "FOREX Management", icon: DollarSign }
-    ];
-
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
-            {/* Procurement Navigation Toolbar */}
-            {!hideNavTabs && (
-                <div className="flex items-center gap-1 border-b pb-2 shrink-0 overflow-x-auto">
-                    {navTabs.map((tab) => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-                                    isActive
-                                        ? "bg-primary text-primary-foreground shadow-xs"
-                                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                                }`}
-                            >
-                                <Icon className="h-3.5 w-3.5" />
-                                {tab.label}
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
+            {/* Module Tabs Navigation */}
+            <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0 overflow-x-auto">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("suppliers")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "suppliers" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Suppliers Directory
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("incoming-shipments")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "incoming-shipments" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Incoming Shipments
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("shipment-expenses")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "shipment-expenses" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Shipment Expenses
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("raw-materials")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "raw-materials" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Raw Materials Master
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("forex")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "forex" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Forex Rates
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("posting")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${activeTab === "posting" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                    Purchase Postings
+                </button>
+            </div>
 
             {/* Tab Content window */}
             <div className={`flex-1 min-h-0 relative flex flex-col ${activeTab === "raw-materials" || activeTab === "forex" ? "overflow-y-auto pr-1" : ""}`}>

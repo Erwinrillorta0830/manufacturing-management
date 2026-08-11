@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
     ClipboardCheck,
-    History as HistoryIcon,
     Layers,
     TrendingUp,
     TrendingDown,
@@ -421,56 +420,7 @@ export default function PhysicalInventoryModule() {
             </div>
 
             {/* Sub-Header Bar & Actions */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-3.5 rounded-2xl">
-                {/* Navigation Tabs */}
-                <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/50">
-                    <button
-                        onClick={() => setActiveTab("sheets")}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                            activeTab === "sheets"
-                                ? "bg-background text-foreground shadow-xs"
-                                : "text-muted-foreground hover:text-foreground"
-                        }`}
-                    >
-                        <Layers className="h-3.5 w-3.5" />
-                        Count Sheets
-                        <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-primary/10 text-primary font-bold">
-                            {countSheets.length}
-                        </span>
-                    </button>
-
-                    <button
-                        onClick={() => {
-                            if (activeSheet) setActiveTab("editor");
-                            else toast.info("Select a count sheet from the list first.");
-                        }}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                            activeTab === "editor"
-                                ? "bg-background text-foreground shadow-xs"
-                                : "text-muted-foreground hover:text-foreground"
-                        }`}
-                    >
-                        <ClipboardCheck className="h-3.5 w-3.5" />
-                        Count Editor
-                        {activeSheet && (
-                            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/10 text-amber-500 font-bold truncate max-w-[80px]">
-                                #{activeSheet.ph_no}
-                            </span>
-                        )}
-                    </button>
-
-                    <button
-                        onClick={() => setActiveTab("history")}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                            activeTab === "history"
-                                ? "bg-background text-foreground shadow-xs"
-                                : "text-muted-foreground hover:text-foreground"
-                        }`}
-                    >
-                        <HistoryIcon className="h-3.5 w-3.5" />
-                        Committed Audits
-                    </button>
-                </div>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-end gap-4 bg-card border border-border p-3.5 rounded-2xl">
 
                 {/* Primary Action Button */}
                 <button

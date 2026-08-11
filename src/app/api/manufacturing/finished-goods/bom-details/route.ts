@@ -102,7 +102,25 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Custom overhead must be 0 or greater." }, { status: 400 });
         }
 
-        const productCode = await ensureProductSkuAvailable(validatedDetails.sku, numericProductId);
+        // Get logged in user ID from secure access token cookie
+        let userId: number | null = null;
+        try {
+            const cookieStore = await cookies();
+            const token = cookieStore.get("vos_access_token")?.value;
+            if (token) {
+                const parts = token.split(".");
+                if (parts.length >= 2) {
+                    const base64Url = parts[1];
+                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+                    while (base64.length % 4) base64 += "=";
+                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
+                    const payload = JSON.parse(jsonPayload);
+                    userId = payload?.id || payload?.user_id || payload?.sub || null;
+                }
+            }
+        } catch (err) {
+            console.error("Error parsing user token in POST bom-details route:", err);
+        }
 
         const identity = await resolveProductIdentity({
             productId: numericProductId,
@@ -110,7 +128,12 @@ export async function POST(request: Request) {
             parentId: details.parent_id,
             unitId: validatedDetails.unitOfMeasurement
         });
-        await ensureProductIdentityAvailable(identity.descriptionKey, numericProductId);
+
+        const productCode = await ensureProductSkuAvailable(
+            validatedDetails.sku
+        );
+
+        await ensureProductIdentityAvailable(identity, numericProductId);
 
         const extractRelationId = (val: unknown): number | undefined => {
             if (val === null || val === undefined) return undefined;
@@ -150,8 +173,14 @@ export async function POST(request: Request) {
             product_image: details.productImage,
 
             unit_of_measurement: identity.unitId,
-            parent_id: identity.parentId
+            parent_id: identity.parentId,
+            updated_by: userId ? Number(userId) : undefined
         };
+
+        if (details.status !== undefined) {
+            prodPayload.status = details.status;
+            prodPayload.isActive = details.status === "Inactive" ? 0 : 1;
+        }
 
         if (brandToUpdate !== undefined) {
             prodPayload.product_brand = brandToUpdate;
@@ -162,11 +191,11 @@ export async function POST(request: Request) {
 
         const prodOk = await updateProductDetails(numericProductId, prodPayload);
         if (!prodOk.ok) {
-            if (prodOk.status === 409 || /sku|product_code|unique/i.test(prodOk.error || "")) {
+            if (prodOk.status === 409 || /unique/i.test(prodOk.error || "")) {
                 throw new ProductIdentityError(
-                    "A product with this SKU already exists. Please choose a unique SKU.",
+                    "A product with this Product Name and Unit of Measurement already exists.",
                     409,
-                    "PRODUCT_SKU_CONFLICT"
+                    "PRODUCT_PARENT_UOM_CONFLICT"
                 );
             }
             throw new Error(prodOk.error || "Failed to update product details in Directus");
@@ -197,26 +226,6 @@ export async function POST(request: Request) {
         );
         if (!versionResult.ok) {
             throw new Error(versionResult.error || "Failed to update version metadata in Directus");
-        }
-
-        // Get logged in user ID from secure access token cookie
-        let userId: number | null = null;
-        try {
-            const cookieStore = await cookies();
-            const token = cookieStore.get("vos_access_token")?.value;
-            if (token) {
-                const parts = token.split(".");
-                if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                    while (base64.length % 4) base64 += "=";
-                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    userId = payload?.id || payload?.user_id || payload?.sub || null;
-                }
-            }
-        } catch (err) {
-            console.error("Error parsing user token in POST bom-details route:", err);
         }
 
         // 3. Sync routes and their route-level BOM items and version labor positions
