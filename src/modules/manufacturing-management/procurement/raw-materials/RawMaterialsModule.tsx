@@ -68,6 +68,7 @@ export default function RawMaterialsModule({
                 onClose={formHook.handleCloseModal}
                 editingItem={formHook.editingItem}
                 saving={formHook.saving}
+                submitError={formHook.submitError}
                 loadingUnits={formHook.loadingUnits}
                 suppliers={suppliers}
                 showValidationErrors={formHook.showValidationErrors}

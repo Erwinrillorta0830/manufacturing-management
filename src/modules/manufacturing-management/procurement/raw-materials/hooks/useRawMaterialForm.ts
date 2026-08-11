@@ -82,6 +82,7 @@ export function useRawMaterialForm(
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<RawMaterialItem | null>(null);
     const [saving, setSaving] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
     const [units, setUnits] = useState<UnitOption[]>([]);
     const [weightUnits, setWeightUnits] = useState<WeightUnitOption[]>([]);
@@ -435,12 +436,14 @@ export function useRawMaterialForm(
 
     const handleStartEdit = (item: RawMaterialItem) => {
         setEditingItem(item);
+        setSubmitError(null);
         populateForm(item);
         setIsModalOpen(true);
     };
 
     const handleOpenModal = () => {
         setEditingItem(null);
+        setSubmitError(null);
         resetForm();
         setIsModalOpen(true);
     };
@@ -448,6 +451,7 @@ export function useRawMaterialForm(
     const handleCloseModal = () => {
         setIsModalOpen(false);
         setEditingItem(null);
+        setSubmitError(null);
         resetForm();
     };
 
@@ -502,6 +506,7 @@ export function useRawMaterialForm(
 
     const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setSubmitError(null);
 
         // Validation Checks
         const isPackagingMaterial = Number(formProductType) === 390;
@@ -681,13 +686,20 @@ export function useRawMaterialForm(
         };
 
         let success = false;
-        if (editingItem) {
-            success = await onUpdateRawMaterial(editingItem.product_id, payload, selectedSupplierIds, variantsPayload);
-        } else {
-            success = await onRegisterRawMaterial(payload, selectedSupplierIds, variantsPayload);
+        try {
+            if (editingItem) {
+                success = await onUpdateRawMaterial(editingItem.product_id, payload, selectedSupplierIds, variantsPayload);
+            } else {
+                success = await onRegisterRawMaterial(payload, selectedSupplierIds, variantsPayload);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to save raw material.";
+            setSubmitError(message);
+            toast.error(message);
+        } finally {
+            setSaving(false);
         }
 
-        setSaving(false);
         if (success) {
             handleCloseModal();
         }
@@ -701,6 +713,7 @@ export function useRawMaterialForm(
         editingItem,
         handleStartEdit,
         saving,
+        submitError,
         loadingUnits,
         units,
         weightUnits,
