@@ -635,10 +635,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
             toast.success(`Successfully registered raw material "${productDetails.product_name}"`);
             await loadRawMaterials();
             return true;
-        } catch (e: unknown) {
-            console.error(e);
-            toast.error((e as Error).message || "Failed to register raw material");
-            return false;
         } finally {
             setLoading(false);
         }
@@ -656,10 +652,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
             toast.success(`Successfully updated raw material "${productDetails.product_name}"`);
             await loadRawMaterials();
             return true;
-        } catch (e: unknown) {
-            console.error(e);
-            toast.error((e as Error).message || "Failed to update raw material");
-            return false;
         } finally {
             setLoading(false);
         }

@@ -17,6 +17,7 @@ interface RawMaterialModalProps {
     onClose: () => void;
     editingItem: RawMaterialItem | null;
     saving: boolean;
+    submitError: string | null;
     loadingUnits: boolean;
     suppliers: SupplierItem[];
     showValidationErrors: boolean;
@@ -87,6 +88,7 @@ export function RawMaterialModal({
     onClose,
     editingItem,
     saving,
+    submitError,
     suppliers,
     showValidationErrors,
     formName,
@@ -198,6 +200,13 @@ export function RawMaterialModal({
                         <X className="h-4 w-4" />
                     </button>
                 </div>
+
+                {submitError && (
+                    <div role="alert" className="mx-4 mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700">
+                        <p className="font-bold">Unable to save material</p>
+                        <p>{submitError}</p>
+                    </div>
+                )}
 
                 {/* Single Page Form Container */}
                 <form onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
