@@ -186,32 +186,7 @@ export default function ManufacturingQAModule() {
 
             {/* Main Tabs Dashboard */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-                <TabsList className="grid grid-cols-6 max-w-5xl">
-                    <TabsTrigger value="holds" className="gap-1.5">
-                        <Lock className="h-4 w-4 text-rose-500 dark:text-rose-400" />
-                        Active Holds ({pendingHolds.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="daily-qa" className="gap-1.5">
-                        <ClipboardCheck className="h-4 w-4 text-sky-500 dark:text-sky-400" />
-                        Daily Yield QA ({yieldLedger.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="final-qa" className="gap-1.5">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
-                        Final Release ({lots.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="closing" className="gap-1.5">
-                        <Forklift className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                        Yield Closing ({activeJobOrders.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="closed-qa" className="gap-1.5">
-                        <Printer className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
-                        Closed QA ({closedJobOrders.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="logs" className="gap-1.5">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        Checkpoint Logs
-                    </TabsTrigger>
-                </TabsList>
+
 
                 {/* TAB: Active Holds */}
                 <TabsContent value="holds" className="space-y-4 outline-none">

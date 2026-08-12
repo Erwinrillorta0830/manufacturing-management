@@ -268,7 +268,26 @@ export async function registerNewVersion(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, baseVersionId, expectedYield, versionName, baseQuantity, uomId })
     });
-    if (!res.ok) throw new Error("Failed to register version via BFF");
+    if (!res.ok) {
+        let msg = "Failed to register version via BFF";
+        let code: string | undefined;
+        let fields: Record<string, string> | undefined;
+        try {
+            const errJson = await res.json();
+            if (errJson && errJson.error) msg = errJson.error;
+            if (errJson && errJson.code) code = errJson.code;
+            if (errJson && errJson.fields) fields = errJson.fields;
+        } catch { }
+        const error = new Error(msg) as Error & {
+            status?: number;
+            code?: string;
+            fields?: Record<string, string>;
+        };
+        error.status = res.status;
+        error.code = code;
+        error.fields = fields;
+        throw error;
+    }
     return res.json();
 }
 

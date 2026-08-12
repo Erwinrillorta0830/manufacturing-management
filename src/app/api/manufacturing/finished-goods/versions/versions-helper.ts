@@ -291,7 +291,7 @@ export async function getBOMDetailsForVersion(
             const versionFilter = encodeURIComponent(JSON.stringify({ product_id: { _in: bomProductIds } }));
             const [productsRes, productVersionsRes] = await Promise.all([
                 fetch(
-                    `${DIRECTUS_URL}/items/products?filter=${productFilter}&fields=product_id,product_type&limit=-1`,
+                    `${DIRECTUS_URL}/items/products?filter=${productFilter}&fields=product_id,product_name,product_code,product_type,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name&limit=-1`,
                     { headers, cache: "no-store" }
                 ),
                 fetch(
@@ -301,10 +301,15 @@ export async function getBOMDetailsForVersion(
             ]);
 
             const products = productsRes.ok ? (await productsRes.json()).data || [] : [];
-            const productTypes = new Map<number, number | null>(
-                products.map((product: { product_id?: number; product_type?: number | null }) => [
+            const productMap = new Map<number, { product_name?: string; product_code?: string; product_type?: number | null; uom?: string }>(
+                products.map((product: { product_id?: number; product_name?: string; product_code?: string; product_type?: number | null; unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } | null }) => [
                     Number(product.product_id),
-                    product.product_type == null ? null : Number(product.product_type)
+                    {
+                        product_name: product.product_name || "",
+                        product_code: product.product_code || "",
+                        product_type: product.product_type == null ? null : Number(product.product_type),
+                        uom: product.unit_of_measurement?.unit_shortcut || product.unit_of_measurement?.unit_name || ""
+                    }
                 ])
             );
             const versionedProductIds = new Set<number>(
@@ -317,7 +322,15 @@ export async function getBOMDetailsForVersion(
 
             bomItems.forEach(item => {
                 const productId = Number(item.product_id);
-                item.product_type = productTypes.get(productId) ?? null;
+                const prodInfo = productMap.get(productId);
+                if (prodInfo) {
+                    if (prodInfo.product_name) item.product_name = prodInfo.product_name;
+                    if (prodInfo.product_code) item.product_code = prodInfo.product_code;
+                    if (prodInfo.uom && !item.unit_of_measurement) item.unit_of_measurement = prodInfo.uom;
+                    item.product_type = prodInfo.product_type;
+                } else {
+                    item.product_type = null;
+                }
                 item.has_versions = versionedProductIds.has(productId);
             });
         }

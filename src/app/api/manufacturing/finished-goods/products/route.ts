@@ -174,14 +174,17 @@ export async function POST(request: Request) {
 
         const validatedDetails = validateProductRegistration({ productDetails, versionName, expectedYield });
 
-        const productCode = await ensureProductSkuAvailable(validatedDetails.productCode);
-
         const identity = await resolveProductIdentity({
             productName: validatedDetails.productName,
             parentId: productDetails.parent_id,
             unitId: validatedDetails.unitOfMeasurement
         });
-        await ensureProductIdentityAvailable(identity.descriptionKey);
+
+        const productCode = await ensureProductSkuAvailable(
+            validatedDetails.productCode
+        );
+
+        await ensureProductIdentityAvailable(identity);
 
         // Get logged in user ID from secure access token cookie
         let userId: number | null = null;
@@ -245,21 +248,8 @@ export async function POST(request: Request) {
         if (!prodRes.ok) {
             const errText = await prodRes.text();
             if (prodRes.status === 409 || /duplicate|unique constraint|unique key/i.test(errText)) {
-                const skuCheckRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?filter[product_code][_eq]=${encodeURIComponent(productCode)}&limit=1`,
-                    { headers, cache: "no-store" }
-                );
-                if (skuCheckRes.ok) {
-                    const skuCheckData = await skuCheckRes.json();
-                    if (skuCheckData.data && skuCheckData.data.length > 0) {
-                        return NextResponse.json({
-                            error: "A product with this SKU already exists. Please choose a unique SKU.",
-                            code: "PRODUCT_SKU_CONFLICT"
-                        }, { status: 409 });
-                    }
-                }
                 return NextResponse.json({
-                    error: "A product with this parent product and unit of measurement already exists.",
+                    error: "A product with this Product Name and Unit of Measurement already exists.",
                     code: "PRODUCT_PARENT_UOM_CONFLICT"
                 }, { status: 409 });
             }

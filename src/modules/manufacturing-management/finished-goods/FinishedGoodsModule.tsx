@@ -9,13 +9,13 @@ import {
     Loader2,
     Package,
     Layers,
-    AlertCircle
+    AlertCircle,
+    Lock
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
-import { QATemplatesTab } from "./components/QATemplatesTab";
+import { QualityImportationTab } from "./components/QualityImportationTab";
 import { CostRollupTab } from "./components/CostRollupTab";
-import { ImportationTab } from "./components/ImportationTab";
 import { VersionCompareModal } from "./components/VersionCompareModal";
 import { FinishedGoodsHeader } from "./components/FinishedGoodsHeader";
 import { VersionManagementTab } from "./components/VersionManagementTab";
@@ -29,8 +29,10 @@ export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const requestedTab = searchParams.get("tab");
-    const validTabs = ["details", "version_management", "routes_bom", "costing", "qa_templates", "importation"];
-    const initialTab = requestedTab && validTabs.includes(requestedTab) ? (requestedTab === "routes_bom" ? "version_management" : requestedTab) : "details";
+    const validTabs = ["details", "version_management", "routes_bom", "costing", "quality_importation", "qa_templates", "importation"];
+    const initialTab = requestedTab && validTabs.includes(requestedTab)
+        ? (requestedTab === "routes_bom" ? "version_management" : requestedTab === "qa_templates" || requestedTab === "importation" ? "quality_importation" : requestedTab)
+        : "details";
     const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
     const [isSyncingYield, setIsSyncingYield] = useState(false);
 
@@ -569,7 +571,8 @@ export default function FinishedGoodsModule() {
     const uomOptions = useMemo(() => {
         return units.map(u => ({
             value: u.unit_shortcut,
-            label: `${u.unit_name} (${u.unit_shortcut})`
+            label: `${u.unit_name} (${u.unit_shortcut})`,
+            order: typeof (u as any).unit_order === "number" ? (u as any).unit_order : typeof (u as any).order === "number" ? (u as any).order : typeof (u as any).sort === "number" ? (u as any).sort : undefined
         }));
     }, [units]);
 
@@ -716,8 +719,13 @@ export default function FinishedGoodsModule() {
                                                             Parent
                                                         </span>
                                                     </div>
-                                                    <div className="mt-1.5 flex items-center justify-between w-full text-xs text-muted-foreground pl-5">
-                                                        <span className="truncate pr-1">SKU: {root.sku || "N/A"} [{root.baseUom}]</span>
+                                                    <div className="mt-1.5 flex items-center justify-between w-full text-xs text-muted-foreground pl-5 gap-2">
+                                                        <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                                            <span className="truncate font-mono">SKU: {root.sku || "N/A"}</span>
+                                                            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-muted text-muted-foreground px-1.5 py-0.5 rounded border border-border">
+                                                                {root.baseUom}
+                                                            </span>
+                                                        </div>
                                                         <span className="font-semibold bg-muted px-1.5 py-0.5 rounded text-foreground shrink-0">
                                                             ₱{root.targetSellingPrice.toFixed(2)}
                                                         </span>
@@ -754,9 +762,14 @@ export default function FinishedGoodsModule() {
                                                                         Child
                                                                     </span>
                                                                 </div>
-                                                                <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5">
-                                                                    <span className="truncate pr-1">SKU: {child.sku || "N/A"} [{child.baseUom}]</span>
-                                                                    <span className="font-semibold text-foreground">
+                                                                <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5 gap-2">
+                                                                    <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                                                        <span className="truncate font-mono">SKU: {child.sku || "N/A"}</span>
+                                                                        <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-muted/80 text-muted-foreground px-1 py-0.5 rounded border border-border/60">
+                                                                            {child.baseUom}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className="font-semibold text-foreground shrink-0">
                                                                         ₱{child.targetSellingPrice.toFixed(2)}
                                                                     </span>
                                                                 </div>
@@ -870,6 +883,7 @@ export default function FinishedGoodsModule() {
                                     <>
                                         {(activeTab === "version_management" || activeTab === "routes_bom") && (
                                             <VersionManagementTab
+                                                activeTab={activeTab}
                                                 selectedProductId={selectedProductId}
                                                 selectedVersionId={selectedVersionId}
                                                 selectedVersion={selectedVersion}
@@ -890,49 +904,12 @@ export default function FinishedGoodsModule() {
                                             />
                                         )}
 
-                                        {activeTab === "qa_templates" && (
-                                            <QATemplatesTab
+                                        {(activeTab === "quality_importation" || activeTab === "qa_templates" || activeTab === "importation") && (
+                                            <QualityImportationTab
                                                 qaTemplates={qaTemplates}
                                                 units={units}
                                                 handleAddQATemplate={handleAddQATemplate}
                                                 handleSaveQATemplate={handleSaveQATemplate}
-                                            />
-                                        )}
-
-                                        {activeTab === "costing" && (
-                                            <CostRollupTab
-                                                versionOverheadItems={editedVersionDetails.overhead_items}
-                                                standardPrice={standardPrice}
-                                                standardCogs={standardCostBreakdown.unitCost}
-                                                standardBreakdown={standardCostBreakdown}
-                                                standardOverheads={standardOverheads}
-                                                standardGrossProfit={standardMarginSummary.grossProfit}
-                                                standardGrossMarginPercent={standardMarginSummary.grossMarginPercent}
-                                                standardNetProfit={standardMarginSummary.netProfit}
-                                                standardNetMarginPercent={standardMarginSummary.netMarginPercent}
-                                                simulationYield={simulationYield}
-                                                setSimulationYield={setSimulationYield}
-                                                simulationTargetPrice={simulationTargetPrice}
-                                                setSimulationTargetPrice={setSimulationTargetPrice}
-                                                simulationPriceOverrides={simulationPriceOverrides}
-                                                setSimulationPriceOverrides={setSimulationPriceOverrides}
-                                                editedBOM={editedBOM}
-                                                selectedProduct={selectedProduct}
-                                                selectedVersionId={selectedVersionId}
-                                                simulatedGrossProfit={simulatedMarginSummary.grossProfit}
-                                                simulatedGrossMarginPercent={simulatedMarginSummary.grossMarginPercent}
-                                                simulatedNetProfit={simulatedMarginSummary.netProfit}
-                                                simulatedCogs={simulatedCostBreakdown.unitCost}
-                                                simulatedBreakdown={simulatedCostBreakdown}
-                                                simulatedOverheads={simulatedOverheads}
-                                                simulatedNetMarginPercent={simulatedMarginSummary.netMarginPercent}
-                                                simulatedForexRate={simulatedForexRate}
-                                                setSimulatedForexRate={setSimulatedForexRate}
-                                            />
-                                        )}
-
-                                        {activeTab === "importation" && (
-                                            <ImportationTab
                                                 importNetWeight={importNetWeight}
                                                 setImportNetWeight={setImportNetWeight}
                                                 importPriceUsd={importPriceUsd}
@@ -971,10 +948,42 @@ export default function FinishedGoodsModule() {
                                                 setAutomateCustoms={setAutomateCustoms}
                                             />
                                         )}
+
+                                        {activeTab === "costing" && (
+                                            <CostRollupTab
+                                                versionOverheadItems={editedVersionDetails.overhead_items}
+                                                standardPrice={standardPrice}
+                                                standardCogs={standardCostBreakdown.unitCost}
+                                                standardBreakdown={standardCostBreakdown}
+                                                standardOverheads={standardOverheads}
+                                                standardGrossProfit={standardMarginSummary.grossProfit}
+                                                standardGrossMarginPercent={standardMarginSummary.grossMarginPercent}
+                                                standardNetProfit={standardMarginSummary.netProfit}
+                                                standardNetMarginPercent={standardMarginSummary.netMarginPercent}
+                                                simulationYield={simulationYield}
+                                                setSimulationYield={setSimulationYield}
+                                                simulationTargetPrice={simulationTargetPrice}
+                                                setSimulationTargetPrice={setSimulationTargetPrice}
+                                                simulationPriceOverrides={simulationPriceOverrides}
+                                                setSimulationPriceOverrides={setSimulationPriceOverrides}
+                                                editedBOM={editedBOM}
+                                                selectedProduct={selectedProduct}
+                                                selectedVersionId={selectedVersionId}
+                                                simulatedGrossProfit={simulatedMarginSummary.grossProfit}
+                                                simulatedGrossMarginPercent={simulatedMarginSummary.grossMarginPercent}
+                                                simulatedNetProfit={simulatedMarginSummary.netProfit}
+                                                simulatedCogs={simulatedCostBreakdown.unitCost}
+                                                simulatedBreakdown={simulatedCostBreakdown}
+                                                simulatedOverheads={simulatedOverheads}
+                                                simulatedNetMarginPercent={simulatedMarginSummary.netMarginPercent}
+                                                simulatedForexRate={simulatedForexRate}
+                                                setSimulatedForexRate={setSimulatedForexRate}
+                                            />
+                                        )}
                                     </>
                                 )}
                                 {loadingBOM && (
-                                    <div className="absolute inset-0 bg-background/55 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-150">
+                                    <div className="fixed inset-0 z-[90] bg-background/65 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-150">
                                         <div className="bg-card border rounded-xl shadow-lg p-5 flex flex-col items-center gap-2 max-w-xs text-center border-primary/20">
                                             <Loader2 className="h-6 w-6 animate-spin text-primary" />
                                             <h4 className="text-xs font-bold text-foreground">Loading Version Recipe...</h4>
@@ -1076,16 +1085,14 @@ export default function FinishedGoodsModule() {
                                     />
                                 </div>
                                 <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base UOM</label>
-                                    <select
-                                        value={versionForm.uomId}
-                                        onChange={e => setVersionForm(prev => ({ ...prev, uomId: parseInt(e.target.value) || 0 }))}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                    >
-                                        {units.map(u => (
-                                            <option key={u.unit_id} value={u.unit_id}>{u.unit_name} ({u.unit_shortcut})</option>
-                                        ))}
-                                    </select>
+                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
+                                        <span>Base UOM</span>
+                                        <span className="text-[9px] text-muted-foreground font-semibold lowercase">(bound to product)</span>
+                                    </label>
+                                    <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm text-muted-foreground font-semibold flex items-center justify-between cursor-not-allowed">
+                                        <span>{selectedProduct?.baseUom || "PCS"}</span>
+                                        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </div>
                                 </div>
                             </div>
 

@@ -4,10 +4,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import {
     TrendingUp,
     Play,
-    RefreshCw,
-    BarChart3,
-    Calculator,
-    Layers
+    RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchProducts, fetchVersions, fetchBOMDetails } from "@/modules/manufacturing-management/finished-goods/services/finished-goods-api";
@@ -773,43 +770,42 @@ export default function BiAndFinancialsModule() {
                 </div>
             </div>
 
-            {/* Tab Navigation */}
-            <div className="flex items-center gap-2 border-b pb-2">
+
+
+            {/* Module Tabs Navigation */}
+            <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0">
                 <button
                     type="button"
                     onClick={() => setActiveTab("overview")}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
                         activeTab === "overview"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "hover:bg-muted text-muted-foreground"
+                            ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                 >
-                    <BarChart3 className="h-4 w-4" />
-                    Financial Overview &amp; Chart
+                    Overview
                 </button>
                 <button
                     type="button"
                     onClick={() => setActiveTab("costing")}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
                         activeTab === "costing"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "hover:bg-muted text-muted-foreground"
+                            ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                 >
-                    <Calculator className="h-4 w-4" />
-                    Costing &amp; Model Configuration
+                    Costing Analytics
                 </button>
                 <button
                     type="button"
                     onClick={() => setActiveTab("margin")}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
                         activeTab === "margin"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "hover:bg-muted text-muted-foreground"
+                            ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                 >
-                    <Layers className="h-4 w-4" />
-                    SKU &amp; Material Explosion
+                    Margin Analysis
                 </button>
             </div>
 

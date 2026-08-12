@@ -5,7 +5,7 @@ import { useLogisticsProfiles } from "./hooks/useLogisticsProfiles";
 import VehicleRegistry from "./components/VehicleRegistry";
 import RouteConfigurations from "./components/RouteConfigurations";
 import TripCostSimulator from "./components/TripCostSimulator";
-import { Loader2, Truck, Navigation, Activity, Settings } from "lucide-react";
+import { Loader2, Truck, Navigation, Settings } from "lucide-react";
 
 export default function LogisticsProfilesModule() {
     const {
@@ -65,30 +65,37 @@ export default function LogisticsProfilesModule() {
                 </div>
             </div>
 
-            {/* Tab Navigation header */}
-            <div className="flex border-b bg-muted/10 shrink-0 rounded-xl overflow-hidden border">
-                {[
-                    { id: "simulator", label: "Trip Cost Simulator", icon: Activity },
-                    { id: "fleet", label: "Fleet Registry", icon: Truck },
-                    { id: "routes", label: "Shipping Routes", icon: Navigation }
-                ].map((t) => {
-                    const Icon = t.icon;
-                    const isActive = activeTab === t.id;
-                    return (
-                        <button
-                            key={t.id}
-                            onClick={() => setActiveTab(t.id)}
-                            className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-3.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                                isActive 
-                                    ? "border-primary text-primary bg-background" 
-                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                            }`}
-                        >
-                            <Icon className="h-4 w-4" />
-                            {t.label}
-                        </button>
-                    );
-                })}
+
+
+            {/* Module Tabs Navigation */}
+            <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("simulator")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                        activeTab === "simulator" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                    Trip Cost Simulator
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("fleet")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                        activeTab === "fleet" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                    Vehicle Registry
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("routes")}
+                    className={`px-4 py-2 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer ${
+                        activeTab === "routes" ? "border-primary text-primary bg-background rounded-t-lg shadow-xs" : "border-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                    Route Configurations
+                </button>
             </div>
 
             {/* Tab Content Window */}
