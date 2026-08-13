@@ -2,6 +2,12 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { 
     DirectusProductPerSupplier 
 } from "@/modules/manufacturing-management/procurement/types";
+import {
+    PHILIPPINES_COUNTRY,
+    canonicalizeSupplierCountry,
+    isForeignCountry,
+    normalizeSupplierCountry
+} from "@/modules/manufacturing-management/procurement/supplier-country";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 
 
@@ -54,8 +60,9 @@ function cleanNotesText(notes: unknown): string {
 
 export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown> {
     const isForeignBool = toBoolean(supplier.is_foreign ?? supplier.isForeign);
-    const country = typeof supplier.country === "string" ? supplier.country : "";
-    const isNonPH = Boolean(country) && country.toLowerCase() !== "philippines" && country.toLowerCase() !== "ph";
+    const rawCountry = typeof supplier.country === "string" ? supplier.country : "";
+    const country = normalizeSupplierCountry(rawCountry) || (rawCountry.trim() ? rawCountry : PHILIPPINES_COUNTRY);
+    const isNonPH = isForeignCountry(country);
     const isUSD = String(supplier.default_currency || supplier.currency || "").toUpperCase() === "USD";
 
     const isForeignNum = (isForeignBool || isUSD || isNonPH || Number(supplier.is_foreign) === 1) ? 1 : 0;
@@ -70,6 +77,7 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
         ...supplier,
         isActive: toBoolean(supplier.isActive),
         nonBuy: toBoolean(supplier.nonBuy),
+        country,
         is_foreign: isForeignNum,
         currency: resolvedCurrency,
         default_currency: resolvedCurrency,
@@ -108,10 +116,11 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
     try {
         const url = `${DIRECTUS_URL}/items/suppliers`;
         const { representatives, ...details } = supplierData;
-        
+        const country = canonicalizeSupplierCountry(details.country);
+        details.country = country;
         const isForeignBool = toBoolean(details.is_foreign);
         const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
-        const isNonPH = details.country && String(details.country).toLowerCase() !== "philippines" && String(details.country).toLowerCase() !== "ph";
+        const isNonPH = isForeignCountry(country);
         const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
         const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
 
@@ -177,10 +186,13 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
     try {
         const url = `${DIRECTUS_URL}/items/suppliers/${supplierId}`;
         const { representatives, ...details } = supplierData;
+        const hasCountry = Object.prototype.hasOwnProperty.call(details, "country");
+        const country = hasCountry ? canonicalizeSupplierCountry(details.country) : undefined;
+        if (hasCountry) details.country = country;
 
         const isForeignBool = toBoolean(details.is_foreign);
         const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
-        const isNonPH = details.country && String(details.country).toLowerCase() !== "philippines" && String(details.country).toLowerCase() !== "ph";
+        const isNonPH = hasCountry && isForeignCountry(country);
         const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
         const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
 

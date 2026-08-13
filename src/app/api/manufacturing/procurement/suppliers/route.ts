@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { fetchSuppliers, createSupplier, updateSupplier } from "./suppliers-helper";
 import type { SupplierStatusFilter } from "./suppliers-helper";
+import {
+    SupplierCountryValidationError,
+    canonicalizeSupplierCountry
+} from "@/modules/manufacturing-management/procurement/supplier-country";
 
 export async function GET(request: Request) {
     try {
@@ -22,9 +26,13 @@ export async function POST(request: Request) {
         if (!body.supplier_name) {
             return NextResponse.json({ error: "supplier_name is required" }, { status: 400 });
         }
+        body.country = canonicalizeSupplierCountry(body.country);
         const supplier = await createSupplier(body);
         return NextResponse.json({ success: true, supplier });
     } catch (e) {
+        if (e instanceof SupplierCountryValidationError) {
+            return NextResponse.json({ error: e.message }, { status: 400 });
+        }
         console.error("API Error creating supplier:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to create supplier" }, { status: 500 });
     }
@@ -37,9 +45,15 @@ export async function PATCH(request: Request) {
         if (!id) {
             return NextResponse.json({ error: "Supplier ID is required" }, { status: 400 });
         }
+        if (Object.prototype.hasOwnProperty.call(data, "country")) {
+            data.country = canonicalizeSupplierCountry(data.country);
+        }
         const supplier = await updateSupplier(id, data);
         return NextResponse.json({ success: true, supplier });
     } catch (e) {
+        if (e instanceof SupplierCountryValidationError) {
+            return NextResponse.json({ error: e.message }, { status: 400 });
+        }
         console.error("API Error updating supplier:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to update supplier" }, { status: 500 });
     }

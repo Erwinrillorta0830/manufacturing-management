@@ -18,6 +18,12 @@ import {
     fetchLinkedProducts
 } from "../services/procurement-api";
 import type { SupplierStatusFilter } from "../services/procurement-api";
+import {
+    PHILIPPINES_COUNTRY,
+    canonicalizeSupplierCountry,
+    isForeignCountry,
+    normalizeSupplierCountry
+} from "../supplier-country";
 
 export function useProcurement(defaultTab: string = "suppliers") {
     const [activeTab, setActiveTab] = useState(defaultTab);
@@ -52,7 +58,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         city: "",
         brgy: "",
         state_province: "",
-        country: "Philippines",
+        country: PHILIPPINES_COUNTRY,
         postal_code: "",
         payment_terms: "",
         delivery_terms: "",
@@ -271,6 +277,9 @@ export function useProcurement(defaultTab: string = "suppliers") {
         if (msg.includes("supplier_shortcut") || msg.includes("shortcut") || msg.includes("code") && msg.includes("unique")) {
             return "This Supplier Code already exists. Please choose a unique code.";
         }
+        if (msg.includes("country")) {
+            return "Please select a valid country from the list.";
+        }
         return errorMsg;
     }
 
@@ -341,11 +350,13 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
 
         try {
-            const isForeignVal = (Number(supplierForm.is_foreign) === 1 || (supplierForm.is_foreign as unknown) === true || String(supplierForm.currency || supplierForm.default_currency).toUpperCase() === "USD" || (supplierForm.country && supplierForm.country.toLowerCase() !== "philippines" && supplierForm.country.toLowerCase() !== "ph")) ? 1 : 0;
+            const country = canonicalizeSupplierCountry(supplierForm.country);
+            const isForeignVal = (Number(supplierForm.is_foreign) === 1 || (supplierForm.is_foreign as unknown) === true || String(supplierForm.currency || supplierForm.default_currency).toUpperCase() === "USD" || isForeignCountry(country)) ? 1 : 0;
             const currVal = supplierForm.currency || supplierForm.default_currency || (isForeignVal === 1 ? "USD" : "PHP");
 
             const payload = {
                 ...supplierForm,
+                country,
                 is_foreign: isForeignVal,
                 currency: currVal,
                 default_currency: currVal
@@ -372,7 +383,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 city: "",
                 brgy: "",
                 state_province: "",
-                country: "Philippines",
+                country: PHILIPPINES_COUNTRY,
                 postal_code: "",
                 payment_terms: "",
                 delivery_terms: "",
@@ -394,10 +405,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
     };
 
     const handleStartEditSupplier = (supplier: Supplier) => {
+        const country = normalizeSupplierCountry(supplier.country) || supplier.country || PHILIPPINES_COUNTRY;
         const isForeign = Number(supplier.is_foreign) === 1 || 
             (supplier.is_foreign as unknown) === true || 
             String(supplier.default_currency).toUpperCase() === "USD" || 
-            (Boolean(supplier.country) && supplier.country?.toLowerCase() !== "philippines" && supplier.country?.toLowerCase() !== "ph");
+            isForeignCountry(country);
         const defaultCurrency = supplier.default_currency || (isForeign ? "USD" : "PHP");
         const cleanNotes = (supplier.notes_or_comments || "")
             .replace(/\[Currency:\s*\w+\]/gi, "")
@@ -414,7 +426,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             city: supplier.city || "",
             brgy: supplier.brgy || "",
             state_province: supplier.state_province || "",
-            country: supplier.country || "Philippines",
+            country,
             postal_code: supplier.postal_code || "",
             payment_terms: supplier.payment_terms || "",
             delivery_terms: supplier.delivery_terms || "",
