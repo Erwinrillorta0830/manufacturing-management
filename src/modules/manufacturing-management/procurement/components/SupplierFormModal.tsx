@@ -3,7 +3,9 @@ import { SupplierFormState, PSGCItem } from "../types";
 import { Building2, AlertCircle, UserSquare2, Plus, Trash2, Globe } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/supplier.service";
+import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-country";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
 
 export interface SupplierFormModalProps {
     isOpen: boolean;
@@ -39,7 +41,7 @@ export default function SupplierFormModal({
     const [loadingCities, setLoadingCities] = useState(false);
     const [loadingBarangays, setLoadingBarangays] = useState(false);
 
-    const isPH = !supplierForm.country || supplierForm.country.toLowerCase() === "philippines" || supplierForm.country.toLowerCase() === "ph";
+    const isPH = isPhilippinesCountry(supplierForm.country);
 
     const handleSupplierSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         if (supplierSubmitLock.current) {
@@ -62,6 +64,30 @@ export default function SupplierFormModal({
         const list = await fetchPHProvinces();
         setProvinces(list);
         setLoadingProvinces(false);
+    };
+
+    const handleCountrySelect = (country: string) => {
+        const nextIsPH = isPhilippinesCountry(country);
+
+        setSelectedProvinceCode("");
+        setSelectedCityCode("");
+        setSelectedBarangayCode("");
+        setCities([]);
+        setBarangays([]);
+
+        setSupplierForm(prev => {
+            const previousIsPH = isPhilippinesCountry(prev.country);
+            return {
+                ...prev,
+                country,
+                state_province: nextIsPH || previousIsPH ? "" : prev.state_province,
+                city: nextIsPH || previousIsPH ? "" : prev.city,
+                brgy: "",
+                is_foreign: nextIsPH ? 0 : 1,
+                default_currency: nextIsPH ? "PHP" : "USD",
+                currency: nextIsPH ? "PHP" : "USD"
+            };
+        });
     };
 
     useEffect(() => {
@@ -421,98 +447,20 @@ export default function SupplierFormModal({
                                 </div>
 
                                 <div className="space-y-1.5 col-span-2">
-                                    <label className="text-[11px] font-semibold text-muted-foreground">Country</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Philippines"
+                                    <label htmlFor="supplier-country" className="text-[11px] font-semibold text-muted-foreground">Country <span className="text-red-500">*</span></label>
+                                    <SearchableCountrySelect
+                                        id="supplier-country"
+                                        options={SUPPLIER_COUNTRY_OPTIONS.map(country => ({
+                                            value: country.name,
+                                            label: country.name,
+                                        }))}
                                         value={supplierForm.country}
-                                        onChange={e => {
-                                            const val = e.target.value;
-                                            const isNonPH = Boolean(val.trim()) && val.trim().toLowerCase() !== "philippines" && val.trim().toLowerCase() !== "ph";
-                                            setSupplierForm(prev => ({
-                                                ...prev,
-                                                country: val,
-                                                state_province: isNonPH ? prev.state_province : "",
-                                                city: isNonPH ? prev.city : "",
-                                                brgy: isNonPH ? prev.brgy : "",
-                                                is_foreign: isNonPH ? 1 : prev.is_foreign,
-                                                default_currency: isNonPH ? "USD" : prev.default_currency,
-                                                currency: isNonPH ? "USD" : prev.currency
-                                            }));
-                                            if (isNonPH) {
-                                                setSelectedProvinceCode("");
-                                                setSelectedCityCode("");
-                                                setSelectedBarangayCode("");
-                                            }
-                                        }}
-                                        className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium"
+                                        onValueChange={handleCountrySelect}
+                                        placeholder="-- Select Country --"
+                                        searchPlaceholder="Search countries..."
+                                        required
+                                        className="rounded-lg px-3 py-2 text-xs font-medium"
                                     />
-                                </div>
-
-                                {/* Supplier Classification & Currency */}
-                                <div className="col-span-2 p-3 rounded-xl border bg-muted/20 space-y-2.5">
-                                    <label className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                                        <Globe className="h-3.5 w-3.5 text-primary" /> Supplier Classification & Operating Currency
-                                    </label>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-semibold text-muted-foreground">Classification</label>
-                                            <div className="flex items-center gap-1.5">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSupplierForm(prev => ({
-                                                        ...prev,
-                                                        is_foreign: 0,
-                                                        default_currency: "PHP",
-                                                        currency: "PHP"
-                                                    }))}
-                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                                                        Number(supplierForm.is_foreign) === 0
-                                                            ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/40 shadow-sm"
-                                                            : "bg-background text-muted-foreground border-input hover:text-foreground"
-                                                    }`}
-                                                >
-                                                    <Building2 className="h-3 w-3" /> Local (PHP)
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSupplierForm(prev => ({
-                                                        ...prev,
-                                                        is_foreign: 1,
-                                                        default_currency: "USD",
-                                                        currency: "USD"
-                                                    }))}
-                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                                                        Number(supplierForm.is_foreign) === 1
-                                                            ? "bg-amber-500/15 text-amber-700 border-amber-500/40 shadow-sm"
-                                                            : "bg-background text-muted-foreground border-input hover:text-foreground"
-                                                    }`}
-                                                >
-                                                    <Globe className="h-3 w-3" /> Foreign Import (USD)
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-semibold text-muted-foreground">Default Currency</label>
-                                            <select
-                                                value={supplierForm.default_currency || supplierForm.currency || "PHP"}
-                                                onChange={e => {
-                                                    const curr = e.target.value;
-                                                    const isFor = curr === "USD" ? 1 : 0;
-                                                    setSupplierForm(prev => ({
-                                                        ...prev,
-                                                        default_currency: curr,
-                                                        currency: curr,
-                                                        is_foreign: isFor
-                                                    }));
-                                                }}
-                                                className="w-full rounded-lg border bg-background px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-primary text-foreground h-[31px]"
-                                            >
-                                                <option value="PHP">PHP (Philippine Peso)</option>
-                                                <option value="USD">USD (US Dollar)</option>
-                                            </select>
-                                        </div>
-                                    </div>
                                 </div>
 
                                 <AnimatePresence mode="wait">
@@ -597,6 +545,72 @@ export default function SupplierFormModal({
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
+
+                                {/* Supplier Classification & Currency */}
+                                <div className="col-span-2 p-3 rounded-xl border bg-muted/20 space-y-2.5">
+                                    <label className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                        <Globe className="h-3.5 w-3.5 text-primary" /> Supplier Classification & Operating Currency
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-semibold text-muted-foreground">Classification</label>
+                                            <div className="flex items-center gap-1.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSupplierForm(prev => ({
+                                                        ...prev,
+                                                        is_foreign: 0,
+                                                        default_currency: "PHP",
+                                                        currency: "PHP"
+                                                    }))}
+                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                                                        Number(supplierForm.is_foreign) === 0
+                                                            ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/40 shadow-sm"
+                                                            : "bg-background text-muted-foreground border-input hover:text-foreground"
+                                                    }`}
+                                                >
+                                                    <Building2 className="h-3 w-3" /> Local (PHP)
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSupplierForm(prev => ({
+                                                        ...prev,
+                                                        is_foreign: 1,
+                                                        default_currency: "USD",
+                                                        currency: "USD"
+                                                    }))}
+                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                                                        Number(supplierForm.is_foreign) === 1
+                                                            ? "bg-amber-500/15 text-amber-700 border-amber-500/40 shadow-sm"
+                                                            : "bg-background text-muted-foreground border-input hover:text-foreground"
+                                                    }`}
+                                                >
+                                                    <Globe className="h-3 w-3" /> Foreign Import (USD)
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-semibold text-muted-foreground">Default Currency</label>
+                                            <select
+                                                value={supplierForm.default_currency || supplierForm.currency || "PHP"}
+                                                onChange={e => {
+                                                    const curr = e.target.value;
+                                                    const isFor = curr === "USD" ? 1 : 0;
+                                                    setSupplierForm(prev => ({
+                                                        ...prev,
+                                                        default_currency: curr,
+                                                        currency: curr,
+                                                        is_foreign: isFor
+                                                    }));
+                                                }}
+                                                className="w-full rounded-lg border bg-background px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-primary text-foreground h-[31px]"
+                                            >
+                                                <option value="PHP">PHP (Philippine Peso)</option>
+                                                <option value="USD">USD (US Dollar)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
 
                                 <div className="space-y-1.5">
                                     <label className="text-[11px] font-semibold text-muted-foreground">Payment Terms <span className="text-red-500">*</span></label>

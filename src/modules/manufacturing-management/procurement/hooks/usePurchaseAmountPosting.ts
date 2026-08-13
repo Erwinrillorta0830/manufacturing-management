@@ -12,6 +12,7 @@ import {
     fetchPurchaseAmountDetails,
     postPurchaseAmounts
 } from "../services/purchase-amount-api";
+import { isForeignCountry } from "../supplier-country";
 
 export interface PurchaseOrderOption {
     purchase_order_id?: number;
@@ -105,7 +106,12 @@ export function usePurchaseAmountPosting(
     const isForeignPO = useMemo(() => {
         if (!selectedShipment) return false;
         const supp = selectedShipment.supplier_name;
-        const suppIsForeign = typeof supp === "object" && supp !== null && (supp?.is_foreign === 1 || supp?.is_foreign === true || (supp as { default_currency?: string })?.default_currency === "USD" || (supp?.country && supp?.country?.toLowerCase() !== "philippines" && supp?.country?.toLowerCase() !== "ph"));
+        const suppIsForeign = typeof supp === "object" && supp !== null && (
+            supp?.is_foreign === 1 ||
+            supp?.is_foreign === true ||
+            (supp as { default_currency?: string })?.default_currency === "USD" ||
+            isForeignCountry(supp?.country)
+        );
         return selectedShipment.is_import === 1 || selectedShipment.currency_code === "USD" || Boolean(suppIsForeign);
     }, [selectedShipment]);
 

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { ManifestLineFormItem, ShipmentFormState } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 
 export interface UseIncomingShipmentsFormProps {
     suppliers: Supplier[];
@@ -71,11 +72,7 @@ export function useIncomingShipmentsForm({
     }, [isModalOpen]);
 
     const isSupplierForeign = useCallback((s: Supplier | null | undefined): boolean => {
-        if (!s) return false;
-        if (Number(s.is_foreign) === 1 || (s.is_foreign as unknown) === true) return true;
-        const curr = String(s.currency || s.default_currency || "").toUpperCase();
-        if (curr === "USD") return true;
-        return Boolean(s.country) && s.country?.toLowerCase() !== "philippines" && s.country?.toLowerCase() !== "ph";
+        return isSupplierForeignRecord(s);
     }, []);
 
     const handleSupplierSelect = useCallback(async (val: string) => {

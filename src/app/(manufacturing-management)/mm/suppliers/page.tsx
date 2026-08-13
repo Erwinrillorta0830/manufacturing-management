@@ -89,12 +89,12 @@ export default async function SuppliersPage() {
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Sourcing & Supply Chain</BreadcrumbLink>
+                                    <BreadcrumbLink href="#">Master Data</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw]">
-                                        Suppliers & Vendors Directory
+                                        Suppliers List
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -108,7 +108,7 @@ export default async function SuppliersPage() {
 
             {/* Scrollable Content */}
             <main className="min-h-0 min-w-0 flex-1 flex flex-col p-2 sm:p-4 bg-background overflow-hidden">
-                <ProcurementModule initialTab="suppliers" />
+                <ProcurementModule initialTab="suppliers" hideNavTabs={true} />
             </main>
         </div>
     );
