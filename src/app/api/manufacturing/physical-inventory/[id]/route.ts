@@ -8,8 +8,6 @@ import {
     DirectusProductMeta,
 } from "../physical-inventory-helper";
 
-
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -79,9 +77,9 @@ export async function GET(_request: Request, context: RouteParams) {
             if (vId) versionIds.add(vId);
         });
 
-        const [productsRes, lotsRes, versionsRes, binLotsRes, allMasterLotsRes, allMasterVersionsRes] = await Promise.all([
+        const [productsRes, lotsRes, versionsRes, binLotsRes, allMasterLotsRes, allMasterVersionsRes, allMasterProductsRes] = await Promise.all([
             productIds.size > 0
-                ? fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${Array.from(productIds).join(",")}&limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.*`, { headers, cache: "no-store" })
+                ? fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${Array.from(productIds).join(",")}&limit=-1&fields=product_id,product_name,product_code,barcode,cost_per_unit,price_per_unit,category_id.*,unit_of_measurement.*`, { headers, cache: "no-store" })
                 : Promise.resolve(null),
             lotIds.size > 0
                 ? fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${Array.from(lotIds).join(",")}&limit=-1&fields=*,lot_id.*`, { headers, cache: "no-store" })
@@ -93,7 +91,8 @@ export async function GET(_request: Request, context: RouteParams) {
                 ? fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${Array.from(lotIds).join(",")}&limit=-1`, { headers, cache: "no-store" })
                 : Promise.resolve(null),
             fetch(`${DIRECTUS_URL}/items/lots?limit=-1&fields=lot_id,lot_name`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name,product_id`, { headers, cache: "no-store" }).catch(() => null)
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name,product_id,status`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,barcode,cost_per_unit,price_per_unit,category_id.*,unit_of_measurement.*`, { headers, cache: "no-store" }).catch(() => null)
         ]);
 
         const productsMap = new Map<number, DirectusProductMeta>();
@@ -129,6 +128,7 @@ export async function GET(_request: Request, context: RouteParams) {
 
         const availableLots = allMasterLotsRes && allMasterLotsRes.ok ? ((await allMasterLotsRes.json()).data || []) : [];
         const availableVersions = allMasterVersionsRes && allMasterVersionsRes.ok ? ((await allMasterVersionsRes.json()).data || []) : [];
+        const allMasterProducts = allMasterProductsRes && allMasterProductsRes.ok ? ((await allMasterProductsRes.json()).data || []) : [];
 
         const enrichedDetails = detailsData.map((item: PhysicalInventoryDetail) => {
             const pId = extractId(item.product_id, "product_id");
@@ -147,13 +147,38 @@ export async function GET(_request: Request, context: RouteParams) {
             };
         });
 
+        // Parse offset_pairings if stored in remarks / metadata
+        let offsetPairings = [];
+        if (sheetData.remarks && typeof sheetData.remarks === "string" && sheetData.remarks.includes("__OFFSET_DATA__:")) {
+            try {
+                const parts = sheetData.remarks.split("__OFFSET_DATA__:");
+                if (parts.length > 1) {
+                    offsetPairings = JSON.parse(parts[1].trim());
+                }
+            } catch {
+                offsetPairings = [];
+            }
+        }
+
+        let resolvedInvType = (sheetData.inventory_type as string) || "";
+        if (!resolvedInvType && sheetData.remarks && typeof sheetData.remarks === "string") {
+            const match = sheetData.remarks.match(/\[Type:\s*([^\]]+)\]/i);
+            if (match) resolvedInvType = match[1].trim();
+        }
+        if (!resolvedInvType) {
+            resolvedInvType = (sheetData.stock_type as string) || "Finished Goods";
+        }
+
         return NextResponse.json({
             success: true,
             data: {
                 ...sheetData,
+                inventory_type: resolvedInvType,
                 details: enrichedDetails,
                 available_lots: availableLots,
                 available_versions: availableVersions,
+                available_products: allMasterProducts,
+                offset_pairings: offsetPairings
             },
         });
     } catch (e) {
@@ -184,16 +209,18 @@ export async function PATCH(request: Request, context: RouteParams) {
                 product_id?: unknown;
                 unit_price?: number | string;
                 system_count?: number | string;
+                offset_qty?: number;
             }[];
             remarks?: string;
+            offset_pairings?: unknown[];
         };
-        const { items, remarks } = body;
+        const { items, remarks, offset_pairings } = body;
 
         if (!Array.isArray(items)) {
             return NextResponse.json({ success: false, error: "Missing required parameter: items array" }, { status: 400 });
         }
 
-        const sheetRes = await fetch(`${DIRECTUS_URL}/items/physical_inventory/${sheetId}?fields=id,is_committed,is_cancelled,isComitted,isCancelled`, {
+        const sheetRes = await fetch(`${DIRECTUS_URL}/items/physical_inventory/${sheetId}?fields=id,is_committed,is_cancelled,isComitted,isCancelled,remarks`, {
             headers,
             cache: "no-store",
         });
@@ -217,14 +244,13 @@ export async function PATCH(request: Request, context: RouteParams) {
 
         for (const item of items) {
             const rawIdStr = String(item.id || "");
-            const isNewSplitItem = !item.id || rawIdStr.startsWith("new_") || isNaN(Number(item.id));
+            const isNewItem = !item.id || rawIdStr.startsWith("new_") || isNaN(Number(item.id));
             const physCount = roundQty(item.physical_count);
             const lotIdVal = extractId(item.lot_id, "lot_id") || extractId(item.lot_id, "id") || null;
             const versionIdVal = extractId(item.version_id, "version_id") || extractId(item.version_id, "id") || null;
-            const batchNoVal = item.batch_no ? String(item.batch_no).trim() : null;
 
-            if (isNewSplitItem) {
-                // Insert new split detail item
+            if (isNewItem) {
+                // Insert new detail item (e.g. No-Count product found on floor or split location)
                 const productIdVal = extractId(item.product_id, "product_id");
                 const unitPrice = roundMoney(item.unit_price);
                 const systemCount = roundQty(item.system_count);
@@ -240,7 +266,7 @@ export async function PATCH(request: Request, context: RouteParams) {
                     product_id: productIdVal,
                     version_id: versionIdVal,
                     lot_id: lotIdVal,
-                    batch_no: batchNoVal,
+                    batch_no: null,
                     unit_price: unitPrice,
                     system_count: systemCount,
                     physical_count: physCount,
@@ -278,7 +304,6 @@ export async function PATCH(request: Request, context: RouteParams) {
                     physical_count: physCount,
                     lot_id: lotIdVal,
                     version_id: versionIdVal,
-                    batch_no: batchNoVal,
                     variance,
                     difference_cost: diffCost,
                     amount,
@@ -292,13 +317,19 @@ export async function PATCH(request: Request, context: RouteParams) {
             }
         }
 
-        // Update sheet header total_amount & remarks
+        // Update sheet header total_amount & remarks (with offset_pairings embedded)
+        let finalRemarks = remarks !== undefined ? String(remarks) : (sheetData.remarks || "");
+        if (finalRemarks.includes("__OFFSET_DATA__:")) {
+            finalRemarks = finalRemarks.split("__OFFSET_DATA__:")[0].trim();
+        }
+        if (Array.isArray(offset_pairings) && offset_pairings.length > 0) {
+            finalRemarks = `${finalRemarks}\n__OFFSET_DATA__:${JSON.stringify(offset_pairings)}`;
+        }
+
         const sheetUpdatePayload: Record<string, unknown> = {
             total_amount: roundMoney(totalAmountAcc),
+            remarks: finalRemarks,
         };
-        if (remarks !== undefined) {
-            sheetUpdatePayload.remarks = remarks;
-        }
 
         await fetch(`${DIRECTUS_URL}/items/physical_inventory/${sheetId}`, {
             method: "PATCH",

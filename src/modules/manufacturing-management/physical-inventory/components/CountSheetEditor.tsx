@@ -7,22 +7,44 @@ import {
     Save,
     CheckCircle2,
     Sparkles,
-    GitFork,
-    Trash2
+    Printer,
+    Download,
+    Scale,
+    PackagePlus,
+    Trash2,
+    Barcode,
+    Clock,
+    Building2,
+    Ban
 } from "lucide-react";
 import { toast } from "sonner";
-import { PhysicalCountSheet, PhysicalInventoryLineItem, StorageLotDetails, RecipeVersionDetails, ProductDetails } from "../types";
+import {
+    PhysicalCountSheet,
+    PhysicalInventoryLineItem,
+    StorageLotDetails,
+    RecipeVersionDetails,
+    ProductDetails,
+    OffsetPairing
+} from "../types";
 import { calculateCountSheetSummary, formatCurrency, formatDate } from "../utils";
+import { downloadPhysicalCountSheetPDF } from "../utils/exportPhysicalCountSheetPDF";
+import { downloadOffsettingReportPDF } from "../utils/exportOffsettingReportPDF";
 import SearchableSelect, { SelectOption } from "./SearchableSelect";
+import AddNoCountProductModal from "./AddNoCountProductModal";
+import OffsettingModal from "./OffsettingModal";
+import PrintableCountSheet from "./PrintableCountSheet";
+import PrintableOffsettingReport from "./PrintableOffsettingReport";
 
 interface CountSheetEditorProps {
     countSheet?: PhysicalCountSheet;
     sheet?: PhysicalCountSheet;
     availableLots?: StorageLotDetails[];
     availableVersions?: RecipeVersionDetails[];
+    availableProducts?: ProductDetails[];
     onSaveDraft?: (updatedSheet: PhysicalCountSheet) => void;
     onSaveSheet?: (updatedSheet: PhysicalCountSheet) => void;
     onProceedToCommit: (sheet: PhysicalCountSheet) => void;
+    onCancelSheet?: (sheetId: string) => void;
     onBackToList: () => void;
 }
 
@@ -31,140 +53,84 @@ export default function CountSheetEditor({
     sheet,
     availableLots = [],
     availableVersions = [],
+    availableProducts = [],
     onSaveDraft,
     onSaveSheet,
     onProceedToCommit,
+    onCancelSheet,
     onBackToList
 }: CountSheetEditorProps) {
     const activeSheet = countSheet || sheet;
 
     const [lineItems, setLineItems] = useState<PhysicalInventoryLineItem[]>(activeSheet?.line_items || []);
+    const [offsetPairings, setOffsetPairings] = useState<OffsetPairing[]>(activeSheet?.offset_pairings || []);
     const [searchQuery, setSearchQuery] = useState("");
     const [varianceFilter, setVarianceFilter] = useState<"all" | "deficit" | "surplus" | "matched" | "uncounted">("all");
     const [isSaving, setIsSaving] = useState(false);
+
+    // Modal states
+    const [isNoCountModalOpen, setIsNoCountModalOpen] = useState(false);
+    const [isOffsetModalOpen, setIsOffsetModalOpen] = useState(false);
+    const [isPrintSheetOpen, setIsPrintSheetOpen] = useState(false);
+    const [isPrintOffsetOpen, setIsPrintOffsetOpen] = useState(false);
+
+    // Sync on activeSheet change
     const [prevActiveSheet, setPrevActiveSheet] = useState<PhysicalCountSheet | null>(null);
-    const [prevAvailableVersions, setPrevAvailableVersions] = useState<RecipeVersionDetails[]>([]);
-
-    if (activeSheet !== prevActiveSheet || availableVersions !== prevAvailableVersions) {
+    if (activeSheet !== prevActiveSheet) {
         setPrevActiveSheet(activeSheet || null);
-        setPrevAvailableVersions(availableVersions);
-        if (activeSheet) {
-            const rawItems = activeSheet.line_items || [];
-            const autoSelected = rawItems.map(item => {
-                const pId = typeof item.product_id === "object"
-                    ? Number(item.product_id?.product_id || item.product_id?.id || 0)
-                    : Number(item.product_id || 0);
-
-                const curVerId = typeof item.version_id === "object"
-                    ? Number(item.version_id?.version_id || item.version_id?.id || 0)
-                    : Number(item.version_id || 0);
-
-                if ((!curVerId || curVerId === 0) && pId && availableVersions.length > 0) {
-                    const matchingVersions = availableVersions.filter(v => {
-                        const vPid = typeof v.product_id === "object"
-                            ? Number(v.product_id?.product_id || v.product_id?.id || 0)
-                            : Number(v.product_id || 0);
-                        return vPid === pId;
-                    });
-
-                    if (matchingVersions.length === 1) {
-                        const singleVerId = Number(matchingVersions[0].version_id || matchingVersions[0].id);
-                        return {
-                            ...item,
-                            version_id: singleVerId
-                        };
-                    }
-                }
-                return item;
-            });
-            setLineItems(autoSelected);
-        } else {
-            setLineItems([]);
-        }
+        setLineItems(activeSheet?.line_items || []);
+        setOffsetPairings(activeSheet?.offset_pairings || []);
     }
-    const isReadOnly = activeSheet ? (activeSheet.isComitted || activeSheet.isCancelled) : false;
 
-    // Helper: Resolve human-readable lot name for a line item
+    const isReadOnly = activeSheet ? (activeSheet.isComitted || activeSheet.isCancelled) : false;
+    const isFinishedGoods = Boolean(
+        activeSheet?.inventory_type === "Finished Goods" ||
+        activeSheet?.stock_type?.includes("Finished")
+    );
+
+    // Map offset quantity per line item
+    const offsetQtyMap = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const pair of offsetPairings) {
+            const sAcc = map.get(pair.shortage_item_id) || 0;
+            map.set(pair.shortage_item_id, sAcc + pair.offset_qty);
+
+            const surpAcc = map.get(pair.surplus_item_id) || 0;
+            map.set(pair.surplus_item_id, surpAcc + pair.offset_qty);
+        }
+        return map;
+    }, [offsetPairings]);
+
+    // Recalculate summary metrics
+    const summary = useMemo(() => {
+        return calculateCountSheetSummary(lineItems, offsetPairings);
+    }, [lineItems, offsetPairings]);
+
+    // Storage Location name resolver
     const getLotName = useCallback((lotIdRaw: string | number | StorageLotDetails | null | undefined): string => {
         if (lotIdRaw && typeof lotIdRaw === "object") {
-            return lotIdRaw.lot_name || lotIdRaw.name || "Main Warehouse Storage";
+            return lotIdRaw.lot_name || lotIdRaw.name || "Main Storage";
         }
         const idNum = Number(lotIdRaw || 0);
-        if (!idNum) return "Main Warehouse Storage";
+        if (!idNum) return "Main Storage";
         const found = availableLots.find(l => Number(l.lot_id || l.id) === idNum);
-        return found ? (found.lot_name || found.name || `Location Bin #${idNum}`) : "Main Warehouse Storage";
+        return found ? (found.lot_name || found.name || `Bin #${idNum}`) : "Main Storage";
     }, [availableLots]);
 
-    // Helper: Resolve human-readable recipe version name for a line item
-    const getVersionName = useCallback((versionIdRaw: string | number | RecipeVersionDetails | null | undefined): string => {
-        if (versionIdRaw && typeof versionIdRaw === "object") {
-            return versionIdRaw.version_name || versionIdRaw.version_code || "Standard Production BOM";
-        }
-        const idNum = Number(versionIdRaw || 0);
-        if (!idNum) return "Standard Production BOM";
-        const found = availableVersions.find(v => Number(v.version_id || v.id) === idNum);
-        return found ? (found.version_name || found.version_code || `Recipe Version v${idNum}`) : "Standard Production BOM";
-    }, [availableVersions]);
-
-    // Helper: Build product-specific recipe version options (filters strictly by product_id)
-    const getProductVersionOptions = useCallback((productIdRaw: string | number | ProductDetails | null | undefined): SelectOption[] => {
-        const pId = typeof productIdRaw === "object"
-            ? Number(productIdRaw?.product_id || productIdRaw?.id || 0)
-            : Number(productIdRaw || 0);
-
-        const list: SelectOption[] = [
-            { value: "0", label: "Standard Production BOM" }
-        ];
-
-        // Filter available versions belonging strictly to this product
-        const matchingVersions = (availableVersions || []).filter(v => {
-            if (!pId) return true;
-            const vPid = typeof v.product_id === "object"
-                ? Number(v.product_id?.product_id || v.product_id?.id || 0)
-                : Number(v.product_id || 0);
-            return vPid === pId;
-        });
-
-        matchingVersions.forEach(v => {
-            const vId = v.version_id || v.id;
-            const vName = v.version_name || v.version_code || `Recipe Version v${vId}`;
-            if (vId) {
-                list.push({
-                    value: String(vId),
-                    label: vName
-                });
-            }
-        });
-
-        return list;
-    }, [availableVersions]);
-
-    // Auto-selection of recipe versions is now handled during rendering when props change to prevent cascading render cycles.
-
-    // Build master location lot options
+    // Location lot select options
     const locationLotOptions: SelectOption[] = useMemo(() => {
-        const list: SelectOption[] = [
-            { value: "0", label: "Main Warehouse Storage" }
-        ];
+        const list: SelectOption[] = [{ value: "0", label: "Main Storage" }];
         (availableLots || []).forEach(l => {
             const lId = l.lot_id || l.id;
-            const lName = l.lot_name || l.name || `Storage Bin #${lId}`;
+            const lName = l.lot_name || l.name || `Bin #${lId}`;
             if (lId) {
-                list.push({
-                    value: String(lId),
-                    label: lName
-                });
+                list.push({ value: String(lId), label: lName });
             }
         });
         return list;
     }, [availableLots]);
 
-    // Auto-calculate sheet summary
-    const summary = useMemo(() => {
-        return calculateCountSheetSummary(lineItems);
-    }, [lineItems]);
-
-    // Handle physical count edit
+    // Handle physical count change
     const handleCountChange = (itemId: string, value: string) => {
         if (isReadOnly) return;
         setLineItems(prev => prev.map(item => {
@@ -172,22 +138,27 @@ export default function CountSheetEditor({
                 const num = value === "" ? null : parseFloat(value);
                 const physVal = isNaN(num as number) ? null : num;
                 const sysVal = item.system_count || 0;
-                const price = item.unit_price || 0;
+                const factor = item.uom_factor || 1;
                 const diff = physVal !== null ? physVal - sysVal : 0;
+                const baseDiff = diff * factor;
+                const price = item.unit_price || 0;
+                const offsetAllocated = offsetQtyMap.get(item.id) || 0;
 
                 return {
                     ...item,
                     physical_count: physVal,
                     variance: diff,
-                    difference_cost: diff * price,
-                    amount: (physVal !== null ? physVal : sysVal) * price
+                    variance_base: baseDiff,
+                    difference_cost: baseDiff * price,
+                    amount: (physVal !== null ? physVal : sysVal) * factor * price,
+                    net_adjusted_variance: baseDiff - offsetAllocated
                 };
             }
             return item;
         }));
     };
 
-    // Handle Storage Location (lot_id) change
+    // Handle location change
     const handleLocationChange = (itemId: string, newLotId: string | number) => {
         if (isReadOnly) return;
         setLineItems(prev => prev.map(item => {
@@ -201,88 +172,65 @@ export default function CountSheetEditor({
         }));
     };
 
-    // Handle Recipe Version (version_id) change
-    const handleVersionChange = (itemId: string, newVersionId: string | number) => {
-        if (isReadOnly) return;
-        setLineItems(prev => prev.map(item => {
-            if (item.id === itemId) {
-                return {
-                    ...item,
-                    version_id: Number(newVersionId) || null
-                };
-            }
-            return item;
-        }));
-    };
-
-    // Handle Batch Number change
-    const handleBatchChange = (itemId: string, newBatchNo: string) => {
-        if (isReadOnly) return;
-        setLineItems(prev => prev.map(item => {
-            if (item.id === itemId) {
-                return {
-                    ...item,
-                    batch_no: newBatchNo
-                };
-            }
-            return item;
-        }));
-    };
-
-    // Split Line Item into a new sub-row for multi-location / multi-version auditing
-    const handleSplitLineItem = useCallback((targetItem: PhysicalInventoryLineItem) => {
-        if (isReadOnly) return;
-        const newSplitId = `new_split_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-
-        const splitItem: PhysicalInventoryLineItem = {
-            ...targetItem,
-            id: newSplitId,
-            system_count: 0,
-            physical_count: 0,
-            variance: 0,
-            difference_cost: 0,
-            amount: 0,
-            batch_no: targetItem.batch_no ? `${targetItem.batch_no}-B` : "",
-        };
-
-        setLineItems(prev => {
-            const targetIndex = prev.findIndex(i => i.id === targetItem.id);
-            const updatedList = [...prev];
-            if (targetIndex >= 0) {
-                updatedList.splice(targetIndex + 1, 0, splitItem);
-            } else {
-                updatedList.push(splitItem);
-            }
-            return updatedList;
-        });
-        toast.success(`Split line item added for ${targetItem.product_name || "product"}.`);
-    }, [isReadOnly]);
-
-    // Delete a split line item
-    const handleDeleteLineItem = (itemId: string) => {
-        if (isReadOnly) return;
-        setLineItems(prev => prev.filter(item => item.id !== itemId));
-        toast.info("Line item row removed.");
-    };
-
-    // Quick Action: Fill system counts
+    // Quick Action: Fill uncounted with system baseline counts
     const handleFillSystemCounts = () => {
         if (isReadOnly) return;
         setLineItems(prev => prev.map(item => {
             const physVal = item.physical_count === null ? item.system_count : item.physical_count;
             const sysVal = item.system_count || 0;
-            const price = item.unit_price || 0;
+            const factor = item.uom_factor || 1;
             const diff = physVal !== null ? physVal - sysVal : 0;
+            const baseDiff = diff * factor;
+            const price = item.unit_price || 0;
+            const offsetAllocated = offsetQtyMap.get(item.id) || 0;
 
             return {
                 ...item,
                 physical_count: physVal,
                 variance: diff,
-                difference_cost: diff * price,
-                amount: (physVal !== null ? physVal : sysVal) * price
+                variance_base: baseDiff,
+                difference_cost: baseDiff * price,
+                amount: (physVal !== null ? physVal : sysVal) * factor * price,
+                net_adjusted_variance: baseDiff - offsetAllocated
             };
         }));
-        toast.info("Uncounted items populated with system count snapshot.");
+        toast.info("Populated uncounted items with system baseline.");
+    };
+
+    // Add No-Count Product from Modal
+    const handleAddNoCountProduct = (newItem: PhysicalInventoryLineItem) => {
+        setLineItems(prev => [newItem, ...prev]);
+        toast.success(`No-Count product "${newItem.product_name}" added to audit sheet.`);
+    };
+
+    // Apply Offsetting from Modal
+    const handleApplyOffsetting = (newPairings: OffsetPairing[]) => {
+        setOffsetPairings(newPairings);
+        const map = new Map<string, number>();
+        for (const pair of newPairings) {
+            const sAcc = map.get(pair.shortage_item_id) || 0;
+            map.set(pair.shortage_item_id, sAcc + pair.offset_qty);
+
+            const surpAcc = map.get(pair.surplus_item_id) || 0;
+            map.set(pair.surplus_item_id, surpAcc + pair.offset_qty);
+        }
+
+        setLineItems(prev => prev.map(item => {
+            const alloc = map.get(item.id) || 0;
+            const baseVar = item.variance_base !== undefined ? item.variance_base : (item.variance || 0);
+            return {
+                ...item,
+                offset_qty: alloc,
+                net_adjusted_variance: baseVar - alloc
+            };
+        }));
+    };
+
+    // Delete Line item (only split or no-count items)
+    const handleDeleteLineItem = (itemId: string) => {
+        if (isReadOnly) return;
+        setLineItems(prev => prev.filter(item => item.id !== itemId));
+        toast.info("Line item removed.");
     };
 
     // Save Draft
@@ -291,14 +239,27 @@ export default function CountSheetEditor({
         setIsSaving(true);
         const updatedSheet: PhysicalCountSheet = {
             ...activeSheet,
-            id: activeSheet.id || "",
-            line_items: lineItems
-        } as PhysicalCountSheet;
+            line_items: lineItems,
+            offset_pairings: offsetPairings
+        };
         const saveFn = onSaveDraft || onSaveSheet;
         if (saveFn) {
             saveFn(updatedSheet);
         }
         setIsSaving(false);
+    };
+
+    // Direct PDF Downloads
+    const handleDownloadCountSheetPDF = () => {
+        if (!activeSheet) return;
+        downloadPhysicalCountSheetPDF({ ...activeSheet, line_items: lineItems });
+        toast.success("Count sheet PDF generated and downloaded.");
+    };
+
+    const handleDownloadOffsettingPDF = () => {
+        if (!activeSheet) return;
+        downloadOffsettingReportPDF({ ...activeSheet, line_items: lineItems }, offsetPairings);
+        toast.success("Offsetting breakdown report PDF generated and downloaded.");
     };
 
     // Filter line items
@@ -308,14 +269,14 @@ export default function CountSheetEditor({
 
             const pName = (typeof item.product_id === "object" ? item.product_id?.product_name : (item.product_name || item.sku_name || "")) || "";
             const pCode = (typeof item.product_id === "object" ? item.product_id?.product_code : (item.product_code || item.sku_code || "")) || "";
+            const barcode = item.barcode || (typeof item.product_id === "object" ? item.product_id?.barcode : "") || "";
             const lName = (typeof item.lot_id === "object" ? (item.lot_id?.lot_name || item.lot_id?.name) : "") || "";
-            const bNo = item.batch_no || "";
 
             const matchesSearch = !q ||
                 pName.toLowerCase().includes(q) ||
                 pCode.toLowerCase().includes(q) ||
-                lName.toLowerCase().includes(q) ||
-                bNo.toLowerCase().includes(q);
+                barcode.toLowerCase().includes(q) ||
+                lName.toLowerCase().includes(q);
 
             if (!matchesSearch) return false;
 
@@ -324,9 +285,9 @@ export default function CountSheetEditor({
             const diff = item.variance !== undefined ? item.variance : (phys !== null ? phys - sys : 0);
 
             if (varianceFilter === "uncounted") return phys === null;
-            if (varianceFilter === "deficit") return phys !== null && diff < 0;
-            if (varianceFilter === "surplus") return phys !== null && diff > 0;
-            if (varianceFilter === "matched") return phys !== null && diff === 0;
+            if (varianceFilter === "deficit") return phys !== null && diff < -0.0001;
+            if (varianceFilter === "surplus") return phys !== null && diff > 0.0001;
+            if (varianceFilter === "matched") return phys !== null && Math.abs(diff) <= 0.0001;
 
             return true;
         });
@@ -334,109 +295,217 @@ export default function CountSheetEditor({
 
     if (!activeSheet) return null;
 
+    const sheetStatus = activeSheet.isComitted
+        ? "Committed"
+        : activeSheet.isCancelled
+        ? "Cancelled"
+        : offsetPairings.length > 0
+        ? "Pending Reconciliation"
+        : "In Progress";
+
     return (
-        <div className="space-y-6">
-            {/* Editor Top Bar */}
+        <div className="space-y-5 animate-in fade-in duration-200">
+            {/* Top Bar Navigation & Header Details (Section 4.1) */}
             <div className="bg-card border border-border p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
                 <div className="flex items-center gap-3">
                     <button
                         onClick={onBackToList}
                         className="p-2 rounded-xl bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-all"
+                        title="Back to Sheets List"
                     >
                         <ArrowLeft className="h-4 w-4" />
                     </button>
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm font-black text-primary">#{activeSheet.ph_no}</span>
+                            <span className="font-mono text-sm font-black text-primary">#{activeSheet.ph_no || activeSheet.sheet_no}</span>
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                activeSheet.isComitted
+                                sheetStatus === "Committed"
                                     ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                                    : activeSheet.isCancelled
+                                    : sheetStatus === "Cancelled"
                                     ? "bg-rose-500/10 text-rose-500 border border-rose-500/20"
-                                    : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                                    : sheetStatus === "Pending Reconciliation"
+                                    ? "bg-purple-500/10 text-purple-500 border border-purple-500/20"
+                                    : "bg-blue-500/10 text-blue-500 border border-blue-500/20"
                             }`}>
-                                {activeSheet.isComitted ? "Committed to Ledger" : activeSheet.isCancelled ? "Cancelled" : "Draft (Active Audit)"}
+                                {sheetStatus}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-secondary text-foreground text-[10px] font-bold border border-border">
+                                {activeSheet.inventory_type || "Finished Goods"} • {activeSheet.stock_type || "Good Stock"}
                             </span>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                            <span className="font-semibold text-foreground">{activeSheet.branch_name}</span>
+                        <p className="text-xs text-muted-foreground mt-0.5 flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-foreground flex items-center gap-1">
+                                <Building2 className="h-3 w-3 inline" />
+                                {activeSheet.branch_name}
+                            </span>
                             <span>•</span>
-                            <span>Cutoff: {formatDate(activeSheet.cutOff_date)}</span>
+                            <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 inline text-primary" />
+                                Start: {formatDate(activeSheet.starting_date)}
+                            </span>
+                            <span>•</span>
+                            <span>Cut-Off: {formatDate(activeSheet.cutOff_date || activeSheet.cutoff_date)}</span>
                         </p>
                     </div>
                 </div>
 
-                {/* Editor Action Buttons */}
-                <div className="flex items-center gap-2 flex-wrap">
+                {/* Header Action Controls (Section 4.3) */}
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {/* Direct PDF Download / Print Sheet */}
+                    <button
+                        onClick={handleDownloadCountSheetPDF}
+                        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 border border-primary/20"
+                        title="Download Count Sheet as PDF"
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                        PDF Sheet
+                    </button>
+
+                    <button
+                        onClick={() => setIsPrintSheetOpen(true)}
+                        className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5"
+                    >
+                        <Printer className="h-3.5 w-3.5" />
+                        Print Sheet
+                    </button>
+
+                    {offsetPairings.length > 0 && (
+                        <>
+                            <button
+                                onClick={handleDownloadOffsettingPDF}
+                                className="px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 border border-purple-500/20"
+                                title="Download Offsetting Breakdown Report as PDF"
+                            >
+                                <Download className="h-3.5 w-3.5" />
+                                PDF Offset Report
+                            </button>
+                            <button
+                                onClick={() => setIsPrintOffsetOpen(true)}
+                                className="px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 border border-purple-500/20"
+                            >
+                                <Printer className="h-3.5 w-3.5" />
+                                Print Offset
+                            </button>
+                        </>
+                    )}
+
                     {!isReadOnly && (
                         <>
+                            {/* Add No-Count Products */}
+                            <button
+                                onClick={() => setIsNoCountModalOpen(true)}
+                                className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 border border-border"
+                            >
+                                <PackagePlus className="h-3.5 w-3.5 text-primary" />
+                                Add No-Count SKU
+                            </button>
+
+                            {/* Offsetting Utility Button */}
+                            <button
+                                onClick={() => setIsOffsetModalOpen(true)}
+                                className="px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border border-purple-500/20"
+                            >
+                                <Scale className="h-3.5 w-3.5" />
+                                Offsetting ({offsetPairings.length})
+                            </button>
+
+                            {/* Fill System Snapshot */}
                             <button
                                 onClick={handleFillSystemCounts}
                                 className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5"
+                                title="Fill uncounted items with system baseline"
                             >
                                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                                Fill System Snapshot
+                                Fill Baseline
                             </button>
 
+                            {/* Save Draft */}
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving}
-                                className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs rounded-xl transition-all flex items-center gap-1.5"
+                                className="px-3.5 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs rounded-xl transition-all flex items-center gap-1.5 border border-border"
                             >
-                                <Save className="h-4 w-4" />
+                                <Save className="h-3.5 w-3.5" />
                                 Save Draft
                             </button>
 
+                            {/* Commit to Ledger */}
                             <button
-                                onClick={() => onProceedToCommit({ ...activeSheet, line_items: lineItems })}
-                                className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5"
+                                onClick={() => onProceedToCommit({ ...activeSheet, line_items: lineItems, offset_pairings: offsetPairings })}
+                                className="px-4 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 hover:scale-[1.01]"
                             >
                                 <CheckCircle2 className="h-4 w-4" />
-                                Proceed to Commit Ledger
+                                Commit
                             </button>
+
+                            {/* Cancel Count Sheet */}
+                            {onCancelSheet && (
+                                <button
+                                    onClick={() => onCancelSheet(activeSheet.id)}
+                                    className="p-1.5 bg-muted hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 rounded-xl transition-all"
+                                    title="Cancel Count Sheet"
+                                >
+                                    <Ban className="h-4 w-4" />
+                                </button>
+                            )}
                         </>
                     )}
                 </div>
             </div>
 
-            {/* Summary Banner */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-muted/30 border border-border p-3.5 rounded-2xl">
+            {/* Summary Metrics Cards (Section 4.1) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 bg-muted/30 border border-border p-3.5 rounded-2xl">
                 <div>
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Audited Items</span>
-                    <span className="text-sm font-black text-foreground mt-0.5 block">
-                        {summary.countedItemsCount} / {summary.totalItemsCount} SKUs
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">System Base Count</span>
+                    <span className="text-sm font-black text-foreground mt-0.5 block font-mono">
+                        {summary.totalSystemQty.toLocaleString()} Units
                     </span>
+                    <span className="text-[10px] text-muted-foreground">Audited: {summary.countedItemsCount}/{summary.totalItemsCount} SKUs</span>
                 </div>
+
                 <div>
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Surplus Variance</span>
-                    <span className="text-sm font-black text-emerald-500 mt-0.5 block">
-                        +{summary.surplusItemsCount} items ({formatCurrency(summary.surplusVarianceCost)})
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Physical Base Count</span>
+                    <span className="text-sm font-black text-primary mt-0.5 block font-mono">
+                        {summary.totalPhysicalQty.toLocaleString()} Units
                     </span>
+                    <span className="text-[10px] text-muted-foreground">{summary.uncountedItemsCount} uncounted</span>
                 </div>
+
                 <div>
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Deficit Variance</span>
-                    <span className="text-sm font-black text-rose-500 mt-0.5 block">
-                        -{summary.deficitItemsCount} items ({formatCurrency(summary.deficitVarianceCost)})
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Base Variance</span>
+                    <span className={`text-sm font-black mt-0.5 block font-mono ${summary.netVarianceQty >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                        {summary.netVarianceQty >= 0 ? `+${summary.netVarianceQty.toLocaleString()}` : summary.netVarianceQty.toLocaleString()} Units
                     </span>
+                    <span className="text-[10px] text-muted-foreground">+{summary.surplusItemsCount} / -{summary.deficitItemsCount} SKUs</span>
                 </div>
+
                 <div>
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Net Financial Impact</span>
-                    <span className={`text-sm font-black mt-0.5 block ${summary.netVarianceCost >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Difference Cost</span>
+                    <span className={`text-sm font-black mt-0.5 block font-mono ${summary.netVarianceCost >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
                         {formatCurrency(summary.netVarianceCost)}
                     </span>
+                    <span className="text-[10px] text-muted-foreground">Gross Variance Value</span>
+                </div>
+
+                <div className="col-span-2 sm:col-span-4 lg:col-span-1 border-t lg:border-t-0 lg:border-l border-border/80 pt-2 lg:pt-0 lg:pl-3">
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 uppercase font-bold tracking-wider block">Reconciled Offsets</span>
+                    <span className="text-sm font-black text-purple-600 dark:text-purple-400 mt-0.5 block font-mono">
+                        {summary.totalOffsetQty.toLocaleString()} Units
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">{offsetPairings.length} active pair(s)</span>
                 </div>
             </div>
 
             {/* Filter & Search Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card border border-border p-3 rounded-2xl">
-                <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card border border-border p-3 rounded-2xl shadow-xs">
+                <div className="relative w-full sm:w-80">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <input
                         type="text"
-                        placeholder="Search SKU name, code, lot, batch..."
+                        placeholder="Search SKU description, code, barcode, bin..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 text-xs bg-background border border-border rounded-xl focus:outline-hidden focus:ring-2 focus:ring-primary/20 transition-all"
+                        className="w-full pl-9 pr-3 py-1.5 text-xs bg-background border border-border rounded-xl focus:ring-2 focus:ring-primary outline-hidden"
                     />
                 </div>
 
@@ -447,7 +516,7 @@ export default function CountSheetEditor({
                             onClick={() => setVarianceFilter(f)}
                             className={`px-3 py-1.2 rounded-lg text-xs font-semibold capitalize whitespace-nowrap transition-all ${
                                 varianceFilter === f
-                                    ? "bg-primary text-primary-foreground"
+                                    ? "bg-primary text-primary-foreground shadow-xs"
                                     : "bg-muted/50 text-muted-foreground hover:text-foreground"
                             }`}
                         >
@@ -457,124 +526,116 @@ export default function CountSheetEditor({
                 </div>
             </div>
 
-            {/* Line Items Table */}
+            {/* Line Items Table (Section 4.2 - Batch Column Removed, Versioning FG only) */}
             <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                         <thead className="bg-muted/50 border-b border-border text-muted-foreground font-semibold">
                             <tr>
-                                <th className="p-3">Product / SKU Item</th>
-                                <th className="p-3">Recipe Version</th>
-                                <th className="p-3">Storage Location / Rack</th>
-                                <th className="p-3">Batch Number</th>
-                                <th className="p-3 text-right">Unit Price</th>
+                                <th className="p-3">Product Name, Code & Barcode</th>
+                                <th className="p-3">Storage Location</th>
+                                {isFinishedGoods && <th className="p-3">Recipe Version</th>}
+                                <th className="p-3 text-center">UOM</th>
                                 <th className="p-3 text-right">System Count</th>
                                 <th className="p-3 text-center">Physical Count</th>
                                 <th className="p-3 text-right">Variance</th>
+                                <th className="p-3 text-right">Unit Price</th>
+                                <th className="p-3 text-right">Count Valuation</th>
                                 <th className="p-3 text-right">Difference Cost</th>
-                                {!isReadOnly && <th className="p-3 text-center">Actions</th>}
+                                <th className="p-3 text-center">Offset Status</th>
+                                {!isReadOnly && <th className="p-3 text-center">Action</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/60 font-medium">
                             {filteredItems.length > 0 ? (
                                 filteredItems.map(item => {
                                     const productName = typeof item.product_id === "object"
-                                        ? (item.product_id?.product_name || item.product_name || item.sku_name || "Manufacturing Product")
-                                        : (item.product_name || item.sku_name || "Manufacturing Product");
+                                        ? (item.product_id?.product_name || item.product_name || item.sku_name || "Product")
+                                        : (item.product_name || item.sku_name || "Product");
 
                                     const productCode = typeof item.product_id === "object"
                                         ? (item.product_id?.product_code || item.product_code || item.sku_code || "")
                                         : (item.product_code || item.sku_code || "");
 
+                                    const barcode = item.barcode || (typeof item.product_id === "object" ? item.product_id?.barcode : "");
+
                                     const curLotId = typeof item.lot_id === "object"
                                         ? String(item.lot_id?.lot_id || item.lot_id?.id || "0")
                                         : String(item.lot_id || "0");
 
-                                    const curVersionId = typeof item.version_id === "object"
-                                        ? String(item.version_id?.version_id || item.version_id?.id || "0")
-                                        : String(item.version_id || "0");
+                                    const versionName = typeof item.version_id === "object"
+                                        ? (item.version_id?.version_name || item.version_id?.version_code || "Standard v1.0")
+                                        : (item.version_id ? `Recipe v${item.version_id}` : "Standard v1.0");
 
                                     const sysCount = item.system_count || 0;
                                     const physCount = item.physical_count;
                                     const unitPrice = item.unit_price || 0;
                                     const diff = item.variance !== undefined ? item.variance : (physCount !== null ? physCount - sysCount : 0);
-                                    const diffCost = item.difference_cost !== undefined ? item.difference_cost : (diff * unitPrice);
-                                    const isSplitItem = String(item.id).startsWith("new_split_");
+                                    const factor = item.uom_factor || 1;
+                                    const baseDiff = diff * factor;
+                                    const diffCost = baseDiff * unitPrice;
+                                    const totalValuation = (physCount !== null ? physCount : sysCount) * factor * unitPrice;
 
-                                    // Get recipe versions strictly belonging to THIS product
-                                    const itemVersionOptions = getProductVersionOptions(item.product_id);
+                                    const allocatedOffset = offsetQtyMap.get(item.id) || 0;
 
                                     return (
-                                        <tr key={item.id} className={`hover:bg-muted/30 transition-colors ${isSplitItem ? "bg-primary/5" : ""}`}>
-                                            <td className="p-3">
-                                                <div className="flex items-center gap-2">
-                                                    {isSplitItem && (
-                                                        <span className="p-1 rounded bg-primary/10 text-primary text-[10px] font-bold">SPLIT</span>
+                                        <tr key={item.id} className={`hover:bg-muted/30 transition-colors ${item.is_no_count_product ? "bg-amber-500/5" : ""}`}>
+                                            {/* SKU, Code, and Barcode */}
+                                            <td className="p-3 max-w-[220px]">
+                                                <div className="font-bold text-foreground truncate" title={productName}>
+                                                    {productName}
+                                                </div>
+                                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
+                                                    {productCode && <span className="font-mono text-primary font-semibold">{productCode}</span>}
+                                                    {barcode && (
+                                                        <span className="font-mono flex items-center gap-0.5 text-muted-foreground">
+                                                            <Barcode className="h-3 w-3 inline" />
+                                                            {barcode}
+                                                        </span>
                                                     )}
-                                                    <div>
-                                                        <div className="font-bold text-foreground">{productName}</div>
-                                                        {productCode && <div className="text-[10px] text-primary font-mono font-semibold">{productCode}</div>}
-                                                    </div>
+                                                    {item.is_no_count_product && (
+                                                        <span className="px-1 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold text-[9px]">
+                                                            NO-COUNT
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </td>
 
-                                            {/* Product-Specific Editable Recipe Version Dropdown */}
-                                            <td className="p-3 min-w-[170px]">
+                                            {/* Location Storage */}
+                                            <td className="p-3 min-w-[150px]">
                                                 {isReadOnly ? (
-                                                    <span className="font-semibold text-muted-foreground">
-                                                        {getVersionName(item.version_id)}
-                                                    </span>
-                                                ) : (
-                                                    <SearchableSelect
-                                                        options={itemVersionOptions}
-                                                        value={curVersionId}
-                                                        onChange={(val) => handleVersionChange(item.id, val)}
-                                                        placeholder="Select recipe version..."
-                                                        searchPlaceholder="Search product version..."
-                                                        className="w-full text-[11px]"
-                                                    />
-                                                )}
-                                            </td>
-
-                                            {/* Editable Storage Location Dropdown */}
-                                            <td className="p-3 min-w-[180px]">
-                                                {isReadOnly ? (
-                                                    <span className="font-semibold text-foreground">
-                                                        {getLotName(item.lot_id)}
-                                                    </span>
+                                                    <span className="font-medium text-foreground">{getLotName(item.lot_id)}</span>
                                                 ) : (
                                                     <SearchableSelect
                                                         options={locationLotOptions}
                                                         value={curLotId}
                                                         onChange={(val) => handleLocationChange(item.id, val)}
-                                                        placeholder="Select location bin..."
-                                                        searchPlaceholder="Search location bin..."
+                                                        placeholder="Select location..."
                                                         className="w-full text-[11px]"
                                                     />
                                                 )}
                                             </td>
 
-                                            {/* Editable Batch Number Input */}
-                                            <td className="p-3 min-w-[130px]">
-                                                {isReadOnly ? (
-                                                    <span className="font-mono text-muted-foreground">{item.batch_no || "—"}</span>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={item.batch_no || ""}
-                                                        onChange={(e) => handleBatchChange(item.id, e.target.value)}
-                                                        placeholder="e.g. BATCH-001"
-                                                        className="w-full px-2 py-1 text-xs font-mono bg-background border border-border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20"
-                                                    />
-                                                )}
+                                            {/* Versioning (Only if Finished Goods) */}
+                                            {isFinishedGoods && (
+                                                <td className="p-3">
+                                                    <span className="px-2 py-0.5 rounded-md bg-secondary text-foreground text-[10px] font-mono font-bold border border-border">
+                                                        {versionName}
+                                                    </span>
+                                                </td>
+                                            )}
+
+                                            {/* UOM */}
+                                            <td className="p-3 text-center font-mono uppercase text-muted-foreground">
+                                                {item.uom || item.unit_of_measure || "PCS"}
                                             </td>
 
-                                            <td className="p-3 text-right font-mono">
-                                                {formatCurrency(unitPrice)}
-                                            </td>
+                                            {/* System Count */}
                                             <td className="p-3 text-right font-mono font-bold text-muted-foreground">
-                                                {sysCount.toLocaleString()} {item.uom || item.unit_of_measure || "PCS"}
+                                                {sysCount.toLocaleString()}
                                             </td>
+
+                                            {/* Physical Count Input */}
                                             <td className="p-3 text-center">
                                                 {isReadOnly ? (
                                                     <span className="font-mono font-bold text-foreground">
@@ -587,56 +648,62 @@ export default function CountSheetEditor({
                                                         value={physCount !== null ? physCount : ""}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
                                                         placeholder="Enter count"
-                                                        className="w-28 px-2 py-1 text-center font-mono font-bold bg-background border border-border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                                        className="w-24 px-2 py-1 text-center font-mono font-bold bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary outline-hidden"
                                                     />
                                                 )}
                                             </td>
+
+                                            {/* Variance */}
                                             <td className="p-3 text-right font-mono font-bold">
                                                 {physCount === null ? (
                                                     <span className="text-muted-foreground">—</span>
-                                                ) : diff > 0 ? (
+                                                ) : diff > 0.0001 ? (
                                                     <span className="text-emerald-500">+{diff.toLocaleString()}</span>
-                                                ) : diff < 0 ? (
+                                                ) : diff < -0.0001 ? (
                                                     <span className="text-rose-500">{diff.toLocaleString()}</span>
                                                 ) : (
                                                     <span className="text-muted-foreground">0</span>
                                                 )}
                                             </td>
-                                            <td className="p-3 text-right font-mono font-bold">
-                                                {physCount === null ? (
-                                                    <span className="text-muted-foreground">—</span>
-                                                ) : diffCost > 0 ? (
-                                                    <span className="text-emerald-500">+{formatCurrency(diffCost)}</span>
-                                                ) : diffCost < 0 ? (
-                                                    <span className="text-rose-500">{formatCurrency(diffCost)}</span>
+
+                                            {/* Unit Price */}
+                                            <td className="p-3 text-right font-mono text-muted-foreground">
+                                                {formatCurrency(unitPrice)}
+                                            </td>
+
+                                            {/* Count Valuation Amount */}
+                                            <td className="p-3 text-right font-mono font-bold text-foreground">
+                                                {formatCurrency(totalValuation)}
+                                            </td>
+
+                                            {/* Difference Cost */}
+                                            <td className={`p-3 text-right font-mono font-bold ${diffCost > 0.0001 ? "text-emerald-500" : diffCost < -0.0001 ? "text-rose-500" : "text-muted-foreground"}`}>
+                                                {physCount === null ? "—" : formatCurrency(diffCost)}
+                                            </td>
+
+                                            {/* Offsetting Status Tag */}
+                                            <td className="p-3 text-center">
+                                                {allocatedOffset > 0 ? (
+                                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                                                        Offset {allocatedOffset.toLocaleString()}
+                                                    </span>
                                                 ) : (
-                                                    <span className="text-muted-foreground">₱0.00</span>
+                                                    <span className="text-muted-foreground text-[10px]">—</span>
                                                 )}
                                             </td>
 
-                                            {/* Action column for Splitting / Deleting Split */}
+                                            {/* Actions */}
                                             {!isReadOnly && (
                                                 <td className="p-3 text-center">
-                                                    <div className="flex items-center justify-center gap-1">
+                                                    {item.is_no_count_product && (
                                                         <button
-                                                            type="button"
-                                                            onClick={() => handleSplitLineItem(item)}
-                                                            className="p-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-all"
-                                                            title="Split row into sub-location / sub-version count"
+                                                            onClick={() => handleDeleteLineItem(item.id)}
+                                                            className="p-1 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                                            title="Remove No-Count SKU"
                                                         >
-                                                            <GitFork className="h-3.5 w-3.5" />
+                                                            <Trash2 className="h-3.5 w-3.5" />
                                                         </button>
-                                                        {isSplitItem && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleDeleteLineItem(item.id)}
-                                                                className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 transition-all"
-                                                                title="Remove split sub-row"
-                                                            >
-                                                                <Trash2 className="h-3.5 w-3.5" />
-                                                            </button>
-                                                        )}
-                                                    </div>
+                                                    )}
                                                 </td>
                                             )}
                                         </tr>
@@ -644,8 +711,8 @@ export default function CountSheetEditor({
                                 })
                             ) : (
                                 <tr>
-                                    <td colSpan={10} className="p-8 text-center text-muted-foreground text-xs">
-                                        No line items match your current search/filter.
+                                    <td colSpan={isFinishedGoods ? 12 : 11} className="p-12 text-center text-muted-foreground text-xs">
+                                        No line items matching filter or search query.
                                     </td>
                                 </tr>
                             )}
@@ -653,6 +720,45 @@ export default function CountSheetEditor({
                     </table>
                 </div>
             </div>
+
+            {/* Sub-Modals */}
+            {isNoCountModalOpen && (
+                <AddNoCountProductModal
+                    isOpen={isNoCountModalOpen}
+                    onClose={() => setIsNoCountModalOpen(false)}
+                    onAddProduct={handleAddNoCountProduct}
+                    availableProducts={availableProducts}
+                    availableLots={availableLots}
+                    availableVersions={availableVersions}
+                    isFinishedGoods={isFinishedGoods}
+                />
+            )}
+
+            {isOffsetModalOpen && (
+                <OffsettingModal
+                    isOpen={isOffsetModalOpen}
+                    onClose={() => setIsOffsetModalOpen(false)}
+                    lineItems={lineItems}
+                    initialPairings={offsetPairings}
+                    onApplyOffsetting={handleApplyOffsetting}
+                    isReadOnly={isReadOnly}
+                />
+            )}
+
+            {isPrintSheetOpen && (
+                <PrintableCountSheet
+                    sheet={{ ...activeSheet, line_items: lineItems }}
+                    onClose={() => setIsPrintSheetOpen(false)}
+                />
+            )}
+
+            {isPrintOffsetOpen && (
+                <PrintableOffsettingReport
+                    sheet={{ ...activeSheet, line_items: lineItems }}
+                    pairings={offsetPairings}
+                    onClose={() => setIsPrintOffsetOpen(false)}
+                />
+            )}
         </div>
     );
 }

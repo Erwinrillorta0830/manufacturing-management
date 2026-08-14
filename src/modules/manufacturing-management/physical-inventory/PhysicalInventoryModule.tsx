@@ -7,12 +7,20 @@ import {
     TrendingUp,
     TrendingDown,
     AlertCircle,
-    Plus,
     ShieldCheck,
     Loader2
 } from "lucide-react";
 import { toast } from "sonner";
-import { PhysicalCountSheet, Branch, StorageLotDetails, RecipeVersionDetails, ProductDetails } from "./types";
+import {
+    PhysicalCountSheet,
+    Branch,
+    Supplier,
+    ProductType,
+    StorageLotDetails,
+    RecipeVersionDetails,
+    ProductDetails,
+    OffsetPairing
+} from "./types";
 import { formatCurrency } from "./utils";
 import CountSheetsList from "./components/CountSheetsList";
 import NewCountSheetModal from "./components/NewCountSheetModal";
@@ -25,21 +33,27 @@ import {
     updateCountSheetDraft,
     commitCountSheet,
     cancelCountSheet,
-    fetchBranches
+    fetchBranches,
+    fetchSuppliers,
+    fetchProductTypes
 } from "./services/physical-inventory-api";
 
 interface RawLineItem {
     id: string | number;
     date_encoded?: string;
     product_id?: string | number | ProductDetails | null;
+    product_code?: string;
+    product_name?: string;
+    barcode?: string;
     version_id?: string | number | RecipeVersionDetails | null;
     lot_id?: string | number | StorageLotDetails | null;
-    batch_no?: string | null;
     uom?: string;
     unit_price?: number | string;
     system_count?: number | string;
     physical_count?: number | string | null;
     offset_match?: number | string | null;
+    offset_qty?: number | string | null;
+    remarks?: string;
 }
 
 interface RawCountSheet {
@@ -52,6 +66,7 @@ interface RawCountSheet {
     cutoff_date?: string;
     price_type?: string;
     stock_type?: string;
+    inventory_type?: string;
     branch_id: string | number | Branch;
     remarks?: string;
     notes?: string;
@@ -69,6 +84,8 @@ interface RawCountSheet {
     encoded_by?: number | string;
     available_lots?: StorageLotDetails[];
     available_versions?: RecipeVersionDetails[];
+    available_products?: ProductDetails[];
+    offset_pairings?: OffsetPairing[];
     details?: RawLineItem[];
     line_items?: RawLineItem[];
 }
@@ -91,13 +108,16 @@ function parseBufferOrBool(val: unknown): boolean {
 export default function PhysicalInventoryModule() {
     const [countSheets, setCountSheets] = useState<PhysicalCountSheet[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
-    const [activeTab, setActiveTab] = useState<"sheets" | "editor" | "history">("sheets");
+    const [activeTab, setActiveTab] = useState<"sheets" | "editor">("sheets");
     const [activeSheetId, setActiveSheetId] = useState<string | null>(null);
     const [activeSheet, setActiveSheet] = useState<PhysicalCountSheet | null>(null);
     const [availableLots, setAvailableLots] = useState<StorageLotDetails[]>([]);
     const [availableVersions, setAvailableVersions] = useState<RecipeVersionDetails[]>([]);
+    const [availableProducts, setAvailableProducts] = useState<ProductDetails[]>([]);
     const [isSheetLoading, setIsSheetLoading] = useState<boolean>(false);
     const [branches, setBranches] = useState<Branch[]>([]);
+    const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+    const [productTypes, setProductTypes] = useState<ProductType[]>([]);
 
     // Modal states
     const [isNewModalOpen, setIsNewModalOpen] = useState(false);
@@ -105,16 +125,20 @@ export default function PhysicalInventoryModule() {
     const [sheetToCommit, setSheetToCommit] = useState<PhysicalCountSheet | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Fetch initial sheets & branches
+    // Fetch initial sheets, branches, suppliers & dynamic product types
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [sheetsData, branchesData] = await Promise.all([
+            const [sheetsData, branchesData, suppliersData, productTypesData] = await Promise.all([
                 fetchCountSheets(),
-                fetchBranches()
+                fetchBranches(),
+                fetchSuppliers(),
+                fetchProductTypes()
             ]);
 
             setBranches(branchesData || []);
+            setSuppliers(suppliersData || []);
+            setProductTypes(productTypesData || []);
 
             // Map API response to PhysicalCountSheet format
             const mappedSheets: PhysicalCountSheet[] = (sheetsData || []).map((s: RawCountSheet) => {
@@ -135,7 +159,8 @@ export default function PhysicalInventoryModule() {
                     starting_date: s.starting_date || s.date_encoded || new Date().toISOString(),
                     cutOff_date: s.cutOff_date || s.cutoff_date || new Date().toISOString(),
                     price_type: s.price_type || "Selling Price",
-                    stock_type: s.stock_type || "Finished Goods",
+                    stock_type: s.stock_type || "Good Stock",
+                    inventory_type: s.inventory_type || "Finished Goods",
                     branch_id: Number(branchIdVal || 1),
                     branch_name: branchName,
                     remarks: s.remarks || "",
@@ -148,7 +173,7 @@ export default function PhysicalInventoryModule() {
                     supplier_id: Number(s.supplier_id || 0),
                     category_id: Number(s.category_id || 0),
                     encoder_id: Number(s.encoder_id || s.encoded_by || 1),
-                    encoder_name: "System Auditor",
+                    encoder_name: "Warehouse Auditor",
                     line_items: []
                 };
             });
@@ -175,6 +200,7 @@ export default function PhysicalInventoryModule() {
 
             setAvailableLots(rawSheet.available_lots || []);
             setAvailableVersions(rawSheet.available_versions || []);
+            setAvailableProducts(rawSheet.available_products || []);
 
             const isCommitted = parseBufferOrBool(rawSheet.isComitted) || parseBufferOrBool(rawSheet.is_committed);
             const isCancelled = parseBufferOrBool(rawSheet.isCancelled) || parseBufferOrBool(rawSheet.is_cancelled);
@@ -192,25 +218,31 @@ export default function PhysicalInventoryModule() {
                 const unitPrice = Number(d.unit_price || 0);
                 const variance = physCount !== null ? physCount - sysCount : 0;
                 const diffCost = variance * unitPrice;
+                const offsetAlloc = d.offset_qty ? Number(d.offset_qty) : 0;
 
                 return {
                     id: String(d.id),
                     ph_id: String(rawSheet.id),
                     date_encoded: d.date_encoded || new Date().toISOString(),
                     product_id: d.product_id,
-                    product_code: typeof d.product_id === "object" ? (d.product_id?.product_code || d.product_id?.code) : `SKU-${d.product_id}`,
-                    product_name: typeof d.product_id === "object" ? (d.product_id?.product_name || d.product_id?.name) : `Product #${d.product_id}`,
+                    product_code: typeof d.product_id === "object" ? (d.product_id?.product_code || d.product_id?.code) : (d.product_code || `SKU-${d.product_id}`),
+                    product_name: typeof d.product_id === "object" ? (d.product_id?.product_name || d.product_id?.name) : (d.product_name || `Product #${d.product_id}`),
+                    barcode: typeof d.product_id === "object" ? (d.product_id?.barcode || d.barcode) : d.barcode,
                     version_id: d.version_id,
                     lot_id: d.lot_id,
-                    batch_no: d.batch_no || undefined,
                     uom: typeof d.product_id === "object" ? (d.product_id?.unit_of_measurement?.unit_shortcut || d.uom || "PCS") : (d.uom || "PCS"),
+                    uom_factor: 1,
                     unit_price: unitPrice,
                     system_count: sysCount,
                     physical_count: physCount,
                     variance: variance,
+                    variance_base: variance,
                     difference_cost: diffCost,
                     amount: (physCount !== null ? physCount : sysCount) * unitPrice,
-                    offset_match: d.offset_match ? Number(d.offset_match) : null
+                    offset_qty: offsetAlloc,
+                    net_adjusted_variance: variance - offsetAlloc,
+                    offset_match: d.offset_match ? Number(d.offset_match) : null,
+                    remarks: d.remarks || ""
                 };
             });
 
@@ -221,7 +253,8 @@ export default function PhysicalInventoryModule() {
                 starting_date: rawSheet.starting_date || rawSheet.date_encoded || new Date().toISOString(),
                 cutOff_date: rawSheet.cutOff_date || rawSheet.cutoff_date || new Date().toISOString(),
                 price_type: rawSheet.price_type || "Selling Price",
-                stock_type: rawSheet.stock_type || "Finished Goods",
+                stock_type: rawSheet.stock_type || "Good Stock",
+                inventory_type: rawSheet.inventory_type || "Finished Goods",
                 branch_id: Number(branchIdVal || 1),
                 branch_name: branchName,
                 remarks: rawSheet.remarks || "",
@@ -234,8 +267,9 @@ export default function PhysicalInventoryModule() {
                 supplier_id: Number(rawSheet.supplier_id || 0),
                 category_id: Number(rawSheet.category_id || 0),
                 encoder_id: Number(rawSheet.encoder_id || rawSheet.encoded_by || 1),
-                encoder_name: "System Auditor",
-                line_items: lineItems
+                encoder_name: "Warehouse Auditor",
+                line_items: lineItems,
+                offset_pairings: rawSheet.offset_pairings || []
             };
 
             setActiveSheet(fullSheet);
@@ -275,11 +309,21 @@ export default function PhysicalInventoryModule() {
     }, [countSheets]);
 
     // Handlers
-    const handleCreateSheetSubmit = async (payload: { branch_id: number; cutoff_date: string; remarks?: string }) => {
+    const handleCreateSheetSubmit = async (payload: {
+        branch_id: number;
+        starting_date: string;
+        cutoff_date: string;
+        inventory_type: string;
+        product_type_id?: number;
+        stock_type: string;
+        supplier_id?: number;
+        price_type?: string;
+        remarks?: string;
+    }) => {
         setIsSubmitting(true);
         try {
             const created = await createCountSheet(payload);
-            toast.success(`Physical inventory sheet #${created.ph_no || created.id} created with real stock snapshot!`);
+            toast.success(`Physical inventory sheet #${created.ph_no || created.id} initialized successfully!`);
             setIsNewModalOpen(false);
             await loadData();
             if (created.id) {
@@ -302,14 +346,14 @@ export default function PhysicalInventoryModule() {
                 physical_count: item.physical_count,
                 lot_id: typeof item.lot_id === "object" ? (item.lot_id?.lot_id || item.lot_id?.id) : item.lot_id,
                 version_id: typeof item.version_id === "object" ? (item.version_id?.version_id || item.version_id?.id) : item.version_id,
-                batch_no: item.batch_no,
                 product_id: typeof item.product_id === "object" ? (item.product_id?.product_id || item.product_id?.id) : item.product_id,
                 unit_price: item.unit_price,
                 system_count: item.system_count,
+                offset_qty: item.offset_qty,
             }));
 
-            await updateCountSheetDraft(updatedSheet.id, itemsPayload, updatedSheet.remarks);
-            toast.success("Draft counts, storage locations, and recipe versions saved successfully.");
+            await updateCountSheetDraft(updatedSheet.id, itemsPayload, updatedSheet.remarks, updatedSheet.offset_pairings);
+            toast.success("Draft counts, storage locations, and offsetting pairings saved successfully.");
             await loadSheetDetails(updatedSheet.id);
         } catch (err) {
             const error = err as Error;
@@ -419,19 +463,6 @@ export default function PhysicalInventoryModule() {
                 </div>
             </div>
 
-            {/* Sub-Header Bar & Actions */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-end gap-4 bg-card border border-border p-3.5 rounded-2xl">
-
-                {/* Primary Action Button */}
-                <button
-                    onClick={() => setIsNewModalOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs rounded-xl shadow-sm transition-all hover:scale-[1.01]"
-                >
-                    <Plus className="h-4 w-4" />
-                    New Count Sheet
-                </button>
-            </div>
-
             {/* Main Content Render */}
             {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-20 bg-card border border-border rounded-2xl">
@@ -444,6 +475,8 @@ export default function PhysicalInventoryModule() {
                         <CountSheetsList
                             countSheets={countSheets}
                             branches={branches}
+                            suppliers={suppliers}
+                            productTypes={productTypes}
                             onSelectSheet={handleSelectSheetToEdit}
                             onCommitSheet={handleOpenCommitModalFromList}
                             onCancelSheet={handleCancelSheet}
@@ -462,9 +495,14 @@ export default function PhysicalInventoryModule() {
                                 countSheet={activeSheet}
                                 availableLots={availableLots}
                                 availableVersions={availableVersions}
+                                availableProducts={availableProducts}
                                 onSaveDraft={handleSaveSheet}
                                 onProceedToCommit={handleProceedToCommit}
-                                onBackToList={() => setActiveTab("sheets")}
+                                onCancelSheet={handleCancelSheet}
+                                onBackToList={() => {
+                                    setActiveTab("sheets");
+                                    loadData();
+                                }}
                             />
                         ) : (
                             <div className="flex flex-col items-center justify-center py-16 bg-card border border-border rounded-2xl text-center p-6">
@@ -482,17 +520,6 @@ export default function PhysicalInventoryModule() {
                             </div>
                         )
                     )}
-
-                    {activeTab === "history" && (
-                        <CountSheetsList
-                            countSheets={countSheets.filter(s => s.isComitted)}
-                            branches={branches}
-                            onSelectSheet={handleSelectSheetToEdit}
-                            onCommitSheet={handleOpenCommitModalFromList}
-                            onCancelSheet={handleCancelSheet}
-                            onCreateNew={() => setIsNewModalOpen(true)}
-                        />
-                    )}
                 </>
             )}
 
@@ -502,6 +529,8 @@ export default function PhysicalInventoryModule() {
                 onClose={() => setIsNewModalOpen(false)}
                 onSubmit={handleCreateSheetSubmit}
                 branches={branches}
+                suppliers={suppliers}
+                productTypes={productTypes}
                 isSubmitting={isSubmitting}
             />
 

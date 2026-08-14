@@ -19,8 +19,9 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const branchId = searchParams.get("branch_id") || searchParams.get("branch");
         const status = searchParams.get("status");
-        const isCommittedParam = searchParams.get("is_committed") || searchParams.get("isComitted");
-        const isCancelledParam = searchParams.get("is_cancelled") || searchParams.get("isCancelled");
+        const inventoryType = searchParams.get("inventory_type");
+        const stockType = searchParams.get("stock_type");
+        const supplierId = searchParams.get("supplier_id");
         const limitParam = searchParams.get("limit") || "100";
         const sortParam = searchParams.get("sort") || "-date_encoded";
         const searchParam = searchParams.get("search");
@@ -31,22 +32,22 @@ export async function GET(request: Request) {
             filterParts.push(`filter[branch_id][_eq]=${encodeURIComponent(branchId)}`);
         }
 
+        if (supplierId) {
+            filterParts.push(`filter[supplier_id][_eq]=${encodeURIComponent(supplierId)}`);
+        }
+
         if (status) {
             const s = status.trim().toLowerCase();
             if (s === "draft") {
+                filterParts.push("filter[isComitted][_eq]=0");
+                filterParts.push("filter[isCancelled][_eq]=0");
+            } else if (s === "in progress" || s === "in_progress") {
                 filterParts.push("filter[isComitted][_eq]=0");
                 filterParts.push("filter[isCancelled][_eq]=0");
             } else if (s === "committed") {
                 filterParts.push("filter[isComitted][_eq]=1");
             } else if (s === "cancelled") {
                 filterParts.push("filter[isCancelled][_eq]=1");
-            }
-        } else {
-            if (isCommittedParam !== null && isCommittedParam !== undefined) {
-                filterParts.push(`filter[isComitted][_eq]=${encodeURIComponent(isCommittedParam)}`);
-            }
-            if (isCancelledParam !== null && isCancelledParam !== undefined) {
-                filterParts.push(`filter[isCancelled][_eq]=${encodeURIComponent(isCancelledParam)}`);
             }
         }
 
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
 
         const limit = Math.min(Math.max(Number(limitParam) || 100, 1), 500);
         const filterQuery = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
-        const url = `${DIRECTUS_URL}/items/physical_inventory?sort=${encodeURIComponent(sortParam)}&limit=${limit}&fields=*,branch_id.*${filterQuery}`;
+        const url = `${DIRECTUS_URL}/items/physical_inventory?sort=${encodeURIComponent(sortParam)}&limit=${limit}&fields=*,branch_id.*,supplier_id.*${filterQuery}`;
 
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) {
@@ -65,7 +66,40 @@ export async function GET(request: Request) {
         }
 
         const json = await res.json();
-        const data = json.data || [];
+        let data = json.data || [];
+
+        // Map resolved inventory_type from fields or remarks
+        data = data.map((d: Record<string, unknown>) => {
+            let resolvedInvType = (d.inventory_type as string) || "";
+            if (!resolvedInvType && d.remarks && typeof d.remarks === "string") {
+                const match = d.remarks.match(/\[Type:\s*([^\]]+)\]/i);
+                if (match) resolvedInvType = match[1].trim();
+            }
+            if (!resolvedInvType) {
+                resolvedInvType = (d.stock_type as string) || "Finished Goods";
+            }
+            return {
+                ...d,
+                inventory_type: resolvedInvType
+            };
+        });
+
+        // In-memory filter fallback for stock_type / inventory_type if stored in remarks/fields
+        if (inventoryType) {
+            const itLower = inventoryType.toLowerCase();
+            data = data.filter((d: Record<string, unknown>) => {
+                const val = String(d.inventory_type || d.stock_type || "").toLowerCase();
+                return val.includes(itLower);
+            });
+        }
+
+        if (stockType) {
+            const stLower = stockType.toLowerCase();
+            data = data.filter((d: Record<string, unknown>) => {
+                const val = String(d.stock_type || "").toLowerCase();
+                return val.includes(stLower);
+            });
+        }
 
         return NextResponse.json({
             success: true,
@@ -75,7 +109,7 @@ export async function GET(request: Request) {
     } catch (e) {
         console.error("[Physical Inventory GET] Error:", e);
         return NextResponse.json(
-            { success: false, error: (e as Error).message || "Failed to fetch physical inventory count sheets" },
+            { success: false, error: (e as Error).message || "Failed to fetch physical count sheets" },
             { status: 500 }
         );
     }
@@ -95,6 +129,8 @@ export async function POST(request: Request) {
             starting_date,
             price_type,
             stock_type,
+            inventory_type,
+            product_type_id,
             remarks,
             encoded_by,
             encoder_id,
@@ -112,7 +148,22 @@ export async function POST(request: Request) {
         }
 
         const rawCutoff = cutoff_date || cutOff_date;
-        const cutoffDateIso = rawCutoff ? new Date(rawCutoff).toISOString() : new Date().toISOString();
+        const now = new Date();
+        const cutoffDateObj = rawCutoff ? new Date(rawCutoff) : now;
+
+        // Strict Real-Time Rule (No Future Dates/Times): Cut-Off <= NOW()
+        // Allow up to 1-minute clock drift buffer
+        if (cutoffDateObj.getTime() > now.getTime() + 60000) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: "Strict Real-Time Constraint: Cut-Off Date and Time cannot exceed current time (Cut-Off <= NOW()). Future timestamps are not allowed."
+                },
+                { status: 400 }
+            );
+        }
+
+        const cutoffDateIso = cutoffDateObj.toISOString();
         const startingDateIso = starting_date ? new Date(starting_date).toISOString() : new Date().toISOString();
         const sheetNo = (typeof ph_no === "string" && ph_no.trim()) ? ph_no.trim() : generatePhNo();
 
@@ -142,7 +193,15 @@ export async function POST(request: Request) {
         }
 
         // 2. Calculate system count snapshot up to cutoff_date
-        const snapshotLines = await snapshotSystemInventory(branchIdNum, cutoffDateIso);
+        const snapshotLines = await snapshotSystemInventory({
+            branchId: branchIdNum,
+            cutoffDateStr: cutoffDateIso,
+            startingDateStr: startingDateIso,
+            inventoryType: inventory_type,
+            productTypeId: product_type_id,
+            categoryId: validCategoryId,
+            supplierId: validSupplierId
+        });
 
         // 3. Compute total amount for sheet
         const totalAmount = snapshotLines.reduce(
@@ -150,16 +209,21 @@ export async function POST(request: Request) {
             0
         );
 
+        // Format remarks with structured type tag
+        const formattedRemarks = inventory_type
+            ? `[Type: ${inventory_type}] ${remarks ? String(remarks).trim() : ""}`.trim()
+            : (remarks ? String(remarks) : "");
+
         // 4. Create physical_inventory record in Directus with dynamic valid FKs
-        const sheetPayload = {
+        const sheetPayload: Record<string, unknown> = {
             ph_no: sheetNo,
             date_encoded: new Date().toISOString(),
             starting_date: startingDateIso,
             cutOff_date: cutoffDateIso,
             price_type: String(price_type || "Selling Price"),
-            stock_type: String(stock_type || "Finished Goods"),
+            stock_type: String(stock_type || "Good Stock"),
             branch_id: branchIdNum,
-            remarks: remarks ? String(remarks) : "",
+            remarks: formattedRemarks,
             isComitted: 0,
             committed_at: null,
             isCancelled: 0,
@@ -170,11 +234,25 @@ export async function POST(request: Request) {
             encoder_id: validUserId || 1,
         };
 
-        const sheetRes = await fetch(`${DIRECTUS_URL}/items/physical_inventory`, {
+        if (product_type_id) {
+            sheetPayload.product_type_id = Number(product_type_id);
+        }
+
+        let sheetRes = await fetch(`${DIRECTUS_URL}/items/physical_inventory`, {
             method: "POST",
             headers,
             body: JSON.stringify(sheetPayload),
         });
+
+        // If field product_type_id does not exist yet in Directus, gracefully retry without it
+        if (!sheetRes.ok && product_type_id) {
+            delete sheetPayload.product_type_id;
+            sheetRes = await fetch(`${DIRECTUS_URL}/items/physical_inventory`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(sheetPayload),
+            });
+        }
 
         if (!sheetRes.ok) {
             const errText = await sheetRes.text();
@@ -194,7 +272,7 @@ export async function POST(request: Request) {
                 product_id: line.product_id,
                 version_id: line.version_id || null,
                 lot_id: line.lot_id || null,
-                batch_no: line.batch_no || null,
+                batch_no: null,
                 unit_price: line.unit_price,
                 system_count: line.system_count,
                 physical_count: line.physical_count,
