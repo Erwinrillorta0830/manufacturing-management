@@ -1,10 +1,16 @@
+import { OffsetPairing } from "../types";
 
 export interface CreateSheetPayload {
     branch_id: number;
+    starting_date?: string;
     cutoff_date: string;
-    remarks?: string;
+    inventory_type?: string;
+    product_type_id?: number | string;
     stock_type?: string;
     price_type?: string;
+    supplier_id?: number;
+    category_id?: number;
+    remarks?: string;
 }
 
 export interface UpdateLineItemPayload {
@@ -16,12 +22,25 @@ export interface UpdateLineItemPayload {
     product_id?: number | string | null;
     unit_price?: number;
     system_count?: number;
+    offset_qty?: number;
 }
 
-export async function fetchCountSheets(params?: { branch_id?: number; status?: string; search?: string }) {
+export async function fetchCountSheets(params?: {
+    branch_id?: number;
+    status?: string;
+    inventory_type?: string;
+    product_type_id?: number | string;
+    stock_type?: string;
+    supplier_id?: number;
+    search?: string;
+}) {
     const searchParams = new URLSearchParams();
     if (params?.branch_id) searchParams.set("branch_id", String(params.branch_id));
     if (params?.status) searchParams.set("status", params.status);
+    if (params?.inventory_type) searchParams.set("inventory_type", params.inventory_type);
+    if (params?.product_type_id) searchParams.set("product_type_id", String(params.product_type_id));
+    if (params?.stock_type) searchParams.set("stock_type", params.stock_type);
+    if (params?.supplier_id) searchParams.set("supplier_id", String(params.supplier_id));
     if (params?.search) searchParams.set("search", params.search);
 
     const res = await fetch(`/api/manufacturing/physical-inventory?${searchParams.toString()}`, { cache: "no-store" });
@@ -55,11 +74,16 @@ export async function createCountSheet(payload: CreateSheetPayload) {
     return json.data;
 }
 
-export async function updateCountSheetDraft(id: string | number, items: UpdateLineItemPayload[], remarks?: string) {
+export async function updateCountSheetDraft(
+    id: string | number,
+    items: UpdateLineItemPayload[],
+    remarks?: string,
+    offsetPairings?: OffsetPairing[]
+) {
     const res = await fetch(`/api/manufacturing/physical-inventory/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, remarks }),
+        body: JSON.stringify({ items, remarks, offset_pairings: offsetPairings }),
     });
     if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -106,12 +130,23 @@ export async function fetchBranches() {
     }
 }
 
-export async function fetchProductTypes() {
+export async function fetchSuppliers() {
     try {
-        const res = await fetch(`/api/manufacturing/lots/inventory-types`, { cache: "no-store" });
+        const res = await fetch(`/api/manufacturing/suppliers`, { cache: "no-store" });
         if (!res.ok) return [];
         const json = await res.json();
-        return json || [];
+        return json.data || json || [];
+    } catch {
+        return [];
+    }
+}
+
+export async function fetchProductTypes() {
+    try {
+        const res = await fetch(`/api/manufacturing/physical-inventory/product-types`, { cache: "no-store" });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return Array.isArray(json) ? json : (json.data || []);
     } catch {
         return [];
     }

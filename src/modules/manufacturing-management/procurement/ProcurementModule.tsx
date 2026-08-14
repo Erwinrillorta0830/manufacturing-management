@@ -16,7 +16,7 @@ interface ProcurementModuleProps {
     hideNavTabs?: boolean;
 }
 
-export default function ProcurementModule({ initialTab = "suppliers", hideNavTabs = false }: ProcurementModuleProps) {
+export default function ProcurementModule({ initialTab = "suppliers" }: ProcurementModuleProps) {
 
     const {
         activeTab,
@@ -68,7 +68,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
             {/* Module Tabs Navigation */}
-            {!hideNavTabs && <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0 overflow-x-auto">
+            <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-4 pt-2 shrink-0 overflow-x-auto">
                 <button
                     type="button"
                     onClick={() => setActiveTab("suppliers")}
@@ -111,7 +111,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                 >
                     Purchase Postings
                 </button>
-            </div>}
+            </div>
 
             {/* Tab Content window */}
             <div className={`flex-1 min-h-0 relative flex flex-col ${activeTab === "raw-materials" || activeTab === "forex" ? "overflow-y-auto pr-1" : ""}`}>
