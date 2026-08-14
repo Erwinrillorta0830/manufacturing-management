@@ -18,6 +18,7 @@ import {
     isSupplierForeign,
     cleanNotes
 } from "../services/supplier.service";
+import { isForeignCountry } from "../supplier-country";
 
 interface SuppliersDirectoryProps {
     suppliers: Supplier[];
@@ -248,7 +249,7 @@ export default function SuppliersDirectory({
                                         <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                                         <span>
                                             Region Scope: {
-                                                (!activeSupplier.country || activeSupplier.country.toLowerCase() === "philippines" || activeSupplier.country.toLowerCase() === "ph")
+                                                !isForeignCountry(activeSupplier.country)
                                                     ? `Domestic (${activeSupplier.country || 'Philippines'})`
                                                     : `International (${activeSupplier.country})`
                                             }

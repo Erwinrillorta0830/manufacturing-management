@@ -10,6 +10,7 @@ import {
     fetchPHCities,
     fetchPHBarangays
 } from "./procurement-api";
+import { isForeignCountry } from "../supplier-country";
 
 export {
     fetchSuppliers,
@@ -32,7 +33,7 @@ export const isSupplierForeign = (s: Supplier | null | undefined): boolean => {
     if (Number(s.is_foreign) === 1 || (s.is_foreign as unknown) === true) return true;
     const curr = String(s.currency || s.default_currency || "").toUpperCase();
     if (curr === "USD") return true;
-    return Boolean(s.country) && s.country?.toLowerCase() !== "philippines" && s.country?.toLowerCase() !== "ph";
+    return isForeignCountry(s.country);
 };
 
 export const cleanNotes = (notes: string | null | undefined): string => {
