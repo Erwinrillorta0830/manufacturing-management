@@ -65,6 +65,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         currency: "PHP",
         default_currency: "PHP",
         notes_or_comments: "",
+        isActive: true,
         nonBuy: false as boolean | number,
         is_foreign: 0 as number,
         representatives: [] as SupplierRepresentative[]
@@ -359,7 +360,8 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 country,
                 is_foreign: isForeignVal,
                 currency: currVal,
-                default_currency: currVal
+                default_currency: currVal,
+                isActive: supplierForm.isActive ? 1 : 0
             };
 
             if (isEditingSupplier && editingSupplierId) {
@@ -390,6 +392,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 currency: "PHP",
                 default_currency: "PHP",
                 notes_or_comments: "",
+                isActive: true,
                 nonBuy: false as boolean | number,
                 is_foreign: 0 as number,
                 representatives: []
@@ -433,6 +436,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             currency: defaultCurrency,
             default_currency: defaultCurrency,
             notes_or_comments: cleanNotes,
+            isActive: Number(supplier.isActive) !== 0,
             nonBuy: supplier.nonBuy === 1 || supplier.nonBuy === true,
             is_foreign: isForeign ? 1 : 0,
             representatives: supplier.representatives || []

@@ -53,6 +53,7 @@ export interface SupplierFormState {
     currency: string;
     default_currency: string;
     notes_or_comments: string;
+    isActive: boolean;
     nonBuy: boolean | number;
     is_foreign: number | boolean;
     representatives: SupplierRepresentative[];
