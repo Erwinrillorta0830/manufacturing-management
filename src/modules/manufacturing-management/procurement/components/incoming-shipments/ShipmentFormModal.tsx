@@ -1,9 +1,14 @@
 import React from "react";
 import { Anchor, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles } from "lucide-react";
-import { ManifestLineFormItem, ShipmentFormState } from "./types";
+import {
+    ManifestLineFormItem,
+    ShipmentFormState,
+    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
+    purchaseOrderMaterialTypeFromProductType
+} from "./types";
 import { IncomingShipment, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
-import { MaterialTypeBadge, formatMoney, formatAmount } from "./ShipmentBadges";
+import { formatMoney, formatAmount } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 
 export interface UOMOption {
@@ -385,7 +390,7 @@ export function ShipmentFormModal({
                                         <thead className="bg-muted/60 border-b select-none text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
                                             <tr>
                                                 <th className="p-2 border-r text-center w-10">#</th>
-                                                <th className="p-2 border-r min-w-[90px]">Type</th>
+                                                <th className="p-2 border-r min-w-[110px]">Type <span className="text-red-500">*</span></th>
                                                 <th className="p-2 border-r min-w-[260px]">Raw Product Name <span className="text-red-500">*</span></th>
                                                 <th className="p-2 border-r min-w-[160px]">Packaging / UOM</th>
                                                 <th className="p-2 border-r text-right min-w-[110px]">Qty <span className="text-red-500">*</span></th>
@@ -413,6 +418,7 @@ export function ShipmentFormModal({
                                                 const grossForeign = qty * unitPrice;
                                                 const discount = (grossForeign * Number(line.discount_percent || 0)) / 100;
                                                 const subtotal = grossForeign - discount;
+                                                const materialType = line.material_type || purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
 
                                                 return (
                                                     <tr 
@@ -426,13 +432,34 @@ export function ShipmentFormModal({
                                                             {idx + 1}
                                                         </td>
 
-                                                        {/* Material Type Badge */}
+                                                        {/* Material Type Selector */}
                                                         <td className="p-2 border-r align-middle">
-                                                            {line.product_id ? (
-                                                                <MaterialTypeBadge typeId={selectedMaterial?.product_type} />
-                                                            ) : (
-                                                                <span className="text-[10px] font-semibold text-muted-foreground/60 italic">Select...</span>
-                                                            )}
+                                                            <select
+                                                                aria-label={`Type for purchase order line ${idx + 1}`}
+                                                                data-index={idx}
+                                                                value={materialType}
+                                                                onChange={event => {
+                                                                    const nextType = event.target.value as ManifestLineFormItem["material_type"];
+                                                                    handleLineFormChange(idx, {
+                                                                        material_type: nextType,
+                                                                        product_id: "",
+                                                                        parent_product_id: "",
+                                                                        product_name: "",
+                                                                        product_code: "",
+                                                                        selected_uom: "",
+                                                                        base_unit_cost_php: "",
+                                                                        uom_options: []
+                                                                    });
+                                                                }}
+                                                                className="w-full rounded-md border bg-background px-2 py-1 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary"
+                                                            >
+                                                                <option value="">Select Type...</option>
+                                                                {PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
+                                                                    <option key={option.value} value={option.value}>
+                                                                        {option.label}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
                                                         </td>
 
                                                         {/* Raw Product Name Selector */}
@@ -459,6 +486,8 @@ export function ShipmentFormModal({
                                                                 })}
                                                                 selectedProductId={line.product_id}
                                                                 productName={line.product_name}
+                                                                materialType={materialType}
+                                                                disabled={!materialType}
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
@@ -484,7 +513,10 @@ export function ShipmentFormModal({
                                                                         }
                                                                     }
 
-                                                                    handleLineFormChange(idx, finalSelected);
+                                                                    handleLineFormChange(idx, {
+                                                                        ...finalSelected,
+                                                                        material_type: materialType
+                                                                    });
                                                                     setTimeout(() => {
                                                                         const nextInput = document.getElementById(`qty-input-${idx}`);
                                                                         if (nextInput) {

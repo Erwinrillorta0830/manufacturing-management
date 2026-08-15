@@ -1,8 +1,27 @@
 import React from "react";
 import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct } from "../../types";
 
+export type PurchaseOrderMaterialType = "raw_material" | "packaging";
+
+export const PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS: Array<{
+    value: PurchaseOrderMaterialType;
+    label: string;
+    productTypeId: number;
+}> = [
+    { value: "raw_material", label: "Raw Material", productTypeId: 389 },
+    { value: "packaging", label: "Packaging Item", productTypeId: 390 }
+];
+
+export function purchaseOrderMaterialTypeFromProductType(
+    productType: number | string | null | undefined
+): PurchaseOrderMaterialType | "" {
+    const normalizedProductType = Number(productType);
+    return PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(option => option.productTypeId === normalizedProductType)?.value || "";
+}
+
 export interface ManifestLineFormItem {
     product_id: string;
+    material_type?: PurchaseOrderMaterialType | "";
     quantity_ordered: string;
     base_unit_cost_php: string;
     parent_product_id: string;

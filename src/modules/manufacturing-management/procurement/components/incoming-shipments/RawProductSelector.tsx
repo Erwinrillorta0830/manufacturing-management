@@ -2,6 +2,10 @@ import React, { useMemo } from "react";
 import { RawMaterial } from "../../types";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { formatAmount } from "./ShipmentBadges";
+import {
+    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
+    PurchaseOrderMaterialType
+} from "./types";
 
 export interface RawProductSelectorProps {
     id?: string;
@@ -10,6 +14,8 @@ export interface RawProductSelectorProps {
     selectedProductId: string;
     parentProductId?: string;
     productName?: string;
+    materialType?: PurchaseOrderMaterialType | "";
+    disabled?: boolean;
     onSelect: (selected: {
         parent_product_id: string;
         product_id: string;
@@ -29,10 +35,21 @@ export interface RawProductSelectorProps {
 export function RawProductSelector({
     rawMaterials,
     selectedProductId,
+    materialType = "",
+    disabled = false,
     onSelect
 }: RawProductSelectorProps) {
+    const filteredMaterials = useMemo(() => {
+        const productTypeId = PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(
+            option => option.value === materialType
+        )?.productTypeId;
+
+        if (!productTypeId) return [];
+        return rawMaterials.filter(material => Number(material.product_type) === productTypeId);
+    }, [materialType, rawMaterials]);
+
     const options = useMemo(() => {
-        return rawMaterials.map(rm => {
+        return filteredMaterials.map(rm => {
             const uom = rm.unit_of_measurement?.unit_shortcut || "PCS";
             const cost = Number(rm.cost_per_unit || rm.estimated_unit_cost || 0);
             const sku = rm.product_code ? ` [${rm.product_code}]` : "";
@@ -41,16 +58,16 @@ export function RawProductSelector({
                 label: `${rm.product_name}${sku} — (${uom} @ ₱${formatAmount(cost)})`
             };
         });
-    }, [rawMaterials]);
+    }, [filteredMaterials]);
 
     const handleValueChange = (val: string) => {
-        const selectedMaterial = rawMaterials.find(rm => String(rm.product_id) === String(val));
+        const selectedMaterial = filteredMaterials.find(rm => String(rm.product_id) === String(val));
         if (!selectedMaterial) return;
 
         const parentId = selectedMaterial.parent_id ? String(selectedMaterial.parent_id) : String(selectedMaterial.product_id);
-        const parentMaterial = rawMaterials.find(rm => String(rm.product_id) === parentId) || selectedMaterial;
+        const parentMaterial = filteredMaterials.find(rm => String(rm.product_id) === parentId) || selectedMaterial;
         
-        const siblings = rawMaterials.filter(rm => 
+        const siblings = filteredMaterials.filter(rm =>
             String(rm.product_id) === parentId || String(rm.parent_id) === parentId
         );
 
@@ -77,7 +94,8 @@ export function RawProductSelector({
             options={options}
             value={String(selectedProductId || "")}
             onValueChange={handleValueChange}
-            placeholder="Select raw product..."
+            placeholder={materialType ? "Select raw product..." : "Select type first..."}
+            disabled={disabled || !materialType}
             className="h-8 text-xs font-semibold w-full bg-background"
         />
     );
