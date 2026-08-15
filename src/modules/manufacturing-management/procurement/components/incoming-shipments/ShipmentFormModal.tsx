@@ -8,7 +8,7 @@ import {
 } from "./types";
 import { IncomingShipment, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
-import { formatMoney, formatAmount } from "./ShipmentBadges";
+import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 
 export interface UOMOption {
@@ -144,7 +144,7 @@ export function ShipmentFormModal({
                                 </span>
                             </h3>
                             <p className="text-[11px] text-muted-foreground">
-                                High-density spreadsheet entry. Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border font-bold text-foreground">Alt + A</kbd> to add row, or <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Tab</kbd> / <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Enter</kbd> to move between cells.
+                                High-density spreadsheet entry. Use <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Tab</kbd> / <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Enter</kbd> to move between cells.
                             </p>
                         </div>
                     </div>
@@ -368,11 +368,10 @@ export function ShipmentFormModal({
                                     <button
                                         type="button"
                                         onClick={handleAddLineForm}
-                                        title="Add new line item (Shortcut: Alt + A)"
+                                        title="Add new line item"
                                         className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-all border border-primary/20 cursor-pointer"
                                     >
                                         <Plus className="h-3.5 w-3.5" /> Add New Row
-                                        <kbd className="ml-1 px-1.5 py-0.5 text-[9px] font-mono font-bold bg-primary/20 text-primary rounded border border-primary/30">Alt + A</kbd>
                                     </button>
                                 )}
                             </div>
@@ -556,16 +555,11 @@ export function ShipmentFormModal({
                                                                     }}
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground"
                                                                 >
-                                                                    {line.uom_options.map((o: UOMOption) => {
-                                                                        const displayCost = canonicalDrafting && shipmentForm.currency_code === "USD"
-                                                                            ? Number(o.cost_per_unit || 0) / (Number(shipmentForm.exchange_rate) || 1)
-                                                                            : o.cost_per_unit || 0;
-                                                                        return (
-                                                                            <option key={o.product_id} value={o.product_id}>
-                                                                                {o.unit_shortcut} ({currencyCode} {formatAmount(displayCost)})
-                                                                            </option>
-                                                                        );
-                                                                    })}
+                                                                    {line.uom_options.map((o: UOMOption) => (
+                                                                        <option key={o.product_id} value={o.product_id}>
+                                                                            {o.unit_shortcut}
+                                                                        </option>
+                                                                    ))}
                                                                 </select>
                                                             ) : (
                                                                 <span className="text-[11px] font-bold text-muted-foreground px-2">
@@ -744,20 +738,7 @@ export function ShipmentFormModal({
 
                     {/* Dialog Action Buttons */}
                     <div className="sticky bottom-0 border-t pt-3 flex items-center justify-between gap-2 shrink-0 bg-card mt-auto">
-                        <div className="flex items-center gap-2">
-                            {shipmentForm.supplier_id && (
-                                <button
-                                    type="button"
-                                    onClick={handleAddLineForm}
-                                    title="Add new line item (Shortcut: Alt + A)"
-                                    className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold text-foreground hover:bg-muted transition-all cursor-pointer"
-                                >
-                                    <Plus className="h-3.5 w-3.5 text-primary" /> Add Line
-                                    <kbd className="ml-1 px-1.5 py-0.5 text-[9px] font-mono font-bold bg-muted text-muted-foreground rounded border">Alt + A</kbd>
-                                </button>
-                            )}
-                        </div>
-                        <div className="flex items-center gap-2">
+                        <div className="ml-auto flex items-center gap-2">
                             <button
                                 onClick={handleCloseModal}
                                 type="button"
