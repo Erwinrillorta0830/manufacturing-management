@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { ManifestLineFormItem, ShipmentFormState } from "../components/incoming-shipments/types";
+import {
+    ManifestLineFormItem,
+    ShipmentFormState,
+    purchaseOrderMaterialTypeFromProductType
+} from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
@@ -161,21 +165,27 @@ export function useIncomingShipmentsForm({
 
         const currencyCode = (activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP";
         const exchangeRate = DecimalValue.from(activeShipment.exchange_rate || 1);
-        setLinesForm(freshLines.map((l: ShipmentLineItem) => ({
-            product_id: String(typeof l.product_id === "object" ? l.product_id.product_id : l.product_id),
-            product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
-            product_code: typeof l.product_id === "object" ? l.product_id.product_code || "" : "",
-            quantity_ordered: String(l.quantity_ordered || 0),
-            base_unit_cost_php: String(l.unit_price_foreign ?? (currencyCode === "USD"
-                ? DecimalValue.from(l.base_unit_cost_php || 0).divideRounded(exchangeRate, 4).toFixed(4)
-                : l.base_unit_cost_php)),
-            parent_product_id: "",
-            selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
-            uom_options: [],
-            purchase_intent: (l as ShipmentLineItem & { purchase_intent?: "MRP_Demand" | "Buffer_Stock" }).purchase_intent || "Buffer_Stock",
-            job_order_id: String((l as ShipmentLineItem & { job_order_id?: number }).job_order_id || ""),
-            discount_percent: String((l as ShipmentLineItem & { discount_percent?: number }).discount_percent ?? "0")
-        })));
+        setLinesForm(freshLines.map((l: ShipmentLineItem) => {
+            const productId = String(typeof l.product_id === "object" ? l.product_id.product_id : l.product_id);
+            const selectedRawMaterial = rawMaterials.find(material => String(material.product_id) === productId);
+
+            return {
+                product_id: productId,
+                material_type: purchaseOrderMaterialTypeFromProductType(selectedRawMaterial?.product_type),
+                product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
+                product_code: typeof l.product_id === "object" ? l.product_id.product_code || "" : "",
+                quantity_ordered: String(l.quantity_ordered || 0),
+                base_unit_cost_php: String(l.unit_price_foreign ?? (currencyCode === "USD"
+                    ? DecimalValue.from(l.base_unit_cost_php || 0).divideRounded(exchangeRate, 4).toFixed(4)
+                    : l.base_unit_cost_php)),
+                parent_product_id: "",
+                selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
+                uom_options: [],
+                purchase_intent: (l as ShipmentLineItem & { purchase_intent?: "MRP_Demand" | "Buffer_Stock" }).purchase_intent || "Buffer_Stock",
+                job_order_id: String((l as ShipmentLineItem & { job_order_id?: number }).job_order_id || ""),
+                discount_percent: String((l as ShipmentLineItem & { discount_percent?: number }).discount_percent ?? "0")
+            };
+        }));
 
         setEditingShipmentId(activeShipment.shipment_id);
         setIsModalOpen(true);
@@ -206,8 +216,16 @@ export function useIncomingShipmentsForm({
         const quantity = Number(line.quantity_ordered);
         const unitPrice = line.base_unit_cost_php;
         const discount = Number(line.discount_percent || 0);
+        const selectedMaterial = rawMaterials.find(material =>
+            String(material.product_id) === String(line.product_id)
+        );
+        const selectedMaterialType = purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
 
+        if (!line.material_type) errors.push("Type is required");
         if (!line.product_id) errors.push("Raw Product Name is required");
+        if (line.material_type && selectedMaterial && selectedMaterialType !== line.material_type) {
+            errors.push("Raw Product Name must match the selected Type");
+        }
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
         if (!isNonNegativeDecimal(unitPrice)) {
             errors.push(`Unit Price must be a non-negative decimal with at most ${UNIT_PRICE_DECIMAL_SCALE} decimal places`);
@@ -216,7 +234,7 @@ export function useIncomingShipmentsForm({
             if (discount < 0 || discount > 100) errors.push("Discount % must be between 0 and 100");
         }
         return errors;
-    }, [canonicalDrafting]);
+    }, [canonicalDrafting, rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -243,7 +261,7 @@ export function useIncomingShipmentsForm({
 
     const handleAddLineForm = () => {
         setLinesForm([...linesForm, {
-            parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "",
+            parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
             purchase_intent: "Buffer_Stock", job_order_id: "", discount_percent: "0"
         }]);
     };

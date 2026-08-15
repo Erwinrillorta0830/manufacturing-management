@@ -98,7 +98,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         price_type: ""
     });
 
-    const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([{ parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+    const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
 
     const [expenseAllocationForm, setExpenseAllocationForm] = useState<{
         allocation_method: "Value" | "Weight" | "Volume";
@@ -145,7 +145,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 payment_type: null,
                 price_type: ""
             });
-            setShipmentLinesForm([{ parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
         }
     }, [isShipmentModalOpen]);
 
@@ -533,7 +533,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 payment_type: null,
                 price_type: ""
             });
-            setShipmentLinesForm([{ parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
             loadShipments();
         } catch (e: unknown) {
             console.error(e);
