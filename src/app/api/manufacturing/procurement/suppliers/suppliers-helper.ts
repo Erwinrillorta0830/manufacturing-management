@@ -116,6 +116,7 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
     try {
         const url = `${DIRECTUS_URL}/items/suppliers`;
         const { representatives, ...details } = supplierData;
+        const hasIsActive = Object.prototype.hasOwnProperty.call(details, "isActive");
         const country = canonicalizeSupplierCountry(details.country);
         details.country = country;
         const isForeignBool = toBoolean(details.is_foreign);
@@ -135,7 +136,7 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
             ...details,
             supplier_type: "TRADE",
             date_added: await getTodayDateString(),
-            isActive: 1
+            isActive: hasIsActive && !toBoolean(details.isActive) ? 0 : 1
         };
 
         const res = await fetch(url, {
@@ -187,20 +188,33 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
         const url = `${DIRECTUS_URL}/items/suppliers/${supplierId}`;
         const { representatives, ...details } = supplierData;
         const hasCountry = Object.prototype.hasOwnProperty.call(details, "country");
+        const hasForeign = Object.prototype.hasOwnProperty.call(details, "is_foreign");
+        const hasCurrency = Object.prototype.hasOwnProperty.call(details, "currency");
+        const hasDefaultCurrency = Object.prototype.hasOwnProperty.call(details, "default_currency");
         const country = hasCountry ? canonicalizeSupplierCountry(details.country) : undefined;
         if (hasCountry) details.country = country;
 
-        const isForeignBool = toBoolean(details.is_foreign);
-        const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
-        const isNonPH = hasCountry && isForeignCountry(country);
-        const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
-        const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
+        if (hasCountry || hasForeign || hasCurrency || hasDefaultCurrency) {
+            const isForeignBool = toBoolean(details.is_foreign);
+            const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
+            const isNonPH = hasCountry && isForeignCountry(country);
+            const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
+            const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
 
-        details.is_foreign = finalIsForeign;
-        details.currency = finalCurrency;
-        delete details.default_currency;
-        details.nonBuy = toBoolean(details.nonBuy) ? 1 : 0;
-        details.notes_or_comments = cleanNotesText(details.notes_or_comments);
+            details.is_foreign = finalIsForeign;
+            details.currency = finalCurrency;
+            delete details.default_currency;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(details, "isActive")) {
+            details.isActive = toBoolean(details.isActive) ? 1 : 0;
+        }
+        if (Object.prototype.hasOwnProperty.call(details, "nonBuy")) {
+            details.nonBuy = toBoolean(details.nonBuy) ? 1 : 0;
+        }
+        if (Object.prototype.hasOwnProperty.call(details, "notes_or_comments")) {
+            details.notes_or_comments = cleanNotesText(details.notes_or_comments);
+        }
 
         const res = await fetch(url, {
             method: "PATCH",

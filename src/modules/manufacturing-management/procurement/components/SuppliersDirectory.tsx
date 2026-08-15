@@ -55,6 +55,7 @@ export default function SuppliersDirectory({
     // Modals state
     const [isEvaluationOpen, setIsEvaluationOpen] = useState(false);
     const [isCatalogMatrixOpen, setIsCatalogMatrixOpen] = useState(false);
+    const [togglingSupplierId, setTogglingSupplierId] = useState<number | null>(null);
 
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
@@ -140,6 +141,17 @@ export default function SuppliersDirectory({
         }
     };
 
+    const handleToggleSupplierActive = async (supplier: Supplier) => {
+        if (!onToggleSupplierActive || togglingSupplierId !== null) return;
+
+        setTogglingSupplierId(supplier.id);
+        try {
+            await onToggleSupplierActive(supplier);
+        } finally {
+            setTogglingSupplierId(null);
+        }
+    };
+
     return (
         <div className="flex flex-col lg:flex-row gap-6 h-full min-h-0">
             {/* Left side: Directory List & Filter Toolbar */}
@@ -199,14 +211,17 @@ export default function SuppliersDirectory({
                                             Edit Details
                                         </button>
                                         <button
-                                            onClick={() => onToggleSupplierActive?.(activeSupplier)}
+                                            onClick={() => handleToggleSupplierActive(activeSupplier)}
+                                            disabled={!onToggleSupplierActive || togglingSupplierId === activeSupplier.id}
+                                            aria-busy={togglingSupplierId === activeSupplier.id}
+                                            aria-label={`${!isSupplierActive(activeSupplier) ? "Activate" : "Deactivate"} supplier ${activeSupplier.supplier_name}`}
                                             className={`text-[10px] font-bold border px-2 py-1 rounded transition-all cursor-pointer ${
                                                 !isSupplierActive(activeSupplier)
                                                     ? "text-emerald-600 border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 hover:underline"
                                                     : "text-red-600 border-red-500/20 bg-red-500/5 hover:bg-red-500/10 hover:underline"
-                                            }`}
+                                            } disabled:cursor-not-allowed disabled:opacity-50`}
                                         >
-                                            {!isSupplierActive(activeSupplier) ? "Activate" : "Deactivate"}
+                                            {togglingSupplierId === activeSupplier.id ? "Updating..." : !isSupplierActive(activeSupplier) ? "Activate" : "Deactivate"}
                                         </button>
                                         <button
                                             onClick={() => setIsEvaluationOpen(true)}
