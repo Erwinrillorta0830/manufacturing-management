@@ -55,7 +55,7 @@ export interface PurchaseOrderDraftPayload {
     };
     lines: Array<{
         productId: number;
-        parentProductId: number;
+        parentProductId?: number | null;
         purchaseIntent: "MRP_Demand" | "Buffer_Stock";
         jobOrderId: number | null;
         quantity: number;

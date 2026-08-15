@@ -12,7 +12,11 @@ import type {
 async function responseJson<T>(response: Response, fallback: string): Promise<T> {
     if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.error || fallback);
+        const details = body?.details;
+        const lineDetail = details && typeof details === "object" && typeof details.lineIndex === "number"
+            ? ` (Line ${details.lineIndex + 1}${details.productId ? `, product ${details.productId}` : ""})`
+            : "";
+        throw new Error(`${body?.error || fallback}${lineDetail}`);
     }
     return response.json();
 }

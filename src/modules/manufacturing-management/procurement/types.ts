@@ -319,7 +319,7 @@ export interface LineItem {
 
 export interface BFFCatalogProduct {
     product_id: number;
-    parent_id?: number | { product_id: number } | null;
+    parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
     product_code?: string;
     product_name: string;
     description?: string;

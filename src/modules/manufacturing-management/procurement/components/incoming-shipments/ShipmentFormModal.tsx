@@ -10,9 +10,11 @@ import { IncomingShipment, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
+import { normalizeProductRelationId } from "../../product-relation";
 
 export interface UOMOption {
     product_id: number;
+    parent_product_id?: number;
     unit_shortcut: string;
     cost_per_unit: number;
     unit_of_measurement_count?: number;
@@ -383,7 +385,7 @@ export function ShipmentFormModal({
                                     <p className="text-[11px] text-amber-600/90 font-medium max-w-md mx-auto">Please select a supplier vendor above to unlock the raw materials catalog and spreadsheet grid.</p>
                                 </div>
                             ) : (
-                                <div className="border rounded-xl shadow-sm bg-card overflow-x-auto">
+                                <div className="border rounded-xl shadow-sm bg-card min-w-0 h-[320px] min-h-[220px] max-h-[45dvh] overflow-auto overscroll-contain">
                                     <table className="w-full text-left text-xs border-collapse font-sans min-w-[1100px]">
                                         {/* Table Column Headers */}
                                         <thead className="bg-muted/60 border-b select-none text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
@@ -472,13 +474,13 @@ export function ShipmentFormModal({
                                                                         const selectedId = String(l.product_id);
                                                                         const selectedParentId = l.parent_product_id ? String(l.parent_product_id) : "";
                                                                         const currentId = String(rm.product_id);
-                                                                        const currentParentId = rm.parent_id ? String(rm.parent_id) : "";
+                                                                        const currentParentId = normalizeProductRelationId(rm.parent_id);
 
                                                                         return (
                                                                             selectedId === currentId ||
                                                                             (selectedParentId && selectedParentId === currentId) ||
-                                                                            (currentParentId && selectedId === currentParentId) ||
-                                                                            (selectedParentId && currentParentId && selectedParentId === currentParentId)
+                                                                            (currentParentId && selectedId === String(currentParentId)) ||
+                                                                            (selectedParentId && currentParentId && selectedParentId === String(currentParentId))
                                                                         );
                                                                     });
                                                                     return !isAlreadySelected;
@@ -548,6 +550,9 @@ export function ShipmentFormModal({
                                                                             }
                                                                             handleLineFormChange(idx, {
                                                                                 product_id: String(selectedId),
+                                                                                parent_product_id: opt.parent_product_id
+                                                                                    ? String(opt.parent_product_id)
+                                                                                    : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
                                                                                 base_unit_cost_php: String(costVal)
                                                                             });

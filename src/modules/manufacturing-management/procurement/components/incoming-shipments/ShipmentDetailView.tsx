@@ -10,6 +10,7 @@ export interface ShipmentDetailViewProps {
     activeShipment: IncomingShipment | null;
     canonicalDrafting: boolean;
     suppliers: Supplier[];
+    branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
     statusLoading: "en-route" | "arrived" | null;
     setStatusLoading: (s: "en-route" | "arrived" | null) => void;
@@ -25,6 +26,7 @@ export function ShipmentDetailView({
     activeShipment,
     canonicalDrafting,
     suppliers,
+    branches,
     isSupplierForeign,
     statusLoading,
     setStatusLoading,
@@ -89,13 +91,8 @@ export function ShipmentDetailView({
                                     <strong className="text-foreground font-bold">
                                         {(() => {
                                             const branchId = (activeShipment as IncomingShipment & { branch_id?: number | null }).branch_id;
-                                            switch (Number(branchId)) {
-                                                case 183: return "Main Branch";
-                                                case 163: return "Urdaneta Branch";
-                                                case 181: return "Bihon Branch";
-                                                case 182: return "Bihon Bad Branch";
-                                                default: return branchId ? `Branch #${branchId}` : "Unassigned Branch";
-                                            }
+                                            const branch = branches.find(item => item.id === Number(branchId));
+                                            return branch?.branchName || (branchId ? `Branch #${branchId}` : "Unassigned Branch");
                                         })()}
                                     </strong>
                                 </span>

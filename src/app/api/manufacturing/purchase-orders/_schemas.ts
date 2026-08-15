@@ -91,7 +91,7 @@ export const purchaseOrderExpectedTotalsSchema = z.object({
 
 export const purchaseOrderDraftLineSchema = z.object({
     productId: positiveId,
-    parentProductId: positiveId,
+    parentProductId: positiveId.nullable().optional(),
     purchaseIntent: z.enum(["MRP_Demand", "Buffer_Stock"]),
     jobOrderId: positiveId.nullable(),
     quantity: z.coerce.number().int().positive(),

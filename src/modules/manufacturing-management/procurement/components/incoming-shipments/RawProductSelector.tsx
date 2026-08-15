@@ -6,6 +6,7 @@ import {
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     PurchaseOrderMaterialType
 } from "./types";
+import { normalizeProductRelationId, resolveProductParentId } from "../../product-relation";
 
 export interface RawProductSelectorProps {
     id?: string;
@@ -25,6 +26,7 @@ export interface RawProductSelectorProps {
         base_unit_cost_php: string;
         uom_options: Array<{
             product_id: number;
+            parent_product_id: number;
             unit_shortcut: string;
             cost_per_unit: number;
             unit_of_measurement_count?: number;
@@ -64,11 +66,12 @@ export function RawProductSelector({
         const selectedMaterial = filteredMaterials.find(rm => String(rm.product_id) === String(val));
         if (!selectedMaterial) return;
 
-        const parentId = selectedMaterial.parent_id ? String(selectedMaterial.parent_id) : String(selectedMaterial.product_id);
+        const parentIdValue = resolveProductParentId(selectedMaterial);
+        const parentId = String(parentIdValue || selectedMaterial.product_id);
         const parentMaterial = filteredMaterials.find(rm => String(rm.product_id) === parentId) || selectedMaterial;
-        
+
         const siblings = filteredMaterials.filter(rm =>
-            String(rm.product_id) === parentId || String(rm.parent_id) === parentId
+            String(rm.product_id) === parentId || normalizeProductRelationId(rm.parent_id) === parentIdValue
         );
 
         const cost = Number(selectedMaterial.cost_per_unit || selectedMaterial.estimated_unit_cost || 0);
@@ -82,6 +85,7 @@ export function RawProductSelector({
             base_unit_cost_php: String(cost),
             uom_options: siblings.map(x => ({
                 product_id: x.product_id,
+                parent_product_id: resolveProductParentId(x) || x.product_id,
                 unit_shortcut: x.unit_of_measurement?.unit_shortcut || "PCS",
                 cost_per_unit: x.cost_per_unit || x.estimated_unit_cost || 0,
                 unit_of_measurement_count: x.unit_of_measurement_count || 1

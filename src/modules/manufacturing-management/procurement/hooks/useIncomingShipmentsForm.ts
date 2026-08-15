@@ -8,6 +8,7 @@ import {
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
+import { resolveProductParentId } from "../product-relation";
 
 export interface UseIncomingShipmentsFormProps {
     suppliers: Supplier[];
@@ -178,7 +179,7 @@ export function useIncomingShipmentsForm({
                 base_unit_cost_php: String(l.unit_price_foreign ?? (currencyCode === "USD"
                     ? DecimalValue.from(l.base_unit_cost_php || 0).divideRounded(exchangeRate, 4).toFixed(4)
                     : l.base_unit_cost_php)),
-                parent_product_id: "",
+                parent_product_id: String(resolveProductParentId(selectedRawMaterial) || ""),
                 selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
                 uom_options: [],
                 purchase_intent: (l as ShipmentLineItem & { purchase_intent?: "MRP_Demand" | "Buffer_Stock" }).purchase_intent || "Buffer_Stock",
@@ -325,7 +326,7 @@ export function useIncomingShipmentsForm({
                     let parentId: number | null = line.parent_product_id ? Number(line.parent_product_id) : null;
                     if (!parentId) {
                         const mat = rawMaterials.find(rm => String(rm.product_id) === line.product_id);
-                        if (mat?.parent_id) parentId = Number(mat.parent_id);
+                        if (mat) parentId = resolveProductParentId(mat);
                     }
 
                     const pps = map[prodId] || (parentId ? map[parentId] : undefined);
