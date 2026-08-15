@@ -17,6 +17,7 @@ import {
     reviseRejectedPurchaseOrder,
     cancelRejectedPurchaseOrder
 } from "../services/purchase-order-api";
+import { resolveProductParentId } from "../../procurement/product-relation";
 
 const blankLine = (): ManifestLineFormItem => ({
     parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "",
@@ -217,17 +218,32 @@ export function usePurchaseOrder() {
             toast.error("A valid exchange rate is required.");
             return;
         }
-        const lineItems: PurchaseOrderDraftPayload["lines"] = lines.map(line => ({
-            productId: Number(line.product_id),
-            parentProductId: Number(line.parent_product_id || line.product_id),
-            purchaseIntent: line.purchase_intent || "Buffer_Stock",
-            jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,
-            quantity: Number(line.quantity_ordered),
-            unitPrice: Number(line.base_unit_cost_php),
-            discountPercent: Number(line.discount_percent) || 0,
-            vatPercent: Number(line.vat_percent) || 0,
-            withholdingPercent: Number(line.withholding_percent) || 0
-        }));
+        const unresolvedLine = lines.find(line => {
+            const product = rawMaterials.find(material => Number(material.product_id) === Number(line.product_id));
+            return !product || !resolveProductParentId(product);
+        });
+        if (unresolvedLine) {
+            toast.error("The selected product relationship is unavailable. Refresh the catalog and try again.");
+            return;
+        }
+
+        const lineItems: PurchaseOrderDraftPayload["lines"] = lines.map(line => {
+            const productId = Number(line.product_id);
+            const product = rawMaterials.find(material => Number(material.product_id) === productId);
+            const canonicalParentId = resolveProductParentId(product!);
+
+            return {
+                productId,
+                parentProductId: canonicalParentId,
+                purchaseIntent: line.purchase_intent || "Buffer_Stock",
+                jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,
+                quantity: Number(line.quantity_ordered),
+                unitPrice: Number(line.base_unit_cost_php),
+                discountPercent: Number(line.discount_percent) || 0,
+                vatPercent: Number(line.vat_percent) || 0,
+                withholdingPercent: Number(line.withholding_percent) || 0
+            };
+        });
         if (lineItems.some(line => line.purchaseIntent === "MRP_Demand" && !line.jobOrderId)) {
             toast.error("Every MRP-demand line requires a valid job order.");
             return;

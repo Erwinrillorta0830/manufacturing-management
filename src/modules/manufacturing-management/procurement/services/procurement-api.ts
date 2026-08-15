@@ -1,4 +1,5 @@
 import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct } from "../types";
+import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
 
@@ -129,7 +130,7 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
     const rawItems = products.filter((p: BFFCatalogProduct) => Number(p.product_type) === 389 || Number(p.product_type) === 390);
 
     return rawItems.map((p: BFFCatalogProduct) => {
-        const parentIdValue = p.parent_id ? (typeof p.parent_id === "object" ? (p.parent_id as { product_id: number }).product_id : p.parent_id) : null;
+        const parentIdValue = normalizeProductRelationId(p.parent_id);
         const parentItem = parentIdValue ? products.find((x: BFFCatalogProduct) => Number(x.product_id) === Number(parentIdValue)) : null;
 
         let catId: number | null = null;
@@ -149,7 +150,7 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
 
         return {
             product_id: p.product_id,
-            parent_id: parentIdValue ? Number(parentIdValue) : null,
+            parent_id: parentIdValue,
             parent_name: parentItem ? parentItem.product_name : null,
             product_code: p.product_code || `SKU-${p.product_id}`,
             product_name: p.product_name,

@@ -12,6 +12,7 @@ import type { z } from "zod";
 import type { purchaseOrderCreateSchema } from "./_schemas";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import { normalizeProductRelationId } from "@/modules/manufacturing-management/procurement/product-relation";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
 
@@ -21,10 +22,17 @@ export class PurchaseOrderDraftError extends Error {
     }
 }
 
+type DirectusCategoryReference = number | string | { category_id?: number | string; id?: number | string } | null;
+type DirectusParentReference = number | string | {
+    product_id?: number | string;
+    id?: number | string;
+    product_category?: DirectusCategoryReference;
+} | null;
+
 interface DirectusProduct {
-    product_id: number;
-    parent_id?: number | { product_id?: number } | null;
-    product_category?: number | { category_id?: number } | null;
+    product_id: number | string;
+    parent_id?: DirectusParentReference;
+    product_category?: DirectusCategoryReference;
 }
 
 interface DirectusPurchaseOrder {
@@ -32,14 +40,16 @@ interface DirectusPurchaseOrder {
     purchase_order_no: string;
 }
 
-function relationId(value: DirectusProduct["parent_id"]): number | null {
-    if (typeof value === "number") return value;
-    return value && typeof value === "object" ? Number(value.product_id) || null : null;
+function relationId(value: unknown): number | null {
+    return normalizeProductRelationId(value);
 }
 
-function categoryId(value: DirectusProduct["product_category"]): number | null {
-    if (typeof value === "number") return value;
-    return value && typeof value === "object" ? Number(value.category_id) || null : null;
+function categoryId(value: unknown): number | null {
+    if (value && typeof value === "object" && "category_id" in value) {
+        const category = value as { category_id?: unknown };
+        return normalizeProductRelationId(category.category_id);
+    }
+    return normalizeProductRelationId(value);
 }
 
 function approvalRule(row: Record<string, unknown>): PurchaseOrderApprovalRule {
@@ -88,7 +98,7 @@ function assertExpectedTotals(order: PurchaseOrderDraft, totals: ReturnType<type
 }
 
 async function validateDraft(order: PurchaseOrderDraft) {
-    const productIds = [...new Set(order.lines.flatMap(line => [line.productId, line.parentProductId]))];
+    const productIds = [...new Set(order.lines.map(line => line.productId))];
     const jobOrderIds = [...new Set(order.lines.flatMap(line => line.jobOrderId ? [line.jobOrderId] : []))];
     const branchIdNum = Number(order.branchId);
 
@@ -98,10 +108,10 @@ async function validateDraft(order: PurchaseOrderDraft) {
             "Unable to validate the supplier."
         ),
         directusData<DirectusProduct[]>(
-            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,parent_id.product_id,product_category.category_id&limit=${productIds.length}`,
+            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,parent_id.product_id,parent_id.product_category.category_id,product_category.category_id&limit=${productIds.length}`,
             "Unable to validate purchase-order products."
         ),
-        directusData<Array<{ product_id: number | { product_id?: number } }>>(
+        directusData<Array<{ product_id: number | string | { product_id?: number | string; id?: number | string } }>>(
             `/items/product_per_supplier?filter[supplier_id][_eq]=${order.supplierId}&fields=product_id.product_id&limit=-1`,
             "Unable to validate supplier product mappings."
         ),
@@ -144,28 +154,33 @@ async function validateDraft(order: PurchaseOrderDraft) {
     if (!isBranchActive(branch)) {
         throw new PurchaseOrderDraftError("The selected branch is inactive.");
     }
-    if (products.length !== productIds.length) throw new PurchaseOrderDraftError("One or more selected products do not exist.");
+    const productsById = new Map(products.map(product => [Number(product.product_id), product]));
+    const missingProductIds = productIds.filter(productId => !productsById.has(productId));
+    if (missingProductIds.length > 0) {
+        throw new PurchaseOrderDraftError("One or more selected products do not exist.", 400, { missingProductIds });
+    }
     if (jobOrders.length !== jobOrderIds.length) throw new PurchaseOrderDraftError("One or more selected job orders do not exist.");
     await assertMrpProductJobOrderPairs(order.lines);
 
-    const mappedIds = new Set(mappings.map(mapping =>
-        typeof mapping.product_id === "object" ? Number(mapping.product_id?.product_id) : Number(mapping.product_id)
-    ));
-    const productsById = new Map(products.map(product => [Number(product.product_id), product]));
-    for (const line of order.lines) {
+    const mappedIds = new Set(mappings
+        .map(mapping => normalizeProductRelationId(mapping.product_id))
+        .filter((id): id is number => id !== null));
+    for (const [lineIndex, line] of order.lines.entries()) {
         const product = productsById.get(line.productId);
-        const actualParentId = relationId(product?.parent_id) || line.productId;
-        if (actualParentId !== line.parentProductId) {
-            throw new PurchaseOrderDraftError(`Product ${line.productId} is not a variant of parent product ${line.parentProductId}.`);
-        }
-        if (!mappedIds.has(line.productId) && !mappedIds.has(line.parentProductId)) {
-            throw new PurchaseOrderDraftError(`Product ${line.productId} is not mapped to the selected supplier.`);
+        const actualParentId = relationId(product?.parent_id) ?? line.productId;
+        if (!mappedIds.has(line.productId) && !mappedIds.has(actualParentId)) {
+            throw new PurchaseOrderDraftError(`Product ${line.productId} is not mapped to the selected supplier.`, 400, {
+                lineIndex,
+                productId: line.productId,
+                canonicalParentProductId: actualParentId,
+                supplierId: order.supplierId
+            });
         }
     }
 
     return [...new Set(order.lines.flatMap(line => {
         const child = productsById.get(line.productId);
-        const parent = productsById.get(line.parentProductId);
+        const parent = child?.parent_id && typeof child.parent_id === "object" ? child.parent_id : null;
         const value = categoryId(child?.product_category) || categoryId(parent?.product_category);
         return value ? [value] : [];
     }))];

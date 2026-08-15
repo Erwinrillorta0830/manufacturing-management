@@ -224,6 +224,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 activeShipment={activeShipment}
                 canonicalDrafting={canonicalDrafting}
                 suppliers={suppliers}
+                branches={dynamicBranches}
                 isSupplierForeign={isSupplierForeign}
                 statusLoading={statusLoading}
                 setStatusLoading={setStatusLoading}
