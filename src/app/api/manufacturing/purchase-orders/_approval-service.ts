@@ -165,7 +165,7 @@ async function resolveRule(order: ApprovalOrder, categoryIds: number[]) {
         const stored = rules.find(rule => rule.ruleId === Number(order.approval_rule_id));
         if (stored) return {
             ...stored,
-            requiresFinance: asBoolean(order.approval_requires_finance),
+            requiresFinance: true,
             allowSelfApproval: asBoolean(order.approval_allow_self_approval),
             snapshot: true
         };
@@ -179,7 +179,7 @@ async function resolveRule(order: ApprovalOrder, categoryIds: number[]) {
         businessDate: await getTodayDateString()
     });
     if (!selected) throw new PurchaseOrderApprovalError("No active approval rule matches this purchase order.", 409);
-    return { ...rules.find(rule => rule.ruleId === selected.ruleId)!, snapshot: false };
+    return { ...rules.find(rule => rule.ruleId === selected.ruleId)!, requiresFinance: true, snapshot: false };
 }
 
 function approvalState(order: ApprovalOrder, requiresFinance: boolean) {
@@ -245,7 +245,7 @@ export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?
         matchedRule: {
             ruleId: rule.ruleId,
             ruleName: rule.ruleName,
-            requiresFinance: rule.requiresFinance,
+            requiresFinance: true,
             allowSelfApproval: true,
             snapshot: rule.snapshot
         },
@@ -313,58 +313,44 @@ async function submitPurchaseOrderApprovalUnlocked(
         );
     }
     const stage = requestedStage;
-    if (command.action === "approve" && stage === "Plant" && !command.lead_time_receiving) {
-        throw new PurchaseOrderApprovalError("ETA is required for Plant approval.", 400);
-    }
-    if (stage === "Plant" && command.action !== "approve" && command.action !== "reject") {
-        throw new PurchaseOrderApprovalError("Plant approval accepts only approve or reject.", 400);
-    }
-    if (stage === "Finance" && command.action !== "awaiting_payment" && command.action !== "cancel") {
-        throw new PurchaseOrderApprovalError("Finance approval accepts only Awaiting Payment or Cancel.", 400);
+    if (command.action !== "approve" && command.action !== "reject") {
+        throw new PurchaseOrderApprovalError("Finance approval accepts only approve or reject.", 400);
     }
 
     const now = new Date().toISOString();
     const nextRevision = revision + 1;
-    const targetStatus = command.action === "reject"
-        ? INVENTORY_STATUS.REJECTED
-        : command.action === "cancel"
-            ? INVENTORY_STATUS.REJECTED
-            : stage === "Plant"
-                ? INVENTORY_STATUS.APPROVED
-                : order.inventory_status;
-    const targetPaymentStatus = command.action === "awaiting_payment"
-        || (stage === "Plant" && !rule.requiresFinance)
-        ? PAYMENT_STATUS.AWAITING_PAYMENT
-        : order.payment_status ?? null;
+    const targetStatus = command.action === "reject" ? INVENTORY_STATUS.REJECTED : INVENTORY_STATUS.FOR_PICKUP;
     const update: Record<string, unknown> = {
         workflow_revision: nextRevision,
         inventory_status: targetStatus,
         approval_rule_id: rule.ruleId,
-        approval_requires_finance: rule.requiresFinance ? 1 : 0,
+        approval_requires_finance: 1,
         approval_allow_self_approval: 1
     };
     if (command.action === "reject") {
         update.remark = `REJECTED: ${command.remarks}`;
-    } else if (command.action === "cancel") {
-        update.remark = `CANCELLED BY FINANCE: ${command.remarks}`;
-        update.payment_status = PAYMENT_STATUS.CANCELLED;
-    } else if (stage === "Plant") {
-        update.approver_id = actor.userId;
-        update.date_approved = now;
-        update.lead_time_receiving = command.lead_time_receiving;
-        if (!rule.requiresFinance) update.payment_status = PAYMENT_STATUS.AWAITING_PAYMENT;
     } else {
+        update.approver_id = null;
+        update.date_approved = null;
+        update.lead_time_receiving = null;
         update.finance_id = actor.userId;
         update.date_financed = now;
-        update.payment_status = PAYMENT_STATUS.AWAITING_PAYMENT;
+        update.payment_status = PAYMENT_STATUS.PENDING;
     }
 
-    const stageFilter = stage === "Plant"
-        ? { approver_id: { _null: true } }
-        : { finance_id: { _null: true } };
-    const allowedStatuses = stage === "Plant"
-        ? [INVENTORY_STATUS.REQUESTED]
-        : [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED];
+    const stageFilter = {
+        finance_id: { _null: true },
+        _or: [
+            { inventory_status: { _eq: INVENTORY_STATUS.REQUESTED } },
+            {
+                _and: [
+                    { inventory_status: { _eq: INVENTORY_STATUS.APPROVED } },
+                    { approver_id: { _null: true } }
+                ]
+            }
+        ]
+    };
+    const allowedStatuses = [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED];
     const updated = await conditionalPatch({
         purchase_order_id: { _eq: id },
         inventory_status: { _in: allowedStatuses },
@@ -377,13 +363,7 @@ async function submitPurchaseOrderApprovalUnlocked(
 
     const action = command.action === "reject"
         ? "Rejected"
-        : command.action === "cancel"
-            ? "FinanceCancelled"
-            : command.action === "awaiting_payment"
-                ? "FinanceAwaitingPayment"
-                : stage === "Plant"
-                    ? "PlantApproved"
-                    : "FinanceApproved";
+        : "FinanceApproved";
     const historyResponse = await procurementDirectusFetch("/items/purchase_order_approval_history", {
         method: "POST",
         body: JSON.stringify({
@@ -421,15 +401,7 @@ async function submitPurchaseOrderApprovalUnlocked(
         success: true,
         action,
         stage,
-        status: targetStatus === INVENTORY_STATUS.APPROVED && targetPaymentStatus === PAYMENT_STATUS.AWAITING_PAYMENT
-            ? "Awaiting Payment"
-            : targetStatus === INVENTORY_STATUS.APPROVED
-                ? "Approved"
-                : targetStatus === INVENTORY_STATUS.REJECTED
-                    ? "Rejected"
-                    : targetStatus === INVENTORY_STATUS.REJECTED
-                        ? "Rejected"
-                        : "For Approval",
+        status: targetStatus === INVENTORY_STATUS.FOR_PICKUP ? "Receiving (QA)" : "Rejected",
         workflowRevision: nextRevision
     };
 }

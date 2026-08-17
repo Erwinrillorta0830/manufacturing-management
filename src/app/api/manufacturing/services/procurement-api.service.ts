@@ -34,7 +34,7 @@ export interface DirectusShipment {
     total_foreign_currency: number;
     exchange_rate: number;
     total_php_value: number;
-    status: "Ordered" | "Approved" | "En Route" | "Receiving (QA)" | "Received";
+    status: "Ordered" | "Approved" | "Receiving (QA)" | "Received";
     created_at?: string;
 }
 
@@ -126,7 +126,7 @@ export async function fetchShipmentExpenses(shipmentId: number): Promise<unknown
  */
 export async function processShipmentLandedCosts(
     shipmentId: number,
-    status: "Ordered" | "Approved" | "En Route" | "Receiving (QA)" | "Received",
+    status: "Ordered" | "Approved" | "Receiving (QA)" | "Received",
     expenses: Array<Partial<DirectusShipmentExpense>>,
     allocationMethod: "Value" | "Weight" | "Volume",
     _lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
@@ -354,7 +354,7 @@ export async function createIncomingShipment(
  */
 export async function updateIncomingShipmentStatus(
     shipmentId: number, 
-    status: "Ordered" | "Approved" | "En Route" | "Receiving (QA)" | "Received"
+    status: "Ordered" | "Approved" | "Receiving (QA)" | "Received"
 ) {
     try {
         if (status === "Receiving (QA)" || status === "Received") {

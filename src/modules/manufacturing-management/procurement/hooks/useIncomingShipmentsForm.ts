@@ -44,7 +44,6 @@ export function useIncomingShipmentsForm({
     canonicalDrafting = false
 }: UseIncomingShipmentsFormProps) {
     const [editingShipmentId, setEditingShipmentId] = useState<number | null>(null);
-    const [statusLoading, setStatusLoading] = useState<"en-route" | "arrived" | null>(null);
     const [isOverridden, setIsOverridden] = useState(false);
     const [hasSubmitted, setHasSubmitted] = useState(false);
     const [fxRateStatus, setFxRateStatus] = useState<FxRateStatus>("idle");
@@ -544,8 +543,6 @@ export function useIncomingShipmentsForm({
     return {
         editingShipmentId,
         activeShipment,
-        statusLoading,
-        setStatusLoading,
         isOverridden,
         setIsOverridden,
         hasSubmitted,

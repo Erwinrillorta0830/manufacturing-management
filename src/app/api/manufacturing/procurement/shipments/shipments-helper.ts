@@ -373,30 +373,28 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     if (!query.approvalStage) return;
 
     if (!query.status || isPurchaseOrderApprovalStatus(query.status)) {
-        if (query.approvalStage === "Plant") {
-            clauses.push({
-                _and: [
-                    { inventory_status: { _eq: INVENTORY_STATUS.REQUESTED } },
-                    { approver_id: { _null: true } }
-                ]
-            });
-        } else {
-            clauses.push({
-                _and: [
-                    { inventory_status: { _in: [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED] } },
-                    { finance_id: { _null: true } },
-                    { approval_requires_finance: { _eq: 1 } }
-                ]
-            });
-        }
+        clauses.push({
+            _and: [
+                { finance_id: { _null: true } },
+                {
+                    _or: [
+                        { inventory_status: { _eq: INVENTORY_STATUS.REQUESTED } },
+                        {
+                            _and: [
+                                { inventory_status: { _eq: INVENTORY_STATUS.APPROVED } },
+                                { approver_id: { _null: true } }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
         return;
     }
 
     if (query.status === "Approved") {
-        clauses.push({ inventory_status: { _eq: INVENTORY_STATUS.APPROVED } });
-        clauses.push({
-            [query.approvalStage === "Plant" ? "approver_id" : "finance_id"]: { _nnull: true }
-        });
+        clauses.push({ inventory_status: { _in: [INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.FOR_PICKUP] } });
+        clauses.push({ finance_id: { _nnull: true } });
         return;
     }
 
@@ -405,7 +403,7 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
             _and: [
                 { inventory_status: { _in: [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED] } },
                 { payment_status: { _eq: PAYMENT_STATUS.AWAITING_PAYMENT } },
-                { [query.approvalStage === "Plant" ? "approver_id" : "finance_id"]: { _nnull: true } }
+                { finance_id: { _nnull: true } }
             ]
         });
         return;

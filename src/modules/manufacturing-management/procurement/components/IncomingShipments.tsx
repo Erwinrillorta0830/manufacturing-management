@@ -44,8 +44,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     const {
         editingShipmentId,
         activeShipment,
-        statusLoading,
-        setStatusLoading,
         isOverridden,
         setIsOverridden,
         hasSubmitted,
@@ -228,8 +226,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 suppliers={suppliers}
                 branches={dynamicBranches}
                 isSupplierForeign={isSupplierForeign}
-                statusLoading={statusLoading}
-                setStatusLoading={setStatusLoading}
                 onUpdateShipmentStatus={onUpdateShipmentStatus}
                 handleStartEdit={handleStartEdit}
                 onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}

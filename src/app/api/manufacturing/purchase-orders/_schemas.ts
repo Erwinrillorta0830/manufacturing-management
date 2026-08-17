@@ -3,7 +3,6 @@ import { compareDecimals, DecimalValue, isWithinDecimalCapacity } from "@/module
 
 const MODULE_PATHS = {
     procurement: "/mm/incoming-shipments",
-    plantApproval: "/mm/plant-approval",
     financeApproval: "/mm/finance-approval",
     receiving: "/mm/qa-receiving"
 } as const;
@@ -25,22 +24,22 @@ const percentage = z.coerce.number().finite().min(0).max(100);
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const purchaseOrderStatusSchema = z.enum([
-    "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup", "En Route",
+    "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
     "Receiving (QA)", "Partially Received", "Received", "Rejected"
 ]);
 
 const initialPurchaseOrderStatusSchema = z.enum(["Ordered"]);
 
 export const purchaseOrderListStatusSchema = z.enum([
-    "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup", "En Route",
+    "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
     "Receiving (QA)", "Partially Received", "Received", "Rejected"
 ]);
 
 const receivingQueueStatusSchema = z.enum([
-    "For Pickup", "Receiving (QA)", "Partially Received", "Received"
+    "Approved", "For Pickup", "Receiving (QA)", "Partially Received", "Received"
 ]);
 
-export const purchaseOrderApprovalStageSchema = z.enum(["Plant", "Finance"]);
+export const purchaseOrderApprovalStageSchema = z.enum(["Finance"]);
 
 export const purchaseOrderLineSchema = z.object({
     product_id: positiveId,
@@ -139,13 +138,12 @@ export const purchaseOrderStatusUpdateSchema = z.object({
 });
 
 export const purchaseOrderApprovalSchema = z.object({
-    action: z.enum(["approve", "reject", "awaiting_payment", "cancel"]),
+    action: z.enum(["approve", "reject"]),
     workflowRevision: z.coerce.number().int().nonnegative(),
     expectedRuleId: positiveId.optional(),
-    lead_time_receiving: dateOnly.nullable().optional(),
     remarks: z.string().trim().min(1).max(1000).optional()
 }).superRefine((value, context) => {
-    if ((value.action === "reject" || value.action === "cancel") && !value.remarks) {
+    if (value.action === "reject" && !value.remarks) {
         context.addIssue({ code: "custom", path: ["remarks"], message: "Remarks are required for rejection." });
     }
 });
@@ -167,7 +165,7 @@ export const purchaseOrderListQuerySchema = z.object({
         context.addIssue({
             code: "custom",
             path: ["status"],
-            message: "Receiving queue status must be For Pickup, Receiving (QA), Partially Received, or Received."
+            message: "Receiving queue status must be Approved, Receiving (QA), Partially Received, or Received."
         });
     }
 });
@@ -175,7 +173,7 @@ export const purchaseOrderListQuerySchema = z.object({
 export type PurchaseOrderListQuery = z.infer<typeof purchaseOrderListQuerySchema>;
 
 export function modulesForStatus(status: z.infer<typeof purchaseOrderStatusSchema>) {
-    return status === "Receiving (QA)" || status === "Partially Received" || status === "Received" || status === "Rejected"
+    return status === "For Pickup" || status === "Receiving (QA)" || status === "Partially Received" || status === "Received" || status === "Rejected"
         ? [MODULE_PATHS.receiving]
-        : [MODULE_PATHS.procurement, MODULE_PATHS.plantApproval, MODULE_PATHS.financeApproval];
+        : [MODULE_PATHS.procurement, MODULE_PATHS.financeApproval];
 }

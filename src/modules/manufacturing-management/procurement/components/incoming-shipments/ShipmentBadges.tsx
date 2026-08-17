@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, ShieldCheck, Landmark, Anchor, Truck, AlertCircle, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, X } from "lucide-react";
 import {
     CURRENCY_DECIMAL_SCALE,
     formatDecimal
@@ -91,16 +91,10 @@ export function getStatusBadge(status: string) {
                     <Landmark className="h-3 w-3" /> Awaiting Payment
                 </span>
             );
-        case "En Route":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500/10 text-sky-600 border border-sky-500/20 uppercase tracking-wider">
-                    <Truck className="h-3 w-3" /> En Route
-                </span>
-            );
         case "For Pickup":
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
-                    <Anchor className="h-3 w-3" /> For Pickup
+                    <Anchor className="h-3 w-3" /> QA Receiving
                 </span>
             );
         case "Rejected":

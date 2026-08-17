@@ -157,7 +157,7 @@ export function useQAReceiving() {
 
     const filteredShipments = useMemo(() => {
         return shipments.filter(s => {
-            // Plant-approved and en-route orders must enter QA through For Pickup.
+            // Finance-approved orders can enter QA directly; legacy For Pickup orders remain supported.
             if (!isReceivingQueueShipmentStatus(s.inventory_status ?? s.status) && s.status !== "Received") return false;
 
             // 1. PO# filter (case-insensitive search on reference_number or shipment_id)
@@ -264,7 +264,7 @@ export function useQAReceiving() {
         const isReceived = shipment.status === "Received" || Number(shipment.inventory_status) === INVENTORY_STATUS.RECEIVED;
         const isPartiallyReceived = shipment.status === "Partially Received";
         if (!isReceivingQueueShipmentStatus(shipment.inventory_status ?? shipment.status) && !isReceived) {
-            toast.error("The purchase order must be moved to QA (Receiving) before it can be received.");
+            toast.error("The purchase order must be Finance-approved before it can be received.");
             clearInspection();
             return;
         }

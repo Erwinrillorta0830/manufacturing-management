@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    CalendarDays,
     Check,
     CheckCircle2,
     CircleDollarSign,
@@ -17,7 +16,6 @@ import {
 import { toast } from "sonner";
 import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
-import { INVENTORY_STATUS, PAYMENT_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 
 type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
@@ -50,15 +48,9 @@ function statusBadge(status: string) {
 }
 
 function statusForApprovalStage(
-    status: string,
-    inventoryStatus: number | null | undefined,
-    paymentStatus: number | null | undefined,
-    stage: PurchaseOrderDecisionStage
+    status: string
 ) {
-    if (stage === "Finance" && Number(paymentStatus) === PAYMENT_STATUS.PENDING) return "Pending Payment";
-    if (stage !== "Plant") return status === "Requested" ? "For Approval" : status;
-    if (Number(inventoryStatus) === INVENTORY_STATUS.APPROVED) return "Approved";
-    return status === "Awaiting Payment" || status === "Requested" ? "For Approval" : status;
+    return status === "Requested" ? "For Approval" : status;
 }
 
 export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecisionStage }) {
@@ -71,22 +63,14 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
         selectedShipmentLines,
         approvalDetail,
         approve,
-        awaitingPayment,
         reject,
-        cancelFinance,
         load
     } = usePurchaseOrderApproval(stage);
     const [tab, setTab] = useState<QueueTab>("For Approval");
     const [search, setSearch] = useState("");
-    const [eta, setEta] = useState("");
     const [remarks, setRemarks] = useState("");
     const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null);
-    const visibleQueueTabs = useMemo(
-        () => stage === "Finance"
-            ? queueTabs.filter(item => item.value !== "Approved")
-            : queueTabs.filter(item => item.value !== "Awaiting Payment"),
-        [stage]
-    );
+    const visibleQueueTabs = useMemo(() => queueTabs, []);
 
     useEffect(() => {
         const timeout = window.setTimeout(() => {
@@ -97,7 +81,6 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
     }, [load, search, setSelectedShipment, tab]);
 
     useEffect(() => {
-        setEta(approvalDetail?.order.lead_time_receiving?.slice(0, 10) || "");
         setRemarks("");
     }, [approvalDetail]);
 
@@ -113,19 +96,10 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
             toast.error(`This purchase order is not awaiting ${stage} approval.`);
             return;
         }
-        if (approvalDetail.stage === "Plant" && !eta) {
-            toast.error("Set the estimated arrival date before Plant approval.");
-            return;
-        }
         try {
             setSubmitting("approve");
-            if (approvalDetail.stage === "Finance") {
-                await awaitingPayment(selectedShipment.shipment_id);
-                toast.success("Finance approval completed. The purchase order is awaiting payment.");
-            } else {
-                await approve(selectedShipment.shipment_id, eta);
-                toast.success("Plant approval completed.");
-            }
+            await approve(selectedShipment.shipment_id);
+            toast.success("Finance approval completed. The purchase order is now available in QA Receiving.");
         } catch (error) {
             const message = (error as Error).message || "Approval failed.";
             toast.error(message);
@@ -150,13 +124,8 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
         }
         try {
             setSubmitting("reject");
-            if (approvalDetail.stage === "Finance") {
-                await cancelFinance(selectedShipment.shipment_id, remarks.trim());
-                toast.success("Purchase order cancelled by Finance.");
-            } else {
-                await reject(selectedShipment.shipment_id, remarks.trim());
-                toast.success("Purchase order rejected.");
-            }
+            await reject(selectedShipment.shipment_id, remarks.trim());
+            toast.success("Purchase order rejected by Finance.");
         } catch (error) {
             const message = (error as Error).message || "Rejection failed.";
             toast.error(message);
@@ -220,10 +189,10 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 ? order.supplier_id?.supplier_name
                                 : suppliers.find(item => item.id === Number(order.supplier_id))?.supplier_name;
                             const selected = selectedShipment?.shipment_id === order.shipment_id;
-                            const displayedStatus = statusForApprovalStage(order.status, order.inventory_status, order.payment_status, stage);
-                            const pendingStageLabel = stage === "Plant"
-                                ? (!order.approver_id && Number(order.inventory_status) === INVENTORY_STATUS.REQUESTED ? "Plant" : "")
-                                : (order.approval_requires_finance && !order.finance_id ? "Finance" : "");
+                            const displayedStatus = statusForApprovalStage(order.status);
+                            const pendingStageLabel = !order.finance_id && (order.status === "For Approval" || order.status === "Requested")
+                                ? "Finance"
+                                : "";
                             const workflowStage = pendingStageLabel || displayedStatus;
                             return (
                                 <button
@@ -263,7 +232,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <h2 className="text-sm font-bold">{approvalDetail.order.purchase_order_no || selectedShipment.reference_number}</h2>
-                                        {statusBadge(statusForApprovalStage(selectedShipment.status, selectedShipment.inventory_status, selectedShipment.payment_status, stage))}
+                                        {statusBadge(statusForApprovalStage(selectedShipment.status))}
                                     </div>
                                     <p className="mt-1 text-xs text-muted-foreground">{supplierName}</p>
                                 </div>
@@ -290,7 +259,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                         <div className="mt-1 text-xs font-bold">{approvalDetail.matchedRule.ruleName}</div>
                                     </div>
                                     <span className={`rounded border px-2 py-1 text-[10px] font-bold ${approvalDetail.matchedRule.requiresFinance ? "border-blue-300 bg-blue-50 text-blue-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>
-                                        {approvalDetail.matchedRule.requiresFinance ? "Plant + Finance" : "Plant only"}
+                                        Finance approval
                                     </span>
                                 </div>
                                 <div className="mt-2 text-[11px] text-muted-foreground">
@@ -301,22 +270,16 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
 
                             {actionable && (
                                 <div className="space-y-3 border-y py-4">
-                                    {approvalDetail.stage === "Plant" && (
-                                        <label className="block max-w-xs">
-                                            <span className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase text-muted-foreground"><CalendarDays className="h-3.5 w-3.5" /> Estimated arrival *</span>
-                                            <input type="date" value={eta} onChange={event => setEta(event.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-xs" />
-                                        </label>
-                                    )}
                                     <label className="block">
                                         <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Rejection reason</span>
                                         <textarea value={remarks} onChange={event => setRemarks(event.target.value)} maxLength={1000} placeholder="Required only when rejecting" className="min-h-20 w-full resize-y rounded-md border bg-background p-3 text-xs" />
                                     </label>
                                     <div className="flex flex-wrap justify-end gap-2">
                                         <button type="button" onClick={handleReject} disabled={submitting !== null} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-                                            {submitting === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} {approvalDetail.stage === "Finance" ? "Cancel PO" : "Reject"}
+                                            {submitting === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Reject PO
                                         </button>
                                         <button type="button" onClick={handleApprove} disabled={submitting !== null} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
-                                            {submitting === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {approvalDetail.stage === "Finance" ? "Move to Awaiting Payment" : "Approve Plant"}
+                                            {submitting === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve PO
                                         </button>
                                     </div>
                                 </div>

@@ -7,16 +7,14 @@ const ACCESS_TOKEN_COOKIE = "vos_access_token";
 export const PURCHASE_ORDER_MODULE_PATHS = {
     procurement: "/mm/incoming-shipments",
     rawMaterials: "/mm/raw-materials",
-    plantApproval: "/mm/plant-approval",
     financeApproval: "/mm/finance-approval",
     receiving: "/mm/qa-receiving",
     expenses: "/mm/shipment-expenses"
 } as const;
 
 export function purchaseOrderApprovalModulePath(stage: ApprovalStage) {
-    return stage === "Plant"
-        ? PURCHASE_ORDER_MODULE_PATHS.plantApproval
-        : PURCHASE_ORDER_MODULE_PATHS.financeApproval;
+    if (stage !== "Finance") throw new PurchaseOrderAuthorizationError(400, "Only Finance approval is supported.");
+    return PURCHASE_ORDER_MODULE_PATHS.financeApproval;
 }
 
 export type PurchaseOrderModulePath = typeof PURCHASE_ORDER_MODULE_PATHS[keyof typeof PURCHASE_ORDER_MODULE_PATHS];

@@ -90,7 +90,8 @@ export default function InboundShipmentsList({
                             className="w-full h-7 rounded-lg border border-border bg-background text-foreground text-[11px] font-semibold px-2 py-0.5 outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                         >
                             <option value="">All Statuses</option>
-                            <option value="For Pickup">QA (Receiving)</option>
+                            <option value="Receiving (QA)">QA (Receiving)</option>
+                            <option value="Approved">Finance Approved</option>
                             <option value="Partially Received">Partially Received / Receiving (QA)</option>
                             <option value="Received">Received</option>
                         </select>
@@ -140,7 +141,7 @@ export default function InboundShipmentsList({
                                     {s.reference_number}
                                 </span>
                                 <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-extrabold border ${
-                                    s.status === "Receiving (QA)" || s.status === "For Pickup"
+                                    s.status === "Receiving (QA)" || s.status === "For Pickup" || s.status === "Approved"
                                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
                                         : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                                 }`}>
