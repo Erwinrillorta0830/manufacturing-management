@@ -38,6 +38,14 @@ export function ShipmentDetailView({
 }: ShipmentDetailViewProps) {
     const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
     const initialWorkflowStatus = canonicalDrafting ? "For Approval" : "Requested";
+    const isFinanceRejected = canonicalDrafting
+        && effectiveStatus === "Rejected"
+        && activeShipment?.rejection_stage === "Finance";
+    const lockedWorkflowMessage = effectiveStatus === "Rejected"
+        ? activeShipment?.rejection_stage === "Plant"
+            ? "Revision and cancellation are locked because this PO was rejected by Plant. Finance must formally reject it first."
+            : "Revision and cancellation are locked until a formal Finance rejection is recorded."
+        : "Edit and cancellation are locked after PO creation until Finance formally rejects this PO.";
 
     return (
         <div className="flex-1 border rounded-xl bg-card overflow-y-auto p-6 shadow-sm flex flex-col gap-6 relative min-h-[300px]">
@@ -195,23 +203,30 @@ export function ShipmentDetailView({
                                     <div className="grid grid-cols-2 gap-2 mt-3">
                                         <button
                                             type="button"
+                                            disabled={canonicalDrafting || loading}
                                             onClick={handleStartEdit}
-                                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
+                                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
                                         >
                                             Edit Purchase Order
                                         </button>
                                         {canonicalDrafting && (
                                             <button
                                                 type="button"
+                                                disabled
                                                 onClick={() => {
                                                     if (window.confirm(`Cancel this ${canonicalDrafting ? "For Approval" : "Requested"} purchase order? This action cannot be undone.`)) {
                                                         onUpdateShipmentStatus(activeShipment.shipment_id, "Cancelled");
                                                     }
                                                 }}
-                                                className="w-full border border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 font-bold py-2.5 px-3 rounded-lg text-xs transition-all"
+                                                className="w-full border border-border bg-muted text-muted-foreground disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all"
                                             >
                                                 Cancel PO
                                             </button>
+                                        )}
+                                        {canonicalDrafting && (
+                                            <p className="col-span-2 text-[10px] font-semibold text-muted-foreground">
+                                                {lockedWorkflowMessage}
+                                            </p>
                                         )}
                                     </div>
                                 )}
@@ -220,15 +235,15 @@ export function ShipmentDetailView({
                                     <div className="grid grid-cols-2 gap-2 mt-3">
                                         <button
                                             type="button"
-                                            disabled={loading}
+                                            disabled={loading || !isFinanceRejected}
                                             onClick={handleStartEdit}
-                                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
+                                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Edit className="h-3.5 w-3.5" /> Revise &amp; Resubmit
                                         </button>
                                         <button
                                             type="button"
-                                            disabled={loading}
+                                            disabled={loading || !isFinanceRejected}
                                             onClick={() => {
                                                 if (window.confirm("Cancel this rejected purchase order? This action cannot be undone.")) {
                                                     onCancelRejectedPurchaseOrder(
@@ -238,10 +253,15 @@ export function ShipmentDetailView({
                                                     );
                                                 }
                                             }}
-                                            className="w-full border border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 disabled:cursor-wait disabled:opacity-60 font-bold py-2.5 px-3 rounded-lg text-xs transition-all inline-flex items-center justify-center gap-1.5"
+                                            className="w-full border border-border bg-muted text-muted-foreground hover:bg-muted disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Trash2 className="h-3.5 w-3.5" /> Cancel PO
                                         </button>
+                                        {!isFinanceRejected && (
+                                            <p className="col-span-2 text-[10px] font-semibold text-muted-foreground">
+                                                {lockedWorkflowMessage}
+                                            </p>
+                                        )}
                                     </div>
                                 )}
 

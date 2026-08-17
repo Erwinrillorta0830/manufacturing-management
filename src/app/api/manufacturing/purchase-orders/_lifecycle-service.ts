@@ -10,6 +10,7 @@ import type { z } from "zod";
 import type { purchaseOrderCancellationSchema, purchaseOrderRevisionSchema } from "./_schemas";
 import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
+import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
@@ -371,6 +372,14 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
     if (revision !== command.workflowRevision) {
         throw new PurchaseOrderLifecycleError("This purchase order changed. Reload it before revising it.", 409);
     }
+    const rejectionStage = await fetchCurrentPurchaseOrderRejectionStage(
+        id,
+        order.inventory_status,
+        revision
+    );
+    if (rejectionStage !== "Finance") {
+        throw new PurchaseOrderLifecycleError("Purchase orders can only be revised after a formal Finance rejection.", 409);
+    }
 
     const exchangeRate = command.shipmentData.exchange_rate;
     const currencyCode = String(command.shipmentData.currency_code || "PHP").toUpperCase();
@@ -458,6 +467,14 @@ export async function cancelRejectedPurchaseOrder(id: number, command: Cancellat
     }
     if (revision !== command.workflowRevision) {
         throw new PurchaseOrderLifecycleError("This purchase order changed. Reload it before cancelling it.", 409);
+    }
+    const rejectionStage = await fetchCurrentPurchaseOrderRejectionStage(
+        id,
+        order.inventory_status,
+        revision
+    );
+    if (rejectionStage !== "Finance") {
+        throw new PurchaseOrderLifecycleError("Purchase orders can only be cancelled after a formal Finance rejection.", 409);
     }
 
     const nextRevision = revision + 1;

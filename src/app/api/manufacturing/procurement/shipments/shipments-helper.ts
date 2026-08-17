@@ -9,6 +9,10 @@ import { buildPurchaseOrderProductPayload, calculatePurchaseOrderLine } from "..
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
+    fetchCurrentPurchaseOrderRejectionStages,
+    type PurchaseOrderRejectionStage
+} from "../../purchase-orders/_rejection-guard";
+import {
     CURRENCY_DECIMAL_SCALE,
     DecimalValue,
     EXCHANGE_RATE_DECIMAL_SCALE,
@@ -258,7 +262,12 @@ function supplierId(value: DirectusPO["supplier_name"]): number | null {
     return Number(value.id) || null;
 }
 
-function mapPurchaseOrder(po: DirectusPO, suppliers: ReadonlyMap<number, DirectusSupplier>, canonicalStatus = false) {
+function mapPurchaseOrder(
+    po: DirectusPO,
+    suppliers: ReadonlyMap<number, DirectusSupplier>,
+    canonicalStatus = false,
+    rejectionStage: PurchaseOrderRejectionStage | null = null
+) {
     const poLabel = `purchase_order/${po.purchase_order_id}`;
     const rate = normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
     const totalPhp = normalizeLegacyDecimal(
@@ -291,6 +300,7 @@ function mapPurchaseOrder(po: DirectusPO, suppliers: ReadonlyMap<number, Directu
         inventory_status: po.inventory_status || null,
         payment_status: po.payment_status || null,
         status,
+        rejection_stage: rejectionStage,
         remark: po.remark || "",
         created_at: po.date_encoded || "",
         branch_id: po.branch_id || null,
@@ -336,21 +346,27 @@ async function findSupplierIds(search: string): Promise<number[]> {
     return rows.map(row => Number(row.id)).filter(id => Number.isSafeInteger(id) && id > 0);
 }
 
-async function findApprovalHistoryPurchaseOrderIds(stage: "Plant" | "Finance", action: "Rejected") {
+async function findCurrentRejectionPurchaseOrderIds(stage: PurchaseOrderRejectionStage) {
     const params = new URLSearchParams({
-        fields: "purchase_order_id",
-        filter: JSON.stringify({
-            _and: [
-                { approval_stage: { _eq: stage } },
-                { action: { _eq: action } }
-            ]
-        }),
-        limit: "-1"
+        fields: "purchase_order_id,inventory_status,workflow_revision",
+        limit: "-1",
+        "filter[inventory_status][_eq]": String(INVENTORY_STATUS.REJECTED)
     });
-    const response = await fetch(`${DIRECTUS_URL}/items/purchase_order_approval_history?${params.toString()}`, { headers, cache: "no-store" });
-    if (!response.ok) throw new Error(`Failed to load ${stage} approval history (${response.status}).`);
-    const rows = ((await response.json()).data || []) as Array<{ purchase_order_id?: number | { purchase_order_id?: number } }>;
-    return [...new Set(rows.map(row => relationId(row.purchase_order_id, "purchase_order_id")).filter((id): id is number => id !== null))];
+    const response = await fetch(`${DIRECTUS_URL}/items/purchase_order?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) throw new Error(`Failed to load rejected purchase orders (${response.status}).`);
+    const rows = ((await response.json()).data || []) as Array<{
+        purchase_order_id?: number;
+        inventory_status?: number | null;
+        workflow_revision?: number | null;
+    }>;
+    const stages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
+        purchaseOrderId: Number(row.purchase_order_id),
+        inventoryStatus: row.inventory_status ?? null,
+        workflowRevision: Number(row.workflow_revision || 0)
+    })));
+    return rows
+        .map(row => Number(row.purchase_order_id))
+        .filter(id => stages.get(id) === stage);
 }
 
 async function addApprovalStageFilter(clauses: Record<string, unknown>[], query: PurchaseOrderListQuery) {
@@ -396,7 +412,7 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     }
 
     if (query.status === "Rejected") {
-        const rejectedIds = await findApprovalHistoryPurchaseOrderIds(query.approvalStage, "Rejected");
+        const rejectedIds = await findCurrentRejectionPurchaseOrderIds(query.approvalStage);
         clauses.push({ inventory_status: { _eq: INVENTORY_STATUS.REJECTED } });
         clauses.push({ purchase_order_id: { _in: rejectedIds.length ? rejectedIds : [-1] } });
         return;
@@ -457,9 +473,14 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
     const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
+        purchaseOrderId: Number(row.purchase_order_id),
+        inventoryStatus: row.inventory_status ?? null,
+        workflowRevision: Number(row.workflow_revision || 0)
+    })));
     const total = Number(body.meta?.filter_count || 0);
     return {
-        data: rows.map(row => mapPurchaseOrder(row, suppliers, true)),
+        data: rows.map(row => mapPurchaseOrder(row, suppliers, true, rejectionStages.get(Number(row.purchase_order_id)) || null)),
         meta: {
             page: query.page,
             limit: query.limit,
@@ -476,8 +497,13 @@ export async function fetchIncomingShipments(): Promise<unknown[]> {
         if (!res.ok) return [];
         const poList = ((await res.json()).data || []) as DirectusPO[];
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+        const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(poList.map(row => ({
+            purchaseOrderId: Number(row.purchase_order_id),
+            inventoryStatus: row.inventory_status ?? null,
+            workflowRevision: Number(row.workflow_revision || 0)
+        })));
 
-        return poList.map(row => mapPurchaseOrder(row, suppliers));
+        return poList.map(row => mapPurchaseOrder(row, suppliers, false, rejectionStages.get(Number(row.purchase_order_id)) || null));
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch incoming shipments:", e);
         return [];
