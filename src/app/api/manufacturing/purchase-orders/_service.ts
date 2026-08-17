@@ -16,6 +16,11 @@ import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/
 import { normalizeProductRelationId } from "@/modules/manufacturing-management/procurement/product-relation";
 import { validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPaymentModeError } from "./_payment-modes";
+import {
+    fetchPurchaseOrderPriceTypeRules,
+    PurchaseOrderPriceTypeError,
+    resolvePurchaseOrderPriceType
+} from "./_price-type";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
 
@@ -295,6 +300,18 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         throw error;
     }
     const productCategoryIds = await validateDraft(order);
+    let resolvedPriceType;
+    try {
+        resolvedPriceType = await resolvePurchaseOrderPriceType(order.lines.map(line => line.productId));
+    } catch (error) {
+        if (error instanceof PurchaseOrderPriceTypeError) {
+            throw new PurchaseOrderDraftError(error.message, error.status, {
+                code: error.code,
+                ...(error.details && typeof error.details === "object" ? error.details : {})
+            });
+        }
+        throw error;
+    }
     const totals = calculatePurchaseOrderTotals(order.lines, exchangeRate);
     assertExpectedTotals(order, totals);
     const selectedRule = await selectRuleForDraft(order, totals.netPhp, productCategoryIds);
@@ -306,7 +323,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         receiving_type: 1,
         payment_type: order.paymentArrangementId,
         payment_mode: order.paymentModeId,
-        price_type: order.priceType,
+        price_type: resolvedPriceType.priceTypeName,
         date_encoded: now.toISOString(),
         date: await getTodayDateString(),
         time: now.toTimeString().split(" ")[0],
@@ -377,6 +394,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         status: "For Approval",
         currencyCode: authoritativeFxRate.currencyCode,
         exchangeRate,
+        priceType: resolvedPriceType.priceTypeName,
+        priceTypeId: resolvedPriceType.priceTypeId,
         totals: {
             grossPhp: totals.grossPhp,
             discountPhp: totals.discountPhp,
@@ -389,12 +408,13 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
 }
 
 export async function fetchPurchaseOrderCatalog() {
-    const [suppliers, branches, jobOrders, paymentTerms, paymentModes] = await Promise.all([
+    const [suppliers, branches, jobOrders, paymentTerms, paymentModes, priceTypeRules] = await Promise.all([
         directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name,is_foreign,currency,country&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
         directusData<unknown[]>("/items/branches?filter[isActive][_eq]=1&fields=id,branch_name,branch_code&sort=branch_name&limit=200", "Unable to load branches."),
         directusData<unknown[]>("/items/manufacturing_job_orders?fields=job_order_id,job_order_no,status&sort=-job_order_id&limit=250", "Unable to load job orders."),
         directusData<unknown[]>("/items/payment_terms?fields=id,payment_name,payment_days,payment_description&sort=payment_name&limit=-1", "Unable to load payment terms."),
-        directusData<unknown[]>("/items/purchase_order_payment_modes?filter[is_active][_eq]=1&fields=id,mode_name,code,is_active,sort_order&sort=sort_order,mode_name&limit=-1", "Unable to load configured payment types.")
+        directusData<unknown[]>("/items/purchase_order_payment_modes?filter[is_active][_eq]=1&fields=id,mode_name,code,is_active,sort_order&sort=sort_order,mode_name&limit=-1", "Unable to load configured payment types."),
+        fetchPurchaseOrderPriceTypeRules()
     ]);
     const paymentTypes = [
         { id: 1, name: "Advance Payment" },
@@ -403,6 +423,6 @@ export async function fetchPurchaseOrderCatalog() {
         { id: 4, name: "Refund" },
         { id: 5, name: "Installment" }
     ];
-    return { suppliers, branches, paymentTypes, paymentModes, paymentTerms, jobOrders };
+    return { suppliers, branches, paymentTypes, paymentModes, paymentTerms, jobOrders, priceTypeRules };
 }
 

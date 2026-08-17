@@ -1,5 +1,5 @@
 import React from "react";
-import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode } from "../../types";
+import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging";
 
@@ -94,4 +94,5 @@ export interface IncomingShipmentsProps {
         payment_description?: string | null;
     }>;
     paymentModes?: PurchaseOrderPaymentMode[];
+    priceTypeRules?: PurchaseOrderPriceTypeRule[];
 }

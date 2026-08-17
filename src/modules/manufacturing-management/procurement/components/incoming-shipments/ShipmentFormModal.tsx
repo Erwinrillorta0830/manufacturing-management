@@ -1,5 +1,5 @@
 import React from "react";
-import { Anchor, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles } from "lucide-react";
+import { Anchor, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles, Pencil, Check } from "lucide-react";
 import {
     ManifestLineFormItem,
     ShipmentFormState,
@@ -7,7 +7,7 @@ import {
     purchaseOrderMaterialTypeFromProductType,
     FxRateStatus
 } from "./types";
-import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode } from "../../types";
+import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
@@ -58,6 +58,14 @@ export interface ShipmentFormModalProps {
         payment_description?: string | null;
     }>;
     paymentModes?: PurchaseOrderPaymentMode[];
+    priceTypeRules?: PurchaseOrderPriceTypeRule[];
+    priceTypeResolution?: {
+        status: "idle" | "pending" | "resolved" | "error";
+        priceTypeName: string | null;
+        message: string | null;
+    };
+    priceMatrixStatus?: "idle" | "loading" | "ready" | "error";
+    priceMatrixError?: string | null;
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -74,6 +82,18 @@ export interface ShipmentFormModalProps {
     fxRateError: string | null;
     loading: boolean;
     listLoading: boolean;
+}
+
+type ActiveRowEdit = {
+    index: number;
+    original: ManifestLineFormItem | null;
+};
+
+function cloneLine(line: ManifestLineFormItem): ManifestLineFormItem {
+    return {
+        ...line,
+        uom_options: line.uom_options ? [...line.uom_options] : line.uom_options
+    };
 }
 
 export function ShipmentFormModal({
@@ -94,6 +114,7 @@ export function ShipmentFormModal({
     setIsOverridden,
     dynamicBranches,
     linesForm,
+    setLinesForm,
     handleAddLineForm,
     handleRemoveLineForm,
     handleLineFormChange,
@@ -106,6 +127,9 @@ export function ShipmentFormModal({
     productPerSupplierMap,
     paymentTerms = [],
     paymentModes = [],
+    priceTypeResolution = { status: "idle", priceTypeName: null, message: null },
+    priceMatrixStatus = "idle",
+    priceMatrixError = null,
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -113,23 +137,114 @@ export function ShipmentFormModal({
     loading,
     listLoading
 }: ShipmentFormModalProps) {
+    const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
+    const [rowEditError, setRowEditError] = React.useState<string | null>(null);
+
+    const handleAddRow = React.useCallback(() => {
+        if (!shipmentForm.supplier_id || activeRowEdit !== null) return;
+
+        const nextIndex = linesForm.length;
+        handleAddLineForm();
+        setActiveRowEdit({ index: nextIndex, original: null });
+        setRowEditError(null);
+
+        window.setTimeout(() => {
+            const nextInput = document.getElementById(`search-input-${nextIndex}`);
+            if (nextInput) nextInput.focus();
+        }, 50);
+    }, [activeRowEdit, handleAddLineForm, linesForm.length, shipmentForm.supplier_id]);
+
+    const handleStartRowEdit = React.useCallback((index: number) => {
+        if (activeRowEdit !== null || !linesForm[index]) return;
+
+        setActiveRowEdit({ index, original: cloneLine(linesForm[index]) });
+        setRowEditError(null);
+    }, [activeRowEdit, linesForm]);
+
+    const handleSaveRow = React.useCallback((index: number) => {
+        if (activeRowEdit?.index !== index || !linesForm[index]) return;
+
+        const errors = getLineErrors(linesForm[index]);
+        if (errors.length > 0) {
+            setRowEditError(errors[0]);
+            return;
+        }
+
+        setActiveRowEdit(null);
+        setRowEditError(null);
+    }, [activeRowEdit, getLineErrors, linesForm]);
+
+    const handleCancelRowEdit = React.useCallback((index: number) => {
+        if (activeRowEdit?.index !== index) return;
+
+        if (activeRowEdit.original === null) {
+            if (linesForm.length > 1) {
+                handleRemoveLineForm(index);
+            } else {
+                setLinesForm(currentLines => currentLines.map((line, lineIndex) => (
+                    lineIndex === index
+                        ? {
+                            ...line,
+                            parent_product_id: "",
+                            product_id: "",
+                            material_type: "",
+                            product_name: "",
+                            product_code: "",
+                            selected_uom: "",
+                            uom_options: [],
+                            quantity_ordered: "",
+                            base_unit_cost_php: "",
+                            purchase_intent: "Buffer_Stock",
+                            job_order_id: "",
+                            discount_type_id: "",
+                            discount_mode: "Percentage",
+                            discount_amount: "0",
+                            discount_percent: "0"
+                        }
+                        : line
+                )));
+            }
+        } else {
+            const original = cloneLine(activeRowEdit.original);
+            setLinesForm(currentLines => currentLines.map((line, lineIndex) => (
+                lineIndex === index ? original : line
+            )));
+        }
+
+        setActiveRowEdit(null);
+        setRowEditError(null);
+    }, [activeRowEdit, handleRemoveLineForm, linesForm.length, setLinesForm]);
+
+    React.useEffect(() => {
+        if (!isModalOpen || (activeRowEdit && activeRowEdit.index >= linesForm.length)) {
+            setActiveRowEdit(null);
+            setRowEditError(null);
+        }
+    }, [activeRowEdit, isModalOpen, linesForm.length]);
+
     React.useEffect(() => {
         if (!isModalOpen) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
-            if ((e.altKey && key === "a") || (e.altKey && e.key === "Insert") || (e.ctrlKey && e.shiftKey && key === "a")) {
+            const isAddShortcut = (e.altKey && key === "a") || (e.altKey && key === "insert") || (e.ctrlKey && e.shiftKey && key === "a");
+            if (isAddShortcut && activeRowEdit === null) {
                 e.preventDefault();
-                handleAddLineForm();
-                setTimeout(() => {
-                    const nextIdx = linesForm.length;
-                    const nextInput = document.getElementById(`search-input-${nextIdx}`);
-                    if (nextInput) nextInput.focus();
-                }, 50);
+                handleAddRow();
             }
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isModalOpen, handleAddLineForm, linesForm.length]);
+    }, [activeRowEdit, handleAddRow, isModalOpen]);
+
+    const handleFormSubmit = (event: React.FormEvent) => {
+        if (activeRowEdit !== null) {
+            event.preventDefault();
+            setRowEditError("Save or cancel this row before submitting the purchase order.");
+            return;
+        }
+
+        handleSubmit(event);
+    };
 
     if (!isModalOpen) return null;
 
@@ -180,7 +295,7 @@ export function ShipmentFormModal({
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+                <form onSubmit={handleFormSubmit} className="flex flex-col flex-1 min-h-0">
                     <div className="space-y-4 overflow-y-auto pr-1 flex-1 pb-4">
                         {/* Header Ribbon / PO Metadata */}
                         <div className="p-4 bg-muted/20 border rounded-xl space-y-3">
@@ -361,33 +476,60 @@ export function ShipmentFormModal({
                                     </div>
                                 )}
 
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>
-                                    <select
-                                        value={shipmentForm.price_type || ""}
-                                        onChange={e => setShipmentForm({...shipmentForm, price_type: e.target.value || null})}
-                                        className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
-                                    >
-                                        <option value="" disabled hidden>Select Price Type...</option>
-                                        {priceTypes && priceTypes.length > 0 ? (
-                                            priceTypes.map(pt => {
-                                                const name = pt.price_type_name || pt.name || `Price Type #${pt.price_type_id}`;
-                                                return (
-                                                    <option key={pt.price_type_id} value={name}>{name}</option>
-                                                );
-                                            })
-                                        ) : (
-                                            <>
-                                                <option value="Internal">Internal</option>
-                                                <option value="SRP">SRP</option>
-                                                <option value="Government">Government</option>
-                                                <option value="Dealer">Dealer</option>
-                                                <option value="Sub-Dealer">Sub-Dealer</option>
-                                                <option value="Project">Project</option>
-                                            </>
+                                {canonicalDrafting ? (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type</label>
+                                        <div
+                                            aria-live="polite"
+                                            role={priceTypeResolution.status === "error" ? "alert" : "status"}
+                                            className={`flex min-h-8 items-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${
+                                                priceTypeResolution.status === "error"
+                                                    ? "border-destructive/40 bg-destructive/5 text-destructive"
+                                                    : priceTypeResolution.status === "resolved"
+                                                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
+                                                        : "bg-muted text-muted-foreground"
+                                            }`}
+                                        >
+                                            {priceTypeResolution.status === "resolved"
+                                                ? priceTypeResolution.priceTypeName
+                                                : priceTypeResolution.message || "Determined from selected products"}
+                                        </div>
+                                        {priceMatrixStatus === "loading" && (
+                                            <p className="text-[10px] font-medium text-muted-foreground">Loading Price Control prices...</p>
                                         )}
-                                    </select>
-                                </div>
+                                        {priceMatrixStatus === "error" && (
+                                            <p className="text-[10px] font-medium text-destructive" role="alert">{priceMatrixError}</p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>
+                                        <select
+                                            value={shipmentForm.price_type || ""}
+                                            onChange={e => setShipmentForm({...shipmentForm, price_type: e.target.value || null})}
+                                            className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
+                                        >
+                                            <option value="" disabled hidden>Select Price Type...</option>
+                                            {priceTypes && priceTypes.length > 0 ? (
+                                                priceTypes.map(pt => {
+                                                    const name = pt.price_type_name || pt.name || `Price Type #${pt.price_type_id}`;
+                                                    return (
+                                                        <option key={pt.price_type_id} value={name}>{name}</option>
+                                                    );
+                                                })
+                                            ) : (
+                                                <>
+                                                    <option value="Internal">Internal</option>
+                                                    <option value="SRP">SRP</option>
+                                                    <option value="Government">Government</option>
+                                                    <option value="Dealer">Dealer</option>
+                                                    <option value="Sub-Dealer">Sub-Dealer</option>
+                                                    <option value="Project">Project</option>
+                                                </>
+                                            )}
+                                        </select>
+                                    </div>
+                                )}
 
                                 {!canonicalDrafting && (
                                     <div className="space-y-1">
@@ -419,11 +561,13 @@ export function ShipmentFormModal({
                                 {shipmentForm.supplier_id && (
                                     <button
                                         type="button"
-                                        onClick={handleAddLineForm}
-                                        title="Add new line item"
-                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-all border border-primary/20 cursor-pointer"
+                                        onClick={handleAddRow}
+                                        disabled={activeRowEdit !== null}
+                                        aria-label="Add Row"
+                                        title="Add Row"
+                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-all border border-primary/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        <Plus className="h-3.5 w-3.5" /> Add New Row
+                                        <Plus className="h-3.5 w-3.5" /> Add Row
                                     </button>
                                 )}
                             </div>
@@ -450,7 +594,7 @@ export function ShipmentFormModal({
                                                 <th className="p-2 border-r min-w-[140px]">Discount Type</th>
                                                 <th className="p-2 border-r text-right min-w-[120px]">Discount Value</th>
                                                 <th className="p-2 border-r text-right min-w-[130px]">Net ({currencyCode})</th>
-                                                <th className="p-2 text-center w-12">Action</th>
+                                                <th className="p-2 text-center min-w-[180px]">Action</th>
                                             </tr>
                                         </thead>
 
@@ -473,13 +617,15 @@ export function ShipmentFormModal({
                                                     : (grossForeign * Number(line.discount_percent || 0)) / 100;
                                                 const subtotal = grossForeign - discount;
                                                 const materialType = line.material_type || purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
+                                                const isRowEditing = activeRowEdit?.index === idx;
+                                                const hasActiveRowEdit = activeRowEdit !== null;
 
                                                 return (
                                                     <tr 
                                                         key={idx} 
                                                         className={`hover:bg-muted/30 transition-colors group ${
                                                             hasSubmitted && lineErrors.length > 0 ? "bg-red-500/5" : ""
-                                                        }`}
+                                                        } ${isRowEditing ? "bg-primary/5" : ""}`}
                                                     >
                                                         {/* Row Index */}
                                                         <td className="p-2 border-r text-center font-mono text-[10px] font-bold text-muted-foreground bg-muted/20">
@@ -505,6 +651,7 @@ export function ShipmentFormModal({
                                                                         uom_options: []
                                                                     });
                                                                 }}
+                                                                disabled={!isRowEditing}
                                                                 className="w-full rounded-md border bg-background px-2 py-1 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary"
                                                             >
                                                                 <option value="">Select Type...</option>
@@ -541,7 +688,7 @@ export function ShipmentFormModal({
                                                                 selectedProductId={line.product_id}
                                                                 productName={line.product_name}
                                                                 materialType={materialType}
-                                                                disabled={!materialType}
+                                                                disabled={!isRowEditing || !materialType}
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
@@ -550,8 +697,10 @@ export function ShipmentFormModal({
                                                                     const specialPrice = priceTypeRatesMap[Number(selected.product_id)];
                                                                     if (specialPrice !== undefined && specialPrice > 0) {
                                                                         finalSelected.base_unit_cost_php = String(specialPrice);
+                                                                    } else if (canonicalDrafting) {
+                                                                        finalSelected.base_unit_cost_php = "";
                                                                     }
-                                                                    if (canonicalDrafting && shipmentForm.currency_code === "USD") {
+                                                                    if (canonicalDrafting && shipmentForm.currency_code === "USD" && finalSelected.base_unit_cost_php) {
                                                                         finalSelected.base_unit_cost_php = String(
                                                                             Number(finalSelected.base_unit_cost_php) / (Number(shipmentForm.exchange_rate) || 1)
                                                                         );
@@ -595,12 +744,14 @@ export function ShipmentFormModal({
                                                                         if (isDuplicate) return;
                                                                         const opt = line.uom_options?.find((o: UOMOption) => String(o.product_id) === String(selectedId));
                                                                         if (opt) {
-                                                                            let costVal = opt.cost_per_unit;
+                                                                            let costVal: number | undefined = opt.cost_per_unit;
                                                                             const specialPrice = priceTypeRatesMap[Number(selectedId)];
                                                                             if (specialPrice !== undefined && specialPrice > 0) {
                                                                                 costVal = specialPrice;
+                                                                            } else if (canonicalDrafting) {
+                                                                                costVal = undefined;
                                                                             }
-                                                                            if (canonicalDrafting && shipmentForm.currency_code === "USD") {
+                                                                            if (costVal !== undefined && canonicalDrafting && shipmentForm.currency_code === "USD") {
                                                                                 costVal /= Number(shipmentForm.exchange_rate) || 1;
                                                                             }
                                                                             handleLineFormChange(idx, {
@@ -609,10 +760,11 @@ export function ShipmentFormModal({
                                                                                     ? String(opt.parent_product_id)
                                                                                     : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
-                                                                                base_unit_cost_php: String(costVal)
+                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal)
                                                                             });
                                                                         }
                                                                     }}
+                                                                    disabled={!isRowEditing}
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground"
                                                                 >
                                                                     {line.uom_options.map((o: UOMOption) => (
@@ -647,6 +799,7 @@ export function ShipmentFormModal({
                                                                         }
                                                                     }
                                                                 }}
+                                                                disabled={!isRowEditing}
                                                                 className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                         </td>
@@ -665,13 +818,14 @@ export function ShipmentFormModal({
                                                                     if (e.key === "Enter") {
                                                                         e.preventDefault();
                                                                         if (idx === linesForm.length - 1) {
-                                                                            handleAddLineForm();
+                                                                            handleAddRow();
                                                                         } else {
                                                                             const nextSearchInput = document.getElementById(`search-input-${idx + 1}`);
                                                                             if (nextSearchInput) nextSearchInput.focus();
                                                                         }
                                                                     }
                                                                 }}
+                                                                disabled={!isRowEditing}
                                                                 className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                         </td>
@@ -693,6 +847,7 @@ export function ShipmentFormModal({
                                                                             ? { discount_mode: mode, discount_type_id: "", discount_percent: "0", discount_amount: "0" }
                                                                             : { discount_mode: "Percentage", discount_amount: "0", discount_percent: line.discount_percent || "0" });
                                                                     }}
+                                                                    disabled={!isRowEditing}
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
                                                                 >
                                                                     <option value="Percentage">Percentage</option>
@@ -701,7 +856,7 @@ export function ShipmentFormModal({
                                                                 <select
                                                                     aria-label={`Discount Preset for purchase order line ${idx + 1}`}
                                                                     value={line.discount_type_id !== undefined && line.discount_type_id !== null ? String(line.discount_type_id) : ""}
-                                                                    disabled={discountMode !== "Percentage"}
+                                                                    disabled={!isRowEditing || discountMode !== "Percentage"}
                                                                     onChange={event => {
                                                                         const dtId = event.target.value;
                                                                         const selectedDt = discountTypes?.find(dt => String(dt.id) === String(dtId));
@@ -734,6 +889,7 @@ export function ShipmentFormModal({
                                                                 aria-label={`${discountMode === "Fixed Amount" ? "Discount Amount" : "Discount Percentage"} for purchase order line ${idx + 1}`}
                                                                 value={discountMode === "Fixed Amount" ? (line.discount_amount ?? "0") : (line.discount_percent ?? "0")}
                                                                 onChange={event => handleLineFormChange(idx, discountMode === "Fixed Amount" ? "discount_amount" : "discount_percent", event.target.value)}
+                                                                disabled={!isRowEditing}
                                                                 className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                             {hasSubmitted && lineErrors.filter(error => error.toLowerCase().includes("discount")).map(error => (
@@ -747,16 +903,60 @@ export function ShipmentFormModal({
                                                         </td>
 
                                                         {/* Actions */}
-                                                        <td className="p-1.5 text-center align-middle">
-                                                            {linesForm.length > 1 && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleRemoveLineForm(idx)}
-                                                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                                                                    title="Remove row"
-                                                                >
-                                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                                </button>
+                                                        <td className="p-1.5 text-center align-middle min-w-[180px]">
+                                                            <div className="flex flex-wrap items-center justify-center gap-1">
+                                                                {isRowEditing ? (
+                                                                    <>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleSaveRow(idx)}
+                                                                            aria-label="Save Row"
+                                                                            title="Save Row"
+                                                                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1 text-[10px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+                                                                        >
+                                                                            <Check className="h-3 w-3" /> Save Row
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleCancelRowEdit(idx)}
+                                                                            aria-label="Cancel Row"
+                                                                            title="Cancel Row"
+                                                                            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                                                        >
+                                                                            <X className="h-3 w-3" /> Cancel Row
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleStartRowEdit(idx)}
+                                                                            disabled={hasActiveRowEdit}
+                                                                            aria-label="Edit Row"
+                                                                            title="Edit Row"
+                                                                            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            <Pencil className="h-3 w-3" /> Edit Row
+                                                                        </button>
+                                                                        {linesForm.length > 1 && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleRemoveLineForm(idx)}
+                                                                                disabled={hasActiveRowEdit}
+                                                                                aria-label="Delete Row"
+                                                                                title="Delete Row"
+                                                                                className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                            >
+                                                                                <Trash2 className="h-3 w-3" /> Delete Row
+                                                                            </button>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                            {isRowEditing && rowEditError && (
+                                                                <p role="alert" className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">
+                                                                    {rowEditError}
+                                                                </p>
                                                             )}
                                                         </td>
                                                     </tr>
@@ -833,7 +1033,12 @@ export function ShipmentFormModal({
                             <button
                                 id="register-shipment-btn"
                                 type="submit"
-                                disabled={loading || listLoading || (canonicalDrafting && !editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")}
+                    disabled={loading || listLoading || (canonicalDrafting && (
+                        priceTypeResolution.status !== "resolved"
+                        || priceMatrixStatus !== "ready"
+                        || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
+                        || activeRowEdit !== null
+                    ))}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {loading ? (

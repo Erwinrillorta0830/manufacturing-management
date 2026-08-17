@@ -117,7 +117,7 @@ export function ShipmentDetailView({
                                         {(() => {
                                             const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
                                             const mode = paymentModes.find(item => item.id === Number(payMode));
-                                            return mode?.mode_name || (payMode ? `Payment Type #${payMode}` : "Not specified (legacy PO)");
+                                            return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
                                         })()}
                                     </strong>
                                 </span>

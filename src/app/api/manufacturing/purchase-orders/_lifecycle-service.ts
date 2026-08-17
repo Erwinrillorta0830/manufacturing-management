@@ -13,6 +13,7 @@ import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "./_payment-modes";
+import { PurchaseOrderPriceTypeError, resolvePurchaseOrderPriceType } from "./_price-type";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
@@ -421,6 +422,18 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         throw new PurchaseOrderLifecycleError("Currency and exchange rate are locked after purchase-order submission.", 409);
     }
     await validateRevisionReferences(command);
+    let resolvedPriceType;
+    try {
+        resolvedPriceType = await resolvePurchaseOrderPriceType(command.lineItems.map(line => Number(line.product_id)));
+    } catch (error) {
+        if (error instanceof PurchaseOrderPriceTypeError) {
+            throw new PurchaseOrderLifecycleError(error.message, error.status, {
+                code: error.code,
+                ...(error.details && typeof error.details === "object" ? error.details : {})
+            });
+        }
+        throw error;
+    }
     let totals: ReturnType<typeof calculatePurchaseOrderTotals>;
     try {
         totals = calculatePurchaseOrderTotals(command.lineItems.map(line => legacyLineAmounts(line, exchangeRate)), exchangeRate);
@@ -444,7 +457,7 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         payment_type: command.shipmentData.payment_type || null,
         payment_mode: command.shipmentData.payment_mode,
         payment_terms: command.shipmentData.payment_terms ?? order.payment_terms ?? null,
-        price_type: command.shipmentData.price_type || null,
+        price_type: resolvedPriceType.priceTypeName,
         currency_code: currencyCode,
         exchange_rate: exchangeRate,
         total_foreign_currency: totals.netForeign,
