@@ -1,5 +1,15 @@
 /* eslint-disable */
-import { QALog, DispositionRecord, JobOrder, Branch } from "../types";
+import { 
+    QALog, 
+    DispositionRecord, 
+    JobOrder, 
+    Branch, 
+    QARejectionReason, 
+    QAJOInspectionLog, 
+    JobOrderStatusHistory, 
+    TwoPointQAInspectionPayload, 
+    TwoPointQAInspectionResult 
+} from "../types";
 
 export async function fetchQALogs(): Promise<QALog[]> {
     const res = await fetch("/api/manufacturing/planning-engineering?action=qa-logs");
@@ -30,6 +40,46 @@ export async function fetchJobOrderMaterials(joId: string): Promise<any[]> {
     const res = await fetch(`/api/manufacturing/planning-engineering?action=job-order-materials&joId=${joId}`);
     if (!res.ok) throw new Error("Failed to load materials");
     return res.json();
+}
+
+// Fetch QA rejection reasons list
+export async function fetchQARejectionReasons(): Promise<QARejectionReason[]> {
+    const res = await fetch("/api/manufacturing/qa?action=rejection-reasons");
+    if (!res.ok) throw new Error("Failed to load rejection reasons");
+    return res.json();
+}
+
+// Fetch QA inspection logs
+export async function fetchQAInspectionLogs(jobOrderId?: number): Promise<QAJOInspectionLog[]> {
+    const url = jobOrderId ? `/api/manufacturing/qa?action=inspection-logs&jobOrderId=${jobOrderId}` : "/api/manufacturing/qa?action=inspection-logs";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to load inspection logs");
+    return res.json();
+}
+
+// Fetch Job Order status history
+export async function fetchJobOrderStatusHistory(jobOrderId?: number): Promise<JobOrderStatusHistory[]> {
+    const url = jobOrderId ? `/api/manufacturing/qa?action=status-history&jobOrderId=${jobOrderId}` : "/api/manufacturing/qa?action=status-history";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to load status history");
+    return res.json();
+}
+
+// Post Simplified 2-Point QA Inspection & Rework Spawning
+export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayload): Promise<TwoPointQAInspectionResult> {
+    const res = await fetch("/api/manufacturing/qa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            action: "two-point-inspection",
+            ...payload
+        })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || "Failed to submit QA inspection");
+    }
+    return data;
 }
 
 export interface FinishedGoodsReceiptPayload {

@@ -94,20 +94,23 @@ export function NetRequirementsTable({
                                             }
                                         >
                                             <TableCell className="py-3">
-                                                <div className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                                                <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
                                                     {item.is_sub_assembly && (
                                                         <span className="text-[8px] bg-sky-500/10 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border border-sky-500/20 px-1.5 py-0.5 rounded uppercase font-black tracking-wider shrink-0">
                                                             Sub-Assembly
                                                         </span>
                                                     )}
                                                     <span className={item.is_sub_assembly ? "text-foreground" : ""}>{item.product_name}</span>
+                                                    <span className="text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded shrink-0">
+                                                        {item.uom_name || item.unit_of_measurement || "Pieces"}
+                                                    </span>
                                                 </div>
                                                 <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
                                                     {item.product_code}
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-right font-semibold text-sm">
-                                                {item.gross_demand.toLocaleString()}
+                                                {item.gross_demand.toLocaleString()} <span className="text-[10px] font-normal text-muted-foreground">{item.uom_name || item.uom_shortcut || "pcs"}</span>
                                             </TableCell>
                                             <TableCell className="text-right text-sm">
                                                 {item.on_hand.toLocaleString()}

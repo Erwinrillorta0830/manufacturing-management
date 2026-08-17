@@ -240,19 +240,25 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
         // 3. Insert header
         const headerPayload = {
             job_order_no: joData.jo_id || `JO-${Math.floor(100000 + Math.random() * 900000)}`,
+            parent_job_order_id: joData.parent_job_order_id ? Number(joData.parent_job_order_id) : null,
             product_id: firstProd.product_id,
             version_id: versionId || null,
             target_quantity: Number(totalMergedQuantity),
+            completed_quantity: 0,
+            rejected_quantity: 0,
             actual_quantity_produced: 0,
             start_date: todayStr,
             end_date: joData.due_date || null,
             status: initialStatus,
+            primary_work_center_id: (joData as any).primary_work_center_id ? Number((joData as any).primary_work_center_id) : null,
             shift_option: joData.shift_option || "8",
+            sub_assembly_version_map: (joData as any).sub_assembly_version_map 
+                ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
+                : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
+            branch_id: joData.branch_id ? Number(joData.branch_id) : null,
             created_by: joData.created_by ? Number(joData.created_by) : null,
             created_at: new Date().toISOString(),
-            remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks,
-            parent_job_order_id: joData.parent_job_order_id ? Number(joData.parent_job_order_id) : null,
-            branch_id: joData.branch_id ? Number(joData.branch_id) : null
+            remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
         };
 
         const headerRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders`, {
@@ -268,6 +274,20 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
         const createdJo = (await headerRes.json()).data;
         const joIdInt = createdJo.job_order_id;
         const joNoStr = createdJo.job_order_no;
+
+        // Insert initial status record into manufacturing_job_order_status_history
+        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                job_order_id: joIdInt,
+                previous_status: "Draft",
+                new_status: initialStatus === "Draft" ? "Draft" : "Planned",
+                remarks: "Initial Job Order Creation",
+                changed_by: joData.created_by ? Number(joData.created_by) : null,
+                changed_at: new Date().toISOString()
+            })
+        }).catch(err => console.error("Error creating initial job order status history row:", err));
 
         // 4. Insert merged product(s) and explode BOM/routings
         let totalEstimatedHours = 0;
@@ -293,6 +313,7 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                 for (const r of routes) {
                     const plannedSetup = Number(r.setup_time_hours || 0);
                     const plannedRun = (productionQty / Number(r.step_batch_size || 1)) * Number(r.run_time_hours || 0);
+                    const plannedLabor = (plannedSetup + plannedRun) * 150;
                     totalEstimatedHours += (plannedSetup + plannedRun);
 
                     // Insert into JO routes table
@@ -306,8 +327,16 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                         actual_setup_hours: 0,
                         actual_run_hours: 0,
                         step_batch_size: Number(r.step_batch_size || 1),
-                        run_time_hours_factor: Number(r.run_time_hours || 0)
+                        run_time_hours_factor: Number(r.run_time_hours || 0),
+                        estimated_labor_cost: plannedLabor,
+                        status: "Pending"
                     };
+
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_operations`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(routePayload)
+                    }).catch(() => {});
 
                     const routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?fields=jo_route_id`, {
                         method: "POST",
@@ -534,8 +563,25 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                 const createdMat = (await matRes.json()).data;
                                 const jomId = createdMat.jo_material_id || createdMat.id;
                                 
-                                // Now log specific lot allocations in the reservations junction table
+                                // Now log specific lot allocations in manufacturing_job_order_allocations
                                 for (const alloc of allocations) {
+                                    const allocationPayload = {
+                                        job_order_id: joIdInt,
+                                        job_order_material_id: jomId,
+                                        lot_id: alloc.purchase_order_product_id || null,
+                                        batch_no: alloc.batch_no || null,
+                                        allocated_quantity: alloc.allocated,
+                                        reservation_type: "SOFT",
+                                        status: "ACTIVE",
+                                        created_by: joData.created_by ? Number(joData.created_by) : null,
+                                        created_at: new Date().toISOString()
+                                    };
+                                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
+                                        method: "POST",
+                                        headers,
+                                        body: JSON.stringify(allocationPayload)
+                                    }).catch(err => console.error("Error creating manufacturing_job_order_allocations row:", err));
+
                                     const reservationPayload = {
                                         product_id: compProductId,
                                         branch_id: joData.branch_id ? Number(joData.branch_id) : null,
@@ -689,9 +735,12 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                                 headers,
                                 body: JSON.stringify({
                                     job_order_id: joIdInt,
-                                    jo_id: joNoStr,
                                     sales_order_detail_id: det.detail_id,
-                                    allocated_quantity: Number(det.ordered_quantity || 0)
+                                    allocated_quantity: Number(det.ordered_quantity || 0),
+                                    reservation_type: "SOFT",
+                                    status: "ACTIVE",
+                                    created_at: new Date().toISOString(),
+                                    created_by: joData.created_by ? Number(joData.created_by) : null
                                 })
                             }).catch(err => console.error("Error creating manufacturing_job_order_allocations link:", err));
 

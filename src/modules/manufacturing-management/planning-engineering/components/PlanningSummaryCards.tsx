@@ -6,18 +6,25 @@ export interface PlanningSummaryCardsProps {
     shortfallItemsCount: number;
     unreleasedJobsCount: number;
     familyGroupsCount: number;
+    onSelectTab?: (tab: "demand" | "inventory" | "queue") => void;
 }
 
 export function PlanningSummaryCards({
     demandLinesCount,
     shortfallItemsCount,
     unreleasedJobsCount,
-    familyGroupsCount
+    familyGroupsCount,
+    onSelectTab
 }: PlanningSummaryCardsProps) {
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Pending Demand Lines */}
-            <div className="bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div 
+                onClick={() => onSelectTab?.("demand")}
+                className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
+                    onSelectTab ? "cursor-pointer hover:border-primary/50 hover:shadow-md" : ""
+                }`}
+            >
                 <div className="space-y-1">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Pending Demand Lines
@@ -35,7 +42,12 @@ export function PlanningSummaryCards({
             </div>
 
             {/* Card 2: Net Shortfall Items */}
-            <div className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between ${shortfallItemsCount > 0 ? "border-amber-500/30 bg-amber-500/5" : ""}`}>
+            <div 
+                onClick={() => onSelectTab?.("inventory")}
+                className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
+                    shortfallItemsCount > 0 ? "border-amber-500/30 bg-amber-500/5" : ""
+                } ${onSelectTab ? "cursor-pointer hover:border-amber-500/50 hover:shadow-md" : ""}`}
+            >
                 <div className="space-y-1">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Material Shortfalls
@@ -53,7 +65,12 @@ export function PlanningSummaryCards({
             </div>
 
             {/* Card 3: Unreleased Job Orders */}
-            <div className="bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div 
+                onClick={() => onSelectTab?.("queue")}
+                className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
+                    onSelectTab ? "cursor-pointer hover:border-sky-500/50 hover:shadow-md" : ""
+                }`}
+            >
                 <div className="space-y-1">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Unreleased JO Queue
@@ -71,7 +88,12 @@ export function PlanningSummaryCards({
             </div>
 
             {/* Card 4: Family Groups */}
-            <div className="bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between">
+            <div 
+                onClick={() => onSelectTab?.("queue")}
+                className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
+                    onSelectTab ? "cursor-pointer hover:border-emerald-500/50 hover:shadow-md" : ""
+                }`}
+            >
                 <div className="space-y-1">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Active Family Groups

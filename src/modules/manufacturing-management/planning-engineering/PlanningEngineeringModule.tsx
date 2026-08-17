@@ -22,6 +22,7 @@ import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
 import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
 import { JOFilterBar } from "./components/JOFilterBar";
 import { JOTable } from "./components/JOTable";
+import { JobOrderTraveler } from "./components/JobOrderTraveler";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -81,12 +82,14 @@ export default function PlanningEngineeringModule() {
         handleReleaseDraftFromPlanning
     } = usePlanningEngineering();
 
+    const [activeMainTab, setActiveMainTab] = useState<"demand" | "inventory" | "queue">("demand");
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
     const [loadingMaterials, setLoadingMaterials] = useState(false);
     const [familyActiveTab, setFamilyActiveTab] = useState<string>("family-all");
     const [childJoMaterials, setChildJoMaterials] = useState<Record<string, any[]>>({});
+    const [isTravelerOpen, setIsTravelerOpen] = useState(false);
 
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
@@ -588,12 +591,13 @@ export default function PlanningEngineeringModule() {
                 shortfallItemsCount={shortfallCount}
                 unreleasedJobsCount={unreleasedJobs.length}
                 familyGroupsCount={familyGroups.length}
+                onSelectTab={setActiveMainTab}
             />
 
             {/* Header banner */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-card border rounded-xl p-6 shadow-sm">
                 <div className="space-y-1">
-                    <h1 className="text-2xl font-bold tracking-tight">Planning & Engineering</h1>
+                    <h1 className="text-2xl font-bold tracking-tight">Job Order Planning & MRP Engine</h1>
                     <p className="text-sm text-muted-foreground">
                         Harvest sales order demand, run branch-scoped Net Requirements calculations, batch consolidate orders, and explode/release Job Orders.
                     </p>
@@ -618,7 +622,7 @@ export default function PlanningEngineeringModule() {
                                 <SelectContent>
                                     {branches.map((b) => (
                                         <SelectItem key={b.id} value={String(b.id)}>
-                                            {b.branch_name}
+                                             {b.branch_name}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -637,7 +641,32 @@ export default function PlanningEngineeringModule() {
             </div>
 
             {/* Tabs-based Layout Dashboard */}
-            <Tabs defaultValue="demand" className="w-full space-y-6">
+            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "inventory" | "queue")} className="w-full space-y-6">
+                <TabsList className="grid w-full grid-cols-3 max-w-2xl bg-muted/60 p-1 rounded-xl">
+                    <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <ClipboardList className="h-4 w-4 text-primary" />
+                        <span>Demand Harvesting</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
+                            {salesOrderLines.length}
+                        </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <Database className="h-4 w-4 text-indigo-500" />
+                        <span>Net Requirements</span>
+                        {shortfallCount > 0 && (
+                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
+                                {shortfallCount}
+                            </Badge>
+                        )}
+                    </TabsTrigger>
+                    <TabsTrigger value="queue" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <Layers className="h-4 w-4 text-sky-500" />
+                        <span>Unreleased Job Orders</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
+                            {unreleasedJobs.length}
+                        </Badge>
+                    </TabsTrigger>
+                </TabsList>
 
 
                 {/* TAB 1: Demand Harvesting & Consolidation */}
@@ -891,10 +920,12 @@ export default function PlanningEngineeringModule() {
                                                 📦 Parent Assembly Run
                                             </span>
                                             <h3 className="font-extrabold text-lg text-foreground">{selectedUnreleasedJo?.jo_id}</h3>
-                                            <span className="text-xs text-muted-foreground font-medium">({selectedUnreleasedJo?.product_name})</span>
+                                            <span className="text-xs text-muted-foreground font-medium">
+                                                ({selectedUnreleasedJo?.product_name} • <strong className="text-foreground font-semibold">{selectedUnreleasedJo?.uom_name || selectedUnreleasedJo?.unit_of_measurement || "Pieces"}</strong>)
+                                            </span>
                                         </div>
                                         <span className="text-xs font-bold text-foreground bg-muted px-3 py-1 rounded-full border border-border">
-                                            {selectedUnreleasedJo?.quantity?.toLocaleString()} pcs
+                                            {selectedUnreleasedJo?.quantity?.toLocaleString()} {selectedUnreleasedJo?.uom_name || selectedUnreleasedJo?.uom_shortcut || "pcs"}
                                         </span>
                                     </div>
 
@@ -902,12 +933,16 @@ export default function PlanningEngineeringModule() {
                                         <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.remarks || "None"}</span></div>
                                         <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.shiftOption || "8"} hours</span></div>
                                         <div>
-                                            <span className="text-muted-foreground font-medium">Parent Run Duration:</span> 
+                                            <span className="text-muted-foreground font-medium">Parent Run Lead Time:</span> 
                                             <span className="font-bold ml-1 text-primary">
                                                 {(() => {
-                                                    const setup = selectedUnreleasedJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0) || 0;
-                                                    const run = selectedUnreleasedJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0) || 0;
-                                                    return `${(setup + run).toFixed(1)} hrs`;
+                                                    const tasks = selectedUnreleasedJo?.routing_tasks || [];
+                                                    const shiftHrs = Number(selectedUnreleasedJo?.shiftOption || selectedUnreleasedJo?.shift_option || 8) || 8;
+                                                    const maxRun = Math.max(0, ...tasks.map((t: any) => Number(t.planned_run_hours || 0)));
+                                                    const initialSetup = Number(tasks[0]?.planned_setup_hours || 0);
+                                                    const leadTime = maxRun + initialSetup;
+                                                    const totalWorkload = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                    return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
                                                 })()}
                                             </span>
                                         </div>
@@ -1069,10 +1104,12 @@ export default function PlanningEngineeringModule() {
                                                         🧩 Sub-Assembly Piece Run
                                                     </span>
                                                     <h3 className="font-extrabold text-lg text-foreground">{childJo.jo_id}</h3>
-                                                    <span className="text-xs text-muted-foreground font-medium">({childJo.product_name})</span>
+                                                    <span className="text-xs text-muted-foreground font-medium">
+                                                        ({childJo.product_name} • <strong className="text-foreground font-semibold">{childJo.uom_name || childJo.unit_of_measurement || "Pieces"}</strong>)
+                                                    </span>
                                                 </div>
                                                 <span className="text-xs font-bold text-sky-700 dark:text-sky-300 bg-sky-500/10 px-3 py-1 rounded-full border border-sky-500/20">
-                                                    {childJo.quantity?.toLocaleString()} pcs
+                                                    {childJo.quantity?.toLocaleString()} {childJo.uom_name || childJo.uom_shortcut || "pcs"}
                                                 </span>
                                             </div>
 
@@ -1080,9 +1117,17 @@ export default function PlanningEngineeringModule() {
                                                 <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{childJo.remarks || "Auto-spawned"}</span></div>
                                                 <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{childJo.shiftOption || "8"} hours</span></div>
                                                 <div>
-                                                    <span className="text-muted-foreground font-medium">Sub-Assembly Run Duration:</span> 
+                                                    <span className="text-muted-foreground font-medium">Sub-Assembly Lead Time:</span> 
                                                     <span className="font-bold ml-1 text-sky-700 dark:text-sky-300">
-                                                        {(cSetup + cRun).toFixed(1)} hrs
+                                                        {(() => {
+                                                            const tasks = childJo.routing_tasks || [];
+                                                            const shiftHrs = Number(childJo.shiftOption || childJo.shift_option || 8) || 8;
+                                                            const maxRun = Math.max(0, ...tasks.map((t: any) => Number(t.planned_run_hours || 0)));
+                                                            const initialSetup = Number(tasks[0]?.planned_setup_hours || 0);
+                                                            const leadTime = maxRun + initialSetup;
+                                                            const totalWorkload = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                            return `${(leadTime / shiftHrs).toFixed(1)} days (${leadTime.toFixed(1)} line hrs • ${totalWorkload.toFixed(1)} mach-hrs)`;
+                                                        })()}
                                                     </span>
                                                 </div>
                                             </div>
@@ -1413,6 +1458,14 @@ export default function PlanningEngineeringModule() {
                         <div className="flex items-center gap-2">
                             <Button 
                                 variant="outline" 
+                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-sky-500/30 text-sky-600 hover:text-sky-500 hover:bg-sky-500/10 dark:text-sky-400" 
+                                onClick={() => setIsTravelerOpen(true)}
+                            >
+                                <Printer className="h-4 w-4" />
+                                Traveler Sheet
+                            </Button>
+                            <Button 
+                                variant="outline" 
                                 className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-amber-500/30 text-amber-600 hover:text-amber-500 hover:bg-amber-500/10 dark:text-amber-400" 
                                 onClick={handlePrintShortfall}
                             >
@@ -1549,6 +1602,23 @@ export default function PlanningEngineeringModule() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Printable Job Order Traveler Sheet */}
+            {isTravelerOpen && selectedUnreleasedJo && (
+                <JobOrderTraveler
+                    isOpen={isTravelerOpen}
+                    onClose={() => setIsTravelerOpen(false)}
+                    jobOrder={selectedUnreleasedJo}
+                    materials={joMaterials}
+                    operations={selectedUnreleasedJo.operations || selectedUnreleasedJo.routing_tasks || selectedUnreleasedJo.routes || []}
+                    childJobOrders={familyChildJobs.map((child: any) => ({
+                        jobOrder: child,
+                        materials: childJoMaterials[child.jo_id] || [],
+                        operations: child.operations || child.routing_tasks || child.routes || []
+                    }))}
+                    branchName={branches.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || "Manufacturing Facility"}
+                />
+            )}
         </div>
     );
 }

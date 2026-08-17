@@ -10,7 +10,7 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
     try {
         const bId = Number(branchId);
         const prodFilter = productIds.length > 0 ? `&filter[product_id][_in]=${productIds.join(",")}` : "";
-        const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1${prodFilter}&fields=product_id,product_name,product_code,maintaining_quantity,product_type,parent_id`, { headers, cache: "no-store" });
+        const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1${prodFilter}&fields=product_id,product_name,product_code,maintaining_quantity,product_type,parent_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" });
         const products = prodRes.ok ? (await prodRes.json()).data || [] : [];
 
         const allProductIds = productIds.length > 0 ? productIds : products.map((p: any) => Number(p.product_id)).filter(Boolean);
@@ -47,12 +47,13 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             product_id: { _in: versionCheckProductIds.length > 0 ? versionCheckProductIds : [0] }
         }));
 
-        const [recRes, yieldRes, movRes, versionsRes, validReceiptsRes] = await Promise.all([
+        const [recRes, yieldRes, movRes, versionsRes, validReceiptsRes, unitsRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter=${validReceiptsFilter}&sort=expiry_date&limit=-1`, { headers, cache: "no-store" })
+            fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter=${validReceiptsFilter}&sort=expiry_date&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
         ]);
 
         const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
@@ -60,6 +61,10 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         const movements = movRes.ok ? (await movRes.json()).data || [] : [];
         const versionData = versionsRes.ok ? (await versionsRes.json()).data || [] : [];
         const validReceipts = validReceiptsRes.ok ? (await validReceiptsRes.json()).data || [] : [];
+        const unitsData = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
+
+        const unitsMap = new Map<number, any>();
+        unitsData.forEach((u: any) => unitsMap.set(Number(u.unit_id), u));
 
         const versionProductIds = new Set<number>(versionData.map((v: any) => Number(v.product_id)));
 
@@ -207,10 +212,18 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                 ? onHand
                 : recommendedLots.reduce((sum, lot) => sum + Number(lot.available || 0), 0);
 
+            const uomId = Number(p.unit_of_measurement?.unit_id || p.unit_of_measurement || 0);
+            const unitObj = unitsMap.get(uomId) || (typeof p.unit_of_measurement === "object" ? p.unit_of_measurement : null);
+            const uomName = unitObj?.unit_name || unitObj?.unit_shortcut || "Pieces";
+            const uomShortcut = unitObj?.unit_shortcut || unitObj?.unit_name || "PCS";
+
             enrichedProducts.push({
                 product_id: pId,
                 product_name: p.product_name,
                 product_code: p.product_code,
+                uom_name: uomName,
+                uom_shortcut: uomShortcut,
+                unit_of_measurement: uomName,
                 on_hand: availableOnHand,
                 safety_stock: safetyStock,
                 recommended_lots: recommendedLots

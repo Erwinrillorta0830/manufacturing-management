@@ -6,12 +6,15 @@ import {
     RefreshCw, 
     ArrowRight, 
     BadgeAlert,
-    Lock,
-    Forklift,
-    FileText,
-    ClipboardCheck,
-    CheckCircle2,
-    Printer
+    Forklift, 
+    FileText, 
+    ClipboardCheck, 
+    CheckCircle2, 
+    RotateCcw,
+    Printer,
+    Sparkles,
+    ShieldCheck,
+    History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +25,10 @@ import {
     TabsTrigger 
 } from "@/components/ui/tabs";
 import { useManufacturingQA } from "./hooks/useManufacturingQA";
+import { JobOrderQAInspectionQueue } from "./components/JobOrderQAInspectionQueue";
+import { QAInspectionLogsTable } from "./components/QAInspectionLogsTable";
+import { TwoPointQAInspectionModal } from "./components/TwoPointQAInspectionModal";
+import { JobOrderStatusHistoryModal } from "./components/JobOrderStatusHistoryModal";
 import { QuarantineHolds } from "./components/QuarantineHolds";
 import { YieldClosingQueue } from "./components/YieldClosingQueue";
 import { CheckpointLogsTable } from "./components/CheckpointLogsTable";
@@ -33,19 +40,48 @@ import { ClosedQAQueue } from "./components/ClosedQAQueue";
 
 export default function ManufacturingQAModule() {
     const {
-        qaLogs,
+        // Tab State
         activeTab,
         setActiveTab,
-        loadingLogs,
-        loadingDispositions,
+
+        // Core Data
+        jobOrders,
+        rejectionReasons,
+        inspectionLogs,
+        qaLogs,
+        dispositions,
         loadingJobOrders,
+        loadingInspectionLogs,
+        loadingDispositions,
+        loadingLogs,
         actionLoading,
+
+        // Search & Filtered Views
         logSearch,
         setLogSearch,
         logStatusFilter,
         setLogStatusFilter,
         joSearch,
         setJoSearch,
+        filteredQALogs,
+        pendingHolds,
+        activeJobOrders,
+        closedJobOrders,
+
+        // 2-Point QA Inspection Modal
+        selectedQAJobOrder,
+        isQAInspectionModalOpen,
+        handleOpenQAInspectionModal,
+        handleCloseQAInspectionModal,
+        handleSubmitTwoPointInspection,
+
+        // Status History Modal
+        selectedStatusHistoryJO,
+        isStatusHistoryModalOpen,
+        handleOpenStatusHistoryModal,
+        handleCloseStatusHistoryModal,
+
+        // Yield Closing Dialog
         selectedJO,
         isYieldDialogOpen,
         setIsYieldDialogOpen,
@@ -59,6 +95,11 @@ export default function ManufacturingQAModule() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        handleOpenYieldDialog,
+        handleSubmitYieldClosing,
+        handleReprintReceipt,
+
+        // Supervisor Override Dialog
         selectedDisp,
         isOverrideDialogOpen,
         setIsOverrideDialogOpen,
@@ -66,19 +107,10 @@ export default function ManufacturingQAModule() {
         setOverrideDecision,
         overrideComments,
         setOverrideComments,
-        refreshAll,
-        getBranchName,
-        filteredQALogs,
-        pendingHolds,
-        activeJobOrders,
-        closedJobOrders,
-        handleOpenYieldDialog,
-        handleSubmitYieldClosing,
-        handleReprintReceipt,
         handleOpenOverrideDialog,
         handleSubmitOverride,
 
-        // Daily Yield QA states & handlers
+        // Daily Yield QA
         yieldLedger,
         dailyInspections,
         loadingDailyQA,
@@ -104,12 +136,11 @@ export default function ManufacturingQAModule() {
         selectedRouteId,
         setSelectedRouteId,
         routes,
-        jobOrders,
         qaTemplates,
         qaParamValues,
         setQaParamValues,
 
-        // Final QA states & handlers
+        // Final QA
         finalReleases,
         lots,
         lotsProducts,
@@ -134,7 +165,11 @@ export default function ManufacturingQAModule() {
         finalRemarks,
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
-        handleSubmitFinalRelease
+        handleSubmitFinalRelease,
+
+        // General
+        refreshAll,
+        getBranchName
     } = useManufacturingQA();
 
     return (
@@ -142,15 +177,18 @@ export default function ManufacturingQAModule() {
             {/* Header section */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5">
                 <div>
-                    <h1 className="text-3xl font-extrabold tracking-tight">Quality Assurance Console</h1>
-                    <p className="text-muted-foreground mt-1">
-                        Audit active checklist parameters, release quarantine hold overrides, and finalize production yield closing log receipts.
+                    <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-2.5">
+                        <ShieldCheck className="h-8 w-8 text-primary" />
+                        Quality Assurance & Rework Console
+                    </h1>
+                    <p className="text-muted-foreground text-sm mt-1">
+                        Execute 2-point QA inspections, trigger automated standalone rework orders, record permanent inspection audit logs, and release finished goods into inventory.
                     </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                    <Button variant="outline" size="sm" onClick={refreshAll} className="gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => refreshAll(false)} className="gap-1.5 text-xs font-semibold">
                         <RefreshCw className="h-4 w-4" />
-                        Sync Dashboard
+                        Sync Console
                     </Button>
                 </div>
             </div>
@@ -176,7 +214,7 @@ export default function ManufacturingQAModule() {
                         variant="destructive" 
                         size="sm" 
                         onClick={() => setActiveTab("holds")}
-                        className="gap-1.5 shrink-0"
+                        className="gap-1.5 shrink-0 text-xs font-bold"
                     >
                         Resolve Holds
                         <ArrowRight className="h-4 w-4" />
@@ -186,9 +224,89 @@ export default function ManufacturingQAModule() {
 
             {/* Main Tabs Dashboard */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+                <TabsList className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1 h-auto p-1.5 bg-muted/60 rounded-xl border">
+                    <TabsTrigger value="jo-inspection" className="text-xs font-bold gap-1.5 py-2">
+                        <ClipboardCheck className="h-3.5 w-3.5" />
+                        QA & Rework Entry
+                    </TabsTrigger>
 
+                    <TabsTrigger value="qa-inspection-logs" className="text-xs font-bold gap-1.5 py-2">
+                        <FileText className="h-3.5 w-3.5" />
+                        Inspection Logs
+                        {inspectionLogs.length > 0 && (
+                            <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
+                                {inspectionLogs.length}
+                            </Badge>
+                        )}
+                    </TabsTrigger>
 
-                {/* TAB: Active Holds */}
+                    <TabsTrigger value="closing" className="text-xs font-bold gap-1.5 py-2">
+                        <Forklift className="h-3.5 w-3.5" />
+                        Yield Closing
+                    </TabsTrigger>
+
+                    <TabsTrigger value="holds" className="text-xs font-bold gap-1.5 py-2">
+                        <BadgeAlert className="h-3.5 w-3.5" />
+                        Quarantine Holds
+                        {pendingHolds.length > 0 && (
+                            <Badge variant="destructive" className="text-[10px] px-1 py-0 ml-1">
+                                {pendingHolds.length}
+                            </Badge>
+                        )}
+                    </TabsTrigger>
+
+                    <TabsTrigger value="daily-qa" className="text-xs font-bold gap-1.5 py-2">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Daily Yield QA
+                    </TabsTrigger>
+
+                    <TabsTrigger value="final-qa" className="text-xs font-bold gap-1.5 py-2">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Final QA Release
+                    </TabsTrigger>
+
+                    <TabsTrigger value="closed-qa" className="text-xs font-bold gap-1.5 py-2">
+                        <Printer className="h-3.5 w-3.5" />
+                        Closed Runs
+                    </TabsTrigger>
+                </TabsList>
+
+                {/* TAB 1: Primary Module 4 Job Order QA & Rework Inspection Workcenter */}
+                <TabsContent value="jo-inspection" className="space-y-4 outline-none">
+                    <JobOrderQAInspectionQueue
+                        jobOrders={jobOrders}
+                        loadingJobOrders={loadingJobOrders}
+                        getBranchName={getBranchName}
+                        onOpenQAInspectionModal={handleOpenQAInspectionModal}
+                        onOpenStatusHistoryModal={handleOpenStatusHistoryModal}
+                        onRefresh={() => refreshAll(false)}
+                    />
+                </TabsContent>
+
+                {/* TAB 2: Immutable QA Inspection Logs (qa_jo_inspection_logs) */}
+                <TabsContent value="qa-inspection-logs" className="space-y-4 outline-none">
+                    <QAInspectionLogsTable
+                        logs={inspectionLogs}
+                        rejectionReasons={rejectionReasons}
+                        loadingLogs={loadingInspectionLogs}
+                        onRefresh={() => refreshAll(false)}
+                    />
+                </TabsContent>
+
+                {/* TAB 3: Yield Closing (Packaging & Ledger Receipting) */}
+                <TabsContent value="closing" className="space-y-4 outline-none">
+                    <YieldClosingQueue
+                        loadingJobOrders={loadingJobOrders}
+                        activeJobOrders={activeJobOrders}
+                        joSearch={joSearch}
+                        setJoSearch={setJoSearch}
+                        getBranchName={getBranchName}
+                        handleOpenYieldDialog={handleOpenYieldDialog}
+                        pendingHolds={pendingHolds}
+                    />
+                </TabsContent>
+
+                {/* TAB 4: Active Quarantine Holds */}
                 <TabsContent value="holds" className="space-y-4 outline-none">
                     <QuarantineHolds
                         loadingDispositions={loadingDispositions}
@@ -197,7 +315,7 @@ export default function ManufacturingQAModule() {
                     />
                 </TabsContent>
 
-                {/* TAB: Daily Yield QA */}
+                {/* TAB 5: Daily Yield QA */}
                 <TabsContent value="daily-qa" className="space-y-4 outline-none">
                     <DailyQAQueue
                         yieldLedger={yieldLedger}
@@ -234,7 +352,7 @@ export default function ManufacturingQAModule() {
                     />
                 </TabsContent>
 
-                {/* TAB: Final QA Release */}
+                {/* TAB 6: Final QA Release */}
                 <TabsContent value="final-qa" className="space-y-4 outline-none">
                     <FinalQAReleases
                         lots={lots}
@@ -265,20 +383,7 @@ export default function ManufacturingQAModule() {
                     />
                 </TabsContent>
 
-                {/* TAB: Yield Closing */}
-                <TabsContent value="closing" className="space-y-4 outline-none">
-                    <YieldClosingQueue
-                        loadingJobOrders={loadingJobOrders}
-                        activeJobOrders={activeJobOrders}
-                        joSearch={joSearch}
-                        setJoSearch={setJoSearch}
-                        getBranchName={getBranchName}
-                        handleOpenYieldDialog={handleOpenYieldDialog}
-                        pendingHolds={pendingHolds}
-                    />
-                </TabsContent>
-
-                {/* TAB: Closed QA (Reprintable Completed Runs) */}
+                {/* TAB 7: Closed QA (Reprintable Completed Runs) */}
                 <TabsContent value="closed-qa" className="space-y-4 outline-none">
                     <ClosedQAQueue
                         loadingJobOrders={loadingJobOrders}
@@ -289,21 +394,27 @@ export default function ManufacturingQAModule() {
                         handleReprintReceipt={handleReprintReceipt}
                     />
                 </TabsContent>
-
-                {/* TAB: QA Logs */}
-                <TabsContent value="logs" className="space-y-4 outline-none">
-                    <CheckpointLogsTable
-                        loadingLogs={loadingLogs}
-                        filteredQALogs={filteredQALogs}
-                        logSearch={logSearch}
-                        setLogSearch={setLogSearch}
-                        logStatusFilter={logStatusFilter}
-                        setLogStatusFilter={setLogStatusFilter}
-                    />
-                </TabsContent>
             </Tabs>
 
-            {/* DIALOG: Yield Closing Form */}
+            {/* MODAL 1: Simplified 2-Point QA Inspection & Rework Trigger */}
+            <TwoPointQAInspectionModal
+                isOpen={isQAInspectionModalOpen}
+                onClose={handleCloseQAInspectionModal}
+                jobOrder={selectedQAJobOrder}
+                rejectionReasons={rejectionReasons}
+                getBranchName={getBranchName}
+                onSubmitInspection={handleSubmitTwoPointInspection}
+                actionLoading={actionLoading}
+            />
+
+            {/* MODAL 2: Job Order Status Transition History Audit Trail */}
+            <JobOrderStatusHistoryModal
+                isOpen={isStatusHistoryModalOpen}
+                onClose={handleCloseStatusHistoryModal}
+                jobOrder={selectedStatusHistoryJO}
+            />
+
+            {/* MODAL 3: Yield Closing Form Dialog */}
             <YieldClosingDialog
                 isYieldDialogOpen={isYieldDialogOpen}
                 setIsYieldDialogOpen={setIsYieldDialogOpen}
@@ -323,7 +434,7 @@ export default function ManufacturingQAModule() {
                 handleSubmitYieldClosing={handleSubmitYieldClosing}
             />
 
-            {/* DIALOG: Supervisor Quarantine Override Form */}
+            {/* MODAL 4: Supervisor Quarantine Override Form Dialog */}
             <OverrideDialog
                 isOverrideDialogOpen={isOverrideDialogOpen}
                 setIsOverrideDialogOpen={setIsOverrideDialogOpen}
