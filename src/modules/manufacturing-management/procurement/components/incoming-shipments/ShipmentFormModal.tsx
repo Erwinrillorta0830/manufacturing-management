@@ -432,7 +432,7 @@ export function ShipmentFormModal({
                                                 <th className="p-2 border-r text-right min-w-[120px]">Price ({currencyCode}) <span className="text-red-500">*</span></th>
                                                 <th className="p-2 border-r text-right min-w-[130px]">Gross ({currencyCode})</th>
                                                 <th className="p-2 border-r min-w-[140px]">Discount Type</th>
-                                                <th className="p-2 border-r text-right w-20">Disc %</th>
+                                                <th className="p-2 border-r text-right min-w-[120px]">Discount Value</th>
                                                 <th className="p-2 border-r text-right min-w-[130px]">Net ({currencyCode})</th>
                                                 <th className="p-2 text-center w-12">Action</th>
                                             </tr>
@@ -451,7 +451,10 @@ export function ShipmentFormModal({
                                                 const qty = Number(line.quantity_ordered || 0);
                                                 const unitPrice = Number(line.base_unit_cost_php || 0);
                                                 const grossForeign = qty * unitPrice;
-                                                const discount = (grossForeign * Number(line.discount_percent || 0)) / 100;
+                                                const discountMode = line.discount_mode || "Percentage";
+                                                const discount = discountMode === "Fixed Amount"
+                                                    ? Number(line.discount_amount || 0)
+                                                    : (grossForeign * Number(line.discount_percent || 0)) / 100;
                                                 const subtotal = grossForeign - discount;
                                                 const materialType = line.material_type || purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
 
@@ -544,6 +547,8 @@ export function ShipmentFormModal({
                                                                         const pps = productPerSupplierMap[prodId] || (parentId ? productPerSupplierMap[parentId] : undefined);
                                                                         if (pps) {
                                                                             (finalSelected as ManifestLineFormItem).discount_type_id = pps.discount_type_id ? String(pps.discount_type_id) : "";
+                                                                            (finalSelected as ManifestLineFormItem).discount_mode = "Percentage";
+                                                                            (finalSelected as ManifestLineFormItem).discount_amount = "0";
                                                                             (finalSelected as ManifestLineFormItem).discount_percent = pps.total_percent !== undefined ? String(pps.total_percent) : "0";
                                                                         }
                                                                     }
@@ -660,40 +665,64 @@ export function ShipmentFormModal({
                                                             {formatMoney(grossForeign, currencyCode)}
                                                         </td>
 
-                                                        {/* Discount Type Dropdown */}
+                                                        {/* Discount Type and Preset */}
                                                         <td className="p-1.5 border-r align-middle">
-                                                            <select
-                                                                value={line.discount_type_id !== undefined && line.discount_type_id !== null ? String(line.discount_type_id) : ""}
-                                                                onChange={event => {
-                                                                    const dtId = event.target.value;
-                                                                    const selectedDt = discountTypes?.find(dt => String(dt.id) === String(dtId));
-                                                                    handleLineFormChange(idx, {
-                                                                        discount_type_id: dtId,
-                                                                        discount_percent: selectedDt ? String(selectedDt.total_percent) : (dtId === "" ? "0" : line.discount_percent || "0")
-                                                                    });
-                                                                }}
-                                                                className="w-full rounded-md border bg-background px-2 py-1 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
-                                                            >
-                                                                <option value="">No Discount / Custom %</option>
-                                                                {discountTypes?.map(dt => (
-                                                                    <option key={dt.id} value={String(dt.id)}>
-                                                                        {dt.discount_type} ({Number(dt.total_percent).toFixed(1)}%)
-                                                                    </option>
-                                                                ))}
-                                                            </select>
+                                                            <div className="space-y-1">
+                                                                <select
+                                                                    aria-label={`Discount Type for purchase order line ${idx + 1}`}
+                                                                    value={line.discount_mode || "Percentage"}
+                                                                    onChange={event => {
+                                                                        const mode = event.target.value as ManifestLineFormItem["discount_mode"];
+                                                                        handleLineFormChange(idx, mode === "Fixed Amount"
+                                                                            ? { discount_mode: mode, discount_type_id: "", discount_percent: "0", discount_amount: "0" }
+                                                                            : { discount_mode: "Percentage", discount_amount: "0", discount_percent: line.discount_percent || "0" });
+                                                                    }}
+                                                                    className="w-full rounded-md border bg-background px-2 py-1 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
+                                                                >
+                                                                    <option value="Percentage">Percentage</option>
+                                                                    <option value="Fixed Amount">Fixed Amount</option>
+                                                                </select>
+                                                                <select
+                                                                    aria-label={`Discount Preset for purchase order line ${idx + 1}`}
+                                                                    value={line.discount_type_id !== undefined && line.discount_type_id !== null ? String(line.discount_type_id) : ""}
+                                                                    disabled={discountMode !== "Percentage"}
+                                                                    onChange={event => {
+                                                                        const dtId = event.target.value;
+                                                                        const selectedDt = discountTypes?.find(dt => String(dt.id) === String(dtId));
+                                                                        handleLineFormChange(idx, {
+                                                                            discount_mode: "Percentage",
+                                                                            discount_type_id: dtId,
+                                                                            discount_amount: "0",
+                                                                            discount_percent: selectedDt ? String(selectedDt.total_percent) : (dtId === "" ? "0" : line.discount_percent || "0")
+                                                                        });
+                                                                    }}
+                                                                    className="w-full rounded-md border bg-background px-2 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    <option value="">No Preset / Custom %</option>
+                                                                    {discountTypes?.map(dt => (
+                                                                        <option key={dt.id} value={String(dt.id)}>
+                                                                            {dt.discount_type} ({Number(dt.total_percent).toFixed(1)}%)
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
                                                         </td>
 
-                                                        {/* Disc % */}
+                                                        {/* Discount Value */}
                                                         <td className="p-1.5 border-r align-middle">
                                                             <input
                                                                 type="number"
                                                                 min="0"
-                                                                max="100"
+                                                                max={discountMode === "Fixed Amount" ? Math.max(0, grossForeign) : 100}
                                                                 step="0.01"
-                                                                value={line.discount_percent ?? "0"}
-                                                                onChange={event => handleLineFormChange(idx, "discount_percent", event.target.value)}
+                                                                aria-label={`${discountMode === "Fixed Amount" ? "Discount Amount" : "Discount Percentage"} for purchase order line ${idx + 1}`}
+                                                                value={discountMode === "Fixed Amount" ? (line.discount_amount ?? "0") : (line.discount_percent ?? "0")}
+                                                                onChange={event => handleLineFormChange(idx, discountMode === "Fixed Amount" ? "discount_amount" : "discount_percent", event.target.value)}
                                                                 className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-primary"
                                                             />
+                                                            {hasSubmitted && lineErrors.filter(error => error.toLowerCase().includes("discount")).map(error => (
+                                                                <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
+                                                            ))}
                                                         </td>
 
                                                         {/* Net Subtotal */}

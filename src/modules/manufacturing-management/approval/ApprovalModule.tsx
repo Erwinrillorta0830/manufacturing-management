@@ -340,6 +340,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                                 const unitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
                                                 const gross = qty * unitPrice;
 
+                                                const discountMode = line.discount_mode || "Percentage";
                                                 let discPercent = Number(line.discount_percent || 0);
                                                 let dtLabel = "No Discount";
 
@@ -351,7 +352,12 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                                     dtLabel = `${discPercent.toFixed(1)}%`;
                                                 }
 
-                                                const discAmount = (gross * discPercent) / 100;
+                                                const discAmount = discountMode === "Fixed Amount"
+                                                    ? Number(line.discount_amount_foreign || 0)
+                                                    : (gross * discPercent) / 100;
+                                                if (discountMode === "Fixed Amount") {
+                                                    dtLabel = `Fixed Amount (${money(discAmount, currency)})`;
+                                                }
                                                 const net = gross - discAmount;
 
                                                 return (

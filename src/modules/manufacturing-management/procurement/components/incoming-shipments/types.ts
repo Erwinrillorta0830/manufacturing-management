@@ -35,6 +35,8 @@ export interface ManifestLineFormItem {
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: string;
     discount_type_id?: string | number;
+    discount_mode?: "Percentage" | "Fixed Amount";
+    discount_amount?: string;
     discount_percent?: string;
     vat_percent?: string;
     withholding_percent?: string;

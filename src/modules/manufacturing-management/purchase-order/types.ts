@@ -67,7 +67,9 @@ export interface PurchaseOrderDraftPayload {
         jobOrderId: number | null;
         quantity: number;
         unitPrice: number;
+        discountMode: "Percentage" | "Fixed Amount";
         discountPercent: number;
+        discountAmount: number;
         vatPercent: number;
         withholdingPercent: number;
     }>;

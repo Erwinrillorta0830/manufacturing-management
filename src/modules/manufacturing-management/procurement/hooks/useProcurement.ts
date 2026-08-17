@@ -98,7 +98,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         price_type: ""
     });
 
-    const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+    const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
 
     const [expenseAllocationForm, setExpenseAllocationForm] = useState<{
         allocation_method: "Value" | "Weight" | "Volume";
@@ -145,7 +145,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 payment_type: null,
                 price_type: ""
             });
-            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
         }
     }, [isShipmentModalOpen]);
 
@@ -499,10 +499,24 @@ export function useProcurement(defaultTab: string = "suppliers") {
             const linesPayload = validLines.map(l => ({
                 product_id: parseInt(l.product_id),
                 quantity_ordered: parseFloat(l.quantity_ordered),
-                base_unit_cost_php: parseFloat(l.base_unit_cost_php)
+                base_unit_cost_php: parseFloat(l.base_unit_cost_php),
+                discount_type: l.discount_type_id ? Number(l.discount_type_id) : null,
+                discount_mode: l.discount_mode || "Percentage",
+                discount_amount: Number(l.discount_amount || 0),
+                discount_percent: Number(l.discount_percent || 0),
+                vat_percent: Number(l.vat_percent || 0),
+                withholding_percent: Number(l.withholding_percent || 0),
+                purchase_intent: l.purchase_intent,
+                job_order_id: l.job_order_id ? Number(l.job_order_id) : null
             }));
 
-            const totalPhp = linesPayload.reduce((acc, curr) => acc + (curr.quantity_ordered * curr.base_unit_cost_php), 0);
+            const totalPhp = linesPayload.reduce((acc, curr) => {
+                const gross = curr.quantity_ordered * curr.base_unit_cost_php;
+                const discount = curr.discount_mode === "Fixed Amount"
+                    ? curr.discount_amount
+                    : gross * curr.discount_percent / 100;
+                return acc + gross - discount;
+            }, 0);
             const rate = rateVal;
 
             const shipmentPayload = {
@@ -533,7 +547,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 payment_type: null,
                 price_type: ""
             });
-            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "" }]);
+            setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
             loadShipments();
         } catch (e: unknown) {
             console.error(e);

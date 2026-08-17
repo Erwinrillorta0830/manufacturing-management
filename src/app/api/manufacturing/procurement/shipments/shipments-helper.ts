@@ -5,7 +5,7 @@ import { toStandardKg, calculateLandedCostAllocations, normalizeAllocationMethod
 
 import { DirectusShipment } from "@/modules/manufacturing-management/procurement/types";
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
-import { buildPurchaseOrderProductPayload, calculatePurchaseOrderLine } from "../../purchase-orders/_domain";
+import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
@@ -16,7 +16,6 @@ import {
     CURRENCY_DECIMAL_SCALE,
     DecimalValue,
     EXCHANGE_RATE_DECIMAL_SCALE,
-    normalizeDecimal,
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 
@@ -107,6 +106,9 @@ interface DirectusPOProduct {
     ordered_quantity?: number | string;
     unit_price?: number | string;
     discount_type?: number | null;
+    discount_mode?: "Percentage" | "Fixed Amount" | null;
+    discount_amount?: number | string | null;
+    discount_amount_foreign?: number | string | null;
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
     discount_percent?: number | string;
@@ -207,6 +209,9 @@ export interface ExtendedShipmentLineItem {
     manufacturing_date?: string | null;
     expiration_date?: string;
     discount_type?: number | null;
+    discount_mode?: "Percentage" | "Fixed Amount" | null;
+    discount_amount?: number | string | null;
+    discount_amount_foreign?: number | string | null;
     discount_percent?: number;
     vat_percent?: number;
     withholding_percent?: number;
@@ -708,6 +713,8 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 purchase_intent: pop.purchase_intent || "Buffer_Stock",
                 job_order_id: pop.job_order_id || null,
                 discount_type: pop.discount_type || null,
+                discount_mode: pop.discount_mode || "Percentage",
+                discount_amount_foreign: pop.discount_amount_foreign ?? null,
                 discount_percent: Number(pop.discount_percent || 0),
                 vat_percent: Number(pop.vat_percent || 0),
                 withholding_percent: Number(pop.withholding_percent || 0)
@@ -728,12 +735,19 @@ export async function createIncomingShipment(
     const createdProductIds: number[] = [];
     try {
         await assertMrpProductJobOrderPairs(lineItems);
-        const totalPhp = normalizeDecimal(String(shipmentData.total_php_value ?? 0));
         const extendedData = shipmentData as ExtendedShipment;
         const exchangeRate = DecimalValue.from(extendedData.exchange_rate ?? 58).toFixed(6);
-        const totalForeignCurrency = extendedData.total_foreign_currency != null
-            ? normalizeDecimal(String(extendedData.total_foreign_currency))
-            : DecimalValue.from(totalPhp).divideRounded(exchangeRate, 2).toFixed(2);
+        const calculatedTotals = calculatePurchaseOrderTotals(lineItems.map(item => ({
+            quantity: Number(item.quantity_ordered || 0),
+            unitPrice: item.base_unit_cost_php || 0,
+            discountMode: item.discount_mode || "Percentage",
+            discountPercent: Number(item.discount_percent || 0),
+            discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
+            vatPercent: Number(item.vat_percent || 0),
+            withholdingPercent: Number(item.withholding_percent || 0)
+        })), 1);
+        const totalPhp = calculatedTotals.netPhp;
+        const totalForeignCurrency = DecimalValue.from(totalPhp).divideRounded(exchangeRate, 2).toFixed(2);
 
         const poPayload = {
             purchase_order_no: `PO-${extendedData.reference_number || Date.now()}`,
@@ -747,7 +761,7 @@ export async function createIncomingShipment(
             date: await getTodayDateString(),
             time: new Date().toTimeString().split(" ")[0],
             datetime: new Date().toISOString().replace("Z", "").replace("T", " "),
-            gross_amount: totalPhp,
+            gross_amount: calculatedTotals.grossPhp,
             total_amount: totalPhp,
             inventory_status: shipmentStatusToInventoryStatus(extendedData.status || "Ordered"),
             payment_status: 1, // Pending Payment
@@ -781,16 +795,11 @@ export async function createIncomingShipment(
 
         // Sync to purchase_order_products for this PO
 
-        for (const item of lineItems) {
+        for (let index = 0; index < lineItems.length; index += 1) {
+            const item = lineItems[index];
             const qty = Number(item.quantity_ordered || 0);
             const price = item.base_unit_cost_php || 0;
-            const amounts = calculatePurchaseOrderLine({
-                quantity: qty,
-                unitPrice: price,
-                discountPercent: Number(item.discount_percent || 0),
-                vatPercent: Number(item.vat_percent || 0),
-                withholdingPercent: Number(item.withholding_percent || 0)
-            }, 1);
+            const amounts = calculatedTotals.lines[index];
 
             const popRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_products`, {
                 method: "POST",
@@ -800,7 +809,9 @@ export async function createIncomingShipment(
                     productId: typeof item.product_id === "object" ? item.product_id.product_id : item.product_id,
                     quantity: qty,
                     unitPrice: price,
+                    discountMode: item.discount_mode || "Percentage",
                     discountPercent: Number(item.discount_percent || 0),
+                    discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
                     vatPercent: Number(item.vat_percent || 0),
                     withholdingPercent: Number(item.withholding_percent || 0),
                     exchangeRate: 1,

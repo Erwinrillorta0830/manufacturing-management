@@ -112,6 +112,8 @@ export interface ShipmentLineItem {
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
     discount_type?: { id: number; discount_type: string; total_percent: number | string } | number | null;
+    discount_mode?: "Percentage" | "Fixed Amount";
+    discount_amount_foreign?: number | string | null;
     discount_percent?: number;
     vat_percent?: number;
     withholding_percent?: number;
@@ -232,6 +234,8 @@ export interface DirectusShipmentLineItem {
     base_unit_cost_php: number | string;
     allocated_expense_php: number | string;
     final_landed_unit_cost: number | string;
+    discount_mode?: "Percentage" | "Fixed Amount" | null;
+    discount_amount_foreign?: number | string | null;
 }
 
 export interface DirectusShipmentExpense {
@@ -313,6 +317,10 @@ export interface LineItem {
     quantity_ordered: string;
     base_unit_cost_php: string;
     parent_product_id: string;
+    discount_type_id?: string | number | null;
+    discount_mode?: "Percentage" | "Fixed Amount";
+    discount_amount?: string | number | null;
+    discount_percent?: string | number | null;
     product_name?: string;
     product_code?: string;
     selected_uom?: string;

@@ -14,7 +14,8 @@ import { compareDecimals, DecimalValue, UNIT_PRICE_DECIMAL_SCALE, type DecimalIn
 
 export type CurrencyCode = string;
 export type QaDisposition = "Passed" | "Partially Accepted" | "Rejected";
-export type DiscountKind = "Percentage" | "Fixed";
+export type DiscountMode = "Percentage" | "Fixed Amount";
+export type DiscountKind = DiscountMode;
 
 export interface MoneySummary {
     currencyCode: CurrencyCode;
@@ -33,17 +34,61 @@ export function roundCurrency(value: DecimalInput): string {
 export interface PurchaseOrderMoneyLine {
     quantity: DecimalInput;
     unitPrice: DecimalInput;
-    discountPercent: DecimalInput;
+    discountMode?: DiscountMode;
+    discountPercent?: DecimalInput;
+    discountAmount?: DecimalInput;
     vatPercent: DecimalInput;
     withholdingPercent: DecimalInput;
 }
 
+export class PurchaseOrderDiscountError extends Error {
+    constructor(
+        message: string,
+        public readonly code: "DISCOUNT_MODE_INVALID" | "DISCOUNT_PERCENT_INVALID" | "DISCOUNT_AMOUNT_INVALID" | "DISCOUNT_EXCEEDS_GROSS",
+        public readonly details?: Record<string, unknown>
+    ) {
+        super(message);
+    }
+}
+
 export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchangeRate: DecimalInput) {
+    const discountMode = line.discountMode || "Percentage";
+    if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") {
+        throw new PurchaseOrderDiscountError("Discount Type must be Percentage or Fixed Amount.", "DISCOUNT_MODE_INVALID", {
+            discountMode
+        });
+    }
+
     const grossForeign = DecimalValue.from(line.quantity).multiply(line.unitPrice).toFixed(2);
-    const discountForeign = DecimalValue.from(grossForeign)
-        .multiply(line.discountPercent)
-        .divideRounded(100, 2)
-        .toFixed(2);
+    const discountPercent = DecimalValue.from(line.discountPercent ?? 0);
+    const discountAmount = DecimalValue.from(line.discountAmount ?? 0);
+    if (discountMode === "Percentage") {
+        if (discountPercent.compare(0) < 0 || discountPercent.compare(100) > 0) {
+            throw new PurchaseOrderDiscountError("Percentage discounts must be between 0 and 100.", "DISCOUNT_PERCENT_INVALID", {
+                discountPercent: discountPercent.toFixed(2),
+                grossForeign
+            });
+        }
+    } else if (discountAmount.compare(0) < 0) {
+        throw new PurchaseOrderDiscountError("Fixed discounts cannot be negative.", "DISCOUNT_AMOUNT_INVALID", {
+            discountAmount: discountAmount.toFixed(2),
+            grossForeign
+        });
+    }
+
+    const discountForeign = discountMode === "Fixed Amount"
+        ? discountAmount.toFixed(2)
+        : DecimalValue.from(grossForeign)
+            .multiply(discountPercent)
+            .divideRounded(100, 2)
+            .toFixed(2);
+    if (DecimalValue.from(discountForeign).compare(grossForeign) > 0) {
+        throw new PurchaseOrderDiscountError("Discount Amount cannot exceed Gross Amount.", "DISCOUNT_EXCEEDS_GROSS", {
+            discountMode,
+            discountAmount: discountForeign,
+            grossForeign
+        });
+    }
     const discountedSubtotalForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
     const vatForeign = DecimalValue.from(discountedSubtotalForeign)
         .multiply(line.vatPercent)
@@ -58,6 +103,7 @@ export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchang
         .subtract(withholdingForeign)
         .toFixed(2);
     return {
+        discountMode,
         grossForeign,
         discountForeign,
         vatForeign,
@@ -72,7 +118,19 @@ export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchang
 }
 
 export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyLine[], exchangeRate: DecimalInput) {
-    const calculatedLines = lines.map(line => calculatePurchaseOrderLine(line, exchangeRate));
+    const calculatedLines = lines.map((line, lineIndex) => {
+        try {
+            return calculatePurchaseOrderLine(line, exchangeRate);
+        } catch (error) {
+            if (error instanceof PurchaseOrderDiscountError) {
+                throw new PurchaseOrderDiscountError(error.message, error.code, {
+                    ...(error.details || {}),
+                    lineIndex
+                });
+            }
+            throw error;
+        }
+    });
     const sum = (field: keyof typeof calculatedLines[number]) => calculatedLines.reduce(
         (total, line) => total.add(line[field]),
         DecimalValue.from(0)
@@ -117,6 +175,7 @@ export function buildPurchaseOrderProductPayload(
         unit_price: unitPricePhp,
         approved_price: unitPricePhp,
         discount_type: input.discountType ?? null,
+        discount_mode: input.discountMode || "Percentage",
         gross_amount: amount.grossPhp,
         discounted_price: DecimalValue.from(discountedSubtotalPhp).divideRounded(quantity, 2).toFixed(2),
         discounted_amount: amount.discountPhp,
@@ -130,8 +189,9 @@ export function buildPurchaseOrderProductPayload(
         job_order_id: input.jobOrderId ?? null,
         unit_price_foreign: DecimalValue.from(input.unitPrice).toFixed(UNIT_PRICE_DECIMAL_SCALE),
         gross_amount_foreign: amount.grossForeign,
+        discount_amount_foreign: amount.discountForeign,
         net_amount_foreign: amount.netForeign,
-        discount_percent: input.discountPercent,
+        discount_percent: input.discountMode === "Fixed Amount" ? 0 : input.discountPercent ?? 0,
         vat_percent: input.vatPercent,
         withholding_percent: input.withholdingPercent
     };

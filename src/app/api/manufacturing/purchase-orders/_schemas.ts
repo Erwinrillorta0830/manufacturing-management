@@ -21,6 +21,7 @@ const nonNegativeMoney = decimalValue
     .refine(value => isWithinDecimalCapacity(value), "Amount exceeds the supported 65-digit currency range.");
 const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).compare(0) > 0, "Must be greater than zero.");
 const percentage = z.coerce.number().finite().min(0).max(100);
+const discountMode = z.enum(["Percentage", "Fixed Amount"]);
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const purchaseOrderStatusSchema = z.enum([
@@ -45,6 +46,8 @@ export const purchaseOrderLineSchema = z.object({
     product_id: positiveId,
     quantity_ordered: z.coerce.number().finite().positive(),
     base_unit_cost_php: nonNegativeMoney,
+    discount_mode: discountMode.optional(),
+    discount_amount: nonNegativeMoney.optional(),
     discount_percent: z.coerce.number().finite().min(0).max(100).optional(),
     discount_type: positiveId.nullable().optional()
 }).passthrough();
@@ -96,7 +99,9 @@ export const purchaseOrderDraftLineSchema = z.object({
     jobOrderId: positiveId.nullable(),
     quantity: z.coerce.number().int().positive(),
     unitPrice: nonNegativeMoney,
+    discountMode: discountMode.default("Percentage"),
     discountPercent: percentage.default(0),
+    discountAmount: nonNegativeMoney.default("0"),
     vatPercent: percentage.default(0),
     withholdingPercent: percentage.default(0)
 }).superRefine((line, context) => {
