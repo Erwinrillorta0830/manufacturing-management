@@ -178,6 +178,7 @@ export function useIncomingShipmentsForm({
             status: "Ordered",
             branch_id: activeShipment.branch_id || 182,
             payment_type: activeShipment.payment_type || 1,
+            payment_terms: activeShipment.payment_terms || null,
             price_type: activeShipment.price_type || "Internal",
             currency_code: (activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP",
             workflow_revision: activeShipment.workflow_revision || 0
@@ -241,6 +242,7 @@ export function useIncomingShipmentsForm({
             status: "Ordered",
             branch_id: null,
             payment_type: null,
+            payment_terms: null,
             price_type: "",
             currency_code: "PHP"
         });

@@ -34,6 +34,7 @@ interface ApprovalOrder {
     lead_time_receiving?: string | null;
     inventory_status: number;
     payment_status?: number | null;
+    payment_terms?: number | null;
     total_amount?: number | string | null;
     gross_amount?: number | string | null;
     currency_code?: string | null;
@@ -71,7 +72,7 @@ interface ApprovalActorRow {
 
 const ORDER_FIELDS = [
     "purchase_order_id", "purchase_order_no", "reference", "encoder_id", "approver_id", "finance_id",
-    "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
+    "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "payment_terms", "total_amount", "gross_amount",
     "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
     "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "remark"
 ].join(",");

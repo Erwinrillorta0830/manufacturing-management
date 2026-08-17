@@ -9,6 +9,12 @@ export interface ShipmentDetailViewProps {
     loading: boolean;
     activeShipment: IncomingShipment | null;
     canonicalDrafting: boolean;
+    paymentTerms?: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
@@ -23,6 +29,7 @@ export function ShipmentDetailView({
     loading,
     activeShipment,
     canonicalDrafting,
+    paymentTerms = [],
     suppliers,
     branches,
     isSupplierForeign,
@@ -115,6 +122,17 @@ export function ShipmentDetailView({
                                                 case 5: return "Installment";
                                                 default: return payType ? `Payment Type #${payType}` : "N/A";
                                             }
+                                        })()}
+                                    </strong>
+                                </span>
+                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                <span>
+                                    Payment Terms:{" "}
+                                    <strong className="text-foreground font-bold">
+                                        {(() => {
+                                            const paymentTermsId = activeShipment.payment_terms;
+                                            const paymentTerm = paymentTerms.find(term => term.id === Number(paymentTermsId));
+                                            return paymentTerm?.payment_name || (paymentTermsId ? `Payment Terms #${paymentTermsId}` : "N/A");
                                         })()}
                                     </strong>
                                 </span>

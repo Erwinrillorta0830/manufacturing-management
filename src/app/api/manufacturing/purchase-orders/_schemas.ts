@@ -60,6 +60,7 @@ export const legacyPurchaseOrderCreateSchema = z.object({
         date_received: dateOnly.nullable().optional(),
         branch_id: positiveId,
         payment_type: positiveId.nullable().optional(),
+        payment_terms: positiveId.nullable().optional(),
         price_type: z.string().trim().min(1).max(50).nullable().optional()
     }).passthrough(),
     lineItems: z.array(purchaseOrderLineSchema).min(1)
@@ -112,6 +113,7 @@ export const purchaseOrderCreateSchema = z.object({
     supplierId: positiveId,
     branchId: positiveId,
     paymentTypeId: positiveId,
+    paymentTermsId: positiveId,
     priceType: z.string().trim().min(1).max(50),
     currencyCode: z.enum(["PHP", "USD"]),
     exchangeRate: positiveDecimal,

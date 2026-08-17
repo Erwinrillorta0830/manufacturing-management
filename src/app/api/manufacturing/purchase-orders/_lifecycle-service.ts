@@ -30,6 +30,7 @@ interface PurchaseOrderRecord {
     supplier_name?: unknown;
     branch_id?: number | null;
     payment_type?: number | null;
+    payment_terms?: number | null;
     price_type?: string | null;
     currency_code?: string | null;
     exchange_rate?: number | string | null;
@@ -56,7 +57,7 @@ interface PurchaseOrderLineRecord {
 }
 
 const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "remark", "supplier_name", "branch_id", "payment_type", "price_type",
+    "purchase_order_id", "purchase_order_no", "reference", "remark", "supplier_name", "branch_id", "payment_type", "payment_terms", "price_type",
     "currency_code", "exchange_rate", "total_foreign_currency", "gross_amount", "total_amount", "inventory_status", "date_received",
     "lead_time_receiving", "approver_id", "date_approved", "finance_id", "date_financed", "workflow_revision", "approval_rule_id",
     "approval_requires_finance", "approval_allow_self_approval", "is_import"
@@ -148,7 +149,7 @@ async function validateRevisionReferences(command: RevisionCommand) {
     }
     const branchIdNum = Number(command.shipmentData.branch_id);
 
-    const [supplier, branchRows] = await Promise.all([
+    const [supplier, branchRows, paymentTerm] = await Promise.all([
         directusData<Record<string, unknown>>(
             `/items/suppliers/${command.shipmentData.supplier_id}?fields=id,isActive,nonBuy`,
             "Unable to validate the revised supplier."
@@ -156,7 +157,13 @@ async function validateRevisionReferences(command: RevisionCommand) {
         directusData<Array<Record<string, unknown>>>(
             `/items/branches?filter[id][_eq]=${branchIdNum}&limit=1`,
             "Unable to validate the revised branch."
-        )
+        ),
+        command.shipmentData.payment_terms == null
+            ? Promise.resolve<Record<string, unknown> | null>(null)
+            : directusData<Record<string, unknown>>(
+                `/items/payment_terms/${command.shipmentData.payment_terms}?fields=id,payment_name,payment_days,payment_description`,
+                "Unable to validate the revised payment terms."
+            )
     ]);
 
     const branch = branchRows && branchRows.length > 0 ? branchRows[0] : null;
@@ -167,6 +174,10 @@ async function validateRevisionReferences(command: RevisionCommand) {
 
     if (!branch) {
         throw new PurchaseOrderLifecycleError(`The revised branch (#${command.shipmentData.branch_id}) was not found.`, 400);
+    }
+
+    if (command.shipmentData.payment_terms != null && !paymentTerm?.id) {
+        throw new PurchaseOrderLifecycleError("The revised payment terms were not found.", 400);
     }
 
     const isBranchActive = (b: Record<string, unknown> | null | undefined): boolean => {
@@ -275,6 +286,7 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         supplier_name: order.supplier_name || null,
         branch_id: order.branch_id || null,
         payment_type: order.payment_type || null,
+        payment_terms: order.payment_terms || null,
         price_type: order.price_type || null,
         currency_code: order.currency_code || "PHP",
         exchange_rate: order.exchange_rate || 1,
@@ -402,6 +414,7 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         supplier_name: Number(command.shipmentData.supplier_id),
         branch_id: command.shipmentData.branch_id,
         payment_type: command.shipmentData.payment_type || null,
+        payment_terms: command.shipmentData.payment_terms ?? order.payment_terms ?? null,
         price_type: command.shipmentData.price_type || null,
         currency_code: currencyCode,
         exchange_rate: exchangeRate,

@@ -72,6 +72,7 @@ interface DirectusPO {
     date_encoded?: string | null;
     branch_id?: number | null;
     payment_type?: number | null;
+    payment_terms?: number | null;
     price_type?: string | null;
     exchange_rate?: number | string | null;
     total_foreign_currency?: number | string | null;
@@ -305,6 +306,7 @@ function mapPurchaseOrder(
         created_at: po.date_encoded || "",
         branch_id: po.branch_id || null,
         payment_type: po.payment_type || null,
+        payment_terms: po.payment_terms || null,
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
         workflow_revision: Number(po.workflow_revision || 0),
@@ -458,7 +460,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,

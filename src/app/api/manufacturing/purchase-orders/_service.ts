@@ -103,7 +103,7 @@ async function validateDraft(order: PurchaseOrderDraft) {
     const jobOrderIds = [...new Set(order.lines.flatMap(line => line.jobOrderId ? [line.jobOrderId] : []))];
     const branchIdNum = Number(order.branchId);
 
-    const [supplier, products, mappings, branchRows, jobOrders] = await Promise.all([
+    const [supplier, products, mappings, branchRows, jobOrders, paymentTerm] = await Promise.all([
         directusData<Record<string, unknown>>(
             `/items/suppliers/${order.supplierId}?fields=id,isActive,nonBuy`,
             "Unable to validate the supplier."
@@ -125,7 +125,11 @@ async function validateDraft(order: PurchaseOrderDraft) {
                 `/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id&limit=${jobOrderIds.length}`,
                 "Unable to validate job orders."
             )
-            : Promise.resolve([])
+            : Promise.resolve([]),
+        directusData<Record<string, unknown>>(
+            `/items/payment_terms/${order.paymentTermsId}?fields=id,payment_name,payment_days,payment_description`,
+            "Unable to validate payment terms."
+        )
     ]);
 
     const branch = branchRows && branchRows.length > 0 ? branchRows[0] : null;
@@ -136,6 +140,10 @@ async function validateDraft(order: PurchaseOrderDraft) {
 
     if (!branch) {
         throw new PurchaseOrderDraftError(`The selected branch (#${order.branchId}) was not found.`);
+    }
+
+    if (!paymentTerm?.id) {
+        throw new PurchaseOrderDraftError("The selected payment terms were not found.");
     }
 
     const isBranchActive = (b: Record<string, unknown> | null | undefined): boolean => {
@@ -296,6 +304,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         total_amount: totals.netPhp,
         inventory_status: INVENTORY_STATUS.REQUESTED,
         payment_status: PAYMENT_STATUS.PENDING,
+        payment_terms: order.paymentTermsId,
         branch_id: order.branchId,
         is_posted: 0,
         encoder_id: actorId,
@@ -367,10 +376,11 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
 }
 
 export async function fetchPurchaseOrderCatalog() {
-    const [suppliers, branches, jobOrders] = await Promise.all([
+    const [suppliers, branches, jobOrders, paymentTerms] = await Promise.all([
         directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name,is_foreign,currency,country&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
         directusData<unknown[]>("/items/branches?filter[isActive][_eq]=1&fields=id,branch_name,branch_code&sort=branch_name&limit=200", "Unable to load branches."),
-        directusData<unknown[]>("/items/manufacturing_job_orders?fields=job_order_id,job_order_no,status&sort=-job_order_id&limit=250", "Unable to load job orders.")
+        directusData<unknown[]>("/items/manufacturing_job_orders?fields=job_order_id,job_order_no,status&sort=-job_order_id&limit=250", "Unable to load job orders."),
+        directusData<unknown[]>("/items/payment_terms?fields=id,payment_name,payment_days,payment_description&sort=payment_name&limit=-1", "Unable to load payment terms.")
     ]);
     const paymentTypes = [
         { id: 1, name: "Advance Payment" },
@@ -379,6 +389,6 @@ export async function fetchPurchaseOrderCatalog() {
         { id: 4, name: "Refund" },
         { id: 5, name: "Installment" }
     ];
-    return { suppliers, branches, paymentTypes, jobOrders };
+    return { suppliers, branches, paymentTypes, paymentTerms, jobOrders };
 }
 
