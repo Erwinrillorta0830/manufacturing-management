@@ -217,6 +217,8 @@ export function useIncomingShipmentsForm({
                 uom_options: [],
                 purchase_intent: (l as ShipmentLineItem & { purchase_intent?: "MRP_Demand" | "Buffer_Stock" }).purchase_intent || "Buffer_Stock",
                 job_order_id: String((l as ShipmentLineItem & { job_order_id?: number }).job_order_id || ""),
+                discount_mode: l.discount_mode || "Percentage",
+                discount_amount: String(l.discount_amount_foreign ?? "0"),
                 discount_percent: String((l as ShipmentLineItem & { discount_percent?: number }).discount_percent ?? "0")
             };
         }));
@@ -256,7 +258,9 @@ export function useIncomingShipmentsForm({
         const errors: string[] = [];
         const quantity = Number(line.quantity_ordered);
         const unitPrice = line.base_unit_cost_php;
+        const discountMode = line.discount_mode || "Percentage";
         const discount = Number(line.discount_percent || 0);
+        const discountAmount = Number(line.discount_amount || 0);
         const selectedMaterial = rawMaterials.find(material =>
             String(material.product_id) === String(line.product_id)
         );
@@ -271,11 +275,17 @@ export function useIncomingShipmentsForm({
         if (!isNonNegativeDecimal(unitPrice)) {
             errors.push(`Unit Price must be a non-negative decimal with at most ${UNIT_PRICE_DECIMAL_SCALE} decimal places`);
         }
-        if (canonicalDrafting) {
-            if (discount < 0 || discount > 100) errors.push("Discount % must be between 0 and 100");
+        if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") errors.push("Discount Type must be Percentage or Fixed Amount");
+        if (discountMode === "Percentage" && (discount < 0 || discount > 100)) errors.push("Discount % must be between 0 and 100");
+        if (discountMode === "Fixed Amount") {
+            const gross = Number.isFinite(quantity) && Number.isFinite(Number(unitPrice))
+                ? DecimalValue.from(quantity).multiply(unitPrice).toFixed(2)
+                : "0.00";
+            if (!Number.isFinite(discountAmount) || discountAmount < 0) errors.push("Discount Amount must be non-negative");
+            else if (DecimalValue.from(discountAmount).compare(gross) > 0) errors.push("Discount Amount cannot exceed Gross Amount");
         }
         return errors;
-    }, [canonicalDrafting, rawMaterials]);
+    }, [rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -308,7 +318,7 @@ export function useIncomingShipmentsForm({
     const handleAddLineForm = () => {
         setLinesForm([...linesForm, {
             parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
-            purchase_intent: "Buffer_Stock", job_order_id: "", discount_percent: "0"
+            purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0"
         }]);
     };
 
@@ -378,6 +388,8 @@ export function useIncomingShipmentsForm({
                     if (pps) {
                         return {
                             ...line,
+                            discount_mode: "Percentage",
+                            discount_amount: "0",
                             discount_type_id: pps.discount_type_id ? String(pps.discount_type_id) : line.discount_type_id,
                             discount_percent: pps.total_percent !== undefined ? String(pps.total_percent) : line.discount_percent
                         };
@@ -518,7 +530,9 @@ export function useIncomingShipmentsForm({
         const exchangeRate = DecimalValue.from(shipmentForm.exchange_rate || 0);
         return linesForm.reduce((summary, line) => {
             const grossForeign = DecimalValue.from(line.quantity_ordered || 0).multiply(line.base_unit_cost_php || 0).toFixed(2);
-            const discountForeign = DecimalValue.from(grossForeign).multiply(line.discount_percent || 0).divideRounded(100, 2).toFixed(2);
+            const discountForeign = line.discount_mode === "Fixed Amount"
+                ? DecimalValue.from(line.discount_amount || 0).toFixed(2)
+                : DecimalValue.from(grossForeign).multiply(line.discount_percent || 0).divideRounded(100, 2).toFixed(2);
             const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
             return {
                 grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(2),

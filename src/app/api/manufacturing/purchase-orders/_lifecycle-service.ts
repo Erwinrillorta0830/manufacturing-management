@@ -3,6 +3,7 @@ import { procurementDirectusFetch } from "../procurement/_directus";
 import {
     buildPurchaseOrderProductPayload,
     calculatePurchaseOrderTotals,
+    PurchaseOrderDiscountError,
     selectPurchaseOrderApprovalRule,
     type PurchaseOrderApprovalRule
 } from "./_domain";
@@ -234,7 +235,9 @@ function legacyLineAmounts(line: RevisionCommand["lineItems"][number], exchangeR
     return {
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
+        discountMode: line.discount_mode || "Percentage",
         discountPercent: Number(line.discount_percent || 0),
+        discountAmount: line.discount_amount || 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate
@@ -252,7 +255,9 @@ function linePayload(
         productId: Number(line.product_id),
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
+        discountMode: line.discount_mode || "Percentage",
         discountPercent: Number(line.discount_percent || 0),
+        discountAmount: line.discount_amount || 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate,
@@ -404,7 +409,18 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         throw new PurchaseOrderLifecycleError("Currency and exchange rate are locked after purchase-order submission.", 409);
     }
     await validateRevisionReferences(command);
-    const totals = calculatePurchaseOrderTotals(command.lineItems.map(line => legacyLineAmounts(line, exchangeRate)), exchangeRate);
+    let totals: ReturnType<typeof calculatePurchaseOrderTotals>;
+    try {
+        totals = calculatePurchaseOrderTotals(command.lineItems.map(line => legacyLineAmounts(line, exchangeRate)), exchangeRate);
+    } catch (error) {
+        if (error instanceof PurchaseOrderDiscountError) {
+            throw new PurchaseOrderLifecycleError(error.message, 400, {
+                code: error.code,
+                ...(error.details || {})
+            });
+        }
+        throw error;
+    }
     const rule = await resolveApprovalRule(totals.netPhp, currencyCode, command.lineItems.map(line => Number(line.product_id)));
     const oldLines = await loadLines(id);
     const nextRevision = revision + 1;

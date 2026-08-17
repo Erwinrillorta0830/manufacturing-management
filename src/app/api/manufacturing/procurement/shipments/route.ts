@@ -18,6 +18,7 @@ import {
     purchaseOrderStatusUpdateSchema
 } from "../../purchase-orders/_schemas";
 import { MrpPairValidationError } from "../../purchase-orders/_mrp-validation";
+import { PurchaseOrderDiscountError } from "../../purchase-orders/_domain";
 
 class InvalidTransitionError extends Error {}
 
@@ -78,7 +79,10 @@ export async function POST(request: Request) {
     } catch (e) {
         console.error("API Error creating incoming shipment:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to create shipment" }, {
-            status: e instanceof PurchaseOrderAuthorizationError || e instanceof MrpPairValidationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof MrpPairValidationError
+                ? e.status
+                : e instanceof PurchaseOrderDiscountError ? 400 : 500,
+            ...(e instanceof PurchaseOrderDiscountError ? { code: e.code, details: e.details } : {})
         });
     }
 }

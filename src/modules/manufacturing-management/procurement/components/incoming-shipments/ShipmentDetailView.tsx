@@ -329,13 +329,14 @@ export function ShipmentDetailView({
                                         <th className="p-3 font-semibold text-muted-foreground">UOM</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">Qty</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">Unit Price</th>
+                                        <th className="p-3 font-semibold text-muted-foreground text-right">Discount</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">ImpFreight Cost</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {lines.length === 0 ? (
                                         <tr>
-                                            <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                                            <td colSpan={6} className="p-8 text-center text-muted-foreground">
                                                 No items registered in this container.
                                             </td>
                                         </tr>
@@ -345,6 +346,15 @@ export function ShipmentDetailView({
                                                 ? line.product_id
                                                 : { product_name: `ID: ${line.product_id}`, product_code: "N/A", unit_of_measurement: { unit_shortcut: "PCS" } };
                                             return (
+                                                (() => {
+                                                    const currency = activeShipment?.currency_code || "PHP";
+                                                    const discountMode = line.discount_mode || "Percentage";
+                                                    const transactionUnitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
+                                                    const gross = Number(line.quantity_ordered || 0) * transactionUnitPrice;
+                                                    const discountAmount = discountMode === "Fixed Amount"
+                                                        ? Number(line.discount_amount_foreign || 0)
+                                                        : gross * Number(line.discount_percent || 0) / 100;
+                                                    return (
                                                 <tr key={line.line_id} className="hover:bg-muted/20">
                                                     <td className="p-3">
                                                         <div className="font-semibold text-foreground">{prod.product_name}</div>
@@ -365,10 +375,17 @@ export function ShipmentDetailView({
                                                     <td className="p-3 text-right font-mono text-[11px]">
                                                         {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}
                                                     </td>
+                                                    <td className="p-3 text-right font-mono text-[11px]">
+                                                        {discountMode === "Fixed Amount"
+                                                            ? formatMoney(discountAmount, currency)
+                                                            : `${Number(line.discount_percent || 0).toFixed(2)}%`}
+                                                    </td>
                                                     <td className="p-3 text-right font-mono text-[11px] text-muted-foreground">
                                                         +{formatMoney(line.allocated_expense_php || 0)}
                                                     </td>
                                                 </tr>
+                                                    );
+                                                })()
                                             );
                                         })
                                     )}
