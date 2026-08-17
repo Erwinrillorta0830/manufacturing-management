@@ -314,13 +314,17 @@ async function submitPurchaseOrderApprovalUnlocked(
         );
     }
     const stage = requestedStage;
-    if (command.action !== "approve" && command.action !== "reject") {
-        throw new PurchaseOrderApprovalError("Finance approval accepts only approve or reject.", 400);
+    if (command.action !== "approve" && command.action !== "reject" && command.action !== "cancel") {
+        throw new PurchaseOrderApprovalError("Finance approval accepts only approve, reject, or cancel.", 400);
     }
 
     const now = new Date().toISOString();
     const nextRevision = revision + 1;
-    const targetStatus = command.action === "reject" ? INVENTORY_STATUS.REJECTED : INVENTORY_STATUS.FOR_PICKUP;
+    const targetStatus = command.action === "reject"
+        ? INVENTORY_STATUS.REJECTED
+        : command.action === "cancel"
+            ? INVENTORY_STATUS.CANCELLED
+            : INVENTORY_STATUS.FOR_PICKUP;
     const update: Record<string, unknown> = {
         workflow_revision: nextRevision,
         inventory_status: targetStatus,
@@ -330,6 +334,8 @@ async function submitPurchaseOrderApprovalUnlocked(
     };
     if (command.action === "reject") {
         update.remark = `REJECTED: ${command.remarks}`;
+    } else if (command.action === "cancel") {
+        update.remark = `CANCELLED: ${command.remarks}`;
     } else {
         update.approver_id = null;
         update.date_approved = null;
@@ -364,7 +370,9 @@ async function submitPurchaseOrderApprovalUnlocked(
 
     const action = command.action === "reject"
         ? "Rejected"
-        : "FinanceApproved";
+        : command.action === "cancel"
+            ? "Cancelled"
+            : "FinanceApproved";
     const historyResponse = await procurementDirectusFetch("/items/purchase_order_approval_history", {
         method: "POST",
         body: JSON.stringify({
@@ -402,7 +410,11 @@ async function submitPurchaseOrderApprovalUnlocked(
         success: true,
         action,
         stage,
-        status: targetStatus === INVENTORY_STATUS.FOR_PICKUP ? "Receiving (QA)" : "Rejected",
+        status: targetStatus === INVENTORY_STATUS.FOR_PICKUP
+            ? "Receiving (QA)"
+            : targetStatus === INVENTORY_STATUS.CANCELLED
+                ? "Cancelled"
+                : "Rejected",
         workflowRevision: nextRevision
     };
 }

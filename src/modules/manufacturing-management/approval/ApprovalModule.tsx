@@ -8,6 +8,7 @@ import {
     Clock3,
     FileCheck2,
     History,
+    Ban,
     Loader2,
     Search,
     ShieldCheck,
@@ -64,12 +65,13 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
         approvalDetail,
         approve,
         reject,
+        cancel,
         load
     } = usePurchaseOrderApproval(stage);
     const [tab, setTab] = useState<QueueTab>("For Approval");
     const [search, setSearch] = useState("");
     const [remarks, setRemarks] = useState("");
-    const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null);
+    const [submitting, setSubmitting] = useState<"approve" | "reject" | "cancel" | null>(null);
     const visibleQueueTabs = useMemo(() => queueTabs, []);
 
     useEffect(() => {
@@ -128,6 +130,33 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
             toast.success("Purchase order rejected by Finance.");
         } catch (error) {
             const message = (error as Error).message || "Rejection failed.";
+            toast.error(message);
+            if (/changed|reload|pending approval/i.test(message)) {
+                setSelectedShipment(null);
+                await load();
+            }
+        } finally {
+            setSubmitting(null);
+        }
+    };
+
+    const handleCancel = async () => {
+        if (!selectedShipment || !approvalDetail) return;
+        if (approvalDetail.stage !== stage) {
+            toast.error(`This purchase order is not awaiting ${stage} approval.`);
+            return;
+        }
+        if (!remarks.trim()) {
+            toast.error("Enter a cancellation reason.");
+            return;
+        }
+        if (!window.confirm("Cancel this purchase order from Finance approval? This action cannot be undone.")) return;
+        try {
+            setSubmitting("cancel");
+            await cancel(selectedShipment.shipment_id, remarks.trim());
+            toast.success("Purchase order cancelled by Finance.");
+        } catch (error) {
+            const message = (error as Error).message || "Cancellation failed.";
             toast.error(message);
             if (/changed|reload|pending approval/i.test(message)) {
                 setSelectedShipment(null);
@@ -271,10 +300,13 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                             {actionable && (
                                 <div className="space-y-3 border-y py-4">
                                     <label className="block">
-                                        <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Rejection reason</span>
-                                        <textarea value={remarks} onChange={event => setRemarks(event.target.value)} maxLength={1000} placeholder="Required only when rejecting" className="min-h-20 w-full resize-y rounded-md border bg-background p-3 text-xs" />
+                                        <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Decision remarks</span>
+                                        <textarea value={remarks} onChange={event => setRemarks(event.target.value)} maxLength={1000} placeholder="Required when rejecting or cancelling" className="min-h-20 w-full resize-y rounded-md border bg-background p-3 text-xs" />
                                     </label>
                                     <div className="flex flex-wrap justify-end gap-2">
+                                        <button type="button" onClick={handleCancel} disabled={submitting !== null} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-700 px-3 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50">
+                                            {submitting === "cancel" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} Cancel PO
+                                        </button>
                                         <button type="button" onClick={handleReject} disabled={submitting !== null} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">
                                             {submitting === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Reject PO
                                         </button>
