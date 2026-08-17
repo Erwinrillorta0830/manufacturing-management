@@ -34,6 +34,12 @@ export interface PurchaseOrderCatalog {
     suppliers: Array<{ id: number; supplier_name: string }>;
     branches: Array<{ id: number; branch_name: string; branch_code?: string }>;
     paymentTypes: Array<{ id: number; payment_name?: string; name?: string }>;
+    paymentTerms: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
 }
 
@@ -42,6 +48,7 @@ export interface PurchaseOrderDraftPayload {
     supplierId: number;
     branchId: number;
     paymentTypeId: number;
+    paymentTermsId: number;
     priceType: string;
     currencyCode: "PHP" | "USD";
     exchangeRate: number;
@@ -91,6 +98,7 @@ export interface PurchaseOrderApprovalDetail {
         reference?: string | null;
         inventory_status: number;
         payment_status?: number | null;
+        payment_terms?: number | null;
         total_amount?: number | string | null;
         gross_amount?: number | string | null;
         currency_code?: string | null;

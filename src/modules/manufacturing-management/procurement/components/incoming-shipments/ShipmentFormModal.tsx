@@ -51,6 +51,12 @@ export interface ShipmentFormModalProps {
     discountTypes?: Array<{ id: number; discount_type: string; total_percent: number | string }>;
     productPerSupplierMap?: Record<number, { discount_type_id?: number; total_percent?: number }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
+    paymentTerms?: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -97,6 +103,7 @@ export function ShipmentFormModal({
     priceTypeRatesMap,
     discountTypes,
     productPerSupplierMap,
+    paymentTerms = [],
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -314,6 +321,29 @@ export function ShipmentFormModal({
                                         <option value={5}>Installment</option>
                                     </select>
                                 </div>
+
+                                {canonicalDrafting && (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Terms *</label>
+                                        <select
+                                            value={shipmentForm.payment_terms != null ? String(shipmentForm.payment_terms) : ""}
+                                            onChange={e => setShipmentForm({
+                                                ...shipmentForm,
+                                                payment_terms: e.target.value ? parseInt(e.target.value, 10) : null
+                                            })}
+                                            disabled={paymentTerms.length === 0}
+                                            className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8 disabled:bg-muted"
+                                        >
+                                            <option value="" disabled hidden>Select Payment Terms...</option>
+                                            {paymentTerms.map(term => (
+                                                <option key={term.id} value={term.id}>{term.payment_name}</option>
+                                            ))}
+                                        </select>
+                                        {paymentTerms.length === 0 && (
+                                            <p className="text-[10px] font-medium text-destructive" role="alert">Payment terms are unavailable.</p>
+                                        )}
+                                    </div>
+                                )}
 
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>

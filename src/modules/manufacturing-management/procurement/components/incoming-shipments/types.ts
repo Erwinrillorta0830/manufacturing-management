@@ -50,6 +50,7 @@ export interface ShipmentFormState {
     date_received: string;
     branch_id: number | null;
     payment_type: number | null;
+    payment_terms?: number | null;
     price_type: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
@@ -83,4 +84,10 @@ export interface IncomingShipmentsProps {
     };
     canonicalDrafting?: boolean;
     jobOrders?: Array<{ job_order_id: number; job_order_no?: string }>;
+    paymentTerms?: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
 }

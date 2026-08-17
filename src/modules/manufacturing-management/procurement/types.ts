@@ -77,6 +77,7 @@ export interface IncomingShipment {
     created_at?: string;
     branch_id?: number | null;
     payment_type?: number | null;
+    payment_terms?: number | null;
     price_type?: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
@@ -303,6 +304,7 @@ export interface ShipmentData {
     date_received: string;
     branch_id: number | null;
     payment_type: number | null;
+    payment_terms?: number | null;
     price_type: string | null;
 }
 
