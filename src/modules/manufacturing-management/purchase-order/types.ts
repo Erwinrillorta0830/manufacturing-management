@@ -4,9 +4,10 @@ export type {
     Supplier,
     RawMaterial,
     LinkedProduct,
-    PurchaseOrderPaymentMode
+    PurchaseOrderPaymentMode,
+    PurchaseOrderPriceTypeRule
 } from "../procurement/types";
-import type { PurchaseOrderPaymentMode } from "../procurement/types";
+import type { PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../procurement/types";
 
 export interface PurchaseOrderListMeta {
     page: number;
@@ -44,6 +45,7 @@ export interface PurchaseOrderCatalog {
         payment_description?: string | null;
     }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
+    priceTypeRules: PurchaseOrderPriceTypeRule[];
 }
 
 export interface PurchaseOrderDraftPayload {
@@ -53,7 +55,6 @@ export interface PurchaseOrderDraftPayload {
     paymentArrangementId: number;
     paymentModeId: number;
     paymentTermsId: number;
-    priceType: string;
     currencyCode: "PHP" | "USD";
     exchangeRate: number;
     expectedTotals: {

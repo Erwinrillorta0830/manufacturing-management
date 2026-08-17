@@ -58,6 +58,7 @@ export function usePurchaseOrder() {
     const [supplierLinkedProducts, setSupplierLinkedProducts] = useState<LinkedProduct[]>([]);
     const [paymentModes, setPaymentModes] = useState<PurchaseOrderCatalog["paymentModes"]>([]);
     const [paymentTerms, setPaymentTerms] = useState<PurchaseOrderCatalog["paymentTerms"]>([]);
+    const [priceTypeRules, setPriceTypeRules] = useState<PurchaseOrderCatalog["priceTypeRules"]>([]);
     const [jobOrders, setJobOrders] = useState<Array<{ job_order_id: number; job_order_no?: string }>>([]);
     const [selectedShipment, setSelectedShipment] = useState<IncomingShipment | null>(null);
     const [selectedShipmentLines, setSelectedShipmentLines] = useState<Awaited<ReturnType<typeof fetchPurchaseOrderLines>>>([]);
@@ -102,6 +103,7 @@ export function usePurchaseOrder() {
                 setSuppliers(catalog.suppliers);
                 setPaymentModes(catalog.paymentModes);
                 setPaymentTerms(catalog.paymentTerms);
+                setPriceTypeRules(catalog.priceTypeRules);
                 setJobOrders(catalog.jobOrders);
             }),
             fetchRawMaterials().then(setRawMaterials)
@@ -207,10 +209,6 @@ export function usePurchaseOrder() {
             toast.error("Payment Terms is required.");
             return;
         }
-        if (!shipmentForm.price_type) {
-            toast.error("Price Type is required.");
-            return;
-        }
         if (lines.length === 0) {
             toast.error("Add at least one Purchase Order Line.");
             return;
@@ -266,7 +264,6 @@ export function usePurchaseOrder() {
                 paymentArrangementId: Number(shipmentForm.payment_type),
                 paymentModeId: Number(shipmentForm.payment_mode),
                 paymentTermsId: Number(shipmentForm.payment_terms),
-                priceType: shipmentForm.price_type,
                 currencyCode: shipmentForm.currency_code || "PHP",
                 exchangeRate,
                 expectedTotals: totals,
@@ -341,7 +338,7 @@ export function usePurchaseOrder() {
     };
 
     return {
-        loading, listLoading, suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, jobOrders, listMeta, loadShipments,
+        loading, listLoading, suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, priceTypeRules, jobOrders, listMeta, loadShipments,
         selectedShipment, setSelectedShipment, selectedShipmentLines,
         isShipmentModalOpen, setIsShipmentModalOpen,
         shipmentForm, setShipmentForm, shipmentLinesForm, setShipmentLinesForm,

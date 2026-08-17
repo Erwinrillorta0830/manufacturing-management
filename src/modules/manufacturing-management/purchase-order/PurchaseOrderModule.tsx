@@ -35,6 +35,7 @@ export default function PurchaseOrderModule() {
                 }}
                 canonicalDrafting
                 paymentModes={purchaseOrder.paymentModes}
+                priceTypeRules={purchaseOrder.priceTypeRules}
                 paymentTerms={purchaseOrder.paymentTerms}
                 jobOrders={purchaseOrder.jobOrders}
             />
