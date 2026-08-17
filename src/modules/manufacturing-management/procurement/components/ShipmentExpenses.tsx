@@ -221,7 +221,7 @@ export default function ShipmentExpenses({
                                                         {Number(line.quantity_ordered || 0).toLocaleString()} {prod.unit_of_measurement?.unit_shortcut || "PCS"}
                                                     </td>
                                                     <td className="p-3 text-right font-bold text-purple-600 dark:text-purple-400 bg-purple-500/5">
-                                                        {shipment.status === "Ordered" || shipment.status === "Approved" || shipment.status === "En Route" ? (
+                                                        {shipment.status === "Ordered" || shipment.status === "Approved" || shipment.status === "Receiving (QA)" ? (
                                                             <span className="text-[9px] uppercase font-bold italic tracking-wide text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">Pending QA</span>
                                                         ) : (
                                                             `${Number(line.quantity_received).toLocaleString()} ${prod.unit_of_measurement?.unit_shortcut || "PCS"}`

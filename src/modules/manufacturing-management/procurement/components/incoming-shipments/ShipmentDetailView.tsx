@@ -12,9 +12,7 @@ export interface ShipmentDetailViewProps {
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
-    statusLoading: "en-route" | "arrived" | null;
-    setStatusLoading: (s: "en-route" | "arrived" | null) => void;
-    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "En Route" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
+    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     handleStartEdit: () => void;
     onCancelRejectedPurchaseOrder?: (shipmentId: number, workflowRevision: number, remarks?: string) => void | Promise<boolean>;
     lines: ShipmentLineItem[];
@@ -28,8 +26,6 @@ export function ShipmentDetailView({
     suppliers,
     branches,
     isSupplierForeign,
-    statusLoading,
-    setStatusLoading,
     onUpdateShipmentStatus,
     handleStartEdit,
     onCancelRejectedPurchaseOrder,
@@ -42,9 +38,7 @@ export function ShipmentDetailView({
         && effectiveStatus === "Rejected"
         && activeShipment?.rejection_stage === "Finance";
     const lockedWorkflowMessage = effectiveStatus === "Rejected"
-        ? activeShipment?.rejection_stage === "Plant"
-            ? "Revision and cancellation are locked because this PO was rejected by Plant. Finance must formally reject it first."
-            : "Revision and cancellation are locked until a formal Finance rejection is recorded."
+        ? "Revision and cancellation require a formal Finance rejection."
         : "Edit and cancellation are locked after PO creation until Finance formally rejects this PO.";
 
     return (
@@ -138,7 +132,7 @@ export function ShipmentDetailView({
                                 <div className="flex items-center w-full relative">
                                     {(effectiveStatus === "Rejected"
                                         ? [initialWorkflowStatus, "Approved", "Rejected"]
-                                        : [initialWorkflowStatus, "Approved", "En Route", "Receiving (QA)", "Received"]
+                                        : [initialWorkflowStatus, "Approved", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
                                         const isInitialWorkflowStatus = effectiveStatus === initialWorkflowStatus
@@ -182,22 +176,6 @@ export function ShipmentDetailView({
                                         );
                                     })}
                                 </div>
-
-                                {/* Explicit Action Buttons for status turnover */}
-                                {(effectiveStatus === "Approved" || effectiveStatus === "Awaiting Payment") && Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED && (
-                                    <button
-                                        type="button"
-                                        disabled={statusLoading !== null}
-                                        onClick={() => {
-                                            setStatusLoading("en-route");
-                                            onUpdateShipmentStatus(activeShipment.shipment_id, "En Route");
-                                            setTimeout(() => setStatusLoading(null), 3000);
-                                        }}
-                                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-wait text-white font-bold py-2 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer mt-3 inline-flex items-center justify-center gap-1.5"
-                                    >
-                                        {statusLoading === "en-route" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Processing...</> : "Dispatch Cargo (Mark En Route)"}
-                                    </button>
-                                )}
 
                                 {(effectiveStatus === "For Approval" || effectiveStatus === "Requested" || effectiveStatus === "Ordered") && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
@@ -265,20 +243,6 @@ export function ShipmentDetailView({
                                     </div>
                                 )}
 
-                                {effectiveStatus === "En Route" && (
-                                    <button
-                                        type="button"
-                                        disabled={statusLoading !== null}
-                                        onClick={() => {
-                                            setStatusLoading("arrived");
-                                            onUpdateShipmentStatus(activeShipment.shipment_id, "Receiving (QA)");
-                                            setTimeout(() => setStatusLoading(null), 3000);
-                                        }}
-                                        className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-wait text-white font-bold py-2 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer mt-3 inline-flex items-center justify-center gap-1.5"
-                                    >
-                                        {statusLoading === "arrived" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Processing...</> : "Mark Cargo as Arrived (Proceed to QA Checklist)"}
-                                    </button>
-                                )}
                             </div>
                         </div>
                     </div>

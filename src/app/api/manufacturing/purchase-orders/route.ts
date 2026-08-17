@@ -21,7 +21,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Invalid purchase-order query.", details: parsed.error.flatten() }, { status: 400 });
         }
         const modulePaths = parsed.data.approvalStage
-            ? [parsed.data.approvalStage === "Plant" ? PURCHASE_ORDER_MODULE_PATHS.plantApproval : PURCHASE_ORDER_MODULE_PATHS.financeApproval]
+            ? [PURCHASE_ORDER_MODULE_PATHS.financeApproval]
             : Object.values(PURCHASE_ORDER_MODULE_PATHS);
         await requirePurchaseOrderModuleAccess({ modulePaths });
         return NextResponse.json(await fetchIncomingShipmentsPage(parsed.data));

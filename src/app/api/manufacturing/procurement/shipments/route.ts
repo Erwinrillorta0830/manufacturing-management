@@ -32,11 +32,6 @@ async function requireAllowedTransition(shipmentId: number, targetStatus: number
     if (!canTransitionInventoryStatus(currentStatus, targetStatus)) {
         throw new InvalidTransitionError(`Invalid purchase order status transition from ${currentStatus} to ${targetStatus}.`);
     }
-    if (targetStatus === INVENTORY_STATUS.EN_ROUTE) {
-        if (currentStatus !== INVENTORY_STATUS.APPROVED) {
-            throw new InvalidTransitionError("Plant approval is required before dispatch.");
-        }
-    }
 }
 
 export async function GET(request: Request) {

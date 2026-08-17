@@ -98,8 +98,7 @@ export function ShipmentListSidebar({
                         <option value="Approved">Approved</option>
                         <option value="Awaiting Payment">Awaiting Payment</option>
                         <option value="Cancelled">Cancelled</option>
-                        <option value="For Pickup">For Pickup</option>
-                        <option value="En Route">En Route</option>
+                        <option value="Receiving (QA)">Receiving (QA)</option>
                         <option value="Receiving (QA)">Receiving (QA)</option>
                         <option value="Partially Received">Partially Received</option>
                         <option value="Received">Received</option>

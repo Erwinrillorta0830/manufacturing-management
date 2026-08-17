@@ -417,7 +417,7 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         date_financed: null,
         workflow_revision: nextRevision,
         approval_rule_id: rule.ruleId,
-        approval_requires_finance: rule.requiresFinance ? 1 : 0,
+        approval_requires_finance: 1,
         approval_allow_self_approval: 1,
         is_import: currencyCode === "PHP" ? 0 : 1
     };

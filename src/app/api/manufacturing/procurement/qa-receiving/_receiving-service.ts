@@ -436,7 +436,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             throw new ReceivingError("This purchase order has a partial previous receiving attempt and requires reconciliation.", 409);
         }
         if (!receivableStatuses.includes(Number(shipment.inventory_status))) {
-            throw new ReceivingError("The purchase order must be moved to QA (Receiving) before it can be received.", 409);
+            throw new ReceivingError("The purchase order must be in Receiving (QA) before it can be received.", 409);
         }
 
         const receivingHistory = summarizeReceivingHistory(allExistingReceipts as Array<Record<string, unknown>>, poLines);

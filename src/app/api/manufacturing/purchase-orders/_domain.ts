@@ -1,10 +1,10 @@
 export const PURCHASE_INTENTS = ["MRP_Demand", "Buffer_Stock"] as const;
 export type PurchaseIntent = typeof PURCHASE_INTENTS[number];
 
-export const APPROVAL_STAGES = ["Plant", "Finance"] as const;
+export const APPROVAL_STAGES = ["Finance"] as const;
 export type ApprovalStage = typeof APPROVAL_STAGES[number];
 
-export const APPROVAL_ACTIONS = ["Submitted", "PlantApproved", "FinanceApproved", "Rejected", "Resubmitted", "Cancelled"] as const;
+export const APPROVAL_ACTIONS = ["Submitted", "FinanceApproved", "Rejected", "Resubmitted", "Cancelled"] as const;
 export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
 
 export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
@@ -184,7 +184,7 @@ export interface PurchaseOrderApprovalContext {
     businessDate: string;
 }
 
-export type PurchaseOrderWorkflowStage = "Plant" | "Finance" | "Complete" | "Rejected";
+export type PurchaseOrderWorkflowStage = "Finance" | "Complete" | "Rejected";
 
 export interface PurchaseOrderWorkflowState {
     inventoryStatus: number;
@@ -193,12 +193,12 @@ export interface PurchaseOrderWorkflowState {
     requiresFinance: boolean;
 }
 
-export function pendingPurchaseOrderApprovalStages(state: PurchaseOrderWorkflowState): Array<"Plant" | "Finance"> {
+export function pendingPurchaseOrderApprovalStages(state: PurchaseOrderWorkflowState): Array<"Finance"> {
     if (state.inventoryStatus !== 1 && state.inventoryStatus !== 3) return [];
-    const stages: Array<"Plant" | "Finance"> = [];
-    if (state.inventoryStatus === 1 && !state.approverId) stages.push("Plant");
-    if (state.requiresFinance && !state.financeId) stages.push("Finance");
-    return stages;
+    // Orders that were already approved by Plant before the workflow change are
+    // grandfathered as approved. New and unapproved orders go directly to Finance.
+    if (state.inventoryStatus === 3 && state.approverId && !state.financeId) return [];
+    return state.financeId ? [] : ["Finance"];
 }
 
 export function derivePurchaseOrderWorkflowStage(state: PurchaseOrderWorkflowState): PurchaseOrderWorkflowStage {

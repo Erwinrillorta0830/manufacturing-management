@@ -1,7 +1,7 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
 import { INVENTORY_STATUS } from "../procurement/_domain";
 
-export type PurchaseOrderRejectionStage = "Plant" | "Finance";
+export type PurchaseOrderRejectionStage = "Finance";
 
 interface PurchaseOrderRejectionCandidate {
     purchaseOrderId: number;
@@ -80,7 +80,7 @@ export async function fetchCurrentPurchaseOrderRejectionStages(
         const candidate = candidateById.get(purchaseOrderId);
         const revision = Number(row.revision_after || 0);
         if (!candidate || revision !== candidate.workflowRevision) continue;
-        if (row.approval_stage === "Plant" || row.approval_stage === "Finance") {
+        if (row.approval_stage === "Finance") {
             result.set(purchaseOrderId, row.approval_stage);
         }
     }

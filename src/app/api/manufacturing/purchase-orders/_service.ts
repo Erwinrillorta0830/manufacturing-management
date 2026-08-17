@@ -305,7 +305,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         is_import: order.currencyCode === "PHP" ? 0 : 1,
         workflow_revision: 0
         ,approval_rule_id: selectedRule.ruleId
-        ,approval_requires_finance: selectedRule.requiresFinance ? 1 : 0
+         ,approval_requires_finance: 1
         ,approval_allow_self_approval: 1
     });
 

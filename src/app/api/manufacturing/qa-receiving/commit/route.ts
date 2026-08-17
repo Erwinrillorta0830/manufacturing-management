@@ -53,7 +53,7 @@ async function assertReceivingStatusOpen(shipmentId: number) {
     const status = Number(headerRows[0]?.inventory_status);
     if (status === INVENTORY_STATUS.RECEIVED) return;
     if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-        throw new CommitError(409, "The purchase order must be moved to QA (Receiving) before it can be received.");
+        throw new CommitError(409, "The purchase order must be in Receiving (QA) before it can be received.");
     }
 }
 

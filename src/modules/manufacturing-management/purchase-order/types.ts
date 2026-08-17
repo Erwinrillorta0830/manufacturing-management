@@ -66,8 +66,8 @@ export interface PurchaseOrderDraftPayload {
     }>;
 }
 
-export type PurchaseOrderApprovalStage = "Plant" | "Finance" | "Complete" | "Rejected";
-export type PurchaseOrderDecisionStage = Extract<PurchaseOrderApprovalStage, "Plant" | "Finance">;
+export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected";
+export type PurchaseOrderDecisionStage = "Finance";
 
 export interface PurchaseOrderApprovalHistory {
     history_id: number;
@@ -117,9 +117,8 @@ export interface PurchaseOrderApprovalDetail {
 }
 
 export interface PurchaseOrderApprovalCommand {
-    action: "approve" | "reject" | "awaiting_payment" | "cancel";
+    action: "approve" | "reject";
     workflowRevision: number;
     expectedRuleId?: number;
-    lead_time_receiving?: string;
     remarks?: string;
 }
