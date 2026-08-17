@@ -1,7 +1,6 @@
 import React, { useMemo } from "react";
 import { RawMaterial } from "../../types";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { formatAmount } from "./ShipmentBadges";
 import {
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     PurchaseOrderMaterialType
@@ -51,15 +50,10 @@ export function RawProductSelector({
     }, [materialType, rawMaterials]);
 
     const options = useMemo(() => {
-        return filteredMaterials.map(rm => {
-            const uom = rm.unit_of_measurement?.unit_shortcut || "PCS";
-            const cost = Number(rm.cost_per_unit || rm.estimated_unit_cost || 0);
-            const sku = rm.product_code ? ` [${rm.product_code}]` : "";
-            return {
-                value: String(rm.product_id),
-                label: `${rm.product_name}${sku} — (${uom} @ ₱${formatAmount(cost)})`
-            };
-        });
+        return filteredMaterials.map(rm => ({
+            value: String(rm.product_id),
+            label: rm.product_name
+        }));
     }, [filteredMaterials]);
 
     const handleValueChange = (val: string) => {
