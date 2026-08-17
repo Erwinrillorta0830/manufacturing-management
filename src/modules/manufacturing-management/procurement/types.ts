@@ -59,6 +59,14 @@ export interface SupplierFormState {
     representatives: SupplierRepresentative[];
 }
 
+export interface PurchaseOrderPaymentMode {
+    id: number;
+    mode_name: string;
+    code: string;
+    is_active?: boolean | number | null;
+    sort_order?: number | null;
+}
+
 export interface IncomingShipment {
     shipment_id: number;
     reference_number: string;
@@ -75,6 +83,7 @@ export interface IncomingShipment {
     rejection_stage?: "Plant" | "Finance" | null;
     remark?: string;
     created_at?: string;
+    payment_mode?: number | null;
     branch_id?: number | null;
     payment_type?: number | null;
     payment_terms?: number | null;
@@ -223,6 +232,8 @@ export interface DirectusShipment {
     status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
+    payment_type?: number | null;
+    payment_mode?: number | null;
     created_at?: string;
 }
 
@@ -308,6 +319,7 @@ export interface ShipmentData {
     date_received: string;
     branch_id: number | null;
     payment_type: number | null;
+    payment_mode: number | null;
     payment_terms?: number | null;
     price_type: string | null;
 }

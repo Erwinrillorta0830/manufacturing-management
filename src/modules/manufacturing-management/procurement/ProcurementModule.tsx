@@ -27,6 +27,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         suppliers,
         shipments,
         rawMaterials,
+        paymentModes,
         supplierLinkedProducts,
         selectedShipment,
         setSelectedShipment,
@@ -154,6 +155,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         onTriggerAllocation={handleTriggerExpenseAllocation}
                         onUpdateShipmentStatus={handleUpdateShipmentStatus}
                         loading={loading}
+                        paymentModes={paymentModes}
                     />
                 )}
 

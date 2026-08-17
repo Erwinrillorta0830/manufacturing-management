@@ -1,5 +1,5 @@
 import React from "react";
-import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct } from "../../types";
+import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode } from "../../types";
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging";
 
@@ -52,6 +52,7 @@ export interface ShipmentFormState {
     date_received: string;
     branch_id: number | null;
     payment_type: number | null;
+    payment_mode: number | null;
     payment_terms?: number | null;
     price_type: string | null;
     currency_code?: "PHP" | "USD";
@@ -92,4 +93,5 @@ export interface IncomingShipmentsProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
+    paymentModes?: PurchaseOrderPaymentMode[];
 }

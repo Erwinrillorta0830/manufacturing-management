@@ -7,7 +7,7 @@ import {
     purchaseOrderMaterialTypeFromProductType,
     FxRateStatus
 } from "./types";
-import { IncomingShipment, RawMaterial } from "../../types";
+import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
@@ -57,6 +57,7 @@ export interface ShipmentFormModalProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
+    paymentModes?: PurchaseOrderPaymentMode[];
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -104,6 +105,7 @@ export function ShipmentFormModal({
     discountTypes,
     productPerSupplierMap,
     paymentTerms = [],
+    paymentModes = [],
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -309,11 +311,25 @@ export function ShipmentFormModal({
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Type *</label>
                                     <select
+                                        value={shipmentForm.payment_mode !== null ? String(shipmentForm.payment_mode) : ""}
+                                        onChange={e => setShipmentForm({...shipmentForm, payment_mode: e.target.value ? parseInt(e.target.value) : null})}
+                                        className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
+                                    >
+                                        <option value="" disabled hidden>Select Payment...</option>
+                                        {paymentModes.map(mode => (
+                                            <option key={mode.id} value={mode.id}>{mode.mode_name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Arrangement *</label>
+                                    <select
                                         value={shipmentForm.payment_type !== null ? String(shipmentForm.payment_type) : ""}
                                         onChange={e => setShipmentForm({...shipmentForm, payment_type: e.target.value ? parseInt(e.target.value) : null})}
                                         className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
                                     >
-                                        <option value="" disabled hidden>Select Payment...</option>
+                                        <option value="" disabled hidden>Select Arrangement...</option>
                                         <option value={3}>Full Payment</option>
                                         <option value={1}>Advance Payment</option>
                                         <option value={2}>Partial Payment</option>

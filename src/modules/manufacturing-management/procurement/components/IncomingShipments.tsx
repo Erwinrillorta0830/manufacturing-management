@@ -32,7 +32,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         serverList,
         canonicalDrafting = false,
         jobOrders = [],
-        paymentTerms = []
+        paymentTerms = [],
+        paymentModes = []
     } = props;
 
     const onServerQueryChange = serverList?.onQueryChange;
@@ -225,6 +226,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 activeShipment={activeShipment}
                 canonicalDrafting={canonicalDrafting}
                 paymentTerms={paymentTerms}
+                paymentModes={paymentModes}
                 suppliers={suppliers}
                 branches={dynamicBranches}
                 isSupplierForeign={isSupplierForeign}
@@ -266,6 +268,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 productPerSupplierMap={productPerSupplierMap}
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
+                paymentModes={paymentModes}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}

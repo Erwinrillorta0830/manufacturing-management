@@ -34,6 +34,7 @@ export default function PurchaseOrderModule() {
                     onQueryChange: purchaseOrder.loadShipments
                 }}
                 canonicalDrafting
+                paymentModes={purchaseOrder.paymentModes}
                 paymentTerms={purchaseOrder.paymentTerms}
                 jobOrders={purchaseOrder.jobOrders}
             />
