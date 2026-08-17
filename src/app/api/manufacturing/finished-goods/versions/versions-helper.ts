@@ -320,6 +320,32 @@ export async function getBOMDetailsForVersion(
                     : []
             );
 
+            // Secondary fallback for component items that may reside in other inventory/item tables
+            const missingIds = bomProductIds.filter(id => !productMap.has(id));
+            if (missingIds.length > 0) {
+                try {
+                    const itemsFilter = encodeURIComponent(JSON.stringify({ id: { _in: missingIds } }));
+                    const itemsRes = await fetch(
+                        `${DIRECTUS_URL}/items/items?filter=${itemsFilter}&limit=-1`,
+                        { headers, cache: "no-store" }
+                    ).catch(() => null);
+                    if (itemsRes && itemsRes.ok) {
+                        const itemsData = (await itemsRes.json()).data || [];
+                        itemsData.forEach((item: Record<string, unknown>) => {
+                            const itemId = Number(item.id || item.item_id);
+                            if (itemId && !productMap.has(itemId)) {
+                                productMap.set(itemId, {
+                                    product_name: String(item.item_name || item.name || item.description || `Material #${itemId}`),
+                                    product_code: String(item.item_code || item.sku || `SKU-${itemId}`),
+                                    product_type: 390,
+                                    uom: String(item.uom || item.unit || "PCS")
+                                });
+                            }
+                        });
+                    }
+                } catch { }
+            }
+
             bomItems.forEach(item => {
                 const productId = Number(item.product_id);
                 const prodInfo = productMap.get(productId);

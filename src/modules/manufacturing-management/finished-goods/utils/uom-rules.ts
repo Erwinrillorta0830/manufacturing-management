@@ -3,10 +3,10 @@ import { Unit } from "../types";
 export interface CatalogProductLike {
     product_id?: number | string | null;
     parent_id?: number | string | { product_id?: number | string } | null;
-    unit_of_measurement?: number | string | { unit_id?: number | string; unit_shortcut?: string } | null;
+    unit_of_measurement?: number | string | { unit_id?: number | string; unit_shortcut?: string | null; unit_name?: string | null } | null;
     baseUom?: string;
-    unit_shortcut?: string;
-    uom?: string;
+    unit_shortcut?: string | null;
+    uom?: string | null;
 }
 
 /**
@@ -18,9 +18,10 @@ export function extractProductUnitId(p: unknown): number | null {
 
     // 1. Direct unit_of_measurement object from Directus
     if (item.unit_of_measurement && typeof item.unit_of_measurement === "object") {
-        const uom = item.unit_of_measurement as { unit_id?: number | string };
-        if (uom.unit_id !== undefined && uom.unit_id !== null) {
-            const id = Number(uom.unit_id);
+        const uom = item.unit_of_measurement as { unit_id?: number | string; id?: number | string };
+        const candidate = uom.unit_id ?? uom.id;
+        if (candidate !== undefined && candidate !== null) {
+            const id = Number(candidate);
             if (!isNaN(id) && id > 0) return id;
         }
     }

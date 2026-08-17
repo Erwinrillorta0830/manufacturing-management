@@ -51,7 +51,7 @@ export async function GET(request: Request) {
         const limit = parseInt(searchParams.get("limit") || "-1");
         const excludeRollup = searchParams.get("excludeRollup") === "true";
 
-        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,weight_unit_id,product_type";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
@@ -269,20 +269,7 @@ export async function POST(request: Request) {
             valid_from: todayStr
         };
 
-        // Enforce global uniqueness of version_name before creating
-        const versionNameDupCheckUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_name][_eq]=${encodeURIComponent(validatedDetails.versionName)}&limit=1&fields=version_id`;
-        const versionNameDupRes = await fetch(versionNameDupCheckUrl, { headers, cache: "no-store" });
-        if (versionNameDupRes.ok) {
-            const versionNameDupJson = await versionNameDupRes.json();
-            if (versionNameDupJson.data && versionNameDupJson.data.length > 0) {
-                // Rollback product
-                await fetch(`${DIRECTUS_URL}/items/products/${productId}`, { method: "DELETE", headers }).catch(() => { });
-                return NextResponse.json(
-                    { error: "A version with this name already exists. Please choose a unique version name.", code: "VERSION_NAME_CONFLICT" },
-                    { status: 409 }
-                );
-            }
-        }
+
 
         const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
             method: "POST",
@@ -339,10 +326,36 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "Missing product_id" }, { status: 400 });
         }
 
+        // Get logged in user ID from secure access token cookie
+        let userId: number | null = null;
+        try {
+            const cookieStore = await cookies();
+            const token = cookieStore.get("vos_access_token")?.value;
+            if (token) {
+                const parts = token.split(".");
+                if (parts.length >= 2) {
+                    const base64Url = parts[1];
+                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+                    while (base64.length % 4) base64 += "=";
+                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
+                    const payload = JSON.parse(jsonPayload);
+                    userId = payload?.id || payload?.user_id || payload?.sub || null;
+                }
+            }
+        } catch (err) {
+            console.error("Error parsing user token in PATCH product route:", err);
+        }
+
+        const updatePayload = {
+            ...body,
+            updated_by: userId ? Number(userId) : undefined,
+            updated_at: new Date().toISOString()
+        };
+
         const res = await fetch(`${DIRECTUS_URL}/items/products/${product_id}`, {
             method: "PATCH",
             headers,
-            body: JSON.stringify(body)
+            body: JSON.stringify(updatePayload)
         });
 
         if (!res.ok) {
