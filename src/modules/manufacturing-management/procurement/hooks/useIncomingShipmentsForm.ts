@@ -285,7 +285,7 @@ export function useIncomingShipmentsForm({
             else if (DecimalValue.from(discountAmount).compare(gross) > 0) errors.push("Discount Amount cannot exceed Gross Amount");
         }
         return errors;
-    }, [canonicalDrafting, rawMaterials]);
+    }, [rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
