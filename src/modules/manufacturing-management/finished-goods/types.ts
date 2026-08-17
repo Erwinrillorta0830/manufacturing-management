@@ -57,6 +57,7 @@ export interface Product {
     targetSellingPrice: number;
     parentProduct?: boolean;
     parent_id?: number | null;
+    status?: string;
     isActive?: boolean;
     bom: BOMItem[];
     routings: RoutingStep[];
@@ -302,7 +303,8 @@ export interface BFFCatalogProduct {
     barcode?: string | null;
     unit_of_measurement?: {
         unit_id: number;
-        unit_shortcut: string;
+        unit_shortcut?: string | null;
+        unit_name?: string | null;
     } | null;
     density_factor?: number | string | null;
     price_per_unit?: number | string | null;
@@ -317,6 +319,7 @@ export interface BFFCatalogProduct {
     unit_of_measurement_count?: number | null;
     product_image?: string | null;
     product_type?: number;
+    status?: string | null;
     isActive?: boolean | number | string | null;
     has_versions?: boolean;
 }

@@ -44,7 +44,8 @@ import {
     fetchQATemplates,
     createQATemplate,
     saveQATemplate,
-    normalizeProductActiveState
+    normalizeProductActiveState,
+    extractId
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
@@ -876,13 +877,13 @@ export function useFinishedGoods(initialTab: string = "details") {
 
         const validatedDetails = validateProductEditDetails(editValidationInput);
 
-        const targetParentId = editedDetails.parent_id !== undefined ? (editedDetails.parent_id ? Number(editedDetails.parent_id) : null) : (selectedProduct?.parent_id ? Number(selectedProduct.parent_id) : null);
+        const targetParentId = editedDetails.parent_id !== undefined ? extractId(editedDetails.parent_id) ?? null : (extractId(selectedProduct?.parent_id) ?? null);
 
         if (targetParentId) {
             const duplicateUom = allCatalogProducts.some(p => {
                 if (String(p.product_id) === selectedProductId) return false;
-                const pParentId = p.parent_id && typeof p.parent_id === "object" ? Number((p.parent_id as any).product_id) : (p.parent_id ? Number(p.parent_id) : null);
-                const pUomId = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null ? Number((p.unit_of_measurement as any).unit_id) : Number(p.unit_of_measurement);
+                const pParentId = extractId(p.parent_id) ?? null;
+                const pUomId = extractId(p.unit_of_measurement);
                 return pParentId === targetParentId && pUomId === uomId;
             });
             if (duplicateUom) {
@@ -895,10 +896,10 @@ export function useFinishedGoods(initialTab: string = "details") {
             const normalizedTitle = validatedDetails.title.trim().toLowerCase();
             const duplicateIdentity = allCatalogProducts.some(p => {
                 if (String(p.product_id) === selectedProductId) return false;
-                const pParentId = p.parent_id && typeof p.parent_id === "object" ? Number((p.parent_id as any).product_id) : (p.parent_id ? Number(p.parent_id) : null);
+                const pParentId = extractId(p.parent_id) ?? null;
                 if (pParentId !== null) return false;
                 const pName = String(p.product_name || "").trim().toLowerCase();
-                const pUomId = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null ? Number((p.unit_of_measurement as any).unit_id) : Number(p.unit_of_measurement);
+                const pUomId = extractId(p.unit_of_measurement);
                 return pName === normalizedTitle && pUomId === uomId;
             });
             if (duplicateIdentity) {

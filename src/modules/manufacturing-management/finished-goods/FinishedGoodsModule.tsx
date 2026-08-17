@@ -982,15 +982,6 @@ export default function FinishedGoodsModule() {
                                         )}
                                     </>
                                 )}
-                                {loadingBOM && (
-                                    <div className="fixed inset-0 z-[90] bg-background/65 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-150">
-                                        <div className="bg-card border rounded-xl shadow-lg p-5 flex flex-col items-center gap-2 max-w-xs text-center border-primary/20">
-                                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                                            <h4 className="text-xs font-bold text-foreground">Loading Version Recipe...</h4>
-                                            <p className="text-[10px] text-muted-foreground">Fetching bill of materials, routing sequences, and overhead variables from database.</p>
-                                        </div>
-                                    </div>
-                                )}
                             </>
                         ) : (
                             <div className="flex flex-col items-center justify-center p-20 text-muted-foreground">
@@ -1001,6 +992,16 @@ export default function FinishedGoodsModule() {
                     </div>
                 </div>
             </div>
+
+            {loadingBOM && (
+                <div className="fixed inset-0 z-[95] bg-background/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-150">
+                    <div className="bg-card border rounded-xl shadow-lg p-5 flex flex-col items-center gap-2 max-w-xs text-center border-primary/20">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                        <h4 className="text-xs font-bold text-foreground">Loading Version Recipe...</h4>
+                        <p className="text-[10px] text-muted-foreground">Fetching bill of materials, routing sequences, and overhead variables from database.</p>
+                    </div>
+                </div>
+            )}
 
             {savingBOM && (
                 <div

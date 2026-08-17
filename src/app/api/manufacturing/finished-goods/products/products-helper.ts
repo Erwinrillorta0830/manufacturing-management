@@ -77,7 +77,7 @@ export async function getLatestLandedCost(
  */
 export async function fetchAllProducts(search?: string, limit: number = -1): Promise<DirectusProduct[]> {
     try {
-        const explicitFields = "product_id,product_name,product_code,description,short_description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
