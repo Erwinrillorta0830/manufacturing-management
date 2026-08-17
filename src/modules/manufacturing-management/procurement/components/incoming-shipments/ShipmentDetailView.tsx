@@ -36,6 +36,9 @@ export function ShipmentDetailView({
     lines,
     hasShipments
 }: ShipmentDetailViewProps) {
+    const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
+    const initialWorkflowStatus = canonicalDrafting ? "For Approval" : "Requested";
+
     return (
         <div className="flex-1 border rounded-xl bg-card overflow-y-auto p-6 shadow-sm flex flex-col gap-6 relative min-h-[300px]">
             {loading && (
@@ -50,7 +53,7 @@ export function ShipmentDetailView({
                         <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
                                 <h2 className="text-base font-extrabold text-foreground leading-tight">{canonicalDrafting ? `Purchase Order: ${activeShipment.purchase_order_no || activeShipment.reference_number}` : `Cargo Invoice / BL: ${activeShipment.reference_number}`}</h2>
-                                {getStatusBadge(displayShipmentStatus(activeShipment))}
+                                {getStatusBadge(effectiveStatus)}
                             </div>
                             <p className="text-xs text-muted-foreground">
                                 Supplier Source:{" "}
@@ -80,7 +83,7 @@ export function ShipmentDetailView({
                                     })()}
                                 </strong>
                             </p>
-                            {activeShipment.status === "Rejected" && activeShipment.remark && (
+                            {effectiveStatus === "Rejected" && activeShipment.remark && (
                                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                                     <strong>Rejection reason:</strong>{" "}{activeShipment.remark.replace(/^REJECTED:\s*/i, "")}
                                 </div>
@@ -125,18 +128,21 @@ export function ShipmentDetailView({
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
                                 <div className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">{canonicalDrafting ? "Purchase Order Workflow Progress" : "Shipment Life Cycle Progress"}</div>
                                 <div className="flex items-center w-full relative">
-                                    {(activeShipment.status === "Rejected"
-                                        ? ["Requested", "Approved", "Rejected"]
-                                        : ["Requested", "Approved", "En Route", "Receiving (QA)", "Received"]
+                                    {(effectiveStatus === "Rejected"
+                                        ? [initialWorkflowStatus, "Approved", "Rejected"]
+                                        : [initialWorkflowStatus, "Approved", "En Route", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
-                                        const currentStatus = activeShipment.status === "Requested" || activeShipment.status === "Ordered"
-                                            ? "Requested"
-                                            : activeShipment.status === "For Pickup" || activeShipment.status === "Partially Received"
+                                        const isInitialWorkflowStatus = effectiveStatus === initialWorkflowStatus
+                                            || effectiveStatus === "Requested"
+                                            || effectiveStatus === "Ordered";
+                                        const currentStatus = isInitialWorkflowStatus
+                                            ? initialWorkflowStatus
+                                            : effectiveStatus === "For Pickup" || effectiveStatus === "Partially Received"
                                             ? "Receiving (QA)"
-                                            : activeShipment.status === "Awaiting Payment"
-                                            ? (Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED ? "Approved" : "Requested")
-                                            : activeShipment.status;
+                                            : effectiveStatus === "Awaiting Payment"
+                                            ? (Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED ? "Approved" : initialWorkflowStatus)
+                                            : effectiveStatus;
                                         const currentIdx = statuses.indexOf(currentStatus);
                                         const stepIdx = statuses.indexOf(st);
                                         
@@ -170,7 +176,7 @@ export function ShipmentDetailView({
                                 </div>
 
                                 {/* Explicit Action Buttons for status turnover */}
-                                {(activeShipment.status === "Approved" || activeShipment.status === "Awaiting Payment") && Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED && (
+                                {(effectiveStatus === "Approved" || effectiveStatus === "Awaiting Payment") && Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED && (
                                     <button
                                         type="button"
                                         disabled={statusLoading !== null}
@@ -185,7 +191,7 @@ export function ShipmentDetailView({
                                     </button>
                                 )}
 
-                                {(activeShipment.status === "Requested" || activeShipment.status === "Ordered") && (
+                                {(effectiveStatus === "For Approval" || effectiveStatus === "Requested" || effectiveStatus === "Ordered") && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
                                         <button
                                             type="button"
@@ -198,7 +204,7 @@ export function ShipmentDetailView({
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    if (window.confirm("Cancel this Requested purchase order? This action cannot be undone.")) {
+                                                    if (window.confirm(`Cancel this ${canonicalDrafting ? "For Approval" : "Requested"} purchase order? This action cannot be undone.`)) {
                                                         onUpdateShipmentStatus(activeShipment.shipment_id, "Cancelled");
                                                     }
                                                 }}
@@ -210,7 +216,7 @@ export function ShipmentDetailView({
                                     </div>
                                 )}
 
-                                {activeShipment.status === "Rejected" && onCancelRejectedPurchaseOrder && (
+                                {effectiveStatus === "Rejected" && onCancelRejectedPurchaseOrder && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
                                         <button
                                             type="button"
@@ -239,7 +245,7 @@ export function ShipmentDetailView({
                                     </div>
                                 )}
 
-                                {activeShipment.status === "En Route" && (
+                                {effectiveStatus === "En Route" && (
                                     <button
                                         type="button"
                                         disabled={statusLoading !== null}
@@ -258,30 +264,38 @@ export function ShipmentDetailView({
                     </div>
 
                     {/* Totals Summary */}
-                    <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+                    <div className="grid gap-4 grid-cols-2 sm:grid-cols-5">
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{canonicalDrafting ? "Net Total" : "Raw FOB Cost"}</span>
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{canonicalDrafting ? "PHP Total" : "Raw FOB Cost"}</span>
                             <span className="text-xs font-extrabold text-foreground">
-                                {formatMoney(activeShipment.total_php_value)}
+                                {formatMoney(activeShipment.total_php_value, "PHP")}
                             </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Foreign Currency</span>
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">USD Total</span>
                             <span className="text-xs font-extrabold text-foreground">
-                                {formatMoney(activeShipment.total_foreign_currency, activeShipment.currency_code || "PHP")}
+                                {activeShipment.currency_code === "USD"
+                                    ? formatMoney(activeShipment.total_foreign_currency, "USD")
+                                    : "N/A"}
                             </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate</span>
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate (PHP/USD)</span>
                             <span className="text-xs font-extrabold text-foreground">{formatMoney(activeShipment.exchange_rate)}</span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Revision Count</span>
+                            <span className="text-xs font-extrabold text-foreground">
+                                {Math.max(0, Math.trunc(Number(activeShipment.workflow_revision) || 0))}
+                            </span>
+                        </div>
+                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                {activeShipment.status === "Received" ? "Arrival Date" : "ETA / Expected"}
+                                {effectiveStatus === "Received" ? "Arrival Date" : "ETA / Expected"}
                             </span>
                             <span className="text-xs font-semibold text-foreground flex items-center gap-1">
                                 <Calendar className="h-3.5 w-3.5 text-primary" />
-                                {activeShipment.status === "Received"
+                                {effectiveStatus === "Received"
                                     ? (activeShipment.date_received && activeShipment.date_received !== "1970-01-01" 
                                         ? new Date(activeShipment.date_received).toLocaleDateString() 
                                         : "N/A")
@@ -362,13 +376,13 @@ export function ShipmentDetailView({
                     </div>
 
                     {/* Informative Note */}
-                    {activeShipment.status !== "Received" && (
+                    {effectiveStatus !== "Received" && (
                         <div className="flex items-start gap-2.5 bg-blue-500/5 border border-blue-500/10 p-4 rounded-xl">
                             <Info className="h-4.5 w-4.5 text-blue-500 shrink-0 mt-0.5" />
                             <div className="space-y-1">
                                 <h5 className="text-xs font-bold text-blue-800 dark:text-blue-300">Pending Landed Cost Recalculation</h5>
                                 <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                    This cargo is currently marked as <strong className="text-foreground">{activeShipment.status}</strong>. Custom duties, ARR, brokerages, and shipping lines must be added/allocated. Marking this shipment as <strong>Received</strong> will commit the computed landed costs to the raw inventory database to update standard BOM prices.
+                                    This cargo is currently marked as <strong className="text-foreground">{effectiveStatus}</strong>. Custom duties, ARR, brokerages, and shipping lines must be added/allocated. Marking this shipment as <strong>Received</strong> will commit the computed landed costs to the raw inventory database to update standard BOM prices.
                                 </p>
                             </div>
                         </div>

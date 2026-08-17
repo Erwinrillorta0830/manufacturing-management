@@ -476,6 +476,8 @@ export function useIncomingShipmentsForm({
             const discountForeign = DecimalValue.from(grossForeign).multiply(line.discount_percent || 0).divideRounded(100, 2).toFixed(2);
             const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
             return {
+                grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(2),
+                discountForeign: DecimalValue.from(summary.discountForeign).add(discountForeign).toFixed(2),
                 grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(2),
                 discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(2),
                 vatPhp: "0.00",
@@ -483,7 +485,16 @@ export function useIncomingShipmentsForm({
                 netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(2),
                 netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(2)
             };
-        }, { grossPhp: "0.00", discountPhp: "0.00", vatPhp: "0.00", withholdingPhp: "0.00", netPhp: "0.00", netForeign: "0.00" });
+        }, {
+            grossForeign: "0.00",
+            discountForeign: "0.00",
+            grossPhp: "0.00",
+            discountPhp: "0.00",
+            vatPhp: "0.00",
+            withholdingPhp: "0.00",
+            netPhp: "0.00",
+            netForeign: "0.00"
+        });
     }, [linesForm, shipmentForm.exchange_rate]);
 
     return {

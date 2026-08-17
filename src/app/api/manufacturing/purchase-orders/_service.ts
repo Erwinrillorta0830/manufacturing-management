@@ -257,7 +257,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
     const now = new Date();
     const header = await reservePurchaseOrderNumber(now.getFullYear(), {
         reference: order.externalReference || null,
-        remark: "Purchase order created in Requested status.",
+        remark: "Purchase order created in For Approval status.",
         supplier_name: order.supplierId,
         receiving_type: 1,
         payment_type: order.paymentTypeId,
@@ -326,7 +326,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         success: true,
         purchaseOrderId: header.purchase_order_id,
         purchaseOrderNo: header.purchase_order_no,
-        status: "Requested",
+        status: "For Approval",
         currencyCode: order.currencyCode,
         exchangeRate: order.exchangeRate,
         totals: {

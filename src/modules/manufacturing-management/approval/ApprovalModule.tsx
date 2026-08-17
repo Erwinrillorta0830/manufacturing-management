@@ -19,10 +19,10 @@ import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePu
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 
-type QueueTab = "Requested" | "Awaiting Payment" | "Approved" | "Rejected";
+type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
 const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3 }> = [
-    { value: "Requested", label: "Pending", icon: Clock3 },
+    { value: "For Approval", label: "For Approval", icon: Clock3 },
     { value: "Awaiting Payment", label: "Awaiting Payment", icon: CircleDollarSign },
     { value: "Approved", label: "Approved", icon: CheckCircle2 },
     { value: "Rejected", label: "Rejected", icon: X }
@@ -38,6 +38,7 @@ function dateTime(value?: string | null) {
 
 function statusBadge(status: string) {
     const styles: Record<string, string> = {
+        "For Approval": "border-amber-300 bg-amber-50 text-amber-700",
         Requested: "border-amber-300 bg-amber-50 text-amber-700",
         "Pending Payment": "border-amber-300 bg-amber-50 text-amber-700",
         Approved: "border-emerald-300 bg-emerald-50 text-emerald-700",
@@ -55,9 +56,9 @@ function statusForApprovalStage(
     stage: PurchaseOrderDecisionStage
 ) {
     if (stage === "Finance" && Number(paymentStatus) === PAYMENT_STATUS.PENDING) return "Pending Payment";
-    if (stage !== "Plant") return status;
+    if (stage !== "Plant") return status === "Requested" ? "For Approval" : status;
     if (Number(inventoryStatus) === INVENTORY_STATUS.APPROVED) return "Approved";
-    return status === "Awaiting Payment" ? "Requested" : status;
+    return status === "Awaiting Payment" || status === "Requested" ? "For Approval" : status;
 }
 
 export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecisionStage }) {
@@ -75,7 +76,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
         cancelFinance,
         load
     } = usePurchaseOrderApproval(stage);
-    const [tab, setTab] = useState<QueueTab>("Requested");
+    const [tab, setTab] = useState<QueueTab>("For Approval");
     const [search, setSearch] = useState("");
     const [eta, setEta] = useState("");
     const [remarks, setRemarks] = useState("");

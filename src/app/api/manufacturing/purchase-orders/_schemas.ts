@@ -32,7 +32,7 @@ export const purchaseOrderStatusSchema = z.enum([
 const initialPurchaseOrderStatusSchema = z.enum(["Ordered"]);
 
 export const purchaseOrderListStatusSchema = z.enum([
-    "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup", "En Route",
+    "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup", "En Route",
     "Receiving (QA)", "Partially Received", "Received", "Rejected"
 ]);
 

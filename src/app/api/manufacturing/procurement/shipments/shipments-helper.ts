@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
-import { INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { toStandardKg, calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 
@@ -356,7 +356,7 @@ async function findApprovalHistoryPurchaseOrderIds(stage: "Plant" | "Finance", a
 async function addApprovalStageFilter(clauses: Record<string, unknown>[], query: PurchaseOrderListQuery) {
     if (!query.approvalStage) return;
 
-    if (!query.status || query.status === "Requested") {
+    if (!query.status || isPurchaseOrderApprovalStatus(query.status)) {
         if (query.approvalStage === "Plant") {
             clauses.push({
                 _and: [
@@ -434,7 +434,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
                 { payment_status: { _eq: PAYMENT_STATUS.AWAITING_PAYMENT } }
             ]
         });
-    } else if (query.status && !(query.approvalStage && query.status === "Requested")) {
+    } else if (query.status && !(query.approvalStage && isPurchaseOrderApprovalStatus(query.status))) {
         clauses.push({ inventory_status: { _eq: shipmentStatusToInventoryStatus(query.status) } });
     }
     await addApprovalStageFilter(clauses, query);

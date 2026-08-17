@@ -266,7 +266,7 @@ export function usePurchaseOrder() {
                 expectedTotals: totals,
                 lines: lineItems
             }) as { purchaseOrderNo?: string };
-            toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in Requested status.`.trim());
+            toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in For Approval status.`.trim());
             setIsShipmentModalOpen(false);
             await loadShipments();
         } catch (error) {

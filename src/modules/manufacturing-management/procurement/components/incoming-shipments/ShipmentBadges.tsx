@@ -4,6 +4,11 @@ import {
     CURRENCY_DECIMAL_SCALE,
     formatDecimal
 } from "@/modules/manufacturing-management/decimal";
+import {
+    inventoryStatusToPurchaseOrderStatus,
+    inventoryStatusToShipmentStatus,
+    isInventoryStatusId
+} from "@/app/api/manufacturing/procurement/_domain";
 
 export function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = CURRENCY_DECIMAL_SCALE) {
     const symbol = currency === "USD" ? "$" : currency === "PHP" ? "₱" : `${currency} `;
@@ -41,15 +46,16 @@ export function MaterialTypeBadge({ typeId, short = false }: { typeId?: number |
     );
 }
 
-export function displayShipmentStatus(s: { status?: string; inventory_status?: number | null; payment_status?: number | null }): string {
-    const inv = s.inventory_status;
-    const pay = s.payment_status;
-    if (inv === 3) return "Rejected";
-    if (inv === 2) return "Received";
-    if (inv === 4) return "Partially Received";
-    if (inv === 1 && pay === 1) return "Awaiting Payment";
-    if (inv === 1 && (pay === 2 || pay === 3)) return "Approved";
-    if (inv === 0) return "Ordered";
+export function displayShipmentStatus(
+    s: { status?: string; inventory_status?: number | null; payment_status?: number | null },
+    canonicalDrafting = false
+): string {
+    const inventoryStatus = Number(s.inventory_status);
+    if (Number.isInteger(inventoryStatus) && isInventoryStatusId(inventoryStatus)) {
+        return canonicalDrafting
+            ? inventoryStatusToPurchaseOrderStatus(inventoryStatus, Number(s.payment_status))
+            : inventoryStatusToShipmentStatus(inventoryStatus, Number(s.payment_status));
+    }
     return s.status || "Ordered";
 }
 
@@ -107,6 +113,12 @@ export function getStatusBadge(status: string) {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-muted text-muted-foreground border border-border uppercase tracking-wider">
                     <X className="h-3 w-3" /> Cancelled
+                </span>
+            );
+        case "For Approval":
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
+                    <RefreshCw className="h-3 w-3" /> For Approval
                 </span>
             );
         default:
