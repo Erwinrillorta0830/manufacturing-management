@@ -4,7 +4,8 @@ import {
     ManifestLineFormItem,
     ShipmentFormState,
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
-    purchaseOrderMaterialTypeFromProductType
+    purchaseOrderMaterialTypeFromProductType,
+    FxRateStatus
 } from "./types";
 import { IncomingShipment, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
@@ -32,6 +33,7 @@ export interface ShipmentFormModalProps {
     setShipmentForm: React.Dispatch<React.SetStateAction<ShipmentFormState>>;
     supplierSelectOptions: Array<{ value: string; label: string; labelNode?: React.ReactNode }>;
     handleSupplierSelect: (val: string) => void;
+    handleCurrencyChange: (currencyCode: "PHP" | "USD") => void;
     isFinanceManager: boolean;
     isOverridden: boolean;
     setIsOverridden: (val: boolean) => void;
@@ -61,6 +63,8 @@ export interface ShipmentFormModalProps {
         netForeign: string;
     };
     totalUsdValue: string;
+    fxRateStatus: FxRateStatus;
+    fxRateError: string | null;
     loading: boolean;
     listLoading: boolean;
 }
@@ -77,6 +81,7 @@ export function ShipmentFormModal({
     setShipmentForm,
     supplierSelectOptions,
     handleSupplierSelect,
+    handleCurrencyChange,
     isFinanceManager,
     isOverridden,
     setIsOverridden,
@@ -94,6 +99,8 @@ export function ShipmentFormModal({
     productPerSupplierMap,
     hasSubmitted,
     draftSummary,
+    fxRateStatus,
+    fxRateError,
     loading,
     listLoading
 }: ShipmentFormModalProps) {
@@ -119,6 +126,7 @@ export function ShipmentFormModal({
 
     const currencyCode = shipmentForm.currency_code || "PHP";
     const exchangeRate = Number(shipmentForm.exchange_rate || 1);
+    const exchangeRateLabel = shipmentForm.exchange_rate === "" ? "Pending" : `₱${exchangeRate}`;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-2 sm:p-4 overflow-y-auto">
@@ -169,7 +177,7 @@ export function ShipmentFormModal({
                         <div className="p-4 bg-muted/20 border rounded-xl space-y-3">
                             <div className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                                 <span>Purchase Order Metadata</span>
-                                <span className="text-[9px] text-muted-foreground font-mono">Currency: {currencyCode} @ FX ₱{exchangeRate}</span>
+                                <span className="text-[9px] text-muted-foreground font-mono">Currency: {currencyCode} @ FX {exchangeRateLabel}</span>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                                 <div className="space-y-1">
@@ -218,22 +226,7 @@ export function ShipmentFormModal({
                                             disabled={Boolean(editingShipmentId)}
                                             onChange={event => {
                                                 const currency = event.target.value as "PHP" | "USD";
-                                                if (currency === "PHP") {
-                                                    setShipmentForm(prev => ({ ...prev, currency_code: currency, exchange_rate: "1" }));
-                                                } else {
-                                                    fetch("/api/manufacturing/procurement/forex")
-                                                        .then(res => res.json())
-                                                        .then(data => {
-                                                            const latestHistory = data?.rateHistory?.find((h: { currency_code: string; new_rate: number }) => h.currency_code === currency);
-                                                            const activeConfig = data?.activeRates?.find((r: { currency_code: string; exchange_rate: number }) => r.currency_code === currency);
-                                                            const rateVal = latestHistory?.new_rate || activeConfig?.exchange_rate || 58.50;
-                                                            const rateStr = String(rateVal);
-                                                            setShipmentForm(prev => ({ ...prev, currency_code: currency, exchange_rate: prev.exchange_rate && prev.exchange_rate !== "1" ? prev.exchange_rate : rateStr }));
-                                                        })
-                                                        .catch(() => {
-                                                            setShipmentForm(prev => ({ ...prev, currency_code: currency, exchange_rate: prev.exchange_rate && prev.exchange_rate !== "1" ? prev.exchange_rate : "58.50" }));
-                                                        });
-                                                }
+                                                handleCurrencyChange(currency);
                                             }}
                                             className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8 disabled:bg-muted"
                                         >
@@ -246,6 +239,11 @@ export function ShipmentFormModal({
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
                                         <label className="text-[10px] font-bold text-muted-foreground uppercase">FX Rate to PHP</label>
+                                        {canonicalDrafting && shipmentForm.currency_code === "USD" && (
+                                            <span className="text-[9px] font-semibold text-muted-foreground">
+                                                {fxRateStatus === "loading" ? "Loading current rate..." : fxRateStatus === "error" ? "Unavailable" : "Locked at creation"}
+                                            </span>
+                                        )}
                                         {isFinanceManager && !canonicalDrafting && (
                                             <label className="flex items-center gap-1 text-[9px] text-primary cursor-pointer select-none">
                                                 <input 
@@ -261,17 +259,21 @@ export function ShipmentFormModal({
                                     <input
                                         type="number"
                                         step="0.0001"
-                                        readOnly={canonicalDrafting ? shipmentForm.currency_code === "PHP" || Boolean(editingShipmentId) : !isOverridden || !isFinanceManager}
+                                        readOnly={canonicalDrafting ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId) : !isOverridden || !isFinanceManager}
+                                        aria-readonly={canonicalDrafting && shipmentForm.currency_code === "USD" ? true : undefined}
                                         value={String(shipmentForm.exchange_rate)}
                                         onChange={e => setShipmentForm({...shipmentForm, exchange_rate: e.target.value})}
                                         className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono font-bold ${
                                             (canonicalDrafting
-                                                ? shipmentForm.currency_code === "PHP" || Boolean(editingShipmentId)
+                                                ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId)
                                                 : !isOverridden || !isFinanceManager)
                                                 ? "bg-muted text-muted-foreground cursor-not-allowed"
                                                 : "bg-background text-foreground"
                                         }`}
                                     />
+                                    {canonicalDrafting && shipmentForm.currency_code === "USD" && fxRateStatus === "error" && (
+                                        <p className="text-[10px] font-medium text-destructive" role="alert">{fxRateError}</p>
+                                    )}
                                 </div>
 
                                 <div className="space-y-1">
@@ -756,7 +758,7 @@ export function ShipmentFormModal({
                             <button
                                 id="register-shipment-btn"
                                 type="submit"
-                                disabled={loading || listLoading}
+                                disabled={loading || listLoading || (canonicalDrafting && !editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {loading ? (

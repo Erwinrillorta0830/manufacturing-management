@@ -53,6 +53,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         modalRef,
         isSupplierForeign,
         handleSupplierSelect,
+        handleCurrencyChange,
         handleStartEdit,
         handleCloseModal,
         handleSubmit,
@@ -66,7 +67,9 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         productPerSupplierMap,
         isFinanceManager,
         totalUsdValue,
-        draftSummary
+        draftSummary,
+        fxRateStatus,
+        fxRateError
     } = useIncomingShipmentsForm({
         suppliers,
         rawMaterials,
@@ -246,6 +249,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 setShipmentForm={setShipmentForm}
                 supplierSelectOptions={supplierSelectOptions}
                 handleSupplierSelect={handleSupplierSelect}
+                handleCurrencyChange={handleCurrencyChange}
                 isFinanceManager={isFinanceManager}
                 isOverridden={isOverridden}
                 setIsOverridden={setIsOverridden}
@@ -266,6 +270,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}
+                fxRateStatus={fxRateStatus}
+                fxRateError={fxRateError}
                 loading={loading}
                 listLoading={listLoading}
             />

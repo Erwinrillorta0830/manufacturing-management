@@ -9,6 +9,12 @@ import type {
     PurchaseOrderListResponse
 } from "../types";
 
+export interface PurchaseOrderFxRateResponse {
+    currencyCode: "PHP" | "USD";
+    exchangeRate: number | string;
+    effectiveDate: string | null;
+}
+
 async function responseJson<T>(response: Response, fallback: string): Promise<T> {
     if (!response.ok) {
         const body = await response.json().catch(() => null);
@@ -39,6 +45,12 @@ export async function fetchPurchaseOrderLines(id: number, signal?: AbortSignal) 
 export async function fetchPurchaseOrderCatalog(signal?: AbortSignal) {
     const response = await fetch("/api/manufacturing/purchase-orders/catalog", { signal });
     return responseJson<PurchaseOrderCatalog>(response, "Failed to load purchase-order catalog.");
+}
+
+export async function fetchPurchaseOrderFxRate(currencyCode: "PHP" | "USD", signal?: AbortSignal) {
+    const params = new URLSearchParams({ currency: currencyCode });
+    const response = await fetch(`/api/manufacturing/purchase-orders/fx-rate?${params.toString()}`, { signal });
+    return responseJson<PurchaseOrderFxRateResponse>(response, "Failed to load the current exchange rate.");
 }
 
 export async function createPurchaseOrder(payload: PurchaseOrderDraftPayload) {

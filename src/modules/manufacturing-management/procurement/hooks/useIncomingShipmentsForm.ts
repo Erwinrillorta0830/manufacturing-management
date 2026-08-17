@@ -3,12 +3,14 @@ import { toast } from "sonner";
 import {
     ManifestLineFormItem,
     ShipmentFormState,
-    purchaseOrderMaterialTypeFromProductType
+    purchaseOrderMaterialTypeFromProductType,
+    FxRateStatus
 } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 import { resolveProductParentId } from "../product-relation";
+import { fetchPurchaseOrderFxRate } from "../../purchase-order/services/purchase-order-api";
 
 export interface UseIncomingShipmentsFormProps {
     suppliers: Supplier[];
@@ -45,11 +47,43 @@ export function useIncomingShipmentsForm({
     const [statusLoading, setStatusLoading] = useState<"en-route" | "arrived" | null>(null);
     const [isOverridden, setIsOverridden] = useState(false);
     const [hasSubmitted, setHasSubmitted] = useState(false);
+    const [fxRateStatus, setFxRateStatus] = useState<FxRateStatus>("idle");
+    const [fxRateError, setFxRateError] = useState<string | null>(null);
     const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
+    const fxRateController = React.useRef<AbortController | null>(null);
 
     const activeShipment = selectedShipment || null;
+
+    const loadCurrentFxRate = useCallback(async (currencyCode: "PHP" | "USD") => {
+        fxRateController.current?.abort();
+
+        if (currencyCode === "PHP") {
+            setShipmentForm(previous => ({ ...previous, exchange_rate: "1" }));
+            setFxRateError(null);
+            setFxRateStatus("ready");
+            return;
+        }
+
+        const controller = new AbortController();
+        fxRateController.current = controller;
+        setFxRateStatus("loading");
+        setFxRateError(null);
+        setShipmentForm(previous => ({ ...previous, exchange_rate: "" }));
+
+        try {
+            const rate = await fetchPurchaseOrderFxRate(currencyCode, controller.signal);
+            if (controller.signal.aborted) return;
+            setShipmentForm(previous => ({ ...previous, exchange_rate: String(rate.exchangeRate) }));
+            setFxRateStatus("ready");
+        } catch (error) {
+            if (controller.signal.aborted || (error as Error).name === "AbortError") return;
+            setShipmentForm(previous => ({ ...previous, exchange_rate: "" }));
+            setFxRateError((error as Error).message || "The current USD exchange rate could not be loaded.");
+            setFxRateStatus("error");
+        }
+    }, [setShipmentForm]);
 
     useEffect(() => {
         fetch("/api/manufacturing/branches")
@@ -80,7 +114,18 @@ export function useIncomingShipmentsForm({
         return isSupplierForeignRecord(s);
     }, []);
 
-    const handleSupplierSelect = useCallback(async (val: string) => {
+    const handleCurrencyChange = useCallback((currencyCode: "PHP" | "USD") => {
+        setShipmentForm(previous => ({ ...previous, currency_code: currencyCode, exchange_rate: currencyCode === "PHP" ? "1" : "" }));
+        if (currencyCode === "USD") {
+            void loadCurrentFxRate("USD");
+        } else {
+            fxRateController.current?.abort();
+            setFxRateStatus("ready");
+            setFxRateError(null);
+        }
+    }, [loadCurrentFxRate, setShipmentForm]);
+
+    const handleSupplierSelect = useCallback((val: string) => {
         const matchedSup = suppliers.find(s => String(s.id) === String(val));
         
         if (!matchedSup) {
@@ -91,34 +136,19 @@ export function useIncomingShipmentsForm({
         const foreign = isSupplierForeign(matchedSup);
 
         if (foreign) {
-            const rawCurr = (matchedSup.currency || matchedSup.default_currency || "USD").toUpperCase();
-            const targetCurrency = (rawCurr !== "PHP" ? rawCurr : "USD") as "PHP" | "USD";
-            
-            let fxRate = shipmentForm.exchange_rate && shipmentForm.exchange_rate !== "1" ? shipmentForm.exchange_rate : "58.00";
-            
-            try {
-                const res = await fetch("/api/manufacturing/procurement/forex");
-                if (res.ok) {
-                    const data = await res.json();
-                    const latestHistory = data?.rateHistory?.find((h: { currency_code: string; new_rate: number }) => h.currency_code === targetCurrency || h.currency_code === "USD");
-                    const activeConfig = data?.activeRates?.find((r: { currency_code: string; exchange_rate: number }) => r.currency_code === targetCurrency || r.currency_code === "USD");
-                    const rateVal = latestHistory?.new_rate || activeConfig?.exchange_rate;
-                    if (rateVal) {
-                        fxRate = String(rateVal);
-                    }
-                }
-            } catch (err) {
-                console.error("Error fetching forex rate for automated supplier currency:", err);
-            }
+            const targetCurrency = "USD" as const;
+            setFxRateStatus("loading");
+            setFxRateError(null);
 
             setShipmentForm(prev => ({
                 ...prev,
                 supplier_id: val,
                 currency_code: targetCurrency,
-                exchange_rate: fxRate
+                exchange_rate: ""
             }));
+            void loadCurrentFxRate(targetCurrency);
 
-            toast.info(`Automated Currency: Set to ${targetCurrency} for Foreign Supplier (${matchedSup.supplier_name}) at FX Rate ₱${fxRate}`);
+            toast.info(`Automated Currency: Set to ${targetCurrency} for Foreign Supplier (${matchedSup.supplier_name}).`);
         } else {
             setShipmentForm(prev => ({
                 ...prev,
@@ -126,10 +156,13 @@ export function useIncomingShipmentsForm({
                 currency_code: "PHP",
                 exchange_rate: "1"
             }));
+            fxRateController.current?.abort();
+            setFxRateStatus("ready");
+            setFxRateError(null);
 
             toast.info(`Automated Currency: Set to PHP for Local Supplier (${matchedSup.supplier_name})`);
         }
-    }, [suppliers, isSupplierForeign, shipmentForm.exchange_rate, setShipmentForm]);
+    }, [loadCurrentFxRate, suppliers, isSupplierForeign, setShipmentForm]);
 
     const handleStartEdit = async () => {
         if (!activeShipment) return;
@@ -189,6 +222,9 @@ export function useIncomingShipmentsForm({
         }));
 
         setEditingShipmentId(activeShipment.shipment_id);
+        const hasStoredRate = Number(activeShipment.exchange_rate) > 0;
+        setFxRateStatus(hasStoredRate ? "ready" : "error");
+        setFxRateError(hasStoredRate ? null : "The stored purchase-order exchange rate is unavailable.");
         setIsModalOpen(true);
     };
 
@@ -210,6 +246,9 @@ export function useIncomingShipmentsForm({
             currency_code: "PHP"
         });
         setLinesForm([]);
+        fxRateController.current?.abort();
+        setFxRateStatus("idle");
+        setFxRateError(null);
     }, [setIsModalOpen, setLinesForm, setShipmentForm]);
 
     const getLineErrors = useCallback((line: ManifestLineFormItem) => {
@@ -240,6 +279,11 @@ export function useIncomingShipmentsForm({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setHasSubmitted(true);
+
+        if (canonicalDrafting && !editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready") {
+            toast.error(fxRateError || "Wait for the current USD exchange rate before submitting.");
+            return;
+        }
         
         const firstInvalidLine = linesForm
             .map((line, index) => ({ index, errors: getLineErrors(line) }))
@@ -509,6 +553,7 @@ export function useIncomingShipmentsForm({
         modalRef,
         isSupplierForeign,
         handleSupplierSelect,
+        handleCurrencyChange,
         handleStartEdit,
         handleCloseModal,
         handleSubmit,
@@ -523,6 +568,8 @@ export function useIncomingShipmentsForm({
         isFinanceManager,
         totalPhpValue,
         totalUsdValue,
-        draftSummary
+        draftSummary,
+        fxRateStatus,
+        fxRateError
     };
 }

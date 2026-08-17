@@ -11,6 +11,7 @@ import {
 import type { z } from "zod";
 import type { purchaseOrderCreateSchema } from "./_schemas";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
+import { PurchaseOrderFxRateError, resolvePurchaseOrderFxRate } from "./_fx-rate";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 import { normalizeProductRelationId } from "@/modules/manufacturing-management/procurement/product-relation";
 
@@ -250,8 +251,33 @@ async function deleteCreatedOrder(poId: number, lineIds: number[]) {
 }
 
 export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorId: number) {
+    let authoritativeFxRate;
+    try {
+        authoritativeFxRate = await resolvePurchaseOrderFxRate(order.currencyCode);
+    } catch (error) {
+        if (error instanceof PurchaseOrderFxRateError) {
+            throw new PurchaseOrderDraftError(error.message, error.status, {
+                code: error.code,
+                ...(error.details && typeof error.details === "object" ? error.details : {})
+            });
+        }
+        throw error;
+    }
+    if (compareDecimals(order.exchangeRate, authoritativeFxRate.exchangeRate) !== 0) {
+        throw new PurchaseOrderDraftError(
+            `The ${order.currencyCode} exchange rate changed. Reload the current rate and submit again.`,
+            409,
+            {
+                code: "FX_RATE_STALE",
+                currencyCode: authoritativeFxRate.currencyCode,
+                expectedExchangeRate: authoritativeFxRate.exchangeRate,
+                providedExchangeRate: order.exchangeRate
+            }
+        );
+    }
+    const exchangeRate = authoritativeFxRate.exchangeRate;
     const productCategoryIds = await validateDraft(order);
-    const totals = calculatePurchaseOrderTotals(order.lines, order.exchangeRate);
+    const totals = calculatePurchaseOrderTotals(order.lines, exchangeRate);
     assertExpectedTotals(order, totals);
     const selectedRule = await selectRuleForDraft(order, totals.netPhp, productCategoryIds);
     const now = new Date();
@@ -273,8 +299,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         branch_id: order.branchId,
         is_posted: 0,
         encoder_id: actorId,
-        currency_code: order.currencyCode,
-        exchange_rate: order.exchangeRate,
+        currency_code: authoritativeFxRate.currencyCode,
+        exchange_rate: exchangeRate,
         total_foreign_currency: totals.netForeign,
         is_import: order.currencyCode === "PHP" ? 0 : 1,
         workflow_revision: 0
@@ -298,7 +324,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
                     discountPercent: line.discountPercent,
                     vatPercent: line.vatPercent,
                     withholdingPercent: line.withholdingPercent,
-                    exchangeRate: order.exchangeRate,
+                    exchangeRate: exchangeRate,
                     branchId: order.branchId,
                     purchaseIntent: line.purchaseIntent,
                     jobOrderId: line.jobOrderId,
@@ -327,8 +353,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         purchaseOrderId: header.purchase_order_id,
         purchaseOrderNo: header.purchase_order_no,
         status: "For Approval",
-        currencyCode: order.currencyCode,
-        exchangeRate: order.exchangeRate,
+        currencyCode: authoritativeFxRate.currencyCode,
+        exchangeRate,
         totals: {
             grossPhp: totals.grossPhp,
             discountPhp: totals.discountPhp,
