@@ -7,7 +7,7 @@ import {
     purchaseOrderMaterialTypeFromProductType,
     FxRateStatus
 } from "./types";
-import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode } from "../../types";
+import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
@@ -58,6 +58,14 @@ export interface ShipmentFormModalProps {
         payment_description?: string | null;
     }>;
     paymentModes?: PurchaseOrderPaymentMode[];
+    priceTypeRules?: PurchaseOrderPriceTypeRule[];
+    priceTypeResolution?: {
+        status: "idle" | "pending" | "resolved" | "error";
+        priceTypeName: string | null;
+        message: string | null;
+    };
+    priceMatrixStatus?: "idle" | "loading" | "ready" | "error";
+    priceMatrixError?: string | null;
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -106,6 +114,9 @@ export function ShipmentFormModal({
     productPerSupplierMap,
     paymentTerms = [],
     paymentModes = [],
+    priceTypeResolution = { status: "idle", priceTypeName: null, message: null },
+    priceMatrixStatus = "idle",
+    priceMatrixError = null,
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -361,33 +372,60 @@ export function ShipmentFormModal({
                                     </div>
                                 )}
 
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>
-                                    <select
-                                        value={shipmentForm.price_type || ""}
-                                        onChange={e => setShipmentForm({...shipmentForm, price_type: e.target.value || null})}
-                                        className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
-                                    >
-                                        <option value="" disabled hidden>Select Price Type...</option>
-                                        {priceTypes && priceTypes.length > 0 ? (
-                                            priceTypes.map(pt => {
-                                                const name = pt.price_type_name || pt.name || `Price Type #${pt.price_type_id}`;
-                                                return (
-                                                    <option key={pt.price_type_id} value={name}>{name}</option>
-                                                );
-                                            })
-                                        ) : (
-                                            <>
-                                                <option value="Internal">Internal</option>
-                                                <option value="SRP">SRP</option>
-                                                <option value="Government">Government</option>
-                                                <option value="Dealer">Dealer</option>
-                                                <option value="Sub-Dealer">Sub-Dealer</option>
-                                                <option value="Project">Project</option>
-                                            </>
+                                {canonicalDrafting ? (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type</label>
+                                        <div
+                                            aria-live="polite"
+                                            role={priceTypeResolution.status === "error" ? "alert" : "status"}
+                                            className={`flex min-h-8 items-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${
+                                                priceTypeResolution.status === "error"
+                                                    ? "border-destructive/40 bg-destructive/5 text-destructive"
+                                                    : priceTypeResolution.status === "resolved"
+                                                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
+                                                        : "bg-muted text-muted-foreground"
+                                            }`}
+                                        >
+                                            {priceTypeResolution.status === "resolved"
+                                                ? priceTypeResolution.priceTypeName
+                                                : priceTypeResolution.message || "Determined from selected products"}
+                                        </div>
+                                        {priceMatrixStatus === "loading" && (
+                                            <p className="text-[10px] font-medium text-muted-foreground">Loading Price Control prices...</p>
                                         )}
-                                    </select>
-                                </div>
+                                        {priceMatrixStatus === "error" && (
+                                            <p className="text-[10px] font-medium text-destructive" role="alert">{priceMatrixError}</p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>
+                                        <select
+                                            value={shipmentForm.price_type || ""}
+                                            onChange={e => setShipmentForm({...shipmentForm, price_type: e.target.value || null})}
+                                            className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
+                                        >
+                                            <option value="" disabled hidden>Select Price Type...</option>
+                                            {priceTypes && priceTypes.length > 0 ? (
+                                                priceTypes.map(pt => {
+                                                    const name = pt.price_type_name || pt.name || `Price Type #${pt.price_type_id}`;
+                                                    return (
+                                                        <option key={pt.price_type_id} value={name}>{name}</option>
+                                                    );
+                                                })
+                                            ) : (
+                                                <>
+                                                    <option value="Internal">Internal</option>
+                                                    <option value="SRP">SRP</option>
+                                                    <option value="Government">Government</option>
+                                                    <option value="Dealer">Dealer</option>
+                                                    <option value="Sub-Dealer">Sub-Dealer</option>
+                                                    <option value="Project">Project</option>
+                                                </>
+                                            )}
+                                        </select>
+                                    </div>
+                                )}
 
                                 {!canonicalDrafting && (
                                     <div className="space-y-1">
@@ -550,8 +588,10 @@ export function ShipmentFormModal({
                                                                     const specialPrice = priceTypeRatesMap[Number(selected.product_id)];
                                                                     if (specialPrice !== undefined && specialPrice > 0) {
                                                                         finalSelected.base_unit_cost_php = String(specialPrice);
+                                                                    } else if (canonicalDrafting) {
+                                                                        finalSelected.base_unit_cost_php = "";
                                                                     }
-                                                                    if (canonicalDrafting && shipmentForm.currency_code === "USD") {
+                                                                    if (canonicalDrafting && shipmentForm.currency_code === "USD" && finalSelected.base_unit_cost_php) {
                                                                         finalSelected.base_unit_cost_php = String(
                                                                             Number(finalSelected.base_unit_cost_php) / (Number(shipmentForm.exchange_rate) || 1)
                                                                         );
@@ -595,12 +635,14 @@ export function ShipmentFormModal({
                                                                         if (isDuplicate) return;
                                                                         const opt = line.uom_options?.find((o: UOMOption) => String(o.product_id) === String(selectedId));
                                                                         if (opt) {
-                                                                            let costVal = opt.cost_per_unit;
+                                                                            let costVal: number | undefined = opt.cost_per_unit;
                                                                             const specialPrice = priceTypeRatesMap[Number(selectedId)];
                                                                             if (specialPrice !== undefined && specialPrice > 0) {
                                                                                 costVal = specialPrice;
+                                                                            } else if (canonicalDrafting) {
+                                                                                costVal = undefined;
                                                                             }
-                                                                            if (canonicalDrafting && shipmentForm.currency_code === "USD") {
+                                                                            if (costVal !== undefined && canonicalDrafting && shipmentForm.currency_code === "USD") {
                                                                                 costVal /= Number(shipmentForm.exchange_rate) || 1;
                                                                             }
                                                                             handleLineFormChange(idx, {
@@ -609,7 +651,7 @@ export function ShipmentFormModal({
                                                                                     ? String(opt.parent_product_id)
                                                                                     : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
-                                                                                base_unit_cost_php: String(costVal)
+                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal)
                                                                             });
                                                                         }
                                                                     }}
@@ -833,7 +875,11 @@ export function ShipmentFormModal({
                             <button
                                 id="register-shipment-btn"
                                 type="submit"
-                                disabled={loading || listLoading || (canonicalDrafting && !editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")}
+                    disabled={loading || listLoading || (canonicalDrafting && (
+                        priceTypeResolution.status !== "resolved"
+                        || priceMatrixStatus !== "ready"
+                        || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
+                    ))}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {loading ? (

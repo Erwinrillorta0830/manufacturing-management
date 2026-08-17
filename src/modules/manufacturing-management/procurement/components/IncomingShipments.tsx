@@ -33,7 +33,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         canonicalDrafting = false,
         jobOrders = [],
         paymentTerms = [],
-        paymentModes = []
+        paymentModes = [],
+        priceTypeRules = []
     } = props;
 
     const onServerQueryChange = serverList?.onQueryChange;
@@ -68,6 +69,9 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         isFinanceManager,
         totalUsdValue,
         draftSummary,
+        priceTypeResolution,
+        priceMatrixStatus,
+        priceMatrixError,
         fxRateStatus,
         fxRateError
     } = useIncomingShipmentsForm({
@@ -83,7 +87,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         setLinesForm,
         onCreateShipment,
         onEditShipment,
-        canonicalDrafting
+        canonicalDrafting,
+        priceTypeRules
     });
 
     useEffect(() => {
@@ -269,6 +274,10 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
                 paymentModes={paymentModes}
+                priceTypeRules={priceTypeRules}
+                priceTypeResolution={priceTypeResolution}
+                priceMatrixStatus={priceMatrixStatus}
+                priceMatrixError={priceMatrixError}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}
