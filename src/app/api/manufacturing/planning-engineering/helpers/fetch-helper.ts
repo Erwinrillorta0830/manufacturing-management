@@ -23,6 +23,7 @@ let masterDataCache: {
     productsList: any[];
     operations: any[];
     mfgRoutesBom: any[];
+    unitsList: any[];
     timestamp: number;
 } | null = null;
 
@@ -31,7 +32,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
     try {
         const now = Date.now();
-        const useCache = masterDataCache && (now - masterDataCache.timestamp < CACHE_TTL_MS);
+        const useCache = masterDataCache && masterDataCache.unitsList && (now - masterDataCache.timestamp < CACHE_TTL_MS);
 
         const fetchList = [
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers: headersNoCache }),
@@ -49,9 +50,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetchList.push(
                 fetch(`${DIRECTUS_URL}/items/manufacturing_routes?limit=-1`, { headers: headersNoCache }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_boms?limit=-1`, { headers: headersNoCache }),
-                fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,unit_of_measurement.unit_shortcut`, { headers: headersNoCache }),
+                fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,unit_of_measurement`, { headers: headersNoCache }),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers: headersNoCache }),
-                fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?limit=-1`, { headers: headersNoCache })
+                fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?limit=-1`, { headers: headersNoCache }),
+                fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers: headersNoCache })
             );
         }
 
@@ -72,6 +74,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         let productsList = [];
         let operations = [];
         let mfgRoutesBom = [];
+        let unitsList: any[] = [];
 
         if (useCache && masterDataCache) {
             mfgRoutings = masterDataCache.mfgRoutings;
@@ -79,18 +82,21 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             productsList = masterDataCache.productsList;
             operations = masterDataCache.operations;
             mfgRoutesBom = masterDataCache.mfgRoutesBom;
+            unitsList = (masterDataCache as any).unitsList || [];
         } else {
             const mfgRoutingsRes = responses[9];
             const mfgBomsRes = responses[10];
             const prodRes = responses[11];
             const operationsRes = responses[12];
             const mfgRoutesBomRes = responses[13];
+            const unitsRes = responses[14];
 
             mfgRoutings = mfgRoutingsRes && mfgRoutingsRes.ok ? (await mfgRoutingsRes.json()).data || [] : [];
             mfgBoms = mfgBomsRes && mfgBomsRes.ok ? (await mfgBomsRes.json()).data || [] : [];
             productsList = prodRes && prodRes.ok ? (await prodRes.json()).data || [] : [];
             operations = operationsRes && operationsRes.ok ? (await operationsRes.json()).data || [] : [];
             mfgRoutesBom = mfgRoutesBomRes && mfgRoutesBomRes.ok ? (await mfgRoutesBomRes.json()).data || [] : [];
+            unitsList = unitsRes && unitsRes.ok ? (await unitsRes.json()).data || [] : [];
 
             masterDataCache = {
                 mfgRoutings,
@@ -98,8 +104,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 productsList,
                 operations,
                 mfgRoutesBom,
+                unitsList,
                 timestamp: now
-            };
+            } as any;
         }
 
         const getObjId = (obj: any): number => {
@@ -113,6 +120,11 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const versionMap = new Map<number, string>();
         mfgVersions.forEach((v: any) => {
             versionMap.set(Number(v.version_id || v.id), v.version_name);
+        });
+
+        const unitsMap = new Map<number, any>();
+        unitsList.forEach((u: any) => {
+            unitsMap.set(Number(u.unit_id), u);
         });
 
         // Map them together
@@ -142,6 +154,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const matchedProduct = productsList.find((p: any) => Number(p.product_id) === Number(jo.product_id));
             const productName = matchedProduct?.product_name || `Product #${jo.product_id}`;
+            const uomId = Number(matchedProduct?.unit_of_measurement?.unit_id || matchedProduct?.unit_of_measurement || 0);
+            const unitObj = unitsMap.get(uomId) || (typeof matchedProduct?.unit_of_measurement === "object" ? matchedProduct.unit_of_measurement : null);
+            const uomName = unitObj?.unit_name || unitObj?.unit_shortcut || "Pieces";
+            const uomShortcut = unitObj?.unit_shortcut || unitObj?.unit_name || "PCS";
 
             const salesOrders = josos
                 .filter((s: any) => s.job_order_id ? getObjId(s.job_order_id) === joIdInt : s.jo_id === joNo)
@@ -309,6 +325,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 jo_id: joNo,
                 product_id: jo.product_id,
                 product_name: productName,
+                unit_of_measurement: uomName,
+                uom_name: uomName,
+                uom_shortcut: uomShortcut,
                 quantity: Number(jo.target_quantity || 0),
                 bom: jo.version_id ? { version_id: jo.version_id } : null,
                 components: [],
@@ -320,6 +339,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 ...jo,
                 product_id: jo.product_id,
                 product_name: productName,
+                unit_of_measurement: uomName,
+                uom_name: uomName,
+                uom_shortcut: uomShortcut,
                 quantity: Number(jo.target_quantity || 0),
                 status: mappedStatus,
                 bom: jo.version_id ? { version_id: jo.version_id } : null,

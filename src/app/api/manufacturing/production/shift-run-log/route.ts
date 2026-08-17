@@ -1,27 +1,67 @@
 /* eslint-disable */
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
-
-const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
-
-const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-};
-if (DIRECTUS_STATIC_TOKEN) {
-    headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
+// Helper to decode user ID from session cookie
+async function getUserIdFromSession(): Promise<number> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value;
+        if (token) {
+            const parts = token.split(".");
+            if (parts.length >= 2) {
+                let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+                while (base64.length % 4) base64 += "=";
+                const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
+                const tokenPayload = JSON.parse(jsonPayload);
+                const id = tokenPayload?.id || tokenPayload?.user_id || tokenPayload?.sub;
+                if (id && !isNaN(Number(id))) return Number(id);
+            }
+        }
+    } catch (err) {
+        console.error("Error decoding session in shift run log:", err);
+    }
+    return 24;
 }
 
-// GET handler: Fetches yield ledger logs from the database
+// GET handler: Fetches yield ledger logs, rejection reasons, or status history
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const taskId = searchParams.get("taskId");
         const joId = searchParams.get("joId");
+        const action = searchParams.get("action");
 
+        // 1. Fetch rejection reasons list
+        if (action === "rejection-reasons") {
+            try {
+                const res = await fetch(`${DIRECTUS_URL}/items/qa_rejection_reasons?filter[is_active][_neq]=0&limit=-1&sort=reason_name`, { headers, cache: "no-store" });
+                if (res.ok) {
+                    const json = await res.json();
+                    return NextResponse.json({ success: true, data: json.data || [] });
+                }
+            } catch (err) {
+                console.warn("Directus fetch for qa_rejection_reasons failed, using fallback list:", err);
+            }
+
+            // Fallback standard rejection reasons
+            const fallbackReasons = [
+                { id: 1, reason_id: 1, code: "DEF-DIM", reason_name: "Dimensional Variance / Out of Tolerance", category: "Dimensional", is_active: true },
+                { id: 2, reason_id: 2, code: "DEF-SURF", reason_name: "Surface Flaw / Scratch / Dent", category: "Cosmetic", is_active: true },
+                { id: 3, reason_id: 3, code: "DEF-CONT", reason_name: "Foreign Material Contamination", category: "Quality", is_active: true },
+                { id: 4, reason_id: 4, code: "DEF-SEAL", reason_name: "Improper Sealing / Packaging Defect", category: "Packaging", is_active: true },
+                { id: 5, reason_id: 5, code: "DEF-CHEM", reason_name: "Chemical / Viscosity Specification Failure", category: "Chemical", is_active: true },
+                { id: 6, reason_id: 6, code: "DEF-MACH", reason_name: "Machine Jam / Processing Scrap", category: "Process", is_active: true },
+                { id: 7, reason_id: 7, code: "DEF-SETUP", reason_name: "Line Setup / Calibration Waste", category: "Setup", is_active: true },
+                { id: 8, reason_id: 8, code: "DEF-EXP", reason_name: "Material Expired in Staging", category: "Material", is_active: true }
+            ];
+            return NextResponse.json({ success: true, data: fallbackReasons });
+        }
+
+        // 2. Fetch yield ledger logs
         let url = `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&sort=-logged_at`;
         if (joId) {
             url += `&filter[job_order_id][_eq]=${joId}`;
@@ -39,18 +79,24 @@ export async function GET(request: Request) {
     }
 }
 
-// POST handler: Logs the shift yield, updates inventory (FIFO), and inserts a ledger record
+// POST handler: Logs the shift yield, performs point-of-use real-time backflushing, updates inventory movements ledger, records genealogy, and updates Job Order status
 export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
+        const manilaTimestamp = await getISOStringInConfiguredTimezone();
+        const sessionUserId = await getUserIdFromSession();
+
         const body = await request.json();
         const { 
             taskId, 
             joId, 
             shiftName, 
             yieldQty, 
+            scrapQty = 0,
+            rejectionReasonId,
+            rejectionRemarks,
             inspectorId, 
-            qaStatus, 
+            qaStatus = "Pending", 
             qaParameters, 
             materialsConsumed,
             batchNo,
@@ -63,19 +109,25 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing required fields: taskId, joId, shiftName, yieldQty" }, { status: 400 });
         }
 
-        // 1. Fetch Job Order Details to find product_id, branch_id, and job_order_no
+        const goodYield = Number(yieldQty || 0);
+        const scrapUnits = Number(scrapQty || 0);
+        const effectiveEncoderId = inspectorId ? Number(inspectorId) : sessionUserId;
+
+        // 1. Fetch Job Order Details
         const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, { headers, cache: "no-store" });
         if (!joRes.ok) {
             throw new Error(`Failed to load job order with ID: ${joId}`);
         }
         const joData = (await joRes.json()).data;
-        const producedProductId = joData.product_id;
+        const producedProductId = Number(joData.product_id);
         if (!joData.branch_id) {
             return NextResponse.json({ error: `Job Order with ID ${joId} has no branch_id` }, { status: 400 });
         }
-        const branchId = joData.branch_id;
-        const jobOrderNo = joData.job_order_no;
-        const targetQuantity = Number(joData.target_quantity || 0);
+        const branchId = Number(joData.branch_id);
+        const jobOrderNo = joData.job_order_no || `JO-${joId}`;
+        const targetQuantity = Number(joData.target_quantity || joData.quantity || 0);
+        const currentCompletedQty = Number(joData.completed_quantity || joData.actual_quantity_produced || 0);
+        const currentRejectedQty = Number(joData.rejected_quantity || 0);
 
         // Fetch all existing yield logs for this Job Order to compute accumulated yield
         const existingYieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${joId}&limit=-1`, { headers, cache: "no-store" });
@@ -85,15 +137,43 @@ export async function POST(request: Request) {
             accumulatedYield = (existingYieldData.data || []).reduce((sum: number, log: any) => sum + Number(log.yield_quantity || 0), 0);
         }
 
-        if (accumulatedYield + Number(yieldQty) > targetQuantity) {
+        if (accumulatedYield + goodYield > targetQuantity * 1.05) {
             return NextResponse.json({ 
-                error: `Accumulated yield would exceed target! Already yielded: ${accumulatedYield.toLocaleString()} units. New yield: ${Number(yieldQty).toLocaleString()} units. Target: ${targetQuantity.toLocaleString()} units.` 
+                error: `Accumulated yield would exceed target by more than allowable tolerance! Already yielded: ${accumulatedYield.toLocaleString()} units. New yield: ${goodYield.toLocaleString()} units. Target: ${targetQuantity.toLocaleString()} units.` 
             }, { status: 400 });
         }
 
-        const timestamp = new Date().toISOString();
+        // Helper function to resolve or create master lot
+        const resolveMasterLotId = async (name: string, typeId: number) => {
+            let lotId = 1;
+            try {
+                const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
+                const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
+                const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
+                if (lotLookup.length > 0) {
+                    lotId = lotLookup[0].lot_id;
+                } else {
+                    const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            lot_name: name,
+                            inventory_type_id: typeId,
+                            max_batch_capacity: 100000,
+                            created_by: effectiveEncoderId
+                        })
+                    });
+                    if (createLotRes.ok) {
+                        lotId = (await createLotRes.json()).data.lot_id;
+                    }
+                }
+            } catch (err) {
+                console.error(`Error resolving master lot ID for ${name}:`, err);
+            }
+            return lotId;
+        };
 
-        // 2. Validate all material stock levels before writing any database entries
+        // 2. Validate all material stock levels before writing database entries
         const lotsCache: Record<number, any[]> = {};
         if (materialsConsumed && materialsConsumed.length > 0) {
             for (const item of materialsConsumed) {
@@ -102,7 +182,7 @@ export async function POST(request: Request) {
 
                 if (consumedQty <= 0) continue;
 
-                // Fetch inventory movements to calculate the true ledger stock
+                // Fetch inventory movements to calculate true ledger stock
                 const movFilter = encodeURIComponent(JSON.stringify({
                     _and: [
                         { product_id: { _eq: rawProductId } },
@@ -122,8 +202,8 @@ export async function POST(request: Request) {
                     if (recRes.ok) {
                         const receipts = (await recRes.json()).data || [];
                         receipts.forEach((rec: any) => {
-                            const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim();
-                            batchStatusMap.set(batchNo, rec.qa_status || "Passed");
+                            const bNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim();
+                            batchStatusMap.set(bNo, rec.qa_status || "Passed");
                         });
                     }
                 } catch (err) {}
@@ -134,8 +214,8 @@ export async function POST(request: Request) {
                     if (yieldRes.ok) {
                         const yields = (await yieldRes.json()).data || [];
                         yields.forEach((yl: any) => {
-                            const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim();
-                            batchStatusMap.set(batchNo, yl.qa_status || "Pending");
+                            const bNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim();
+                            batchStatusMap.set(bNo, yl.qa_status || "Pending");
                         });
                     }
                 } catch (err) {}
@@ -148,7 +228,7 @@ export async function POST(request: Request) {
                         const prodId = Number(parts[0]);
                         const bNo = parts[3] || "LOT-N/A";
                         if (prodId === rawProductId) {
-                            const status = batchStatusMap.get(bNo) || "Passed"; // default to Passed for legacy/unknown lots
+                            const status = batchStatusMap.get(bNo) || "Passed";
                             if (status === "Passed" || status === "Partially Accepted") {
                                 lotsEnriched.push({
                                     lot_id: parts[2] === "null" ? 0 : Number(parts[2]),
@@ -181,20 +261,24 @@ export async function POST(request: Request) {
                     }
 
                     return NextResponse.json({
-                        error: `Insufficient stock for raw material "${prodName}". Only ${totalAvailable.toLocaleString()} ${unitName} available in active Passed lots, but ${consumedQty.toLocaleString()} was logged as consumed.`
+                        error: `Insufficient staging stock for component "${prodName}". Only ${totalAvailable.toLocaleString()} ${unitName} available in active Passed staging lots, but ${consumedQty.toLocaleString()} was entered for point-of-use consumption.`,
+                        isShortfall: true
                     }, { status: 400 });
                 }
             }
         }
 
-        // 3. Insert new row into relational manufacturing_job_order_yield_ledger table
+        // 3. Insert new row into manufacturing_job_order_yield_ledger table
+        const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
         const ledgerPayload = {
             job_order_id: Number(joId),
             shift_name: shiftName,
-            yield_quantity: Number(yieldQty),
-            qa_status: qaStatus === "Passed" ? "Pending" : qaStatus,
-            logged_at: timestamp,
-            logged_by: inspectorId ? Number(inspectorId) : null
+            yield_quantity: goodYield,
+            scrap_quantity: scrapUnits,
+            lot_number: finalBatchNo,
+            qa_status: qaStatus === "Passed" ? "Passed" : qaStatus,
+            logged_at: manilaTimestamp,
+            logged_by: effectiveEncoderId
         };
 
         const ledgerRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger`, {
@@ -225,9 +309,9 @@ export async function POST(request: Request) {
                     value_numeric: valNumeric,
                     value_boolean: valBool,
                     is_passed: !param.is_failed,
-                    inspected_by: inspectorId ? Number(inspectorId) : null,
-                    inspected_at: timestamp,
-                    remarks: `Shift: ${shiftName} | Yield: ${yieldQty} pcs | ${param.remarks || "Shift QA check"}`
+                    inspected_by: effectiveEncoderId,
+                    inspected_at: manilaTimestamp,
+                    remarks: `Shift: ${shiftName} | Yield: ${goodYield} pcs | Scrap: ${scrapUnits} pcs | ${param.remarks || "Shift QA Check"}`
                 };
 
                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records`, {
@@ -242,9 +326,9 @@ export async function POST(request: Request) {
                 jo_route_id: Number(taskId),
                 parameter_id: null,
                 is_passed: qaStatus === "Passed" ? 1 : 0,
-                inspected_by: inspectorId ? Number(inspectorId) : null,
-                inspected_at: timestamp,
-                remarks: `Shift Yield Log: ${shiftName} | Yield: ${yieldQty} pcs`
+                inspected_by: effectiveEncoderId,
+                inspected_at: manilaTimestamp,
+                remarks: `Shift Yield Log: ${shiftName} | Yield: ${goodYield} pcs | Scrap: ${scrapUnits} pcs ${rejectionRemarks ? `| Rejection: ${rejectionRemarks}` : ""}`
             };
 
             await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records`, {
@@ -254,37 +338,10 @@ export async function POST(request: Request) {
             });
         }
 
-        // Helper function to resolve or create master lot
-        const resolveMasterLotId = async (name: string, typeId: number) => {
-            let lotId = 1;
-            try {
-                const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-                const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-                const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
-                if (lotLookup.length > 0) {
-                    lotId = lotLookup[0].lot_id;
-                } else {
-                    const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            lot_name: name,
-                            inventory_type_id: typeId,
-                            max_batch_capacity: 100000,
-                            created_by: inspectorId ? Number(inspectorId) : 24
-                        })
-                    });
-                    if (createLotRes.ok) {
-                        lotId = (await createLotRes.json()).data.lot_id;
-                    }
-                }
-            } catch (err) {
-                console.error(`Error resolving master lot ID for ${name}:`, err);
-            }
-            return lotId;
-        };
+        // 5. POINT-OF-USE REAL-TIME BACKFLUSHING: Write negative consumption entries into `inventory_movements`
+        // Document No: 'JO-xxxx' (single standard source_document_no)
+        const genealogyRecords: any[] = [];
 
-        // 5. Process Material Consumption Reconciliations & deductions
         if (materialsConsumed && materialsConsumed.length > 0) {
             const matsSheetRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joId}&limit=-1`, { headers, cache: "no-store" });
             const matsSheet = matsSheetRes.ok ? (await matsSheetRes.json()).data || [] : [];
@@ -298,11 +355,13 @@ export async function POST(request: Request) {
                 const matchingMat = matsSheet.find((m: any) => Number(m.product_id) === rawProductId);
                 let remainingToConsume = consumedQty;
 
-                // Log Consumage and Movements
+                // Function to write Point-of-Use negative consumption movement and genealogy
                 const logConsumageAndMovement = async (qty: number, lot: any) => {
                     if (qty <= 0) return;
                     let consumageId = 0;
-                    if (ledgerId) {
+
+                    // Log consumage sub-record if ledger table exists
+                    try {
                         const consumagePayload = {
                             ledger_id: Number(ledgerId),
                             product_id: rawProductId,
@@ -317,34 +376,62 @@ export async function POST(request: Request) {
                             const cData = (await consumageRes.json()).data;
                             consumageId = cData.id || cData.consumage_id || 0;
                         }
-                    }
+                    } catch (cErr) {}
 
-                    const batchNumber = lot.batch_no || lot.lot_number || "LOT-N/A";
+                    const batchNumber = String(lot.batch_no || lot.lot_number || item.batch_no || "LOT-STAGING").trim();
                     const relatedLotId = typeof lot.lot_id === "object"
                         ? Number(lot.lot_id?.lot_id || 0)
-                        : Number(lot.lot_id || 0);
+                        : Number(lot.lot_id || item.lot_id || 0);
                     const consumedLotId = relatedLotId || await resolveMasterLotId(batchNumber, 1);
-                    const mPayload = {
+
+                    // Standard Negative Backflushing entry into inventory_movements
+                    const backflushMovementPayload = {
                         product_id: rawProductId,
                         lot_id: consumedLotId,
                         branch_id: branchId,
-                        transaction_type_id: 1, // Job Order Consumage
-                        source_document_id: consumageId,
-                        source_document_no: String(ledgerId),
+                        transaction_type_id: 1, // Job Order Consumage / Backflushing
+                        source_document_id: Number(joId),
+                        source_document_no: jobOrderNo, // 'JO-xxxx'
                         batch_no: batchNumber,
                         expiry_date: lot.expiry_date || null,
                         manufacturing_date: lot.created_on ? lot.created_on.split("T")[0] : null,
-                        quantity: -qty, // OUT direction
-                        created_by: inspectorId ? Number(inspectorId) : 24,
-                        remarks: `Consumed from lot ${batchNumber} for JO yield`
+                        quantity: -qty, // Outgoing negative consumption entry
+                        created_by: effectiveEncoderId,
+                        remarks: `Point-of-use backflushing from lot ${batchNumber} for JO #${jobOrderNo} (${shiftName})`
                     };
+
                     await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
                         method: "POST",
                         headers,
-                        body: JSON.stringify(mPayload)
+                        body: JSON.stringify(backflushMovementPayload)
                     });
+
+                    // Record into jo_material_genealogy
+                    try {
+                        const genealogyPayload = {
+                            job_order_id: Number(joId),
+                            finished_batch_no: finalBatchNo,
+                            raw_product_id: rawProductId,
+                            raw_lot_id: consumedLotId,
+                            raw_batch_no: batchNumber,
+                            quantity_consumed: qty,
+                            created_at: manilaTimestamp,
+                            created_by: effectiveEncoderId
+                        };
+
+                        await fetch(`${DIRECTUS_URL}/items/jo_material_genealogy`, {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify(genealogyPayload)
+                        });
+
+                        genealogyRecords.push(genealogyPayload);
+                    } catch (genErr) {
+                        console.warn("Directus insert into jo_material_genealogy error (ignoring if table optional):", genErr);
+                    }
                 };
 
+                // Deduct from pre-reservations first if available
                 if (matchingMat) {
                     try {
                         const reservationsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_eq]=${matchingMat.jo_material_id || matchingMat.id}&limit=-1`, { headers, cache: "no-store" });
@@ -361,7 +448,7 @@ export async function POST(request: Request) {
 
                             const reservedVal = Number(resRow.reserved_quantity || 0);
                             const usedVal = Number(resRow.actual_used_quantity || 0);
-                            const lotNo = resRow.batch_no || "LOT-N/A";
+                            const lotNo = resRow.batch_no || "LOT-STAGING";
 
                             const portion = Math.min(reservedVal, remainingToConsume);
                             if (portion <= 0) continue;
@@ -377,59 +464,33 @@ export async function POST(request: Request) {
                                     reserved_quantity: newReserved,
                                     actual_used_quantity: newUsed
                                 })
-                            }).catch(err => console.error(`Failed to update materials reservation row:`, err));
+                            }).catch(() => {});
 
                             // Deduct from inventory_movements ledger by lotNo
-                            if (portion > 0) {
-                                try {
-                                    const movQuery = encodeURIComponent(JSON.stringify({
-                                        _and: [
-                                            { product_id: { _eq: rawProductId } },
-                                            { branch_id: { _eq: branchId } },
-                                            { batch_no: { _eq: lotNo } }
-                                        ]
-                                    }));
-                                    
-                                    const mRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movQuery}&limit=1`, { headers, cache: "no-store" });
-                                    if (mRes.ok) {
-                                        const movList = (await mRes.json()).data || [];
-                                        if (movList.length > 0) {
-                                            const lot = movList[0];
-                                            await logConsumageAndMovement(portion, lot);
-                                        } else {
-                                            await logConsumageAndMovement(portion, { batch_no: lotNo });
-                                        }
-                                    } else {
-                                        await logConsumageAndMovement(portion, { batch_no: lotNo });
-                                    }
-                                } catch (porErr) {
-                                    console.error(`Failed to locate inventory movement for lot ${lotNo}:`, porErr);
-                                }
-                            } else {
-                                // For sub-assembly direct reservations
-                                await logConsumageAndMovement(portion, { lot_number: "Manufacturing Stock" });
-                            }
-
+                            await logConsumageAndMovement(portion, { batch_no: lotNo });
                             remainingToConsume -= portion;
                         }
 
                         // Update parent manufacturing_job_order_materials row
                         const newJomReserved = Math.max(0, Number(matchingMat.reserved_quantity || 0) - consumedQty);
                         const newJomConsumed = Number(matchingMat.actual_consumed_quantity || 0) + consumedQty;
+                        const newJomScrap = Number(matchingMat.scrap_quantity || 0) + (scrapUnits > 0 ? (consumedQty * (scrapUnits / (goodYield + scrapUnits))) : 0);
+
                         await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${matchingMat.jo_material_id || matchingMat.id}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({
                                 reserved_quantity: newJomReserved,
-                                actual_consumed_quantity: newJomConsumed
+                                actual_consumed_quantity: newJomConsumed,
+                                scrap_quantity: Math.round(newJomScrap * 100) / 100
                             })
-                        }).catch(err => console.error("Error updating parent material requirement row:", err));
+                        }).catch(() => {});
                     } catch (err) {
                         console.error("Error reconciling reservations:", err);
                     }
                 }
 
-                // If shortfall remains or mat wasn't pre-allocated, deduct standard FIFO
+                // If shortfall remains or mat wasn't pre-allocated, deduct standard FIFO from available staging stock
                 if (remainingToConsume > 0) {
                     if (!matchingMat) {
                         await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials`, {
@@ -444,32 +505,21 @@ export async function POST(request: Request) {
                                 actual_consumed_quantity: consumedQty,
                                 scrap_quantity: 0
                             })
-                        }).catch(err => console.error("Error creating unallocated materials row:", err));
+                        }).catch(() => {});
                     }
 
-                    try {
-                        const fallbackQuery = encodeURIComponent(JSON.stringify({
-                            _and: [
-                                { product_id: { _eq: rawProductId } },
-                                { branch_id: { _eq: branchId } },
-                                { qa_status: { _eq: "Passed" } },
-                                { quantity: { _gt: 0 } }
-                            ]
-                        }));
-                        const activeLots = lotsCache[rawProductId] || [];
-                        if (activeLots.length > 0) {
-                            const fbLot = activeLots[0];
-                            await logConsumageAndMovement(remainingToConsume, fbLot);
-                        }
-                    } catch (err) {
-                        console.error("Failed to deduct fallback lot for shortfall:", err);
+                    const activeLots = lotsCache[rawProductId] || [];
+                    if (activeLots.length > 0) {
+                        const fbLot = activeLots[0];
+                        await logConsumageAndMovement(remainingToConsume, fbLot);
+                    } else {
+                        await logConsumageAndMovement(remainingToConsume, { batch_no: "LOT-STAGING" });
                     }
                 }
             }
         }
 
-        // 6. Record Yield: Log finished yield movement in inventory_movements ledger (single source of truth)
-        const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
+        // 6. RECORD FINISHED GOODS / WIP OUTPUT MOVEMENT IN INVENTORY_MOVEMENTS LEDGER
         const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
 
         const finishedMovementPayload = {
@@ -477,25 +527,82 @@ export async function POST(request: Request) {
             lot_id: finishedLotId,
             branch_id: branchId,
             transaction_type_id: 2, // Job Order Finished Goods
-            source_document_id: Number(ledgerId),
-            source_document_no: jobOrderNo,
+            source_document_id: Number(joId),
+            source_document_no: jobOrderNo, // 'JO-xxxx'
             batch_no: finalBatchNo,
             expiry_date: expiryDate || null,
             manufacturing_date: manufacturingDate || null,
-            quantity: Number(yieldQty),
-            created_by: inspectorId ? Number(inspectorId) : 24,
-            remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName}`
+            quantity: goodYield,
+            created_by: effectiveEncoderId,
+            remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName} | Lot: ${finalBatchNo}`
         };
+
         await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
             method: "POST",
             headers,
             body: JSON.stringify(finishedMovementPayload)
         });
 
-        return NextResponse.json({ success: true, message: "Shift run progress logged successfully, inventory movements ledger updated." });
+        // 7. UPDATE JOB ORDER ACCUMULATED COMPLETED QUANTITY, REJECTED QUANTITY, AND STATUS
+        const newCompletedQty = currentCompletedQty + goodYield;
+        const newRejectedQty = currentRejectedQty + scrapUnits;
+        const isJobFullyFinished = newCompletedQty >= targetQuantity;
+
+        const joUpdatePayload: Record<string, any> = {
+            completed_quantity: newCompletedQty,
+            actual_quantity_produced: newCompletedQty,
+            rejected_quantity: newRejectedQty,
+            modified_by: effectiveEncoderId,
+            modified_at: manilaTimestamp
+        };
+
+        if (isJobFullyFinished) {
+            joUpdatePayload.status = "Finished";
+        } else if (joData.status !== "In Progress" && joData.status !== "Ongoing") {
+            joUpdatePayload.status = "In Progress";
+        }
+
+        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify(joUpdatePayload)
+        });
+
+        // 8. RECORD IN MANUFACTURING_JOB_ORDER_STATUS_HISTORY IF COMPLETED OR TRANSITIONED
+        if (isJobFullyFinished && joData.status !== "Finished" && joData.status !== "Completed") {
+            try {
+                const statusHistoryPayload = {
+                    job_order_id: Number(joId),
+                    work_center_id: joData.primary_work_center_id || null,
+                    previous_status: joData.status,
+                    status: "Finished",
+                    changed_by: effectiveEncoderId,
+                    changed_at: manilaTimestamp,
+                    remarks: `Job Order completed. Target ${targetQuantity.toLocaleString()} pcs reached with final shift run (${goodYield} pcs).`
+                };
+
+                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(statusHistoryPayload)
+                });
+            } catch (histErr) {
+                console.error("Error creating completion status history:", histErr);
+            }
+        }
+
+        return NextResponse.json({ 
+            success: true, 
+            message: `Shift run progress logged successfully! Backflushed point-of-use materials into inventory movements (${jobOrderNo}) and updated output batch ${finalBatchNo}.`,
+            batchNo: finalBatchNo,
+            yieldQty: goodYield,
+            scrapQty: scrapUnits,
+            completedQuantity: newCompletedQty,
+            isFullyFinished: isJobFullyFinished,
+            genealogyRecords
+        });
     } catch (e) {
         console.error("Error in shift-run-log POST API:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to log shift progress" }, { status: 500 });
     }
 }
-

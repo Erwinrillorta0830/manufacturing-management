@@ -1,13 +1,24 @@
 /* eslint-disable */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { QALog, DispositionRecord, JobOrder, Branch } from "../types";
+import { 
+    QALog, 
+    DispositionRecord, 
+    JobOrder, 
+    Branch, 
+    QARejectionReason, 
+    QAJOInspectionLog, 
+    TwoPointQAInspectionPayload 
+} from "../types";
 import {
     fetchQALogs,
     fetchDispositions,
     fetchJobOrders,
     fetchBranchesList,
     fetchJobOrderMaterials,
+    fetchQARejectionReasons,
+    fetchQAInspectionLogs,
+    postTwoPointQAInspection,
     postFinishedGoodsReceipt,
     postSupervisorOverride,
     fetchDailyQAInspections,
@@ -52,9 +63,7 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
         <html>
             <style>
                 @page { size: 58mm auto; margin: 0; }
-                * {
-                    box-sizing: border-box;
-                }
+                * { box-sizing: border-box; }
                 body {
                     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
                     font-size: 8px;
@@ -277,25 +286,37 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
 };
 
 export function useManufacturingQA() {
-    // Tab State
-    const [activeTab, setActiveTab] = useState("holds");
+    // Primary Tab State (defaults to QA & Rework Inspection Workcenter)
+    const [activeTab, setActiveTab] = useState("jo-inspection");
 
-    // Data lists
+    // Core Data Lists
+    const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
+    const [rejectionReasons, setRejectionReasons] = useState<QARejectionReason[]>([]);
+    const [inspectionLogs, setInspectionLogs] = useState<QAJOInspectionLog[]>([]);
     const [qaLogs, setQaLogs] = useState<QALog[]>([]);
     const [dispositions, setDispositions] = useState<DispositionRecord[]>([]);
-    const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
     const [branches, setBranches] = useState<Branch[]>([]);
 
     // Loading states
+    const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+    const [loadingReasons, setLoadingReasons] = useState(false);
+    const [loadingInspectionLogs, setLoadingInspectionLogs] = useState(false);
     const [loadingLogs, setLoadingLogs] = useState(false);
     const [loadingDispositions, setLoadingDispositions] = useState(false);
-    const [loadingJobOrders, setLoadingJobOrders] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
 
     // Search and filters
     const [logSearch, setLogSearch] = useState("");
     const [logStatusFilter, setLogStatusFilter] = useState("all");
     const [joSearch, setJoSearch] = useState("");
+
+    // 2-Point QA Inspection Modal State
+    const [selectedQAJobOrder, setSelectedQAJobOrder] = useState<JobOrder | null>(null);
+    const [isQAInspectionModalOpen, setIsQAInspectionModalOpen] = useState(false);
+
+    // Status History Modal State
+    const [selectedStatusHistoryJO, setSelectedStatusHistoryJO] = useState<JobOrder | null>(null);
+    const [isStatusHistoryModalOpen, setIsStatusHistoryModalOpen] = useState(false);
 
     // Yield Closing Dialog states
     const [selectedJO, setSelectedJO] = useState<JobOrder | null>(null);
@@ -312,7 +333,85 @@ export function useManufacturingQA() {
     const [overrideDecision, setOverrideDecision] = useState<"Release with Deviation" | "Rework" | "Scrap">("Release with Deviation");
     const [overrideComments, setOverrideComments] = useState("");
 
-    // Load QA Logs
+    // Daily Yield QA & Final release QA states
+    const [yieldLedger, setYieldLedger] = useState<any[]>([]);
+    const [dailyInspections, setDailyInspections] = useState<any[]>([]);
+    const [qaTemplates, setQaTemplates] = useState<any[]>([]);
+    const [qaParamValues, setQaParamValues] = useState<Record<number, string>>({});
+    const [finalReleases, setFinalReleases] = useState<any[]>([]);
+    const [lots, setLots] = useState<any[]>([]);
+    const [lotsProducts, setLotsProducts] = useState<any[]>([]);
+    const [loadingDailyQA, setLoadingDailyQA] = useState(false);
+    const [loadingFinalQA, setLoadingFinalQA] = useState(false);
+
+    // Daily Audit Dialog states
+    const [isDailyAuditOpen, setIsDailyAuditOpen] = useState(false);
+    const [selectedLedgerEntry, setSelectedLedgerEntry] = useState<any | null>(null);
+    const [moisturePct, setMoisturePct] = useState("");
+    const [acidityPh, setAcidityPh] = useState("");
+    const [sensoryStatus, setSensoryStatus] = useState<"Passed" | "Failed">("Passed");
+    const [weightCheckPassed, setWeightCheckPassed] = useState(true);
+    const [dailyLabStatus, setDailyLabStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
+    const [dailyActionTaken, setDailyActionTaken] = useState<"Released" | "Quarantined" | "Scrapped">("Released");
+    const [dailyRemarks, setDailyRemarks] = useState("");
+    const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
+    const [routes, setRoutes] = useState<any[]>([]);
+
+    // Final QA release Dialog states
+    const [isFinalReleaseOpen, setIsFinalReleaseOpen] = useState(false);
+    const [selectedLot, setSelectedLot] = useState<any | null>(null);
+    const [inspectedQty, setInspectedQty] = useState("");
+    const [defectQty, setDefectQty] = useState("");
+    const [microbiologicalStatus, setMicrobiologicalStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
+    const [packagingSealPassed, setPackagingSealPassed] = useState(true);
+    const [labelCompliancePassed, setLabelCompliancePassed] = useState(true);
+    const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
+    const [coaRefNo, setCoaRefNo] = useState("");
+    const [finalRemarks, setFinalRemarks] = useState("");
+
+    // Load Job Orders
+    const loadJobOrders = async (silent = false) => {
+        if (!silent) setLoadingJobOrders(true);
+        try {
+            const data = await fetchJobOrders();
+            setJobOrders(data);
+        } catch (e) {
+            if (!silent) {
+                console.error("Job Orders fetch error:", e);
+                toast.error("Failed to retrieve job orders.");
+            }
+        } finally {
+            if (!silent) setLoadingJobOrders(false);
+        }
+    };
+
+    // Load Rejection Reasons
+    const loadRejectionReasons = async (silent = false) => {
+        if (!silent) setLoadingReasons(true);
+        try {
+            const data = await fetchQARejectionReasons();
+            setRejectionReasons(data);
+        } catch (e) {
+            console.error("Error fetching rejection reasons:", e);
+        } finally {
+            if (!silent) setLoadingReasons(false);
+        }
+    };
+
+    // Load Inspection Logs
+    const loadInspectionLogs = async (silent = false) => {
+        if (!silent) setLoadingInspectionLogs(true);
+        try {
+            const data = await fetchQAInspectionLogs();
+            setInspectionLogs(data);
+        } catch (e) {
+            console.error("Error fetching QA inspection logs:", e);
+        } finally {
+            if (!silent) setLoadingInspectionLogs(false);
+        }
+    };
+
+    // Load QA Logs (task-level checkpoints)
     const loadQALogs = async (silent = false) => {
         if (!silent) setLoadingLogs(true);
         try {
@@ -321,7 +420,6 @@ export function useManufacturingQA() {
         } catch (e) {
             if (!silent) {
                 console.error("QA Logs fetch error:", e);
-                toast.error("Failed to retrieve quality checkpoint logs.");
             }
         } finally {
             if (!silent) setLoadingLogs(false);
@@ -337,26 +435,9 @@ export function useManufacturingQA() {
         } catch (e) {
             if (!silent) {
                 console.error("Dispositions fetch error:", e);
-                toast.error("Failed to retrieve quarantine/holds list.");
             }
         } finally {
             if (!silent) setLoadingDispositions(false);
-        }
-    };
-
-    // Load Active Job Orders
-    const loadJobOrders = async (silent = false) => {
-        if (!silent) setLoadingJobOrders(true);
-        try {
-            const data = await fetchJobOrders();
-            setJobOrders(data);
-        } catch (e) {
-            if (!silent) {
-                console.error("Job Orders fetch error:", e);
-                toast.error("Failed to retrieve active job orders.");
-            }
-        } finally {
-            if (!silent) setLoadingJobOrders(false);
         }
     };
 
@@ -370,44 +451,6 @@ export function useManufacturingQA() {
         }
     };
 
-    // Daily Yield QA & Final release QA states
-    const [yieldLedger, setYieldLedger] = useState<any[]>([]);
-    const [dailyInspections, setDailyInspections] = useState<any[]>([]);
-    const [qaTemplates, setQaTemplates] = useState<any[]>([]);
-    const [qaParamValues, setQaParamValues] = useState<Record<number, string>>({});
-    const [finalReleases, setFinalReleases] = useState<any[]>([]);
-    const [lots, setLots] = useState<any[]>([]);
-    const [lotsProducts, setLotsProducts] = useState<any[]>([]);
-    const [loadingDailyQA, setLoadingDailyQA] = useState(false);
-    const [loadingFinalQA, setLoadingFinalQA] = useState(false);
-
-    // Recording Daily QA Dialog states
-    const [isDailyAuditOpen, setIsDailyAuditOpen] = useState(false);
-    const [selectedLedgerEntry, setSelectedLedgerEntry] = useState<any | null>(null);
-    const [moisturePct, setMoisturePct] = useState("");
-    const [acidityPh, setAcidityPh] = useState("");
-    const [sensoryStatus, setSensoryStatus] = useState<"Passed" | "Failed">("Passed");
-    const [weightCheckPassed, setWeightCheckPassed] = useState(true);
-    const [dailyLabStatus, setDailyLabStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
-    const [dailyActionTaken, setDailyActionTaken] = useState<"Released" | "Quarantined" | "Scrapped">("Released");
-    const [dailyRemarks, setDailyRemarks] = useState("");
-    const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
-    const [routes, setRoutes] = useState<any[]>([]);
-
-    // Recording Final QA release Dialog states
-    const [isFinalReleaseOpen, setIsFinalReleaseOpen] = useState(false);
-    const [selectedLot, setSelectedLot] = useState<any | null>(null);
-    const [inspectedQty, setInspectedQty] = useState("");
-    const [defectQty, setDefectQty] = useState("");
-    const [microbiologicalStatus, setMicrobiologicalStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
-    const [packagingSealPassed, setPackagingSealPassed] = useState(true);
-    const [labelCompliancePassed, setLabelCompliancePassed] = useState(true);
-    const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
-    const [coaRefNo, setCoaRefNo] = useState("");
-    const [finalRemarks, setFinalRemarks] = useState("");
-
-    // Imports from services are now at the top of the file
-
     const loadDailyQAData = async (silent = false) => {
         if (!silent) setLoadingDailyQA(true);
         try {
@@ -416,7 +459,6 @@ export function useManufacturingQA() {
             setYieldLedger(ledger);
             setDailyInspections(inspections);
 
-            // Load QA templates list
             const res = await fetch("/api/manufacturing/qa?action=templates");
             if (res.ok) {
                 const data = await res.json();
@@ -445,22 +487,24 @@ export function useManufacturingQA() {
     };
 
     // Refresh all data
-    const refreshAll = (silent: boolean | any = false) => {
+    const refreshAll = useCallback((silent: boolean | any = false) => {
         const isSilent = silent === true;
+        loadJobOrders(isSilent);
+        loadRejectionReasons(isSilent);
+        loadInspectionLogs(isSilent);
         loadQALogs(isSilent);
         loadDispositions(isSilent);
-        loadJobOrders(isSilent);
         loadDailyQAData(isSilent);
         loadFinalQAData(isSilent);
-    };
+    }, []);
 
-    // Mount lifecycle
+    // Initial Mount Lifecycle
     useEffect(() => {
         refreshAll(false);
         loadBranches();
-    }, []);
+    }, [refreshAll]);
 
-    // Establish Realtime SSE (Server-Sent Events) Connection for inventory movements
+    // Establish Realtime SSE Connection for inventory movements
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -469,20 +513,13 @@ export function useManufacturingQA() {
 
         const connectSSE = () => {
             if (isDisposed) return;
-            if (reconnectAttempts >= 10) {
-                console.warn("[QA Realtime SSE] Maximum reconnect attempts reached (10). Standing by.");
-                return;
-            }
+            if (reconnectAttempts >= 10) return;
 
             try {
                 eventSource = new EventSource("/api/manufacturing/inventory/movements/stream");
 
                 eventSource.addEventListener("movement", (event) => {
                     try {
-                        const movement = JSON.parse(event.data);
-                        console.log(`[QA Realtime SSE] Inventory movement detected (ID: ${movement.movement_id}). Refreshing QA dashboard data...`);
-                        
-                        // Silent reload to update QA dashboard data
                         refreshAll(true);
                     } catch (e) {
                         console.error("[QA Realtime SSE] Error parsing movement event data:", e);
@@ -515,14 +552,10 @@ export function useManufacturingQA() {
 
         return () => {
             isDisposed = true;
-            if (eventSource) {
-                eventSource.close();
-            }
-            if (reconnectTimeout) {
-                clearTimeout(reconnectTimeout);
-            }
+            if (eventSource) eventSource.close();
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
         };
-    }, []);
+    }, [refreshAll]);
 
     // Resolve Branch Name from ID
     const getBranchName = (branchId?: number | null) => {
@@ -555,7 +588,7 @@ export function useManufacturingQA() {
         });
     }, [qaLogs, logSearch, logStatusFilter]);
 
-    // Active Pending Holds (Quarantined Job Orders)
+    // Active Pending Holds
     const pendingHolds = useMemo(() => {
         return dispositions.filter(d => d.disposition_status === "Pending");
     }, [dispositions]);
@@ -563,39 +596,83 @@ export function useManufacturingQA() {
     // Filtered Active Job Orders (Awaiting yield closing)
     const activeJobOrders = useMemo(() => {
         return jobOrders.filter(jo => {
-            const status = jo.status?.toLowerCase();
+            const status = (jo.status || "").toLowerCase();
             const isCompleted = status === "finished" || status === "completed" || status === "cancelled" || status === "closed";
-            const matchesSearch = jo.jo_id.toLowerCase().includes(joSearch.toLowerCase()) || 
-                                  jo.product_name.toLowerCase().includes(joSearch.toLowerCase());
+            const matchesSearch = (jo.job_order_no || jo.jo_id || "").toLowerCase().includes(joSearch.toLowerCase()) || 
+                                  (jo.product_name || "").toLowerCase().includes(joSearch.toLowerCase());
             return !isCompleted && matchesSearch;
         });
     }, [jobOrders, joSearch]);
 
-    // Filtered Closed Job Orders (Completed/Closed runs)
+    // Filtered Closed Job Orders
     const closedJobOrders = useMemo(() => {
         return jobOrders.filter(jo => {
-            const status = jo.status?.toLowerCase();
+            const status = (jo.status || "").toLowerCase();
             const isCompleted = status === "finished" || status === "completed" || status === "closed";
-            const matchesSearch = jo.jo_id.toLowerCase().includes(joSearch.toLowerCase()) || 
-                                  jo.product_name.toLowerCase().includes(joSearch.toLowerCase());
+            const matchesSearch = (jo.job_order_no || jo.jo_id || "").toLowerCase().includes(joSearch.toLowerCase()) || 
+                                  (jo.product_name || "").toLowerCase().includes(joSearch.toLowerCase());
             return isCompleted && matchesSearch;
         });
     }, [jobOrders, joSearch]);
 
+    // Handlers for 2-Point QA Inspection
+    const handleOpenQAInspectionModal = (jo: JobOrder) => {
+        setSelectedQAJobOrder(jo);
+        setIsQAInspectionModalOpen(true);
+    };
+
+    const handleCloseQAInspectionModal = () => {
+        setSelectedQAJobOrder(null);
+        setIsQAInspectionModalOpen(false);
+    };
+
+    // Handler for Status History Modal
+    const handleOpenStatusHistoryModal = (jo: JobOrder) => {
+        setSelectedStatusHistoryJO(jo);
+        setIsStatusHistoryModalOpen(true);
+    };
+
+    const handleCloseStatusHistoryModal = () => {
+        setSelectedStatusHistoryJO(null);
+        setIsStatusHistoryModalOpen(false);
+    };
+
+    // Submit 2-Point QA Inspection
+    const handleSubmitTwoPointInspection = async (payload: TwoPointQAInspectionPayload) => {
+        setActionLoading(true);
+        try {
+            const result = await postTwoPointQAInspection(payload);
+
+            if (payload.rejected_quantity === 0) {
+                toast.success(result.message || `QA Inspection 100% Passed. Job Order ${payload.job_order_no} marked COMPLETED.`);
+            } else {
+                toast.warning(result.message || `Rework Job Order spawned for ${payload.rejected_quantity} rejected units.`);
+            }
+
+            setIsQAInspectionModalOpen(false);
+            refreshAll(true);
+        } catch (e: any) {
+            console.error("2-Point QA Inspection submission error:", e);
+            toast.error(e.message || "Failed to submit QA inspection.");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     // Handle Open Yield Dialog
     const handleOpenYieldDialog = (jo: JobOrder) => {
         setSelectedJO(jo);
-        setYieldQty(String(jo.quantity));
+        setYieldQty(String(jo.quantity || jo.target_quantity || 0));
         
-        // Find the first yield log to extract the lot number, mfg date, and expiry date if available
         const firstLog = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
+        const joNo = jo.job_order_no || jo.jo_id;
         
         if (firstLog) {
-            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || `MFG-${jo.jo_id}`);
+            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || `MFG-${joNo}`);
             setManufacturingDate(firstLog.manufacturing_date || firstLog.mfg_date || "");
             setExpiryDate(firstLog.expiry_date || "");
         } else {
-            setLotNumber(`MFG-${jo.jo_id}`);
+            setLotNumber(`MFG-${joNo}`);
             setManufacturingDate("");
             setExpiryDate("");
         }
@@ -607,19 +684,16 @@ export function useManufacturingQA() {
     const handleReprintReceipt = async (jo: JobOrder) => {
         if (!jo) return;
         const log = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
+        const joNo = jo.job_order_no || jo.jo_id;
         
         const branchName = getBranchName(jo.branch_id);
         const verName = jo.recipe_version_name || 
-                        jo.recipeVersionName || 
                         jo.version_name || 
-                        jo.versionName || 
-                        ((jo.version_id || jo.versionId || jo.bom?.version_id) 
-                            ? `Version #${jo.version_id || jo.versionId || jo.bom?.version_id}` 
-                            : 'Active');
+                        (jo.version_id ? `Version #${jo.version_id}` : 'Active');
 
         let components: Array<PrintReceiptComponent> = [];
         try {
-            const materials = await fetchJobOrderMaterials(jo.jo_id);
+            const materials = await fetchJobOrderMaterials(joNo);
             components = materials.map((m: any) => ({
                 product_name: m.product_name || `Component #${m.product_id}`,
                 quantity: Number(m.actual_consumed_quantity || m.quantity_required || 0),
@@ -630,12 +704,12 @@ export function useManufacturingQA() {
         }
 
         printYieldClosingReceipt({
-            jo_no: jo.jo_id,
+            jo_no: joNo,
             product_code: jo.product_code || `PROD-${jo.product_id}`,
             product_name: jo.product_name,
             recipe_version: verName,
-            yield_qty: log ? Number(log.yield_quantity || jo.producedQty || jo.produced_quantity || 0) : Number(jo.producedQty || jo.produced_quantity || jo.quantity || 0),
-            lot_number: log ? (log.lot_number || log.lot_no || `MFG-${jo.jo_id}`) : `MFG-${jo.jo_id}`,
+            yield_qty: log ? Number(log.yield_quantity || jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0) : Number(jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0),
+            lot_number: log ? (log.lot_number || log.lot_no || `MFG-${joNo}`) : `MFG-${joNo}`,
             expiry_date: log ? (log.expiry_date || "N/A") : "N/A",
             manufacturing_date: log ? (log.manufacturing_date || "N/A") : "N/A",
             branch_name: branchName,
@@ -660,6 +734,7 @@ export function useManufacturingQA() {
             return;
         }
 
+        const joNo = selectedJO.job_order_no || selectedJO.jo_id;
         setActionLoading(true);
         try {
             let componentsConsumed: Array<{
@@ -669,7 +744,7 @@ export function useManufacturingQA() {
                 component_name: string;
             }> = [];
             try {
-                const materials = await fetchJobOrderMaterials(selectedJO.jo_id);
+                const materials = await fetchJobOrderMaterials(joNo);
                 componentsConsumed = materials.map((m: any) => ({
                     component_product_id: m.product_id,
                     required: m.quantity_required,
@@ -686,12 +761,12 @@ export function useManufacturingQA() {
             }
 
             await postFinishedGoodsReceipt({
-                joId: selectedJO.jo_id,
+                joId: joNo,
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
                 branchId: Number(selectedJO.branch_id),
-                lotNumber: lotNumber || `MFG-${selectedJO.jo_id}`,
+                lotNumber: lotNumber || `MFG-${joNo}`,
                 expirationDate: expiryDate || null,
                 manufacturingDate: manufacturingDate || null,
                 unitCost: Number(unitCost || 0),
@@ -699,27 +774,22 @@ export function useManufacturingQA() {
                 completeJobOrder: true
             });
 
-            toast.success(`Job Order ${selectedJO.jo_id} successfully completed and WMS ledger receipted!`);
+            toast.success(`Job Order ${joNo} successfully completed and WMS ledger receipted!`);
             setIsYieldDialogOpen(false);
             
-            // Trigger auto print
             try {
                 const branchName = getBranchName(selectedJO.branch_id);
                 const verName = selectedJO.recipe_version_name || 
-                                selectedJO.recipeVersionName || 
                                 selectedJO.version_name || 
-                                selectedJO.versionName || 
-                                ((selectedJO.version_id || selectedJO.versionId || selectedJO.bom?.version_id) 
-                                    ? `Version #${selectedJO.version_id || selectedJO.versionId || selectedJO.bom?.version_id}` 
-                                    : 'Active');
+                                (selectedJO.version_id ? `Version #${selectedJO.version_id}` : 'Active');
 
                 printYieldClosingReceipt({
-                    jo_no: selectedJO.jo_id,
+                    jo_no: joNo,
                     product_code: selectedJO.product_code || `PROD-${selectedJO.product_id}`,
                     product_name: selectedJO.product_name,
                     recipe_version: verName,
                     yield_qty: Number(yieldQty),
-                    lot_number: lotNumber || `MFG-${selectedJO.jo_id}`,
+                    lot_number: lotNumber || `MFG-${joNo}`,
                     expiry_date: expiryDate || "N/A",
                     manufacturing_date: manufacturingDate || "N/A",
                     branch_name: branchName,
@@ -790,22 +860,20 @@ export function useManufacturingQA() {
         setDailyLabStatus("Passed");
         setDailyActionTaken("Released");
         setDailyRemarks("");
-        setQaParamValues({}); // Reset dynamic parameter inputs
+        setQaParamValues({});
 
         const jo = jobOrders.find(
             (j) => 
                 Number(j.order_id || j.job_order_id || j.id) === Number(ledgerEntry.job_order_id) ||
-                j.jo_id === String(ledgerEntry.job_order_id)
+                (j.job_order_no || j.jo_id) === String(ledgerEntry.job_order_id)
         );
         const tasks = jo ? (jo.routing_tasks || jo.routingTasks || []) : [];
         setRoutes(tasks);
 
-        // Find the first task that has NOT been audited yet for this ledger entry
         const audits = dailyInspections.filter((ins: any) => Number(ins.ledger_id) === Number(ledgerEntry.ledger_id || ledgerEntry.id));
         const pendingTask = tasks.find((t: any) => !audits.some((a: any) => Number(a.jo_route_id) === Number(t.id)));
         
         setSelectedRouteId(pendingTask ? (pendingTask.id || null) : (tasks.length > 0 ? (tasks[0].id || null) : null));
-
         setIsDailyAuditOpen(true);
     };
 
@@ -816,11 +884,10 @@ export function useManufacturingQA() {
         const jo = jobOrders.find(
             (j) => 
                 Number(j.order_id || j.job_order_id || j.id) === Number(selectedLedgerEntry.job_order_id) ||
-                j.jo_id === String(selectedLedgerEntry.job_order_id)
+                (j.job_order_no || j.jo_id) === String(selectedLedgerEntry.job_order_id)
         );
         const tasks = jo ? (jo.routing_tasks || jo.routingTasks || []) : [];
 
-        // Prepare the inspections array for all steps
         const inspectionsPayload = tasks.map((task: any) => {
             let activeParameters: any[] = [];
             if (task.qa_template_id) {
@@ -830,7 +897,6 @@ export function useManufacturingQA() {
                 }
             }
 
-            // Map parameter values to payload format for this task
             const qaParametersPayload = activeParameters.map((param: any) => {
                 const val = qaParamValues[param.parameter_id] || "";
                 let isFailed = false;
@@ -856,7 +922,6 @@ export function useManufacturingQA() {
                 };
             });
 
-            // Auto-extract moisture and acidity pH for this step
             let resolvedMoisture = "";
             let resolvedAcidity = "";
             activeParameters.forEach((param: any) => {
@@ -870,7 +935,6 @@ export function useManufacturingQA() {
                 }
             });
 
-            // Determine sensory status/action taken per step
             const stepHasFailure = qaParametersPayload.some(p => p.is_failed);
             const stepSensoryStatus = stepHasFailure ? "Failed" : sensoryStatus;
             const stepActionTaken = stepHasFailure ? "Quarantined" : dailyActionTaken;
@@ -880,7 +944,7 @@ export function useManufacturingQA() {
                 jobOrderId: selectedLedgerEntry.job_order_id,
                 joRouteId: task.id,
                 ledgerId: selectedLedgerEntry.id || selectedLedgerEntry.ledger_id,
-                inspectorId: 1, // Default supervisor ID
+                inspectorId: 1,
                 moisturePercentage: resolvedMoisture,
                 acidityPh: resolvedAcidity,
                 sensoryStatus: stepSensoryStatus,
@@ -895,7 +959,6 @@ export function useManufacturingQA() {
         setActionLoading(true);
         try {
             await postDailyQAInspection(inspectionsPayload);
-
             toast.success("Daily yield QA checklist signed off successfully.");
             setIsDailyAuditOpen(false);
             refreshAll();
@@ -927,9 +990,8 @@ export function useManufacturingQA() {
 
         setActionLoading(true);
         try {
-            // Self-healing: Resolve correct Job Order ID from lot number
-            const matchingJO = jobOrders.find(jo => selectedLot.lot_number?.includes(jo.jo_id));
-            const resolvedJoId = matchingJO ? matchingJO.order_id || matchingJO.id || 0 : 0;
+            const matchingJO = jobOrders.find(jo => selectedLot.lot_number?.includes(jo.job_order_no || jo.jo_id));
+            const resolvedJoId = matchingJO ? Number(matchingJO.job_order_id || matchingJO.order_id || matchingJO.id || 0) : 0;
 
             await postFinalQARelease({
                 jobOrderId: resolvedJoId,
@@ -941,7 +1003,7 @@ export function useManufacturingQA() {
                 labelCompliancePassed,
                 overallDisposition,
                 coaReferenceNo: coaRefNo,
-                approvedBy: 1, // Supervisor
+                approvedBy: 1,
                 remarks: finalRemarks
             });
 
@@ -957,22 +1019,52 @@ export function useManufacturingQA() {
     };
 
     return {
+        // Tab State
         activeTab,
         setActiveTab,
+
+        // Core Data
+        jobOrders,
+        rejectionReasons,
+        inspectionLogs,
         qaLogs,
         dispositions,
-        jobOrders,
         branches,
+
+        // Loadings
+        loadingJobOrders,
+        loadingReasons,
+        loadingInspectionLogs,
         loadingLogs,
         loadingDispositions,
-        loadingJobOrders,
         actionLoading,
+
+        // Search & Filters
         logSearch,
         setLogSearch,
         logStatusFilter,
         setLogStatusFilter,
         joSearch,
         setJoSearch,
+        filteredQALogs,
+        pendingHolds,
+        activeJobOrders,
+        closedJobOrders,
+
+        // 2-Point QA Inspection Modal
+        selectedQAJobOrder,
+        isQAInspectionModalOpen,
+        handleOpenQAInspectionModal,
+        handleCloseQAInspectionModal,
+        handleSubmitTwoPointInspection,
+
+        // Status History Modal
+        selectedStatusHistoryJO,
+        isStatusHistoryModalOpen,
+        handleOpenStatusHistoryModal,
+        handleCloseStatusHistoryModal,
+
+        // Yield Closing Dialog
         selectedJO,
         isYieldDialogOpen,
         setIsYieldDialogOpen,
@@ -986,6 +1078,11 @@ export function useManufacturingQA() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        handleOpenYieldDialog,
+        handleSubmitYieldClosing,
+        handleReprintReceipt,
+
+        // Supervisor Overrides
         selectedDisp,
         isOverrideDialogOpen,
         setIsOverrideDialogOpen,
@@ -993,19 +1090,10 @@ export function useManufacturingQA() {
         setOverrideDecision,
         overrideComments,
         setOverrideComments,
-        refreshAll,
-        getBranchName,
-        filteredQALogs,
-        pendingHolds,
-        activeJobOrders,
-        closedJobOrders,
-        handleOpenYieldDialog,
-        handleSubmitYieldClosing,
-        handleReprintReceipt,
         handleOpenOverrideDialog,
         handleSubmitOverride,
 
-        // Daily Yield QA states & handlers
+        // Daily Yield QA
         yieldLedger,
         dailyInspections,
         loadingDailyQA,
@@ -1035,7 +1123,7 @@ export function useManufacturingQA() {
         qaParamValues,
         setQaParamValues,
 
-        // Final QA states & handlers
+        // Final QA
         finalReleases,
         lots,
         lotsProducts,
@@ -1060,6 +1148,10 @@ export function useManufacturingQA() {
         finalRemarks,
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
-        handleSubmitFinalRelease
+        handleSubmitFinalRelease,
+
+        // General
+        refreshAll,
+        getBranchName
     };
 }

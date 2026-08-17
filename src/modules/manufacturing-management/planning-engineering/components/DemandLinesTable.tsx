@@ -137,11 +137,9 @@ export function DemandLinesTable({
                                         <TableCell className="py-2 text-xs">
                                             <div className="font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
                                                 <span>{line.product_id?.product_name}</span>
-                                                {line.product_id?.uom && (
-                                                    <span className="text-[10px] font-medium text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                                                        {line.product_id.uom} ({line.product_id.uom_count || 1})
-                                                    </span>
-                                                )}
+                                                <span className="text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
+                                                    {line.product_id?.uom || "Pieces"} {line.product_id?.uom_count && line.product_id.uom_count > 1 ? `(${line.product_id.uom_count} pcs)` : ""}
+                                                </span>
                                             </div>
                                             <div className="text-[10px] font-medium text-primary">
                                                 Ver: {line.bom_version_name || "No Version"}

@@ -86,7 +86,7 @@ async function fetchProductGraph(read: DirectusReader, initialProductIds: number
         const params = new URLSearchParams({
             "filter[_or][0][product_id][_in]": frontier.join(","),
             "filter[_or][1][parent_id][_in]": frontier.join(","),
-            fields: "product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
+            fields: "product_id,product_name,product_code,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
             limit: "-1"
         });
         const rows = (await read("products", params)).data;
@@ -208,12 +208,15 @@ export async function enrichSalesOrderReadModel(
     const termsPromise = paymentTermIds.length > 0 ? read("payment_terms", termsParams) : Promise.resolve({ data: [] });
 
     const productIds = [...new Set(details.map((detail) => Number(detail.product_id)).filter(Boolean))];
-    const [customerResult, termsResult, products] = await Promise.all([
+    const unitsPromise = read("units", new URLSearchParams({ fields: "unit_id,unit_name,unit_shortcut", limit: "-1" }));
+    const [customerResult, termsResult, products, unitsResult] = await Promise.all([
         customersPromise,
         termsPromise,
-        fetchProductGraph(read, productIds)
+        fetchProductGraph(read, productIds),
+        unitsPromise
     ]);
 
+    const unitsMap = new Map<number, any>((unitsResult.data || []).map((u: any) => [Number(u.unit_id), u]));
     const customersByCode = new Map(customerResult.data.map((customer) => [String(customer.customer_code), customer]));
     const customerIds = [...new Set(customerResult.data.map((customer) => Number(customer.id || customer.customer_id)).filter(Boolean))];
     const termsById = new Map(termsResult.data.map((term) => [Number(term.id), term]));
@@ -238,11 +241,19 @@ export async function enrichSalesOrderReadModel(
         const orderId = Number(detail.order_id);
         const rawProductId = Number(detail.product_id);
         const product = products.get(rawProductId);
+        const uomId = Number(product?.unit_of_measurement?.unit_id || product?.unit_of_measurement || 0);
+        const unitObj = unitsMap.get(uomId) || (typeof product?.unit_of_measurement === "object" ? product.unit_of_measurement : null);
+        const unitName = unitObj?.unit_name || unitObj?.unit_shortcut || "Pieces";
+        const unitShortcut = unitObj?.unit_shortcut || unitObj?.unit_name || "PCS";
+
         detail.product_id = product ? {
             product_id: Number(product.product_id),
             product_name: product.product_name,
             product_code: product.product_code,
-            uom: product.unit_of_measurement?.unit_shortcut || "PCS",
+            uom: unitName,
+            uom_name: unitName,
+            uom_shortcut: unitShortcut,
+            unit_name: unitName,
             uom_count: product.unit_of_measurement_count ? Number(product.unit_of_measurement_count) : 1,
             parent_id: product.parent_id ? Number(typeof product.parent_id === "object" ? product.parent_id.product_id : product.parent_id) : null,
             brand: product.product_brand?.brand_name || "N/A",
@@ -251,7 +262,10 @@ export async function enrichSalesOrderReadModel(
             product_id: rawProductId,
             product_name: `Product #${rawProductId}`,
             product_code: `CODE-${rawProductId}`,
-            uom: "PCS",
+            uom: "Pieces",
+            uom_name: "Pieces",
+            uom_shortcut: "PCS",
+            unit_name: "Pieces",
             uom_count: 1,
             parent_id: null,
             brand: "N/A",
