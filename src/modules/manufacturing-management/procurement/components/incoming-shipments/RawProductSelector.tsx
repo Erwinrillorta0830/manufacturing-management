@@ -46,7 +46,14 @@ export function RawProductSelector({
         )?.productTypeId;
 
         if (!productTypeId) return [];
-        return rawMaterials.filter(material => Number(material.product_type) === productTypeId);
+        return rawMaterials.filter(material => {
+            if (Number(material.product_type) === productTypeId) return true;
+            const parentId = normalizeProductRelationId(material.parent_id);
+            const parent = parentId
+                ? rawMaterials.find(candidate => Number(candidate.product_id) === parentId)
+                : null;
+            return Number(parent?.product_type) === productTypeId;
+        });
     }, [materialType, rawMaterials]);
 
     const options = useMemo(() => {

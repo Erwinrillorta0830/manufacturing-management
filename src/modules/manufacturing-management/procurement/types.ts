@@ -84,6 +84,7 @@ export interface IncomingShipment {
     remark?: string;
     created_at?: string;
     payment_mode?: number | null;
+    payment_mode_name?: string | null;
     branch_id?: number | null;
     payment_type?: number | null;
     payment_terms?: number | null;
@@ -366,4 +367,11 @@ export interface BFFCatalogProduct {
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;
+}
+
+export interface PurchaseOrderPriceTypeRule {
+    productTypeId: number;
+    productTypeName: string;
+    priceTypeId: number | null;
+    priceTypeName: string | null;
 }

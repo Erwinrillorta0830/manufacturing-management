@@ -126,8 +126,16 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
     const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/products?limit=250&excludeRollup=true");
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
-    // Filter to exclude finished goods (include only raw materials and packaging items)
-    const rawItems = products.filter((p: BFFCatalogProduct) => Number(p.product_type) === 389 || Number(p.product_type) === 390);
+    // Filter to exclude finished goods while retaining variants that inherit their
+    // material classification from a raw-material or packaging parent.
+    const rawItems = products.filter((p: BFFCatalogProduct) => {
+        const ownType = Number(p.product_type);
+        if (ownType === 389 || ownType === 390) return true;
+        const parentId = normalizeProductRelationId(p.parent_id);
+        const parent = parentId ? products.find(candidate => Number(candidate.product_id) === parentId) : null;
+        const parentType = Number(parent?.product_type);
+        return parentType === 389 || parentType === 390;
+    });
 
     return rawItems.map((p: BFFCatalogProduct) => {
         const parentIdValue = normalizeProductRelationId(p.parent_id);

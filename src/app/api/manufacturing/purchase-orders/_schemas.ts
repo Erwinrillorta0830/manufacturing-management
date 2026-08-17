@@ -121,7 +121,6 @@ export const purchaseOrderCreateSchema = z.object({
     paymentArrangementId: positiveId,
     paymentModeId: positiveId,
     paymentTermsId: positiveId,
-    priceType: z.string().trim().min(1).max(50),
     currencyCode: z.enum(["PHP", "USD"]),
     exchangeRate: positiveDecimal,
     expectedTotals: purchaseOrderExpectedTotalsSchema,

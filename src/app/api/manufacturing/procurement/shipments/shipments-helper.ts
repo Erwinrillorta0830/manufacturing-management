@@ -91,6 +91,11 @@ interface DirectusPO {
     is_posted_amounts?: number | boolean | null;
 }
 
+interface DirectusPaymentMode {
+    id: number;
+    mode_name?: string | null;
+}
+
 interface DirectusSupplier {
     id: number;
     supplier_name: string;
@@ -273,6 +278,7 @@ function supplierId(value: DirectusPO["supplier_name"]): number | null {
 function mapPurchaseOrder(
     po: DirectusPO,
     suppliers: ReadonlyMap<number, DirectusSupplier>,
+    paymentModes: ReadonlyMap<number, DirectusPaymentMode>,
     canonicalStatus = false,
     rejectionStage: PurchaseOrderRejectionStage | null = null
 ) {
@@ -314,6 +320,7 @@ function mapPurchaseOrder(
         branch_id: po.branch_id || null,
         payment_type: po.payment_type || null,
         payment_mode: po.payment_mode || null,
+        payment_mode_name: po.payment_mode ? paymentModes.get(Number(po.payment_mode))?.mode_name || null : null,
         payment_terms: po.payment_terms || null,
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
@@ -328,6 +335,25 @@ function mapPurchaseOrder(
         is_posted: po.is_posted === true || Number(po.is_posted) === 1 ? 1 : 0,
         is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0
     };
+}
+
+async function fetchPaymentModeMap(ids: readonly number[]): Promise<Map<number, DirectusPaymentMode>> {
+    const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (uniqueIds.length === 0) return new Map();
+    try {
+        const params = new URLSearchParams({
+            fields: "id,mode_name",
+            limit: String(uniqueIds.length),
+            filter: JSON.stringify({ id: { _in: uniqueIds } })
+        });
+        const response = await fetch(`${DIRECTUS_URL}/items/purchase_order_payment_modes?${params.toString()}`, { headers, cache: "no-store" });
+        if (!response.ok) return new Map();
+        const rows = ((await response.json()).data || []) as DirectusPaymentMode[];
+        return new Map(rows.map(row => [Number(row.id), row]));
+    } catch (error) {
+        console.warn("[Manufacturing Directus API] Failed to resolve purchase-order payment type names.", error);
+        return new Map();
+    }
 }
 
 async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, DirectusSupplier>> {
@@ -481,6 +507,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
     const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+    const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
     const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
         purchaseOrderId: Number(row.purchase_order_id),
         inventoryStatus: row.inventory_status ?? null,
@@ -488,7 +515,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     })));
     const total = Number(body.meta?.filter_count || 0);
     return {
-        data: rows.map(row => mapPurchaseOrder(row, suppliers, true, rejectionStages.get(Number(row.purchase_order_id)) || null)),
+        data: rows.map(row => mapPurchaseOrder(row, suppliers, paymentModes, true, rejectionStages.get(Number(row.purchase_order_id)) || null)),
         meta: {
             page: query.page,
             limit: query.limit,
@@ -505,13 +532,14 @@ export async function fetchIncomingShipments(): Promise<unknown[]> {
         if (!res.ok) return [];
         const poList = ((await res.json()).data || []) as DirectusPO[];
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+        const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));
         const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(poList.map(row => ({
             purchaseOrderId: Number(row.purchase_order_id),
             inventoryStatus: row.inventory_status ?? null,
             workflowRevision: Number(row.workflow_revision || 0)
         })));
 
-        return poList.map(row => mapPurchaseOrder(row, suppliers, false, rejectionStages.get(Number(row.purchase_order_id)) || null));
+        return poList.map(row => mapPurchaseOrder(row, suppliers, paymentModes, false, rejectionStages.get(Number(row.purchase_order_id)) || null));
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch incoming shipments:", e);
         return [];
