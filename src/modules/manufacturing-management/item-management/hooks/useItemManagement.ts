@@ -287,15 +287,16 @@ export function useItemManagement() {
         }
     };
 
-    // Filtered Lists (Sorted ascending: oldest first, with stable display numbering starting at one)
+    // Filtered Lists (Sorted descending: newest first, with stable display numbering)
     const filteredItems = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
+        const chronologicalItems = [...items].sort((a, b) => a.id - b.id);
         return items
             .filter((item) => item.item_name?.toLowerCase().includes(query))
-            .sort((a, b) => a.id - b.id)
+            .sort((a, b) => b.id - a.id)
             .map((item) => {
-                const originalIndex = items.findIndex((i) => i.id === item.id);
-                // 1 being oldest (index 0), highest being latest (index length - 1)
+                const originalIndex = chronologicalItems.findIndex((i) => i.id === item.id);
+                // 1 being oldest, highest being latest
                 const displayNumber = originalIndex !== -1 ? originalIndex + 1 : 0;
                 return { ...item, displayNumber };
             });
@@ -303,11 +304,12 @@ export function useItemManagement() {
 
     const filteredItemTypes = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
+        const chronologicalTypes = [...itemTypes].sort((a, b) => a.id - b.id);
         return itemTypes
             .filter((t) => t.type_name?.toLowerCase().includes(query))
-            .sort((a, b) => a.id - b.id)
+            .sort((a, b) => b.id - a.id)
             .map((t) => {
-                const originalIndex = itemTypes.findIndex((i) => i.id === t.id);
+                const originalIndex = chronologicalTypes.findIndex((i) => i.id === t.id);
                 const displayNumber = originalIndex !== -1 ? originalIndex + 1 : 0;
                 return { ...t, displayNumber };
             });
@@ -315,11 +317,12 @@ export function useItemManagement() {
 
     const filteredItemClassifications = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
+        const chronologicalClassifications = [...itemClassifications].sort((a, b) => a.id - b.id);
         return itemClassifications
             .filter((c) => c.classification_name?.toLowerCase().includes(query))
-            .sort((a, b) => a.id - b.id)
+            .sort((a, b) => b.id - a.id)
             .map((c) => {
-                const originalIndex = itemClassifications.findIndex((i) => i.id === c.id);
+                const originalIndex = chronologicalClassifications.findIndex((i) => i.id === c.id);
                 const displayNumber = originalIndex !== -1 ? originalIndex + 1 : 0;
                 return { ...c, displayNumber };
             });

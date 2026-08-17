@@ -112,7 +112,7 @@ export default function LotFormDialog({
                         {/* Max Batch Capacity */}
                         <div className="space-y-1">
                             <Label htmlFor="maxBatchCapacity">
-                                Max Batch Capacity (Batches) <span className="text-destructive">*</span>
+                                Max Capacity (pcs) <span className="text-destructive">*</span>
                             </Label>
                             <Input
                                 id="maxBatchCapacity"

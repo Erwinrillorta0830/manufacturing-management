@@ -128,8 +128,10 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
         const payload: DecisionPayload = {
             versionId: item.version_id,
-            action: decision,
+            action: decision === "revision" ? "request_revision" : decision,
             setActive: decision === "approve" ? setActive : false,
+            remarks: decision === "revision" ? feedback.trim() : (decision === "approve" ? ecnReference.trim() : undefined),
+            rejectionReason: decision === "reject" ? reason.trim() : undefined,
             reason: decision === "reject" ? reason.trim() : undefined,
             feedback: decision === "revision" ? feedback.trim() : undefined,
         };
@@ -141,10 +143,10 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                 body: JSON.stringify(payload),
             });
 
-            const result = await res.json();
+            const result = await res.json().catch(() => ({}));
 
             if (!res.ok || result.error) {
-                throw new Error(result.error || "Failed to submit decision");
+                throw new Error(result.error || `Failed to submit decision (${res.status})`);
             }
 
             onSuccess();

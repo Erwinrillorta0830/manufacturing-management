@@ -258,14 +258,15 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
-        // 2. Create Product Version (Active status by default for first version)
+        // 2. Create Product Version (Draft status by default for first version)
         const versionPayload = {
             product_id: productId,
             version_name: validatedDetails.versionName,
             base_quantity: 1,
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
-            status: "Active",
+            status: "Draft",
+            is_primary: false,
             valid_from: todayStr
         };
 

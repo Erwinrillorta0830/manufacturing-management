@@ -6,6 +6,7 @@ export type ApprovalStatus =
     | "Active"
     | "Archived"
     | "Inactive"
+    | "Draft"
     | "Rejected"
     | "Revision Required"
     | "Revision";
@@ -26,6 +27,7 @@ export interface VersionApprovalItem {
     rejection_reason?: string | null;
     revision_notes?: string | null;
     base_version_id?: number | null;
+    approved_by_name?: string | null;
 }
 
 export interface VersionApprovalKPISummary {
@@ -111,8 +113,10 @@ export interface VersionComparisonData {
 
 export interface DecisionPayload {
     versionId: number;
-    action: "approve" | "reject" | "revision";
+    action: "approve" | "reject" | "request_revision" | "revision";
     setActive?: boolean;
+    remarks?: string;
+    rejectionReason?: string;
     reason?: string;
     feedback?: string;
 }

@@ -105,6 +105,7 @@ export default function FinishedGoodsModule() {
         handleRegisterNewVersion,
         handleSave,
         handleActivateVersion,
+        handleSubmitVersionForApproval,
         handleAddQATemplate,
         handleSaveQATemplate,
         editedVersionDetails,
@@ -652,6 +653,7 @@ export default function FinishedGoodsModule() {
                 hasUnsavedChanges={hasUnsavedChanges}
                 setHasUnsavedChanges={setHasUnsavedChanges}
                 handleActivateVersion={handleActivateVersion}
+                handleSubmitVersionForApproval={handleSubmitVersionForApproval}
                 handleOpenVersionModal={handleOpenVersionModal}
                 setIsCompareModalOpen={setIsCompareModalOpen}
                 isSyncingYield={isSyncingYield}

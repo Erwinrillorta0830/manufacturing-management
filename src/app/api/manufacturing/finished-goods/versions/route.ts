@@ -52,7 +52,7 @@ export async function GET(request: Request) {
             base_quantity: v.base_quantity ?? 1,
             uom_id: v.uom_id ?? null,
             expected_yield_percentage: v.expected_yield_percentage ?? 100,
-            status: v.status || "For Approval",
+            status: v.status || "Draft",
             valid_from: v.valid_from || null,
             valid_to: v.valid_to || null,
             is_active: v.status === "Active",
@@ -144,7 +144,8 @@ export async function POST(request: Request) {
                     base_quantity: bQty,
                     uom_id: uId,
                     expected_yield_percentage: yieldPercent,
-                    status: "For Approval", // New version starts as For Approval
+                    status: "Draft", // New version starts as Draft
+                    is_primary: false,
                     valid_from: today,
                     created_by: userId
                 })
@@ -245,23 +246,11 @@ export async function POST(request: Request) {
 }
 
 async function patchVersionItem(versionId: number, data: Record<string, unknown>) {
-    let res = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify(data)
     });
-    // Fallback if Directus rejects is_primary field because it hasn't been created in DB schema yet
-    if (!res.ok && "is_primary" in data) {
-        const fallbackData = { ...data };
-        delete fallbackData.is_primary;
-        if (Object.keys(fallbackData).length > 0) {
-            res = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${versionId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify(fallbackData)
-            });
-        }
-    }
     return res;
 }
 
@@ -337,8 +326,27 @@ export async function PATCH(request: Request) {
                 }
             }
             return NextResponse.json({ success: true });
+        } else if (action === "submit_for_approval") {
+            const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
+            const allowedForSubmit = ["Draft", "Revision Required"];
+            if (targetVer && !allowedForSubmit.includes(targetVer.status || "Draft")) {
+                return NextResponse.json(
+                    { error: `Version is currently "${targetVer.status}". Only Draft or Revision Required versions can be submitted for approval.` },
+                    { status: 400 }
+                );
+            }
+            const actRes = await patchVersionItem(numericVersionId, { status: "For Approval" });
+            if (!actRes.ok) throw new Error("Failed to submit version for approval");
+            return NextResponse.json({ success: true });
         } else {
-            // Action "set_active": Activate version without deactivating other active versions
+            // Action "set_active": Activate version — only allowed for Approved versions
+            const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
+            if (targetVer && targetVer.status !== "Approved" && targetVer.status !== "Archived") {
+                return NextResponse.json(
+                    { error: `Version is currently "${targetVer.status || "Draft"}". Only Approved versions can be set to Active.` },
+                    { status: 400 }
+                );
+            }
             const hasPrimary = versions.some((v: VersionRecord) => v.is_primary);
             const isPrimary = !hasPrimary;
 

@@ -61,63 +61,6 @@ export const VersionApprovalModule: React.FC = () => {
         fetchApprovals();
     }, [fetchApprovals]);
 
-    const handleQuickApprove = async (item: VersionApprovalItem) => {
-        if (!confirm(`Are you sure you want to approve version '${item.version_name}' for ${item.product_name}?`)) {
-            return;
-        }
-
-        try {
-            const res = await fetch("/api/manufacturing/finished-goods/versions/approvals", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    versionId: item.version_id,
-                    action: "approve",
-                    setActive: true
-                }),
-            });
-            const result = await res.json();
-            if (!res.ok || result.error) throw new Error(result.error || "Failed to approve version");
-
-            setActionMessage({ type: "success", text: `Version '${item.version_name}' approved & set active successfully!` });
-            fetchApprovals();
-        } catch (err: unknown) {
-            const error = err as Error;
-            console.error("Quick approve error:", err);
-            setActionMessage({ type: "error", text: error.message || "Failed to approve version." });
-        }
-    };
-
-    const handleQuickReject = async (item: VersionApprovalItem) => {
-        const reason = prompt(`Enter rejection reason for version '${item.version_name}':`);
-        if (reason === null) return; // User cancelled
-        if (!reason.trim()) {
-            alert("Rejection reason is required.");
-            return;
-        }
-
-        try {
-            const res = await fetch("/api/manufacturing/finished-goods/versions/approvals", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    versionId: item.version_id,
-                    action: "reject",
-                    reason: reason.trim()
-                }),
-            });
-            const result = await res.json();
-            if (!res.ok || result.error) throw new Error(result.error || "Failed to reject version");
-
-            setActionMessage({ type: "success", text: `Version '${item.version_name}' rejected.` });
-            fetchApprovals();
-        } catch (err: unknown) {
-            const error = err as Error;
-            console.error("Quick reject error:", err);
-            setActionMessage({ type: "error", text: error.message || "Failed to reject version." });
-        }
-    };
-
     const handleOpenReviewModal = (item: VersionApprovalItem) => {
         setSelectedItem(item);
         setIsReviewModalOpen(true);
@@ -258,7 +201,7 @@ export const VersionApprovalModule: React.FC = () => {
             {/* Filter Tabs & Search Control Bar */}
             <div className="va-controls">
                 <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-2 pt-1 rounded-t-xl shrink-0 overflow-x-auto">
-                    {(["All", "Pending Approval", "Approved", "Rejected", "Revision Requested"] as ApprovalStatus[]).map((status) => (
+                    {(["All", "Pending Approval", "Approved", "Rejected", "Revision Required"] as ApprovalStatus[]).map((status) => (
                         <button
                             key={status}
                             type="button"
@@ -306,8 +249,6 @@ export const VersionApprovalModule: React.FC = () => {
                 items={filteredItems}
                 loading={loading}
                 onReviewAndCompare={handleOpenReviewModal}
-                onQuickApprove={handleQuickApprove}
-                onReject={handleQuickReject}
             />
 
             {/* Side-by-Side Review & Comparison Modal */}
