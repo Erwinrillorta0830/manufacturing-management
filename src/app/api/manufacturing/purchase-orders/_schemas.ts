@@ -140,13 +140,13 @@ export const purchaseOrderStatusUpdateSchema = z.object({
 });
 
 export const purchaseOrderApprovalSchema = z.object({
-    action: z.enum(["approve", "reject"]),
+    action: z.enum(["approve", "reject", "cancel"]),
     workflowRevision: z.coerce.number().int().nonnegative(),
     expectedRuleId: positiveId.optional(),
     remarks: z.string().trim().min(1).max(1000).optional()
 }).superRefine((value, context) => {
-    if (value.action === "reject" && !value.remarks) {
-        context.addIssue({ code: "custom", path: ["remarks"], message: "Remarks are required for rejection." });
+    if ((value.action === "reject" || value.action === "cancel") && !value.remarks) {
+        context.addIssue({ code: "custom", path: ["remarks"], message: "Remarks are required for rejection or cancellation." });
     }
 });
 

@@ -125,7 +125,7 @@ export interface PurchaseOrderApprovalDetail {
 }
 
 export interface PurchaseOrderApprovalCommand {
-    action: "approve" | "reject";
+    action: "approve" | "reject" | "cancel";
     workflowRevision: number;
     expectedRuleId?: number;
     remarks?: string;

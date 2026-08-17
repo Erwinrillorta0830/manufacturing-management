@@ -38,7 +38,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     if (!Number.isSafeInteger(id) || id <= 0) return NextResponse.json({ error: "Invalid purchase-order ID." }, { status: 400 });
     try {
         const stage = requestedStage(request);
-        await requirePurchaseOrderModuleAccess({ modulePath: purchaseOrderApprovalModulePath(stage) });
+        await requirePurchaseOrderModuleAccess({
+            modulePath: purchaseOrderApprovalModulePath(stage),
+            approvalStage: stage
+        });
         return NextResponse.json({ data: await getPurchaseOrderApprovalDetail(id, stage) });
     } catch (error) {
         return routeError(error);
@@ -54,7 +57,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         if (!parsed.success) {
             return NextResponse.json({ error: "Invalid approval action.", details: parsed.error.flatten() }, { status: 400 });
         }
-        const actor = await requirePurchaseOrderModuleAccess({ modulePath: purchaseOrderApprovalModulePath(stage) });
+        const actor = await requirePurchaseOrderModuleAccess({
+            modulePath: purchaseOrderApprovalModulePath(stage),
+            approvalStage: stage,
+            requireReject: parsed.data.action !== "approve"
+        });
         return NextResponse.json(await submitPurchaseOrderApproval(id, parsed.data, actor, stage));
     } catch (error) {
         return routeError(error);
