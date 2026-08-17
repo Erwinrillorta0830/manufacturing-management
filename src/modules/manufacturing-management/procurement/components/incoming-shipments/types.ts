@@ -3,6 +3,8 @@ import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduc
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging";
 
+export type FxRateStatus = "idle" | "loading" | "ready" | "error";
+
 export const PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS: Array<{
     value: PurchaseOrderMaterialType;
     label: string;
