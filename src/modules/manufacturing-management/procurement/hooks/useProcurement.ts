@@ -18,6 +18,7 @@ import {
     fetchLinkedProducts
 } from "../services/procurement-api";
 import type { SupplierStatusFilter } from "../services/procurement-api";
+import { fetchPurchaseOrderCatalog } from "../../purchase-order/services/purchase-order-api";
 import {
     PHILIPPINES_COUNTRY,
     canonicalizeSupplierCountry,
@@ -35,6 +36,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [shipments, setShipments] = useState<IncomingShipment[]>([]);
     const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+    const [paymentModes, setPaymentModes] = useState<import("../types").PurchaseOrderPaymentMode[]>([]);
 
     // Selected items
     const [selectedShipment, setSelectedShipment] = useState<IncomingShipment | null>(null);
@@ -95,6 +97,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         date_received: new Date().toISOString().split("T")[0],
         branch_id: null,
         payment_type: null,
+        payment_mode: null,
         price_type: ""
     });
 
@@ -143,6 +146,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 date_received: new Date().toISOString().split("T")[0],
                 branch_id: null,
                 payment_type: null,
+                payment_mode: null,
                 price_type: ""
             });
             setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
@@ -150,6 +154,12 @@ export function useProcurement(defaultTab: string = "suppliers") {
     }, [isShipmentModalOpen]);
 
     const [supplierLinkedProducts, setSupplierLinkedProducts] = useState<LinkedProduct[]>([]);
+
+    useEffect(() => {
+        void fetchPurchaseOrderCatalog()
+            .then(catalog => setPaymentModes(catalog.paymentModes))
+            .catch(error => toast.error((error as Error).message || "Failed to load configured payment types."));
+    }, []);
 
     useEffect(() => {
         const loadLinkedForSelectedSupplier = async () => {
@@ -462,6 +472,10 @@ export function useProcurement(defaultTab: string = "suppliers") {
             return;
         }
         if (!shipmentForm.payment_type) {
+            toast.error("Payment arrangement is required");
+            return;
+        }
+        if (!shipmentForm.payment_mode) {
             toast.error("Payment type is required");
             return;
         }
@@ -529,6 +543,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 date_received: shipmentForm.date_received,
                 branch_id: Number(shipmentForm.branch_id),
                 payment_type: Number(shipmentForm.payment_type),
+                payment_mode: Number(shipmentForm.payment_mode),
                 price_type: shipmentForm.price_type
             };
 
@@ -545,6 +560,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 date_received: new Date().toISOString().split("T")[0],
                 branch_id: null,
                 payment_type: null,
+                payment_mode: null,
                 price_type: ""
             });
             setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
@@ -745,6 +761,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         suppliers,
         shipments,
         rawMaterials,
+        paymentModes,
         supplierLinkedProducts,
         selectedShipment,
         setSelectedShipment,

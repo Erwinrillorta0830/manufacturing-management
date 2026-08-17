@@ -3,8 +3,10 @@ export type {
     ShipmentLineItem as PurchaseOrderLine,
     Supplier,
     RawMaterial,
-    LinkedProduct
+    LinkedProduct,
+    PurchaseOrderPaymentMode
 } from "../procurement/types";
+import type { PurchaseOrderPaymentMode } from "../procurement/types";
 
 export interface PurchaseOrderListMeta {
     page: number;
@@ -34,6 +36,7 @@ export interface PurchaseOrderCatalog {
     suppliers: Array<{ id: number; supplier_name: string }>;
     branches: Array<{ id: number; branch_name: string; branch_code?: string }>;
     paymentTypes: Array<{ id: number; payment_name?: string; name?: string }>;
+    paymentModes: PurchaseOrderPaymentMode[];
     paymentTerms: Array<{
         id: number;
         payment_name: string;
@@ -47,7 +50,8 @@ export interface PurchaseOrderDraftPayload {
     externalReference?: string;
     supplierId: number;
     branchId: number;
-    paymentTypeId: number;
+    paymentArrangementId: number;
+    paymentModeId: number;
     paymentTermsId: number;
     priceType: string;
     currencyCode: "PHP" | "USD";

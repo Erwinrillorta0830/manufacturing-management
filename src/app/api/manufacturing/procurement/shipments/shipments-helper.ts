@@ -18,6 +18,7 @@ import {
     EXCHANGE_RATE_DECIMAL_SCALE,
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
+import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
 
 const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
 
@@ -71,6 +72,7 @@ interface DirectusPO {
     date_encoded?: string | null;
     branch_id?: number | null;
     payment_type?: number | null;
+    payment_mode?: number | null;
     payment_terms?: number | null;
     price_type?: string | null;
     exchange_rate?: number | string | null;
@@ -311,6 +313,7 @@ function mapPurchaseOrder(
         created_at: po.date_encoded || "",
         branch_id: po.branch_id || null,
         payment_type: po.payment_type || null,
+        payment_mode: po.payment_mode || null,
         payment_terms: po.payment_terms || null,
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
@@ -465,7 +468,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -734,6 +737,12 @@ export async function createIncomingShipment(
     let poId: number | null = null;
     const createdProductIds: number[] = [];
     try {
+        try {
+            await validatePurchaseOrderPaymentMode(Number((shipmentData as ExtendedShipment).payment_mode));
+        } catch (error) {
+            if (error instanceof PurchaseOrderPaymentModeError) throw error;
+            throw new PurchaseOrderPaymentModeError("The selected Payment Type could not be validated.", 503);
+        }
         await assertMrpProductJobOrderPairs(lineItems);
         const extendedData = shipmentData as ExtendedShipment;
         const exchangeRate = DecimalValue.from(extendedData.exchange_rate ?? 58).toFixed(6);
@@ -755,7 +764,8 @@ export async function createIncomingShipment(
             remark: extendedData.remark || extendedData.notes || "Registered via Incoming Shipments portal.",
             supplier_name: typeof extendedData.supplier_id === "object" && extendedData.supplier_id ? (extendedData.supplier_id as Record<string, unknown>).id : extendedData.supplier_id,
             receiving_type: 1,
-            payment_type: 1,
+            payment_type: extendedData.payment_type || null,
+            payment_mode: extendedData.payment_mode,
             price_type: "Internal",
             date_encoded: new Date().toISOString(),
             date: await getTodayDateString(),

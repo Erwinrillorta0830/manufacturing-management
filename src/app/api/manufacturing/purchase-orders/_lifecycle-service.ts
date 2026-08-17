@@ -12,6 +12,7 @@ import type { purchaseOrderCancellationSchema, purchaseOrderRevisionSchema } fro
 import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
+import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
@@ -31,6 +32,7 @@ interface PurchaseOrderRecord {
     supplier_name?: unknown;
     branch_id?: number | null;
     payment_type?: number | null;
+    payment_mode?: number | null;
     payment_terms?: number | null;
     price_type?: string | null;
     currency_code?: string | null;
@@ -58,7 +60,7 @@ interface PurchaseOrderLineRecord {
 }
 
 const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "remark", "supplier_name", "branch_id", "payment_type", "payment_terms", "price_type",
+    "purchase_order_id", "purchase_order_no", "reference", "remark", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "price_type",
     "currency_code", "exchange_rate", "total_foreign_currency", "gross_amount", "total_amount", "inventory_status", "date_received",
     "lead_time_receiving", "approver_id", "date_approved", "finance_id", "date_financed", "workflow_revision", "approval_rule_id",
     "approval_requires_finance", "approval_allow_self_approval", "is_import"
@@ -181,6 +183,15 @@ async function validateRevisionReferences(command: RevisionCommand) {
         throw new PurchaseOrderLifecycleError("The revised payment terms were not found.", 400);
     }
 
+    try {
+        await validatePurchaseOrderPaymentMode(command.shipmentData.payment_mode);
+    } catch (error) {
+        if (error instanceof PurchaseOrderPaymentModeError) {
+            throw new PurchaseOrderLifecycleError(error.message, error.status);
+        }
+        throw error;
+    }
+
     const isBranchActive = (b: Record<string, unknown> | null | undefined): boolean => {
         if (!b) return false;
         const val = b.isActive ?? b.is_active ?? b.status;
@@ -291,6 +302,7 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         supplier_name: order.supplier_name || null,
         branch_id: order.branch_id || null,
         payment_type: order.payment_type || null,
+        payment_mode: order.payment_mode || null,
         payment_terms: order.payment_terms || null,
         price_type: order.price_type || null,
         currency_code: order.currency_code || "PHP",
@@ -430,6 +442,7 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         supplier_name: Number(command.shipmentData.supplier_id),
         branch_id: command.shipmentData.branch_id,
         payment_type: command.shipmentData.payment_type || null,
+        payment_mode: command.shipmentData.payment_mode,
         payment_terms: command.shipmentData.payment_terms ?? order.payment_terms ?? null,
         price_type: command.shipmentData.price_type || null,
         currency_code: currencyCode,

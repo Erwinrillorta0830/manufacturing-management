@@ -24,7 +24,7 @@ const blankLine = (): ManifestLineFormItem => ({
 });
 const blankForm = (): ShipmentFormState => ({
     reference_number: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
-    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_terms: null, price_type: "", currency_code: "PHP"
+    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, price_type: "", currency_code: "PHP"
 });
 
 function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchangeRate: number) {
@@ -56,6 +56,7 @@ export function usePurchaseOrder() {
     const [shipments, setShipments] = useState<IncomingShipment[]>([]);
     const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
     const [supplierLinkedProducts, setSupplierLinkedProducts] = useState<LinkedProduct[]>([]);
+    const [paymentModes, setPaymentModes] = useState<PurchaseOrderCatalog["paymentModes"]>([]);
     const [paymentTerms, setPaymentTerms] = useState<PurchaseOrderCatalog["paymentTerms"]>([]);
     const [jobOrders, setJobOrders] = useState<Array<{ job_order_id: number; job_order_no?: string }>>([]);
     const [selectedShipment, setSelectedShipment] = useState<IncomingShipment | null>(null);
@@ -99,6 +100,7 @@ export function usePurchaseOrder() {
             loadShipments(),
             fetchPurchaseOrderCatalog().then(catalog => {
                 setSuppliers(catalog.suppliers);
+                setPaymentModes(catalog.paymentModes);
                 setPaymentTerms(catalog.paymentTerms);
                 setJobOrders(catalog.jobOrders);
             }),
@@ -194,6 +196,10 @@ export function usePurchaseOrder() {
             return;
         }
         if (!shipmentForm.payment_type) {
+            toast.error("Payment Arrangement is required.");
+            return;
+        }
+        if (!shipmentForm.payment_mode) {
             toast.error("Payment Type is required.");
             return;
         }
@@ -257,7 +263,8 @@ export function usePurchaseOrder() {
                 externalReference: shipmentForm.reference_number.trim() || undefined,
                 supplierId: Number(shipmentForm.supplier_id),
                 branchId: Number(shipmentForm.branch_id),
-                paymentTypeId: Number(shipmentForm.payment_type),
+                paymentArrangementId: Number(shipmentForm.payment_type),
+                paymentModeId: Number(shipmentForm.payment_mode),
                 paymentTermsId: Number(shipmentForm.payment_terms),
                 priceType: shipmentForm.price_type,
                 currencyCode: shipmentForm.currency_code || "PHP",
@@ -334,7 +341,7 @@ export function usePurchaseOrder() {
     };
 
     return {
-        loading, listLoading, suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentTerms, jobOrders, listMeta, loadShipments,
+        loading, listLoading, suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, jobOrders, listMeta, loadShipments,
         selectedShipment, setSelectedShipment, selectedShipmentLines,
         isShipmentModalOpen, setIsShipmentModalOpen,
         shipmentForm, setShipmentForm, shipmentLinesForm, setShipmentLinesForm,

@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2 } from "lucide-react";
-import { IncomingShipment, ShipmentLineItem, Supplier } from "../../types";
+import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
@@ -15,6 +15,7 @@ export interface ShipmentDetailViewProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
+    paymentModes?: PurchaseOrderPaymentMode[];
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
@@ -30,6 +31,7 @@ export function ShipmentDetailView({
     activeShipment,
     canonicalDrafting,
     paymentTerms = [],
+    paymentModes = [],
     suppliers,
     branches,
     isSupplierForeign,
@@ -111,6 +113,17 @@ export function ShipmentDetailView({
                                 <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
                                 <span>
                                     Payment Type:{" "}
+                                    <strong className="text-foreground font-bold">
+                                        {(() => {
+                                            const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
+                                            const mode = paymentModes.find(item => item.id === Number(payMode));
+                                            return mode?.mode_name || (payMode ? `Payment Type #${payMode}` : "Not specified (legacy PO)");
+                                        })()}
+                                    </strong>
+                                </span>
+                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                <span>
+                                    Payment Arrangement:{" "}
                                     <strong className="text-foreground font-bold">
                                         {(() => {
                                             const payType = (activeShipment as IncomingShipment & { payment_type?: number | null }).payment_type;
