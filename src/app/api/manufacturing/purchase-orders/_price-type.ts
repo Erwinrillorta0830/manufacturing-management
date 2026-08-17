@@ -35,6 +35,7 @@ export class PurchaseOrderPriceTypeError extends Error {
 type DirectusRelation = number | string | Record<string, unknown> | null | undefined;
 
 interface DirectusProductTypeRow {
+    id?: number | string;
     type_id?: number | string;
     type_name?: string | null;
     name?: string | null;
@@ -46,12 +47,18 @@ interface DirectusProductRow {
     product_id?: number | string;
     product_type?: DirectusRelation;
     parent_id?: DirectusRelation & { product_type?: DirectusRelation };
+    parent_product_type?: DirectusRelation;
 }
 
 interface DirectusPriceMatrixRow {
     product_id?: DirectusRelation;
     price_type_id?: DirectusRelation;
     price?: number | string | null;
+}
+
+interface DirectusPriceTypeRow {
+    price_type_id?: number | string;
+    price_type_name?: string | null;
 }
 
 function relationId(value: DirectusRelation, keys: string[]): number | null {
@@ -96,7 +103,7 @@ async function directusData<T>(path: string, message: string): Promise<T> {
 }
 
 function normalizeRule(row: DirectusProductTypeRow): PurchaseOrderPriceTypeRule | null {
-    const productTypeId = relationId(row.type_id, ["type_id", "id"]);
+    const productTypeId = relationId(row.id ?? row.type_id, ["type_id", "id"]);
     if (!productTypeId) return null;
     const priceType = row.default_purchase_price_type_id ?? row.default_purchase_price_type;
     return {
@@ -109,10 +116,33 @@ function normalizeRule(row: DirectusProductTypeRow): PurchaseOrderPriceTypeRule 
 
 export async function fetchPurchaseOrderPriceTypeRules(): Promise<PurchaseOrderPriceTypeRule[]> {
     const rows = await directusData<DirectusProductTypeRow[]>(
-        "/items/product_type?fields=type_id,type_name,default_purchase_price_type_id,default_purchase_price_type_id.price_type_id,default_purchase_price_type_id.price_type_name&sort=type_name&limit=-1",
+        "/items/product_type?fields=id,name,default_purchase_price_type_id,default_purchase_price_type_id.price_type_id,default_purchase_price_type_id.price_type_name&sort=name&limit=-1",
         "Unable to load product-type price rules."
     );
-    return rows.map(normalizeRule).filter((rule): rule is PurchaseOrderPriceTypeRule => Boolean(rule));
+    const rules = rows.map(normalizeRule).filter((rule): rule is PurchaseOrderPriceTypeRule => Boolean(rule));
+    const priceTypeIds = [...new Set(rules
+        .map(rule => rule.priceTypeId)
+        .filter((id): id is number => id !== null))];
+    if (priceTypeIds.length === 0) return rules;
+
+    const priceTypes = await directusData<DirectusPriceTypeRow[]>(
+        "/items/price_types?fields=price_type_id,price_type_name&limit=-1",
+        "Unable to load Price Type names."
+    );
+    const namesById = new Map(
+        priceTypes
+            .map(priceType => {
+                const id = relationId(priceType.price_type_id, ["price_type_id", "id"]);
+                const name = priceType.price_type_name?.trim();
+                return id && name ? [id, name] as const : null;
+            })
+            .filter((entry): entry is readonly [number, string] => Boolean(entry))
+    );
+
+    return rules.map(rule => ({
+        ...rule,
+        priceTypeName: rule.priceTypeName || (rule.priceTypeId ? namesById.get(rule.priceTypeId) || null : null)
+    }));
 }
 
 function productTypeId(value: DirectusRelation): number | null {
@@ -125,9 +155,11 @@ function resolveProductType(
     rulesByProductType: Map<number, PurchaseOrderPriceTypeRule>
 ) {
     const ownTypeId = productTypeId(product.product_type);
-    const parentTypeId = product.parent_id && typeof product.parent_id === "object"
-        ? productTypeId(product.parent_id.product_type)
-        : null;
+    const parentTypeId = product.parent_product_type
+        ? productTypeId(product.parent_product_type)
+        : product.parent_id && typeof product.parent_id === "object"
+            ? productTypeId(product.parent_id.product_type)
+            : null;
 
     if (ownTypeId && parentTypeId && ownTypeId !== parentTypeId) {
         throw new PurchaseOrderPriceTypeError(
@@ -221,17 +253,41 @@ export function resolvePurchaseOrderPriceTypeFromRows(
 export async function resolvePurchaseOrderPriceType(productIds: number[]): Promise<ResolvedPurchaseOrderPriceType> {
     const uniqueProductIds = [...new Set(productIds)];
     const productFilter = uniqueProductIds.join(",");
-    const [products, rules] = await Promise.all([
+    const [selectedProducts, rules] = await Promise.all([
         directusData<DirectusProductRow[]>(
-            `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type.type_id,product_type.type_name,parent_id.product_id,parent_id.product_type.type_id,parent_id.product_type.type_name&limit=${uniqueProductIds.length}`,
+            `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id&limit=${uniqueProductIds.length}`,
             "Unable to load products for Price Type determination."
         ),
         fetchPurchaseOrderPriceTypeRules()
     ]);
+    const parentProductIds = [...new Set(selectedProducts
+        .map(product => relationId(product.parent_id, ["product_id", "id"]))
+        .filter((id): id is number => id !== null))];
+    let products = selectedProducts;
+    if (parentProductIds.length > 0) {
+        const parentProducts = await directusData<DirectusProductRow[]>(
+            `/items/products?filter[product_id][_in]=${parentProductIds.join(",")}&fields=product_id,product_type&limit=${parentProductIds.length}`,
+            "Unable to load parent products for Price Type determination."
+        );
+        const parentTypes = new Map(parentProducts.map(product => [
+            relationId(product.product_id, ["product_id", "id"]),
+            product.product_type
+        ]));
+        products = selectedProducts.map(product => {
+            const parentId = relationId(product.parent_id, ["product_id", "id"]);
+            return parentId && parentTypes.has(parentId)
+                ? { ...product, parent_product_type: parentTypes.get(parentId) }
+                : product;
+        });
+    }
     const rulesByProductType = new Map(rules.map(rule => [rule.productTypeId, rule]));
     const resolvedTypeIds = products.flatMap(product => {
         const ownType = productTypeId(product.product_type);
-        const parentType = product.parent_id && typeof product.parent_id === "object" ? productTypeId(product.parent_id.product_type) : null;
+        const parentType = product.parent_product_type
+            ? productTypeId(product.parent_product_type)
+            : product.parent_id && typeof product.parent_id === "object"
+                ? productTypeId(product.parent_id.product_type)
+                : null;
         return [ownType, parentType].filter((id): id is number => id !== null);
     });
     const priceTypeIds = [...new Set(resolvedTypeIds.map(typeId => rulesByProductType.get(typeId)?.priceTypeId).filter((id): id is number => id !== null))];
