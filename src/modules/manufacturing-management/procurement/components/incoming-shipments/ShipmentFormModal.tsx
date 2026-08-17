@@ -51,6 +51,8 @@ export interface ShipmentFormModalProps {
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
     hasSubmitted: boolean;
     draftSummary: {
+        grossForeign: string;
+        discountForeign: string;
         grossPhp: string;
         discountPhp: string;
         vatPhp: string;
@@ -58,7 +60,6 @@ export interface ShipmentFormModalProps {
         netPhp: string;
         netForeign: string;
     };
-    totalPhpValue: string;
     totalUsdValue: string;
     loading: boolean;
     listLoading: boolean;
@@ -93,7 +94,6 @@ export function ShipmentFormModal({
     productPerSupplierMap,
     hasSubmitted,
     draftSummary,
-    totalPhpValue,
     loading,
     listLoading
 }: ShipmentFormModalProps) {
@@ -139,7 +139,9 @@ export function ShipmentFormModal({
                         <div>
                             <h3 id="purchase-order-dialog-title" className="font-extrabold text-base flex items-center gap-2">
                                 {editingShipmentId
-                                    ? activeShipment?.status === "Rejected" ? "Revise Rejected Purchase Order" : "Edit Requested Purchase Order"
+                                    ? activeShipment?.status === "Rejected"
+                                        ? "Revise Rejected Purchase Order"
+                                        : canonicalDrafting ? "Edit For Approval Purchase Order" : "Edit Requested Purchase Order"
                                     : canonicalDrafting ? "Create Purchase Order" : "Log Incoming Cargo & PO Line Items"}
                                 <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider">
                                     Excel Grid Mode
@@ -698,7 +700,7 @@ export function ShipmentFormModal({
                                                     AVG Rate
                                                 </td>
                                                 <td className="p-2.5 border-r text-right text-foreground">
-                                                    {formatMoney(draftSummary.grossPhp ? (canonicalDrafting ? draftSummary.netForeign : totalPhpValue) : 0, currencyCode)}
+                                                    {formatMoney(draftSummary.grossForeign, currencyCode)}
                                                 </td>
                                                 <td colSpan={2} className="p-2.5 border-r text-right text-muted-foreground font-medium text-[10px]">
                                                     Disc Subtotal
@@ -726,15 +728,15 @@ export function ShipmentFormModal({
                                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs pt-1">
                                     <div className="bg-background p-2.5 border rounded-lg">
                                         <span className="text-[10px] text-muted-foreground uppercase font-bold block">Gross ({currencyCode})</span>
-                                        <span className="font-mono font-bold text-foreground text-sm block">{formatMoney(draftSummary.grossPhp, currencyCode)}</span>
+                                        <span className="font-mono font-bold text-foreground text-sm block">{formatMoney(draftSummary.grossForeign, currencyCode)}</span>
                                     </div>
                                     <div className="bg-background p-2.5 border rounded-lg">
                                         <span className="text-[10px] text-muted-foreground uppercase font-bold block">Discount ({currencyCode})</span>
-                                        <span className="font-mono font-bold text-foreground text-sm block">{formatMoney(draftSummary.discountPhp, currencyCode)}</span>
+                                        <span className="font-mono font-bold text-foreground text-sm block">{formatMoney(draftSummary.discountForeign, currencyCode)}</span>
                                     </div>
                                     <div className="bg-background p-2.5 border rounded-lg sm:col-span-2">
                                         <span className="text-[10px] text-muted-foreground uppercase font-bold block">Net {currencyCode} Value</span>
-                                        <span className="font-mono font-black text-primary text-base block">{formatMoney(draftSummary.netPhp, currencyCode)}</span>
+                                        <span className="font-mono font-black text-primary text-base block">{formatMoney(draftSummary.netForeign, currencyCode)}</span>
                                     </div>
                                 </div>
                             </div>
@@ -765,7 +767,9 @@ export function ShipmentFormModal({
                                             : canonicalDrafting ? "Creating Purchase Order..." : "Registering Shipment..."}
                                     </>
                                 ) : (editingShipmentId
-                                    ? activeShipment?.status === "Rejected" ? "Revise & Resubmit PO" : "Save Requested PO"
+                                    ? activeShipment?.status === "Rejected"
+                                        ? "Revise & Resubmit PO"
+                                        : canonicalDrafting ? "Save For Approval PO" : "Save Requested PO"
                                     : canonicalDrafting ? "Create Purchase Order" : "Register Shipment")}
                             </button>
                         </div>

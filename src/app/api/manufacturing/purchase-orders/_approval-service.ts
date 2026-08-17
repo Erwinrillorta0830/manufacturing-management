@@ -429,7 +429,7 @@ async function submitPurchaseOrderApprovalUnlocked(
                     ? "Rejected"
                     : targetStatus === INVENTORY_STATUS.REJECTED
                         ? "Rejected"
-                        : "Requested",
+                        : "For Approval",
         workflowRevision: nextRevision
     };
 }

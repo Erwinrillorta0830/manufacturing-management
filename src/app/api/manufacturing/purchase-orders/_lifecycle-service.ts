@@ -447,7 +447,7 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
         throw error;
     }
 
-    return { success: true, purchaseOrderId: id, status: "Requested", workflowRevision: nextRevision };
+    return { success: true, purchaseOrderId: id, status: "For Approval", workflowRevision: nextRevision };
 }
 
 export async function cancelRejectedPurchaseOrder(id: number, command: CancellationCommand, actor: AuthorizedPurchaseOrderUser) {

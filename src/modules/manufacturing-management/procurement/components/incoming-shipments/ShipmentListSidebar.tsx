@@ -94,7 +94,7 @@ export function ShipmentListSidebar({
                         className="rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground h-9 w-32"
                     >
                         <option value="All">All Statuses</option>
-                        <option value={canonicalDrafting ? "Requested" : "Ordered"}>{canonicalDrafting ? "Requested" : "Ordered"}</option>
+                        <option value={canonicalDrafting ? "For Approval" : "Ordered"}>{canonicalDrafting ? "For Approval" : "Ordered"}</option>
                         <option value="Approved">Approved</option>
                         <option value="Awaiting Payment">Awaiting Payment</option>
                         <option value="Cancelled">Cancelled</option>
@@ -162,7 +162,7 @@ export function ShipmentListSidebar({
                             >
                                 <div className="flex items-start justify-between gap-2">
                                     <span className="font-bold text-xs text-foreground truncate">{canonicalDrafting ? `PO: ${s.purchase_order_no || s.reference_number}` : `BL/PO: ${s.reference_number}`}</span>
-                                    {getStatusBadge(displayShipmentStatus(s))}
+                                    {getStatusBadge(displayShipmentStatus(s, canonicalDrafting))}
                                 </div>
                                 <div className="flex items-center justify-between text-[11px] text-muted-foreground font-semibold">
                                     <div className="flex items-center gap-1.5 truncate">

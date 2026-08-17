@@ -65,7 +65,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         discountTypes,
         productPerSupplierMap,
         isFinanceManager,
-        totalPhpValue,
         totalUsdValue,
         draftSummary
     } = useIncomingShipmentsForm({
@@ -266,7 +265,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 jobOrders={jobOrders}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
-                totalPhpValue={totalPhpValue}
                 totalUsdValue={totalUsdValue}
                 loading={loading}
                 listLoading={listLoading}

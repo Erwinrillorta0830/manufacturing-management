@@ -63,6 +63,12 @@ export function canTransitionInventoryStatus(current: number, target: number): b
 
 export type ShipmentStatusLabel = "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "En Route" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
 
+export type PurchaseOrderStatusLabel = "For Approval" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "En Route" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+
+export function isPurchaseOrderApprovalStatus(status: string | null | undefined): boolean {
+    return status === "For Approval" || status === "Requested";
+}
+
 export function isReceivingQueueShipmentStatus(status: string | number | null | undefined): boolean {
     if (Number(status) === INVENTORY_STATUS.FOR_PICKUP || Number(status) === INVENTORY_STATUS.PARTIALLY_RECEIVED) return true;
     return status === "For Pickup"
@@ -95,17 +101,20 @@ export function inventoryStatusToShipmentStatus(statusId?: number | null, paymen
     }
 }
 
-export function inventoryStatusToPurchaseOrderStatus(statusId?: number | null, paymentStatus?: number | null) {
+export function inventoryStatusToPurchaseOrderStatus(statusId?: number | null, paymentStatus?: number | null): PurchaseOrderStatusLabel {
     if (statusId === INVENTORY_STATUS.REQUESTED) {
         return Number(paymentStatus) === PAYMENT_STATUS.AWAITING_PAYMENT
             ? "Awaiting Payment" as const
-            : "Requested" as const;
+            : "For Approval" as const;
     }
-    return inventoryStatusToShipmentStatus(statusId, paymentStatus);
+    const status = inventoryStatusToShipmentStatus(statusId, paymentStatus);
+    return status === "Ordered" ? "For Approval" : status;
 }
 
 export function shipmentStatusToInventoryStatus(status: string): InventoryStatusId {
     switch (status) {
+        case "For Approval":
+        case "Requested": return INVENTORY_STATUS.REQUESTED;
         case "Approved": return INVENTORY_STATUS.APPROVED;
         case "Awaiting Payment": return INVENTORY_STATUS.AWAITING_PAYMENT;
         case "Cancelled": return INVENTORY_STATUS.CANCELLED;
