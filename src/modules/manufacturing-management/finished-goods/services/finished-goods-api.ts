@@ -22,6 +22,23 @@ import {
  * Client-side services for Finished Goods interacting with the Next.js API BFF.
  */
 
+export function extractId(value: unknown): number | undefined {
+    if (value === null || value === undefined || value === "") return undefined;
+    if (typeof value === "number") {
+        return Number.isFinite(value) && value > 0 ? value : undefined;
+    }
+    if (typeof value === "string") {
+        const parsed = Number(value.trim());
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    }
+    if (typeof value === "object") {
+        const obj = value as Record<string, unknown>;
+        const candidate = obj.category_id ?? obj.brand_id ?? obj.unit_id ?? obj.id ?? obj.class_id ?? obj.segment_id ?? obj.section_id ?? obj.product_id;
+        return extractId(candidate);
+    }
+    return undefined;
+}
+
 export function normalizeProductActiveState(value: unknown): boolean {
     if (value === undefined || value === null) return true;
     if (typeof value === "boolean") return value;
@@ -44,10 +61,9 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
 
     // Map Directus model to local Product interface
     return data.map((p: BFFCatalogProduct) => {
-        const parentId = p.parent_id && typeof p.parent_id === "object"
-            // disabled-lint-next-line @typescript-eslint/no-explicit-any
-            ? Number((p.parent_id as any).product_id)
-            : (p.parent_id ? Number(p.parent_id) : null);
+        const parentId = extractId(p.parent_id) ?? null;
+        const isActive = normalizeProductActiveState(p.isActive);
+        const resolvedStatus = (p as unknown as { status?: string }).status || (isActive ? "Active" : "Inactive");
 
         return {
             id: String(p.product_id),
@@ -56,20 +72,21 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
             description: p.short_description || p.description || "",
             identityKey: p.description || null,
             barcode: p.barcode || "",
-            baseUom: p.unit_of_measurement?.unit_shortcut || "PCS",
+            baseUom: p.unit_of_measurement?.unit_shortcut || p.unit_of_measurement?.unit_name || "PCS",
             expectedYieldPercent: 100,
             targetSellingPrice: Number(p.price_per_unit || 0),
             parentProduct: parentId === null,
             parent_id: parentId,
-            isActive: normalizeProductActiveState(p.isActive),
+            status: resolvedStatus,
+            isActive: resolvedStatus !== "Inactive" && isActive,
             bom: [],
             routings: [],
             densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
-            product_brand: p.product_brand ? Number(p.product_brand) : undefined,
-            product_category: p.product_category ? Number(p.product_category) : undefined,
-            product_class: p.product_class ? Number(p.product_class) : undefined,
-            product_segment: p.product_segment ? Number(p.product_segment) : undefined,
-            product_section: p.product_section ? Number(p.product_section) : undefined,
+            product_brand: extractId(p.product_brand),
+            product_category: extractId(p.product_category),
+            product_class: extractId(p.product_class),
+            product_segment: extractId(p.product_segment),
+            product_section: extractId(p.product_section),
             product_shelf_life: p.product_shelf_life ? Number(p.product_shelf_life) : undefined,
             cost_per_unit: p.cost_per_unit ? Number(p.cost_per_unit) : undefined,
             unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : undefined,

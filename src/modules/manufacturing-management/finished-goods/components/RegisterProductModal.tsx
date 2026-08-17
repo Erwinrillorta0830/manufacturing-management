@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { CreatableSelect } from "./CreatableSelect";
 import { uploadProductImage } from "../services/product-image";
+import { extractId } from "../services/finished-goods-api";
 import { Product, Supplier } from "../types";
 import { type RegisterFormField, type RegisterFormErrors, type useFinishedGoods } from "../hooks/useFinishedGoods";
 
@@ -339,12 +340,11 @@ export function RegisterProductModal({
                                             setRegisterForm(prev => {
                                                 if (parentProd) {
                                                     const count = Number(prev.uomCount) || 20;
-                                                    const parentCatId = typeof parentProd.product_category === "object" && parentProd.product_category !== null
-                                                        ? (parentProd.product_category as any).category_id ?? (parentProd.product_category as any).id
-                                                        : parentProd.product_category;
-                                                    const parentBrandId = typeof parentProd.product_brand === "object" && parentProd.product_brand !== null
-                                                        ? (parentProd.product_brand as any).brand_id ?? (parentProd.product_brand as any).id
-                                                        : parentProd.product_brand;
+                                                    const parentCatId = extractId(parentProd.product_category);
+                                                    const parentBrandId = extractId(parentProd.product_brand);
+                                                    const parentClassId = extractId(parentProd.product_class);
+                                                    const parentSegmentId = extractId(parentProd.product_segment);
+                                                    const parentSectionId = extractId(parentProd.product_section);
 
                                                     return {
                                                         ...prev,
@@ -358,9 +358,9 @@ export function RegisterProductModal({
                                                         description: parentProd.description || prev.description,
                                                         brandId: parentBrandId ? String(parentBrandId) : prev.brandId,
                                                         categoryId: parentCatId ? String(parentCatId) : prev.categoryId,
-                                                        classId: parentProd.product_class ? String(parentProd.product_class) : prev.classId,
-                                                        segmentId: parentProd.product_segment ? String(parentProd.product_segment) : prev.segmentId,
-                                                        sectionId: parentProd.product_section ? String(parentProd.product_section) : prev.sectionId,
+                                                        classId: parentClassId ? String(parentClassId) : prev.classId,
+                                                        segmentId: parentSegmentId ? String(parentSegmentId) : prev.segmentId,
+                                                        sectionId: parentSectionId ? String(parentSectionId) : prev.sectionId,
                                                         shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
                                                         densityFactor: parentProd.densityFactor !== undefined
                                                             ? String(parentProd.densityFactor)

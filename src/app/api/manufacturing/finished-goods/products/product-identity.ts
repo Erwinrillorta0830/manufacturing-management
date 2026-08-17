@@ -161,8 +161,7 @@ export async function ensureProductIdentityAvailable(
     if (identity.parentId) {
         const parentIdNum = Number(identity.parentId);
         const query = new URLSearchParams({
-            "filter[_or][0][product_id][_eq]": String(parentIdNum),
-            "filter[_or][1][parent_id][_eq]": String(parentIdNum),
+            "filter[parent_id][_eq]": String(parentIdNum),
             fields: "product_id,unit_of_measurement",
             limit: "100"
         });
@@ -175,7 +174,7 @@ export async function ensureProductIdentityAvailable(
         const collision = items.find((p: { product_id?: number | string; unit_of_measurement?: unknown }) => {
             if (Number(p.product_id) === currentId) return false;
             const pUom = typeof p.unit_of_measurement === "object" && p.unit_of_measurement !== null
-                ? Number((p.unit_of_measurement as { unit_id?: number | string }).unit_id)
+                ? Number((p.unit_of_measurement as { unit_id?: number | string; id?: number | string }).unit_id ?? (p.unit_of_measurement as { unit_id?: number | string; id?: number | string }).id)
                 : Number(p.unit_of_measurement);
             return pUom === Number(identity.unitId);
         });
@@ -189,6 +188,7 @@ export async function ensureProductIdentityAvailable(
     } else {
         const query = new URLSearchParams({
             "filter[product_name][_eq]": identity.productName,
+            "filter[parent_id][_null]": "true",
             "filter[unit_of_measurement][_eq]": String(identity.unitId),
             fields: "product_id,product_name,unit_of_measurement",
             limit: "10"

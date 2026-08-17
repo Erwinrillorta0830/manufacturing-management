@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
 import { uploadProductImage } from "../services/product-image";
+import { extractId } from "../services/finished-goods-api";
 import { 
     Tag, 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -137,17 +138,22 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     const isParent = !selectedProduct.parent_id;
     
     const familyChildren = React.useMemo(() => {
-        return products.filter(p => String(p.parent_id) === String(selectedProduct.id) && p.isActive !== false);
+        return products.filter(p => {
+            const pParentId = extractId(p.parent_id);
+            return pParentId !== undefined && String(pParentId) === String(selectedProduct.id) && p.isActive !== false;
+        });
     }, [products, selectedProduct.id]);
     
     const parentProductObj = React.useMemo(() => {
-        if (!selectedProduct.parent_id) return null;
-        return products.find(p => String(p.id) === String(selectedProduct.parent_id)) || null;
+        const pId = extractId(selectedProduct.parent_id);
+        if (!pId) return null;
+        return products.find(p => String(p.id) === String(pId)) || null;
     }, [products, selectedProduct.parent_id]);
     
     const siblingProducts = React.useMemo(() => {
-        if (!selectedProduct.parent_id) return [];
-        return products.filter(p => String(p.parent_id) === String(selectedProduct.parent_id));
+        const pId = extractId(selectedProduct.parent_id);
+        if (!pId) return [];
+        return products.filter(p => extractId(p.parent_id) === pId);
     }, [products, selectedProduct.parent_id]);
 
     const brandOptions = React.useMemo(() => {
@@ -258,10 +264,8 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 <CreatableSelect
                                     options={brandOptions}
                                     value={(() => {
-                                        const b = editedDetails.product_brand ?? selectedProduct.product_brand;
-                                        if (!b) return "";
-                                        const bObj = b as { brand_id?: number | string; id?: number | string };
-                                        return typeof b === "object" ? String(bObj.brand_id ?? bObj.id ?? "") : String(b);
+                                        const b = extractId(editedDetails.product_brand) ?? extractId(selectedProduct.product_brand);
+                                        return b ? String(b) : "";
                                     })()}
                                     onValueChange={(val) => handleDetailChange("product_brand", val ? Number(val) : undefined)}
                                     placeholder="Select brand..."
@@ -280,10 +284,8 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 <CreatableSelect
                                     options={categoryOptions}
                                     value={(() => {
-                                        const c = editedDetails.product_category ?? selectedProduct.product_category;
-                                        if (!c) return "";
-                                        const cObj = c as { category_id?: number | string; id?: number | string };
-                                        return typeof c === "object" ? String(cObj.category_id ?? cObj.id ?? "") : String(c);
+                                        const c = extractId(editedDetails.product_category) ?? extractId(selectedProduct.product_category);
+                                        return c ? String(c) : "";
                                     })()}
                                     onValueChange={(val) => handleDetailChange("product_category", val ? Number(val) : undefined)}
                                     placeholder="Select category..."
