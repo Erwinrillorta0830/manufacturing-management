@@ -145,7 +145,7 @@ export function useLotManagement() {
             return false;
         }
         if (isCapacityInvalid) {
-            toast.error("Max Batch Capacity must be a positive number greater than 0");
+            toast.error("Max Capacity must be a positive number greater than 0");
             return false;
         }
         return true;

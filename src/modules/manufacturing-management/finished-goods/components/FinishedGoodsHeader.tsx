@@ -12,7 +12,9 @@ import {
     FileText,
     Sliders,
     Shield,
-    Star
+    Star,
+    Send,
+    Clock
 } from "lucide-react";
 import { Product, ProductVersion } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
@@ -37,6 +39,7 @@ export interface FinishedGoodsHeaderProps {
         action?: "set_active" | "set_primary" | "deactivate" | "deactivate_all",
         deactivateAll?: boolean
     ) => void;
+    handleSubmitVersionForApproval?: (versionId?: number) => void;
     handleOpenVersionModal: () => void;
     setIsCompareModalOpen: (open: boolean) => void;
     isSyncingYield: boolean;
@@ -61,6 +64,7 @@ export function FinishedGoodsHeader({
     hasUnsavedChanges,
     setHasUnsavedChanges,
     handleActivateVersion,
+    handleSubmitVersionForApproval,
     handleOpenVersionModal,
     setIsCompareModalOpen,
     isSyncingYield,
@@ -220,6 +224,10 @@ export function FinishedGoodsHeader({
                                     const isActive = currentVer.is_active || currentVer.status === "Active";
                                     const isApproved = currentVer.status === "Approved" || currentVer.status === "Active" || !!currentVer.is_active;
                                     const isPrimary = !!currentVer.is_primary;
+                                    const isSubmitted = currentVer.status === "For Approval" || currentVer.status === "Pending Approval";
+                                    const isRejected = currentVer.status === "Rejected";
+                                    const isRevision = currentVer.status === "Revision Required";
+                                    const isDraft = currentVer.status === "Draft" || !currentVer.status;
 
                                     return (
                                         <div className="flex items-center gap-1.5">
@@ -230,6 +238,22 @@ export function FinishedGoodsHeader({
                                             ) : isActive ? (
                                                 <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider">
                                                     Active Alternate
+                                                </span>
+                                            ) : isApproved ? (
+                                                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider">
+                                                    Approved
+                                                </span>
+                                            ) : isSubmitted ? (
+                                                <span className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-[10px] font-semibold px-2 py-1 rounded flex items-center gap-1">
+                                                    <Clock className="h-3 w-3" /> Pending Approval
+                                                </span>
+                                            ) : isRejected ? (
+                                                <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[10px] font-semibold px-2 py-1 rounded uppercase tracking-wider">
+                                                    Rejected
+                                                </span>
+                                            ) : isRevision ? (
+                                                <span className="bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30 text-[10px] font-semibold px-2 py-1 rounded uppercase tracking-wider">
+                                                    Revision Required
                                                 </span>
                                             ) : (
                                                 <span className="bg-muted border text-muted-foreground rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider">
@@ -252,7 +276,8 @@ export function FinishedGoodsHeader({
                                                 </button>
                                             )}
 
-                                            {!isActive && (
+                                            {/* Activate (Alternate) — only for Approved versions that are not yet Active */}
+                                            {isApproved && !isActive && (
                                                 <button
                                                     type="button"
                                                     onClick={() => {
@@ -265,10 +290,20 @@ export function FinishedGoodsHeader({
                                                 </button>
                                             )}
 
-                                            {!isApproved && (
-                                                <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[10px] font-semibold px-2 py-1 rounded flex items-center gap-1">
-                                                    <span>⚠️ Unapproved — Activate first to make Primary</span>
-                                                </span>
+                                            {/* Submit for Approval — only for Draft or Revision Required */}
+                                            {(isDraft || isRevision) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (handleSubmitVersionForApproval) {
+                                                            handleSubmitVersionForApproval(selectedVersionId);
+                                                        }
+                                                    }}
+                                                    className="inline-flex items-center gap-1 rounded bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                                    title="Submit this version for approval review"
+                                                >
+                                                    <Send className="h-3.5 w-3.5" /> Submit for Approval
+                                                </button>
                                             )}
 
                                             {isActive && (

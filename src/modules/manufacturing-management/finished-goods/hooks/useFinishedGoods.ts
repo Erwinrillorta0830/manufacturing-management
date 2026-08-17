@@ -714,8 +714,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                 const vList = await fetchVersions(res.productId);
                 setVersions(vList);
                 if (vList && vList.length > 0) {
-                    const activeVer = vList.find((v: any) => v.is_active);
-                    setSelectedVersionId(activeVer ? activeVer.version_id : vList[0].version_id);
+                    // New product starts with a Draft version — just select the first one
+                    setSelectedVersionId(vList[0].version_id);
                 }
 
                 // Switch tab straight to BOM
@@ -965,7 +965,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 custom_overhead: Number(editedVersionDetails.custom_overhead ?? 0),
                 overhead_items: editedVersionDetails.overhead_items || [],
                 labor_positions: editedVersionDetails.labor_positions || [],
-                version_status: editedVersionDetails.status || "For Approval",
+                version_status: editedVersionDetails.status || "Draft",
                 valid_from: editedVersionDetails.valid_from || null,
                 valid_to: editedVersionDetails.valid_to || null,
 
@@ -1158,6 +1158,34 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
     };
 
+    const handleSubmitVersionForApproval = async (versionId?: number) => {
+        const vId = versionId || selectedVersionId;
+        if (!selectedProductId || !vId) return;
+        const numericProductId = Number(selectedProductId);
+        const currentVer = versions.find(v => v.version_id === vId);
+
+        setSavingBOM(true);
+        setSaveProgress(20);
+        setSaveStatus("Submitting version for approval...");
+        try {
+            const res = await activateVersion(numericProductId, vId, "submit_for_approval");
+            if (res.success) {
+                setSaveProgress(100);
+                toast.success(`Version '${currentVer?.version_name || vId}' submitted for approval!`);
+                const list = await fetchVersions(numericProductId);
+                setVersions(list);
+            }
+        } catch (e) {
+            console.error("Failed to submit version for approval:", e);
+            const error = e instanceof Error ? e : new Error(String(e));
+            toast.error(error.message || "Failed to submit version for approval");
+        } finally {
+            setSavingBOM(false);
+            setSaveProgress(0);
+            setSaveStatus("");
+        }
+    };
+
     const handleCreateBrand = async (name: string): Promise<number | undefined> => {
         try {
             const res = await createBrand(name);
@@ -1341,6 +1369,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         handleRegisterNewVersion,
         handleSave,
         handleActivateVersion,
+        handleSubmitVersionForApproval,
         handleAddQATemplate,
         handleSaveQATemplate
     };

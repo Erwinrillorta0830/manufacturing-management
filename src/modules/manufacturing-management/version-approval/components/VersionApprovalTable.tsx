@@ -19,16 +19,14 @@ interface VersionApprovalTableProps {
     items: VersionApprovalItem[];
     loading: boolean;
     onReviewAndCompare: (item: VersionApprovalItem) => void;
-    onQuickApprove: (item: VersionApprovalItem) => void;
-    onReject: (item: VersionApprovalItem) => void;
+    onQuickApprove?: (item: VersionApprovalItem) => void;
+    onReject?: (item: VersionApprovalItem) => void;
 }
 
 export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
     items,
     loading,
     onReviewAndCompare,
-    onQuickApprove,
-    onReject,
 }) => {
     const formatDate = (dateStr: string) => {
         try {
@@ -45,6 +43,13 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
 
     const renderStatusBadge = (status: string) => {
         switch (status) {
+            case "Draft":
+                return (
+                    <Badge variant="outline" className="bg-slate-500/15 text-slate-400 border-slate-500/30 gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">
+                        <Layers size={13} />
+                        Draft
+                    </Badge>
+                );
             case "Pending Approval":
             case "For Approval":
                 return (
@@ -54,11 +59,24 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                     </Badge>
                 );
             case "Approved":
+                return (
+                    <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">
+                        <CheckCircle size={13} />
+                        Approved
+                    </Badge>
+                );
             case "Active":
                 return (
                     <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">
                         <CheckCircle size={13} />
-                        {status === "Active" ? "Active Version" : "Approved"}
+                        Active Version
+                    </Badge>
+                );
+            case "Archived":
+            case "Inactive":
+                return (
+                    <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/20 gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">
+                        {status}
                     </Badge>
                 );
             case "Rejected":
@@ -78,7 +96,7 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                 );
             default:
                 return (
-                    <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/30 rounded-full px-2.5 py-1 text-xs font-semibold">
+                    <Badge variant="outline" className="bg-muted text-muted-foreground border-border rounded-full px-2.5 py-1 text-xs font-semibold">
                         {status}
                     </Badge>
                 );
@@ -167,7 +185,7 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                                 </TableCell>
                                 <TableCell>{renderStatusBadge(item.status)}</TableCell>
                                 <TableCell>
-                                    <div className="va-actions-cell justify-end gap-1.5">
+                                    <div className="va-actions-cell justify-end">
                                         <Button
                                             type="button"
                                             size="sm"
@@ -179,31 +197,6 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                                             <Eye size={14} />
                                             <span>Review Version</span>
                                         </Button>
-
-                                        {((item.status as string) === "Pending Approval" || (item.status as string) === "For Approval" || (item.status as string) === "Revision Required" || (item.status as string) === "Revision") && (
-                                            <>
-                                                <Button
-                                                    type="button"
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-8 w-8 p-0 bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30 hover:text-emerald-300"
-                                                    onClick={() => onQuickApprove(item)}
-                                                    title="Quick Approve"
-                                                >
-                                                    <CheckCircle size={15} />
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    size="sm"
-                                                    variant="destructive"
-                                                    className="h-8 w-8 p-0 bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 hover:text-rose-300"
-                                                    onClick={() => onReject(item)}
-                                                    title="Reject Version"
-                                                >
-                                                    <XCircle size={15} />
-                                                </Button>
-                                            </>
-                                        )}
                                     </div>
                                 </TableCell>
                             </TableRow>

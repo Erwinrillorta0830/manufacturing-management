@@ -84,14 +84,14 @@ export async function GET(request: Request) {
             });
         }
 
-        // KPI Summaries
+        // KPI Summaries — only count versions in the approval lifecycle
         let pendingCount = 0;
         let approvedMonthCount = 0;
         let rejectedCount = 0;
         let revisionCount = 0;
 
         rawVersions.forEach(v => {
-            const st = (v.status || "For Approval").toLowerCase();
+            const st = (v.status || "").toLowerCase();
             if (st === "for approval" || st === "pending approval") {
                 pendingCount++;
             } else if (st === "approved" || st === "active") {
@@ -100,9 +100,8 @@ export async function GET(request: Request) {
                 rejectedCount++;
             } else if (st === "revision required" || st === "revision") {
                 revisionCount++;
-            } else {
-                pendingCount++;
             }
+            // Draft, Archived, Inactive — not counted in any KPI bucket
         });
 
         let enriched = rawVersions.map(v => {
@@ -122,7 +121,7 @@ export async function GET(request: Request) {
                 expected_yield_percentage: Number(v.expected_yield_percentage || 100),
                 created_by: createdByName,
                 created_at: v.created_at || new Date().toISOString(),
-                status: v.status || "For Approval",
+                status: v.status || "Draft",
                 rejection_reason: v.rejection_reason || null,
                 revision_notes: v.approval_remarks || null,
                 base_version_id: null,
@@ -131,10 +130,15 @@ export async function GET(request: Request) {
         });
 
         // 1. Filter by status
+        // When no explicit status filter is provided, default to showing only approval-lifecycle statuses
+        // (Draft, Archived, Inactive are excluded from the approvals queue by default)
+        const APPROVAL_LIFECYCLE_STATUSES = ["for approval", "pending approval", "approved", "active", "rejected", "revision required", "revision"];
         if (statusParam && statusParam.trim()) {
             const statusFilter = statusParam.trim().toLowerCase();
             const allowedStatuses = statusFilter.split(",").map(s => s.trim());
             enriched = enriched.filter(v => v.status && allowedStatuses.includes(v.status.toLowerCase()));
+        } else {
+            enriched = enriched.filter(v => v.status && APPROVAL_LIFECYCLE_STATUSES.includes(v.status.toLowerCase()));
         }
 
         // 2. Filter by productId
@@ -156,6 +160,14 @@ export async function GET(request: Request) {
                 (v.created_by && v.created_by.toLowerCase().includes(term))
             );
         }
+
+        // Sort by newest first (DESC)
+        enriched.sort((a, b) => {
+            const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            if (timeB !== timeA) return timeB - timeA;
+            return b.version_id - a.version_id;
+        });
 
         return NextResponse.json({
             success: true,
@@ -179,12 +191,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { versionId, action, setActive, remarks, rejectionReason } = body;
+        const { versionId, action, setActive, remarks, rejectionReason, reason, feedback } = body;
 
         if (!versionId) {
             return NextResponse.json({ error: "Missing required field: versionId" }, { status: 400 });
         }
-        if (!action || !["approve", "reject", "request_revision"].includes(action)) {
+
+        // Normalize action key
+        const normalizedAction = action === "revision" ? "request_revision" : action;
+
+        if (!normalizedAction || !["approve", "reject", "request_revision"].includes(normalizedAction)) {
             return NextResponse.json({ error: "Invalid action. Must be 'approve', 'reject', or 'request_revision'." }, { status: 400 });
         }
 
@@ -206,43 +222,85 @@ export async function POST(request: Request) {
 
         let updatePayload: Record<string, unknown> = {};
 
-        if (action === "approve") {
+        if (normalizedAction === "approve") {
+            // Validate that the version has at least 1 routing step and 1 BOM component
+            const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes?filter[version_id][_eq]=${numVersionId}&limit=-1`, { headers, cache: "no-store" });
+            const routesJson = routesRes.ok ? await routesRes.json() : { data: [] };
+            const routes = routesJson.data || [];
+
+            if (routes.length === 0) {
+                return NextResponse.json({
+                    error: "Cannot approve version: Both BOM components and routing operations are required before approval.",
+                    code: "EMPTY_VERSION_VALIDATION"
+                }, { status: 400 });
+            }
+
+            const routeIds = routes.map((r: { route_id: number }) => r.route_id).filter(Boolean);
+            let hasBOM = false;
+            if (routeIds.length > 0) {
+                const bomRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?filter[route_id][_in]=${routeIds.join(",")}&limit=1`, { headers, cache: "no-store" });
+                if (bomRes.ok) {
+                    const bomJson = await bomRes.json();
+                    hasBOM = (bomJson.data || []).length > 0;
+                }
+            }
+
+            if (!hasBOM) {
+                return NextResponse.json({
+                    error: "Cannot approve version: Both BOM components and routing operations are required before approval.",
+                    code: "EMPTY_VERSION_VALIDATION"
+                }, { status: 400 });
+            }
+
             const isSetActive = Boolean(setActive);
             const targetStatus = isSetActive ? "Active" : "Approved";
 
             if (isSetActive && productId) {
-                // Set status of all other versions for this product to "Archived"
-                const otherVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1&fields=version_id`, { headers, cache: "no-store" });
+                // Fetch all other versions including is_primary status
+                const otherVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1&fields=version_id,is_primary`, { headers, cache: "no-store" });
                 if (otherVerRes.ok) {
                     const otherVerJson = await otherVerRes.json();
                     const otherVersions = (otherVerJson.data || []).filter((v: { version_id: number }) => Number(v.version_id) !== numVersionId);
                     for (const ov of otherVersions) {
+                        // Archive and clear primary flag on all sibling versions
                         await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${ov.version_id}`, {
                             method: "PATCH",
                             headers,
-                            body: JSON.stringify({ status: "Archived" })
+                            body: JSON.stringify({ status: "Archived", is_primary: false })
                         });
                     }
                 }
             }
 
+            // Determine is_primary: only assign if activating and no other primary exists (or if archiving all others cleared them)
+            const isPrimaryTarget = isSetActive ? true : false;
+
             updatePayload = {
                 status: targetStatus,
                 approved_by: userId,
                 approved_at: nowIso,
-                approval_remarks: remarks || null
+                approval_remarks: remarks || feedback || null,
+                ...(isSetActive ? { is_primary: isPrimaryTarget } : {})
             };
-        } else if (action === "reject") {
+        } else if (normalizedAction === "reject") {
+            const finalReason = rejectionReason || reason || remarks;
+            if (!finalReason || !finalReason.trim()) {
+                return NextResponse.json({ error: "Rejection reason is required." }, { status: 400 });
+            }
             updatePayload = {
                 status: "Rejected",
-                rejection_reason: rejectionReason || null,
+                rejection_reason: finalReason.trim(),
                 approved_by: userId,
                 approved_at: nowIso
             };
-        } else if (action === "request_revision") {
+        } else if (normalizedAction === "request_revision") {
+            const finalFeedback = remarks || feedback || reason;
+            if (!finalFeedback || !finalFeedback.trim()) {
+                return NextResponse.json({ error: "Revision instructions / feedback are required." }, { status: 400 });
+            }
             updatePayload = {
                 status: "Revision Required",
-                approval_remarks: remarks || null,
+                approval_remarks: finalFeedback.trim(),
                 approved_by: userId,
                 approved_at: nowIso
             };
@@ -255,7 +313,8 @@ export async function POST(request: Request) {
         });
 
         if (!patchRes.ok) {
-            throw new Error(`Failed to update version status: ${patchRes.status}`);
+            const errText = await patchRes.text().catch(() => "");
+            throw new Error(`Failed to update version status: ${patchRes.status} ${errText}`);
         }
 
         const patchJson = await patchRes.json();

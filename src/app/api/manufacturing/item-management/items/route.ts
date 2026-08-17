@@ -82,7 +82,7 @@ export async function GET() {
                 : "N/A";
             const updatedByName = updatedUser
                 ? [updatedUser.user_fname, updatedUser.user_lname].filter(Boolean).join(" ") || "N/A"
-                : "N/A";
+                : (createdByName !== "N/A" ? createdByName : "N/A");
 
             return {
                 ...item,
@@ -146,6 +146,7 @@ export async function POST(request: Request) {
             item_classification: Number(item_classification),
             created_by: userId ? Number(userId) : null,
             created_at: manilaTime,
+            updated_by: userId ? Number(userId) : null,
             updated_at: manilaTime
         };
 

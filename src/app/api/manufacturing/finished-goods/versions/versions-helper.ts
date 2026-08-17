@@ -480,7 +480,8 @@ export async function createProductVersion(
             expected_yield_percentage: expectedYield,
             base_quantity: baseQuantity,
             uom_id: uomId || null,
-            status: "For Approval",
+            status: "Draft",
+            is_primary: false,
             valid_from: todayStr
         };
         const res = await fetch(url, {

@@ -361,7 +361,7 @@ export async function createSection(sectionName: string): Promise<{ success: boo
 export async function activateVersion(
     productId: number,
     versionId?: number,
-    action: "set_active" | "set_primary" | "deactivate" | "deactivate_all" = "set_active",
+    action: "set_active" | "set_primary" | "deactivate" | "deactivate_all" | "submit_for_approval" = "set_active",
     deactivateAll?: boolean
 ): Promise<{ success: boolean }> {
     const effectiveAction = deactivateAll ? "deactivate_all" : action;

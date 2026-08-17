@@ -145,7 +145,7 @@ export default function LotTable({
                                 <TableHead className="w-[100px]">No.</TableHead>
                                 <TableHead>Lot Name</TableHead>
                                 <TableHead>Inventory Type</TableHead>
-                                <TableHead>Max Batch Capacity</TableHead>
+                                <TableHead>Max Capacity (pcs)</TableHead>
                                 <TableHead>Created By</TableHead>
                                 <TableHead className="text-right w-[100px]">Actions</TableHead>
                             </TableRow>
@@ -162,7 +162,7 @@ export default function LotTable({
                                             {lot.inventoryTypeName}
                                         </span>
                                     </TableCell>
-                                    <TableCell>{lot.maxBatchCapacity.toLocaleString()} batches</TableCell>
+                                    <TableCell>{lot.maxBatchCapacity.toLocaleString()} pcs</TableCell>
                                     <TableCell className="text-muted-foreground">
                                         {lot.createdBy || "System"}
                                     </TableCell>
