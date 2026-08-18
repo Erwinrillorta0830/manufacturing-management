@@ -194,11 +194,17 @@ export function useIncomingShipmentsForm({
         if (!activeShipment) return;
 
         setHasSubmitted(false);
+        const storedRemark = activeShipment.remark || "";
+        const legacyRemarkMatch = storedRemark.match(/^(REJECTED|CANCELLED):\s*/i);
+        const dateReceived = activeShipment.date_received
+            ? activeShipment.date_received.split("T")[0]
+            : new Date().toISOString().split("T")[0];
 
         setShipmentForm({
             reference_number: activeShipment.reference_number,
+            remark: legacyRemarkMatch ? "" : storedRemark,
             supplier_id: String(activeShipment.supplier_id && typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id.id : activeShipment.supplier_id || ""),
-            date_received: activeShipment.date_received || new Date().toISOString().split("T")[0],
+            date_received: dateReceived,
             total_foreign_currency: String(activeShipment.total_foreign_currency),
             exchange_rate: String(activeShipment.exchange_rate),
             total_php_value: String(activeShipment.total_php_value),
@@ -264,6 +270,7 @@ export function useIncomingShipmentsForm({
         setHasSubmitted(false);
         setShipmentForm({
             reference_number: "",
+            remark: "",
             supplier_id: "",
             date_received: new Date().toISOString().split("T")[0],
             total_foreign_currency: "",

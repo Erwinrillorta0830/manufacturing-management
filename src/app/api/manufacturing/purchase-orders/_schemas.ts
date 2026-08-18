@@ -55,6 +55,7 @@ export const purchaseOrderLineSchema = z.object({
 export const legacyPurchaseOrderCreateSchema = z.object({
     shipmentData: z.object({
         reference_number: z.string().trim().min(1).max(255),
+        remark: z.string().nullable().optional(),
         supplier_id: positiveId,
         exchange_rate: positiveDecimal,
         total_foreign_currency: nonNegativeMoney,
@@ -116,6 +117,7 @@ export const purchaseOrderDraftLineSchema = z.object({
 
 export const purchaseOrderCreateSchema = z.object({
     externalReference: z.string().trim().max(255).optional(),
+    remark: z.string().optional(),
     supplierId: positiveId,
     branchId: positiveId,
     paymentArrangementId: positiveId,

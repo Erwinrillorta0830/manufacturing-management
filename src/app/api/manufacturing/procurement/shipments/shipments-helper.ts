@@ -789,7 +789,7 @@ export async function createIncomingShipment(
         const poPayload = {
             purchase_order_no: `PO-${extendedData.reference_number || Date.now()}`,
             reference: extendedData.reference_number,
-            remark: extendedData.remark || extendedData.notes || "Registered via Incoming Shipments portal.",
+            remark: extendedData.remark || extendedData.notes || null,
             supplier_name: typeof extendedData.supplier_id === "object" && extendedData.supplier_id ? (extendedData.supplier_id as Record<string, unknown>).id : extendedData.supplier_id,
             receiving_type: 1,
             payment_type: extendedData.payment_type || null,

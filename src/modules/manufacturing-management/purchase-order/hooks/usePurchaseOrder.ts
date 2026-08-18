@@ -28,7 +28,7 @@ const blankLine = (): ManifestLineFormItem => ({
     purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "", vat_percent: "", withholding_percent: ""
 });
 const blankForm = (): ShipmentFormState => ({
-    reference_number: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
+    reference_number: "", remark: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
     status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, price_type: "", currency_code: "PHP"
 });
 
@@ -264,6 +264,7 @@ export function usePurchaseOrder() {
         try {
             const result = await createPurchaseOrder({
                 externalReference: shipmentForm.reference_number.trim() || undefined,
+                remark: shipmentForm.remark === "" ? undefined : shipmentForm.remark,
                 supplierId: Number(shipmentForm.supplier_id),
                 branchId: Number(shipmentForm.branch_id),
                 paymentArrangementId: Number(shipmentForm.payment_type),

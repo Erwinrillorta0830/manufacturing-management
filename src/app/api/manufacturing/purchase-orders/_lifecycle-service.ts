@@ -517,7 +517,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
     const nextRevision = revision + 1;
     const headerPayload = {
         reference: command.shipmentData.reference_number,
-        remark: null,
+        remark: command.shipmentData.remark === "" ? null : command.shipmentData.remark || null,
         supplier_name: Number(command.shipmentData.supplier_id),
         branch_id: command.shipmentData.branch_id,
         payment_type: command.shipmentData.payment_type || null,
@@ -613,8 +613,7 @@ export async function cancelRejectedPurchaseOrder(id: number, command: Cancellat
     const reason = command.remarks || "Purchase order cancelled after rejection.";
     const updated = await conditionalPatch(id, revision, {
         inventory_status: INVENTORY_STATUS.CANCELLED,
-        workflow_revision: nextRevision,
-        remark: `CANCELLED: ${reason}`
+        workflow_revision: nextRevision
     }, INVENTORY_STATUS.REJECTED);
     if (!updated) throw new PurchaseOrderLifecycleError("Another action changed this purchase order. Reload and try again.", 409);
 

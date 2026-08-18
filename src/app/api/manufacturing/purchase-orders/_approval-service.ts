@@ -343,11 +343,7 @@ async function submitPurchaseOrderApprovalUnlocked(
         approval_requires_finance: 1,
         approval_allow_self_approval: 1
     };
-    if (command.action === "reject") {
-        update.remark = `REJECTED: ${command.remarks}`;
-    } else if (command.action === "cancel") {
-        update.remark = `CANCELLED: ${command.remarks}`;
-    } else {
+    if (command.action === "approve") {
         update.approver_id = null;
         update.date_approved = null;
         update.lead_time_receiving = null;
