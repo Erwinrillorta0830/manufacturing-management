@@ -2,7 +2,7 @@ import React from "react";
 import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2 } from "lucide-react";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
-import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
+import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export interface ShipmentDetailViewProps {
@@ -133,6 +133,11 @@ export function ShipmentDetailView({
                                             return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
                                         })()}
                                     </strong>
+                                </span>
+                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                <span>
+                                    Payment Status:{" "}
+                                    <strong className="text-foreground font-bold">{paymentStatusLabel(activeShipment.payment_status)}</strong>
                                 </span>
                                 <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
                                 <span>

@@ -149,6 +149,7 @@ export interface ReceivingCommitResult {
     idempotentReplay: boolean;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
+    paymentStatus: number | null;
     workflowRevision: number;
     receivingRecordIds: number[];
     inventoryLotIds: number[];

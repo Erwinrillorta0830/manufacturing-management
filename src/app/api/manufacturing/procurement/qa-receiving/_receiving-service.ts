@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
-import { evaluateShelfLife, INVENTORY_STATUS, todayInManila } from "../_domain";
+import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, todayInManila } from "../_domain";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
     deriveRejectedQuantity,
@@ -347,7 +347,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,date_received`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,date_received`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,max_batch_capacity&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -596,6 +596,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!replacementDispositionId && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
             throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.", 422);
         }
+        if (!replacementDispositionId && receivingStatus.status === "Received" && !paymentStatusAllowsReceivingHandoff(shipment.payment_status)) {
+            throw new ReceivingError("This purchase order already has an active or completed payment status and cannot be received again.", 409);
+        }
 
 
         const expenses = await fetchShipmentExpenses(shipmentId);
@@ -641,6 +644,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
             const headerRestore = await mutate("purchase_order", shipmentId, "PATCH", {
                 inventory_status: shipment.inventory_status,
+                payment_status: shipment.payment_status ?? null,
                 date_received: shipment.date_received
             });
             if (!headerRestore.ok) return false;
@@ -792,12 +796,16 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
             if (!replacementDispositionId) {
                 commitPhase = "status";
+                const nextInventoryStatus = receivingStatus.status === "Partially Received"
+                    ? INVENTORY_STATUS.PARTIALLY_RECEIVED
+                    : receivingStatus.status === "Rejected"
+                        ? INVENTORY_STATUS.REJECTED
+                        : INVENTORY_STATUS.RECEIVED;
                 const statusRes = await mutate("purchase_order", shipmentId, "PATCH", {
-                    inventory_status: receivingStatus.status === "Partially Received"
-                        ? INVENTORY_STATUS.PARTIALLY_RECEIVED
-                        : receivingStatus.status === "Rejected"
-                            ? INVENTORY_STATUS.REJECTED
-                            : INVENTORY_STATUS.RECEIVED,
+                    inventory_status: nextInventoryStatus,
+                    ...(nextInventoryStatus === INVENTORY_STATUS.RECEIVED
+                        ? { payment_status: PAYMENT_STATUS.AWAITING_PAYMENT }
+                        : {}),
                     ...(receivingStatus.status !== "Partially Received" ? { date_received: todayInManila() } : {})
                 });
                 if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);

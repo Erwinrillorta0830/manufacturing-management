@@ -110,6 +110,7 @@ export async function commitReceivingQa(payload: ReceivingCommitPayload, idempot
         body.data?.mode !== "compatibility"
         || !body.data?.commitReference
         || typeof body.data?.receivingTicketNumber !== "string"
+        || (body.data.status === "Received" && Number(body.data.paymentStatus) !== 2)
         || !Array.isArray(body.data?.receivingRecords)
         || body.data.receivingRecords.some((record: Record<string, unknown>) =>
             !Number.isSafeInteger(Number(record.receivingRecordId))

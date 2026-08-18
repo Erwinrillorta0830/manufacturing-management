@@ -29,6 +29,40 @@ export const PAYMENT_STATUS = {
     PROCESSING: 8
 } as const;
 
+export type PaymentStatusId = typeof PAYMENT_STATUS[keyof typeof PAYMENT_STATUS];
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatusId, string> = {
+    [PAYMENT_STATUS.PENDING]: "Pending",
+    [PAYMENT_STATUS.AWAITING_PAYMENT]: "Awaiting Payment",
+    [PAYMENT_STATUS.PARTIALLY_PAID]: "Partially Paid",
+    [PAYMENT_STATUS.PAID]: "Paid",
+    [PAYMENT_STATUS.OVERDUE]: "Overdue",
+    [PAYMENT_STATUS.CANCELLED]: "Cancelled",
+    [PAYMENT_STATUS.PROCESSING]: "Processing"
+};
+
+const PAYMENT_STATUSES_BLOCKING_RECEIVING_HANDOFF = new Set<number>([
+    PAYMENT_STATUS.PARTIALLY_PAID,
+    PAYMENT_STATUS.PAID,
+    PAYMENT_STATUS.OVERDUE,
+    PAYMENT_STATUS.CANCELLED,
+    PAYMENT_STATUS.PROCESSING
+]);
+
+export function paymentStatusLabel(value: unknown): string {
+    const status = Number(value);
+    if (!Number.isFinite(status) || status <= 0) return "Pending";
+    return PAYMENT_STATUS_LABELS[status as PaymentStatusId] || `Payment Status ${status}`;
+}
+
+export function paymentStatusAllowsReceivingHandoff(value: unknown): boolean {
+    if (value == null || value === "") return true;
+    const status = Number(value);
+    if (!Number.isFinite(status) || status === 0) return true;
+    if (status === PAYMENT_STATUS.PENDING || status === PAYMENT_STATUS.AWAITING_PAYMENT) return true;
+    return !PAYMENT_STATUSES_BLOCKING_RECEIVING_HANDOFF.has(status);
+}
+
 export type InventoryStatusId = typeof INVENTORY_STATUS[keyof typeof INVENTORY_STATUS];
 
 export const INVENTORY_STATUS_LABELS: Record<InventoryStatusId, string> = {
