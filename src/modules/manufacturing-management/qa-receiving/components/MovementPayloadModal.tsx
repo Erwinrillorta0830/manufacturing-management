@@ -139,6 +139,9 @@ export default function MovementPayloadModal({
                                         <span><strong>PO Number:</strong> {purchaseOrderReference || "Current purchase order"}</span>
                                         <span><strong>Receipt Number:</strong> <span className="font-mono font-bold text-primary">{displayReceipt}</span></span>
                                         <span><strong>Status:</strong> <span className="font-bold text-emerald-700">{committedResult.status}</span></span>
+                                        {committedResult.status === "Received" && (
+                                            <span><strong>Payment Status:</strong> <span className="font-bold text-blue-700">{Number(committedResult.paymentStatus) === 2 ? "Awaiting Payment" : "Pending"}</span></span>
+                                        )}
                                         <span><strong>Submission:</strong> {committedResult.idempotentReplay ? "Idempotent Replay" : "Fresh Posting"}</span>
                                     </div>
                                 );

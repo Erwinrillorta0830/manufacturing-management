@@ -29,6 +29,7 @@ export interface Shipment {
     total_php_value: string;
     created_at: string;
     inventory_status?: number | null;
+    payment_status?: number | null;
     supplier_id: unknown;
     date_received: string;
     branch_id?: number | null;
@@ -195,6 +196,7 @@ export interface ReceivingCommitResult {
     receivingTicketNumber: string;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
+    paymentStatus?: number | null;
     workflowRevision: number;
     idempotentReplay: boolean;
     receivingRecordIds: number[];

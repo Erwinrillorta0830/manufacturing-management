@@ -378,6 +378,11 @@ export default function ShipmentInspectionForm({
                                     Received - View Only
                                 </span>
                             )}
+                            {(readOnly || selectedShipment.status === "Received") && Number(selectedShipment.payment_status) === 2 && (
+                                <span className="text-[9px] bg-blue-500/10 text-blue-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                    Payment Status: Awaiting Payment
+                                </span>
+                            )}
                             {!readOnly && selectedShipment.status === "Partially Received" && (
                                 <span className="text-[9px] bg-amber-500/10 text-amber-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
                                     Partially Received - Receiving Remaining Goods

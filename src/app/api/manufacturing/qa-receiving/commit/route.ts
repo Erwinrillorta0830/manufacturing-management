@@ -5,7 +5,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { procurementDirectusFetch } from "../../procurement/_directus";
-import { INVENTORY_STATUS } from "../../procurement/_domain";
+import { INVENTORY_STATUS, PAYMENT_STATUS } from "../../procurement/_domain";
 import { handleQaReceivingPost } from "../../procurement/qa-receiving/_receiving-service";
 import {
     RECEIVING_POSTING_ENABLED,
@@ -164,7 +164,7 @@ async function persistedResult(
     });
     const [headerRows, receivingRows] = await Promise.all([
         directusRows(
-            `/items/purchase_order?filter[purchase_order_id][_eq]=${input.shipmentId}&fields=purchase_order_id,inventory_status,workflow_revision&limit=1`,
+            `/items/purchase_order?filter[purchase_order_id][_eq]=${input.shipmentId}&fields=purchase_order_id,inventory_status,payment_status,workflow_revision&limit=1`,
             "Unable to verify the final purchase-order status."
         ),
         directusRows(`/items/purchase_order_receiving?${receiptParams}`, "Unable to verify the created receiving records.")
@@ -176,6 +176,9 @@ async function persistedResult(
         || status === INVENTORY_STATUS.RECEIVED
         || status === INVENTORY_STATUS.REJECTED;
     if (!receivingPosted) return null;
+    if (status === INVENTORY_STATUS.RECEIVED && Number(header.payment_status) !== PAYMENT_STATUS.AWAITING_PAYMENT) {
+        throw new CommitError(409, "The purchase order was received but payment status is not Awaiting Payment. Reconciliation is required.");
+    }
     if (
         receivingRows.length !== receiptNumbers.length
         || new Set(receivingRows.map(row => String(row.receipt_no))).size !== receiptNumbers.length
@@ -407,6 +410,7 @@ async function persistedResult(
         idempotentReplay,
         shipmentId: input.shipmentId,
         status: statusLabel(status),
+        paymentStatus: Number.isFinite(Number(header.payment_status)) ? Number(header.payment_status) : null,
         workflowRevision: Number(header.workflow_revision || input.workflowRevision),
         receivingRecordIds: receivingIds,
         inventoryLotIds: [...new Set(finalMovements.map(movement => movement.inventoryLotId))],

@@ -1030,6 +1030,7 @@ export async function receiveIncomingShipment(
         // Update purchase_order status to Received (6)
         const poPayload = {
             inventory_status: shipmentStatusToInventoryStatus("Received"),
+            payment_status: PAYMENT_STATUS.AWAITING_PAYMENT,
             date_received: new Date().toISOString(),
             receiver_id: userId || null
         };
