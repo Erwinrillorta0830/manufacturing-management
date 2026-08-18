@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { evaluateShelfLife, INVENTORY_STATUS, todayInManila } from "../_domain";
 import { receivingSubmissionSchema } from "../_schemas";
-import { validateReceivingQuantities } from "../../qa/_receiving-evaluation";
+import {
+    evaluateOverDelivery,
+    validateReceivingQuantities
+} from "../../qa/_receiving-evaluation";
 import {
     normalizeReceivingLotAllocations,
     normalizeRejectedLotAllocations,
@@ -23,6 +26,7 @@ class ReceivingError extends Error {
 
 interface ReceivingPostOptions {
     actorUserId: number;
+    receivingHeaderId?: number;
 }
 
 interface MrpAllocationDraft {
@@ -297,7 +301,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             throw new ReceivingError("The receiving user could not be verified.", 401);
         }
 
-        const { shipmentId, referenceNumber, receiptMode, branchId, lineItemUpdates } = parsed.data;
+        const { shipmentId, referenceNumber, receiptMode, processOverDelivery, branchId, lineItemUpdates } = parsed.data;
         lockedShipmentId = shipmentId;
         if (activeShipments.has(shipmentId)) throw new ReceivingError("This shipment is already being received.", 409);
         activeShipments.add(shipmentId);
@@ -468,6 +472,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             const ordered = Number(poLine.ordered_quantity || 0);
             const previous = previouslyReceivedByLine.get(item.line_id) || { received: 0, rejected: 0 };
             const remaining = Math.max(0, ordered - previous.received);
+            const overDelivery = evaluateOverDelivery(received, remaining);
             const quantityError = validateReceivingQuantities({
                 receivedQuantity: received,
                 acceptedQuantity: declaredAccepted,
@@ -476,6 +481,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (quantityError) throw new ReceivingError(`${quantityError} Product ${productId}.`, 400);
             if (!Number.isFinite(ordered) || ordered <= 0) {
                 throw new ReceivingError(`Invalid ordered quantity for product ${productId}.`, 400);
+            }
+            if (overDelivery.isOverReceived && !processOverDelivery) {
+                throw new ReceivingError(`Over-delivery of ${overDelivery.overDeliveryQuantity} unit(s) for product ${productId} requires explicit processing confirmation.`, 422);
             }
             if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
                 throw new ReceivingError(`Remarks are required for the quantity discrepancy on product ${productId}.`, 400);
@@ -522,7 +530,22 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (rejectedAllocationError) throw new ReceivingError(`${rejectedAllocationError} Product ${productId}.`, 400);
             const primaryLotId = item.lot_id || acceptedLotAllocations[0]?.storageLotId || rejectedLotAllocations[0]?.storageLotId;
             if (!primaryLotId) throw new ReceivingError(`A storage lot is required for product ${productId}.`, 400);
-            return { item, poLine, product, productId, received, accepted, rejected, baseUnitCost, acceptedLotAllocations, rejectedLotAllocations, primaryLotId };
+            return {
+                item,
+                poLine,
+                product,
+                productId,
+                received,
+                accepted,
+                rejected,
+                baseUnitCost,
+                acceptedLotAllocations,
+                rejectedLotAllocations,
+                primaryLotId,
+                remainingQuantity: overDelivery.remainingQuantity,
+                overDeliveryQuantity: overDelivery.overDeliveryQuantity,
+                isOverReceived: overDelivery.isOverReceived
+            };
         });
 
         const preparedByLine = new Map(prepared.map(line => [line.item.line_id, line]));
@@ -533,6 +556,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             return previous + current < Number(poLine.ordered_quantity || 0) - 1e-9;
         });
         const allLinesAccounted = incompleteFullLines.length === 0;
+        if (receiptMode === "full" && !allLinesAccounted) {
+            throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining quantity.", 422);
+        }
+        if (receiptMode === "partial" && allLinesAccounted) {
+            throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining quantity.", 422);
+        }
 
 
         const expenses = await fetchShipmentExpenses(shipmentId);
@@ -591,13 +620,15 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             for (const line of prepared) {
                 const allocation = allocations.get(line.item.line_id)!;
                 const receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, { method: "POST", headers, body: JSON.stringify({
-                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, product_id: line.productId, batch_no: line.item.batch_no, lot_id: line.primaryLotId,
+                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: line.item.batch_no, lot_id: line.primaryLotId,
                     expiry_date: line.item.expiration_date, received_quantity: line.received, unit_price: line.baseUnitCost,
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
                     receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: new Date().toISOString(),
-                    isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason
+                    isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
+                    is_over_received: line.isOverReceived,
+                    over_delivery_quantity: line.overDeliveryQuantity
                 }) });
                 if (!receiptRes.ok) throw new Error(`Failed to create receiving record for product ${line.productId}: ${await receiptRes.text()}`);
                 const receiptId = Number((await receiptRes.json()).data.purchase_order_product_id);

@@ -21,6 +21,13 @@ import type { ReceivingPreviewResult } from "../_preview-domain";
 import { POST as previewReceiving } from "../preview/route";
 import { normalizeReceivingLotAllocations, normalizeRejectedLotAllocations } from "../_lot-allocation";
 import { fetchQaResults, qaResultsMatch, type QaResultExpectation } from "../../procurement/qa-receiving/_qa-results";
+import {
+    allocateReceivingTicket,
+    fetchReceivingTicketByIdempotencyKey,
+    markReceivingTicketFailed,
+    markReceivingTicketPosted,
+    ReceivingTicketError
+} from "../_receiving-ticket";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,13 +146,14 @@ function statusLabel(status: number): "Partially Received" | "Received" | "Rejec
 
 async function persistedResult(
     input: ReceivingCommitRequest,
+    receivingTicketNumber: string,
     idempotentReplay: boolean,
     expectedAllocationLineIds: Set<number> = new Set()
 ): Promise<ReceivingCommitResult | null> {
-    const receiptNumbers = input.lines.map(line => receiptNumberForLine(input.receiptNumber, line.lineId));
+    const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -180,11 +188,18 @@ async function persistedResult(
         qaRowsByReceivingId.set(row.receiving_line_id, existing);
     }
     for (const line of input.lines) {
-        const receiptNo = receiptNumberForLine(input.receiptNumber, line.lineId);
+        const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
         const receiving = receivingRows.find(row => String(row.receipt_no) === receiptNo);
-        const receivingLineId = Number(receiving?.purchase_order_product_id);
+        if (!receiving) {
+            throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
+        }
+        const receivingLineId = Number(receiving.purchase_order_product_id);
         if (!receivingLineId) {
             throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
+        }
+        const isOverReceived = receiving.is_over_received === true || Number(receiving.is_over_received) === 1;
+        if (isOverReceived && !input.processOverDelivery) {
+            throw new CommitError(422, `Over-delivery for line ${line.lineId} requires explicit processing confirmation.`);
         }
         const expectedQa: QaResultExpectation[] = line.readings.map(reading => ({
             spec_id: reading.specId,
@@ -253,12 +268,13 @@ async function persistedResult(
     for (const line of input.lines) {
         const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId);
         const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId);
-        const receiptNo = receiptNumberForLine(input.receiptNumber, line.lineId);
+        const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
         const receiving = receivingRows.find(row => row.receipt_no === receiptNo);
         const receivingLineId = Number(receiving?.purchase_order_product_id);
         if (!receiving || !receivingLineId) {
             throw new CommitError(409, `Receiving record for line ${line.lineId} could not be correlated.`);
         }
+        const isOverReceived = receiving.is_over_received === true || Number(receiving.is_over_received) === 1;
         const candidates = movementRows.filter(row =>
             relationId(row.source_document_id, "purchase_order_product_id") === receivingLineId
             || String(row.source_document_no || "") === receiptNo
@@ -357,6 +373,8 @@ async function persistedResult(
             batchNumber: String(receiving.batch_no || line.supplierBatchNumber),
             receivedQuantity: Number(receiving.received_quantity || 0),
             rejectedQuantity: Number(receiving.quantity_rejected || 0),
+            isOverReceived,
+            overDeliveryQuantity: Number(receiving.over_delivery_quantity || 0),
             unitPrice: Number(receiving.unit_price || 0),
             finalLandedUnitCost: Number(receiving.final_landed_unit_cost || 0),
             qaStatus: String(receiving.qa_status || ""),
@@ -372,7 +390,8 @@ async function persistedResult(
     return {
         contractVersion: "v1",
         mode: "compatibility",
-        commitReference: input.receiptNumber,
+        commitReference: receivingTicketNumber,
+        receivingTicketNumber,
         idempotentReplay,
         shipmentId: input.shipmentId,
         status: statusLabel(status),
@@ -380,7 +399,7 @@ async function persistedResult(
         receivingRecordIds: receivingIds,
         inventoryLotIds: [...new Set(finalMovements.map(movement => movement.inventoryLotId))],
         allocationIds: finalAllocations.map(allocation => allocation.allocationId),
-        receiptNumbers: [...new Set([input.receiptNumber])],
+        receiptNumbers: [...new Set(receiptNumbers)],
         receivingRecords,
         movements: finalMovements,
         allocations: finalAllocations
@@ -388,6 +407,8 @@ async function persistedResult(
 }
 
 export async function POST(request: Request) {
+    let allocatedTicketId: number | null = null;
+    let ticketPosted = false;
     try {
         if (!RECEIVING_POSTING_ENABLED) throw new CommitError(503, "Receiving posting is not enabled.");
         const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
@@ -400,16 +421,25 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving commit request.", details: parsed.error.flatten() }, { status: 400 });
         }
         await assertReceivingStatusOpen(parsed.data.shipmentId);
-        const completed = await persistedResult(parsed.data, true);
-        if (completed) return NextResponse.json({ data: completed });
+        const existingTicket = await fetchReceivingTicketByIdempotencyKey(idempotencyKey);
+        if (existingTicket?.posting_status === "Posted" && existingTicket.receiving_ticket_no) {
+            const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true);
+            if (completed) return NextResponse.json({ data: completed });
+        }
+        if (existingTicket?.posting_status === "Reserved") {
+            throw new CommitError(409, "A receiving commit with this idempotency key is already in progress.");
+        }
+        if (existingTicket?.posting_status === "Failed") {
+            throw new CommitError(409, "The previous receiving attempt failed. Generate a new preview before posting.");
+        }
 
         const previewResponse = await previewReceiving(new Request(request.url.replace(/\/commit$/, "/preview"), {
             method: "POST",
             headers: { "Content-Type": "application/json", cookie: request.headers.get("cookie") || "" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
-                receiptNumber: parsed.data.receiptNumber,
                 receiptMode: parsed.data.receiptMode,
+                processOverDelivery: parsed.data.processOverDelivery,
                 destinationBranchId: parsed.data.destinationBranchId,
                 lines: parsed.data.lines
             })
@@ -453,15 +483,34 @@ export async function POST(request: Request) {
                 job_order_id: allocation.jobOrder.id,
                 job_order_material_id: allocation.jobOrderMaterialId,
                 quantity: allocation.quantity
-            })));
+                })));
         });
+        const receivingTicket = await allocateReceivingTicket({
+            purchaseOrderId: parsed.data.shipmentId,
+            branchId: parsed.data.destinationBranchId,
+            receiptMode: parsed.data.receiptMode,
+            workflowRevision: parsed.data.workflowRevision,
+            idempotencyKey,
+            createdBy: actor.userId
+        });
+        allocatedTicketId = receivingTicket.id;
+        if (!receivingTicket.receiving_ticket_no) {
+            throw new CommitError(503, "The receiving ticket number was not generated.");
+        }
+        if (receivingTicket.posting_status === "Posted") {
+            ticketPosted = true;
+            const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)));
+            if (completed) return NextResponse.json({ data: completed });
+            throw new CommitError(409, "The existing receiving ticket could not be reconciled with its persisted records.");
+        }
         const legacyResponse = await handleQaReceivingPost(new Request(request.url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
-                referenceNumber: parsed.data.receiptNumber,
+                referenceNumber: receivingTicket.receiving_ticket_no,
                 receiptMode: parsed.data.receiptMode,
+                processOverDelivery: parsed.data.processOverDelivery,
                 branchId: parsed.data.destinationBranchId,
                 branchName: preview.destinationBranch.name,
                 mrp_allocation_drafts: mrpAllocationDrafts,
@@ -499,7 +548,7 @@ export async function POST(request: Request) {
                     };
                 })
             })
-        }), { actorUserId: actor.userId });
+        }), { actorUserId: actor.userId, receivingHeaderId: receivingTicket.id });
         const legacyBody = await legacyResponse.json();
         if (!legacyResponse.ok) {
             throw new CommitError(legacyResponse.status, legacyBody.error || "Failed to post receiving records.");
@@ -507,18 +556,26 @@ export async function POST(request: Request) {
 
         const committed = await persistedResult(
             parsed.data,
+            receivingTicket.receiving_ticket_no,
             legacyBody.idempotent === true,
             new Set(mrpAllocationDrafts.map(draft => draft.line_id))
         );
         if (!committed) {
             throw new CommitError(500, "Receiving completed but persisted records could not be fully verified. Reconciliation is required.");
         }
+        await markReceivingTicketPosted(receivingTicket.id);
+        ticketPosted = true;
         return NextResponse.json({ data: committed }, { status: legacyBody.idempotent ? 200 : 201 });
     } catch (error) {
+        if (allocatedTicketId && !ticketPosted) {
+            await markReceivingTicketFailed(allocatedTicketId).catch(() => false);
+        }
         const status = error instanceof PurchaseOrderAuthorizationError
             ? error.status
             : error instanceof CommitError
                 ? error.statusCode
+                : error instanceof ReceivingTicketError
+                    ? error.statusCode
                 : 500;
         return NextResponse.json({ error: (error as Error).message || "Failed to post receiving." }, { status });
     }

@@ -151,10 +151,13 @@ interface DirectusReceivingRecord {
     purchase_order_line_id?: number | { purchase_order_product_id: number } | null;
     product_id: number | { product_id: number };
     receipt_no?: string | null;
+    receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null } | null;
     batch_no?: string | null;
     lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
     quantity_rejected?: number | string | null;
+    is_over_received?: boolean | number | null;
+    over_delivery_quantity?: number | string | null;
     expiry_date?: string | null;
     rejection_reason?: string | null;
     qa_status?: string | null;
@@ -191,6 +194,8 @@ interface LatestReceivingSnapshot {
     rejection_reason: string;
     qa_status: string;
     branch_id: number | null;
+    is_over_received: boolean;
+    over_delivery_quantity: number;
 }
 
 export interface ExtendedShipmentLineItem {
@@ -203,6 +208,8 @@ export interface ExtendedShipmentLineItem {
     previously_received_quantity?: number;
     previously_rejected_quantity?: number;
     remaining_quantity?: number;
+    is_over_received?: boolean;
+    over_delivery_quantity?: number;
     latest_receipt?: LatestReceivingSnapshot | null;
     rejection_reason?: string;
     qa_status?: string;
@@ -563,7 +570,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,batch_no,lot_id,received_quantity,quantity_rejected,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,batch_no,lot_id,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
@@ -681,7 +688,11 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 || null;
             const latestSnapshot: LatestReceivingSnapshot | null = latestReceipt
                 ? {
-                    receipt_number: String(latestReceipt.receipt_no || ""),
+                    receipt_number: String(
+                        typeof latestReceipt.receiving_header_id === "object" && latestReceipt.receiving_header_id?.receiving_ticket_no
+                            ? latestReceipt.receiving_header_id.receiving_ticket_no
+                            : latestReceipt.receipt_no || ""
+                    ),
                     received_quantity: latestReceivedQuantity,
                     accepted_quantity: latestAcceptedQuantity,
                     rejected_quantity: latestRejectedQuantity,
@@ -690,10 +701,12 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                     accepted_lot_allocations: latestAcceptedAllocations,
                     rejected_lot_allocations: rejectedAllocations,
                     manufacturing_date: latestMovementWithDate?.manufacturing_date || null,
-                    expiration_date: latestReceipt.expiry_date || null,
-                    rejection_reason: String(latestReceipt.rejection_reason || ""),
-                    qa_status: String(latestReceipt.qa_status || "Pending"),
-                    branch_id: Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null
+                     expiration_date: latestReceipt.expiry_date || null,
+                     rejection_reason: String(latestReceipt.rejection_reason || ""),
+                     qa_status: String(latestReceipt.qa_status || "Pending"),
+                     branch_id: Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
+                     is_over_received: latestReceipt.is_over_received === true || Number(latestReceipt.is_over_received) === 1,
+                     over_delivery_quantity: Number(latestReceipt.over_delivery_quantity || 0)
                 }
                 : null;
             const movementForProduct = movementData.filter(row => receivingIdsForProduct.includes(relationId(row.source_document_id, "purchase_order_product_id") || 0));
@@ -710,9 +723,11 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 quantity_received: previouslyReceivedQuantity,
                 quantity_rejected: previouslyRejectedQuantity,
                 previously_received_quantity: previouslyReceivedQuantity,
-                previously_rejected_quantity: previouslyRejectedQuantity,
-                remaining_quantity: remainingQuantity,
-                latest_receipt: latestSnapshot,
+                 previously_rejected_quantity: previouslyRejectedQuantity,
+                 remaining_quantity: remainingQuantity,
+                 is_over_received: latestSnapshot?.is_over_received || false,
+                 over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
+                 latest_receipt: latestSnapshot,
                 rejection_reason: latestSnapshot?.rejection_reason || "",
                 qa_status: latestReceipt ? latestReceipt.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;

@@ -17,17 +17,10 @@ export interface ReceivingValidationIssue {
 }
 
 export function validateReceivingMetadata(
-    receiptNumber: string,
     branchId: string,
     lines: ReceivingMetadataLine[]
 ): ReceivingValidationIssue[] {
     const issues: ReceivingValidationIssue[] = [];
-    const normalizedReceiptNumber = receiptNumber.trim();
-    if (!normalizedReceiptNumber) {
-        issues.push({ field: "receiptNumber", message: "Receiving Ticket / DR Number is required." });
-    } else if (normalizedReceiptNumber.length > 50) {
-        issues.push({ field: "receiptNumber", message: "Receiving Ticket / DR Number cannot exceed 50 characters." });
-    }
     if (!Number.isInteger(Number(branchId)) || Number(branchId) <= 0) {
         issues.push({ field: "branchId", message: "Receiving Branch is required." });
     }

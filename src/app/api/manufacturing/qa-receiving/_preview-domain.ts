@@ -54,6 +54,8 @@ export interface ReceivingPreviewLineResult {
     lineId: number;
     previouslyReceivedQuantity: number;
     remainingQuantity: number;
+    overDeliveryQuantity: number;
+    isOverReceived: boolean;
     disposition: ReceivingDisposition;
     receivedQuantity: number;
     acceptedQuantity: number;
@@ -66,7 +68,9 @@ export interface ReceivingPreviewLineResult {
 
 export interface ReceivingPreviewResult {
     shipmentId: number;
-    receiptNumber: string;
+    receivingTicketNumber: string | null;
+    receiptMode: "full" | "partial";
+    processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;
     destinationBranch: ReceivingRouteBranch;
