@@ -17,6 +17,8 @@ import { normalizeProductRelationId } from "@/modules/manufacturing-management/p
 import { validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPaymentModeError } from "./_payment-modes";
 import {
+    assertEnteredPricesForMissingPriceControl,
+    buildPriceControlWarning,
     fetchPurchaseOrderPriceTypeRules,
     PurchaseOrderPriceTypeError,
     resolvePurchaseOrderPriceType
@@ -303,6 +305,10 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
     let resolvedPriceType;
     try {
         resolvedPriceType = await resolvePurchaseOrderPriceType(order.lines.map(line => line.productId));
+        assertEnteredPricesForMissingPriceControl(
+            order.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
+            resolvedPriceType.missingProductIds
+        );
     } catch (error) {
         if (error instanceof PurchaseOrderPriceTypeError) {
             throw new PurchaseOrderDraftError(error.message, error.status, {
@@ -396,6 +402,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         exchangeRate,
         priceType: resolvedPriceType.priceTypeName,
         priceTypeId: resolvedPriceType.priceTypeId,
+        priceControlWarning: buildPriceControlWarning(resolvedPriceType),
         totals: {
             grossPhp: totals.grossPhp,
             discountPhp: totals.discountPhp,

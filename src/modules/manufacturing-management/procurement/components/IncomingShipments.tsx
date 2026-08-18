@@ -72,6 +72,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         priceTypeResolution,
         priceMatrixStatus,
         priceMatrixError,
+        priceMatrixMissingProductIds,
         fxRateStatus,
         fxRateError
     } = useIncomingShipmentsForm({
@@ -278,6 +279,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 priceTypeResolution={priceTypeResolution}
                 priceMatrixStatus={priceMatrixStatus}
                 priceMatrixError={priceMatrixError}
+                priceMatrixMissingProductIds={priceMatrixMissingProductIds}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}

@@ -1,110 +1,19 @@
 import { NextResponse } from "next/server";
 import { procurementDirectusFetch } from "../_directus";
+import {
+    fallbackActiveRates,
+    fallbackRateHistory,
+    getActiveForexRates,
+    getForexRateHistory
+} from "./_rates";
+import type { ForexRateHistory } from "./_rates";
 
-export interface ForexConfig {
-    forex_id: number;
-    currency_code: string;
-    currency_name: string;
-    symbol: string;
-    exchange_rate: number;
-    effective_date: string;
-    is_active: number;
-    created_at?: string;
-    updated_at?: string;
-}
-
-export interface ForexRateHistory {
-    history_id: number;
-    forex_id: number;
-    currency_code: string;
-    previous_rate: number;
-    new_rate: number;
-    effective_date: string;
-    changed_by_user_id: number | null;
-    change_reason: string;
-    created_at: string;
-}
-
-// In-memory fallback cache so rate updates persist during session if DB collection is initializing
-const fallbackActiveRates: ForexConfig[] = [
-    {
-        forex_id: 1,
-        currency_code: "USD",
-        currency_name: "US Dollar",
-        symbol: "$",
-        exchange_rate: 58.500000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    },
-    {
-        forex_id: 2,
-        currency_code: "EUR",
-        currency_name: "Euro",
-        symbol: "€",
-        exchange_rate: 63.200000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    },
-    {
-        forex_id: 3,
-        currency_code: "JPY",
-        currency_name: "Japanese Yen",
-        symbol: "¥",
-        exchange_rate: 0.385000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    }
-];
-
-const fallbackRateHistory: ForexRateHistory[] = [];
+export type { ForexConfig, ForexRateHistory } from "./_rates";
 
 export async function GET() {
     try {
-        let activeRates: ForexConfig[] = [...fallbackActiveRates];
-        let rateHistory: ForexRateHistory[] = [...fallbackRateHistory];
-
-        // Attempt to fetch from Directus
-        try {
-            const configRes = await procurementDirectusFetch("/items/forex_configurations?filter[is_active][_eq]=1&sort=currency_code");
-            if (configRes.ok) {
-                const configJson = await configRes.json();
-                if (Array.isArray(configJson.data) && configJson.data.length > 0) {
-                    activeRates = configJson.data.map((item: Record<string, unknown>) => ({
-                        forex_id: Number(item.forex_id || item.id),
-                        currency_code: String(item.currency_code || ""),
-                        currency_name: String(item.currency_name || item.currency_code || ""),
-                        symbol: String(item.symbol || "$"),
-                        exchange_rate: Number(item.exchange_rate),
-                        effective_date: String(item.effective_date || ""),
-                        is_active: item.is_active ? 1 : 0
-                    }));
-                }
-            }
-        } catch (e) {
-            console.warn("[Procurement Forex API] Directus forex_configurations fetch skipped, using active cache", e);
-        }
-
-        try {
-            const historyRes = await procurementDirectusFetch("/items/forex_rate_history?sort=-created_at&limit=100");
-            if (historyRes.ok) {
-                const historyJson = await historyRes.json();
-                if (Array.isArray(historyJson.data)) {
-                    rateHistory = historyJson.data.map((item: Record<string, unknown>) => ({
-                        history_id: Number(item.history_id || item.id),
-                        forex_id: Number(item.forex_id),
-                        currency_code: String(item.currency_code || ""),
-                        previous_rate: Number(item.previous_rate),
-                        new_rate: Number(item.new_rate),
-                        effective_date: String(item.effective_date || ""),
-                        changed_by_user_id: item.changed_by_user_id ? Number(item.changed_by_user_id) : null,
-                        change_reason: String(item.change_reason || "Exchange rate update"),
-                        created_at: String(item.created_at || new Date().toISOString())
-                    }));
-                }
-            }
-        } catch (e) {
-            console.warn("[Procurement Forex API] Directus forex_rate_history fetch skipped", e);
-        }
+        const activeRates = await getActiveForexRates();
+        const rateHistory = await getForexRateHistory();
 
         return NextResponse.json({
             success: true,

@@ -1,5 +1,5 @@
-import { procurementDirectusFetch } from "../procurement/_directus";
 import { EXCHANGE_RATE_DECIMAL_SCALE, DecimalValue } from "@/modules/manufacturing-management/decimal";
+import { findActiveForexRate } from "../procurement/forex/_rates";
 
 export type PurchaseOrderCurrencyCode = "PHP" | "USD";
 
@@ -29,35 +29,21 @@ export async function resolvePurchaseOrderFxRate(currencyCode: string): Promise<
         throw new PurchaseOrderFxRateError("Purchase orders support PHP and USD currencies only.", 400, "UNSUPPORTED_CURRENCY");
     }
 
-    const params = new URLSearchParams({
-        "filter[is_active][_eq]": "1",
-        "filter[currency_code][_eq]": "USD",
-        fields: "id,currency_code,exchange_rate,effective_date",
-        sort: "-effective_date,-id",
-        limit: "1"
-    });
-
-    let response: Response;
     try {
-        response = await procurementDirectusFetch(`/items/forex_configurations?${params.toString()}`);
-    } catch {
+        const configuredRate = await findActiveForexRate("USD");
+        if (!configuredRate) {
+            throw new PurchaseOrderFxRateError("No active USD exchange rate is configured.");
+        }
+
+        return {
+            currencyCode: "USD",
+            exchangeRate: DecimalValue.from(String(configuredRate.exchange_rate)).toFixed(EXCHANGE_RATE_DECIMAL_SCALE),
+            effectiveDate: configuredRate.effective_date || null
+        };
+    } catch (error) {
+        if (error instanceof PurchaseOrderFxRateError) {
+            throw error;
+        }
         throw new PurchaseOrderFxRateError("The current USD exchange rate could not be loaded.");
     }
-    if (!response.ok) {
-        throw new PurchaseOrderFxRateError("The current USD exchange rate could not be loaded.");
-    }
-
-    const body = await response.json().catch(() => null) as { data?: Array<Record<string, unknown>> } | null;
-    const row = body?.data?.[0];
-    const rawRate = row?.exchange_rate;
-    const numericRate = Number(rawRate);
-    if (!row || String(row.currency_code || "").toUpperCase() !== "USD" || !Number.isFinite(numericRate) || numericRate <= 0) {
-        throw new PurchaseOrderFxRateError("No active USD exchange rate is configured.");
-    }
-
-    return {
-        currencyCode: "USD",
-        exchangeRate: DecimalValue.from(String(rawRate)).toFixed(EXCHANGE_RATE_DECIMAL_SCALE),
-        effectiveDate: typeof row.effective_date === "string" ? row.effective_date : null
-    };
 }

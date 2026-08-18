@@ -5,8 +5,10 @@ import type {
     PurchaseOrderCatalog,
     PurchaseOrderDecisionStage,
     PurchaseOrderDraftPayload,
+    PurchaseOrderDraftResponse,
     PurchaseOrderListQuery,
-    PurchaseOrderListResponse
+    PurchaseOrderListResponse,
+    PurchaseOrderRevisionResponse
 } from "../types";
 
 export interface PurchaseOrderFxRateResponse {
@@ -59,7 +61,7 @@ export async function createPurchaseOrder(payload: PurchaseOrderDraftPayload) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     });
-    return responseJson(response, "Failed to create purchase order.");
+    return responseJson<PurchaseOrderDraftResponse>(response, "Failed to create purchase order.");
 }
 
 export async function editPurchaseOrder(id: number, shipmentData: unknown, lineItems: unknown[]) {
@@ -77,7 +79,7 @@ export async function reviseRejectedPurchaseOrder(id: number, shipmentData: unkn
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shipmentData, lineItems, workflowRevision })
     });
-    return responseJson(response, "Failed to revise purchase order.");
+    return responseJson<PurchaseOrderRevisionResponse>(response, "Failed to revise purchase order.");
 }
 
 export async function cancelRejectedPurchaseOrder(id: number, workflowRevision: number, remarks?: string) {

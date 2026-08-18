@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { IncomingShipment, LinkedProduct, RawMaterial, Supplier } from "../../procurement/types";
 import type { ManifestLineFormItem, ShipmentFormState } from "../../procurement/components/IncomingShipments";
-import type { PurchaseOrderCatalog, PurchaseOrderDraftPayload, PurchaseOrderListMeta, PurchaseOrderListQuery } from "../types";
+import type {
+    PurchaseOrderCatalog,
+    PurchaseOrderDraftPayload,
+    PurchaseOrderListMeta,
+    PurchaseOrderListQuery
+} from "../types";
 import {
     fetchLinkedProducts,
     fetchRawMaterials
@@ -268,8 +273,13 @@ export function usePurchaseOrder() {
                 exchangeRate,
                 expectedTotals: totals,
                 lines: lineItems
-            }) as { purchaseOrderNo?: string };
+            });
             toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in For Approval status.`.trim());
+            if (result.priceControlWarning) {
+                toast.warning(
+                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} selected product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
+                );
+            }
             setIsShipmentModalOpen(false);
             await loadShipments();
         } catch (error) {
@@ -286,8 +296,13 @@ export function usePurchaseOrder() {
         }
         setLoading(true);
         try {
-            await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
+            const result = await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
             toast.success("Finance-rejected purchase order revised and resubmitted for approval.");
+            if (result.priceControlWarning) {
+                toast.warning(
+                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} revised product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
+                );
+            }
             setSelectedShipment(null);
             await loadShipments();
             return true;

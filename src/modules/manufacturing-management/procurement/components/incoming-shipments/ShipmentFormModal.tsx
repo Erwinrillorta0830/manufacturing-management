@@ -64,8 +64,9 @@ export interface ShipmentFormModalProps {
         priceTypeName: string | null;
         message: string | null;
     };
-    priceMatrixStatus?: "idle" | "loading" | "ready" | "error";
+    priceMatrixStatus?: "idle" | "loading" | "ready" | "warning" | "error";
     priceMatrixError?: string | null;
+    priceMatrixMissingProductIds?: number[];
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -130,6 +131,7 @@ export function ShipmentFormModal({
     priceTypeResolution = { status: "idle", priceTypeName: null, message: null },
     priceMatrixStatus = "idle",
     priceMatrixError = null,
+    priceMatrixMissingProductIds = [],
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -140,19 +142,27 @@ export function ShipmentFormModal({
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
 
+    const missingPriceControlProducts = priceMatrixMissingProductIds.map(productId => {
+        const line = linesForm.find(item => Number(item.product_id) === productId);
+        const material = rawMaterials.find(item => Number(item.product_id) === productId);
+        return line?.product_name || material?.product_name || `Product #${productId}`;
+    });
+
     const handleAddRow = React.useCallback(() => {
-        if (!shipmentForm.supplier_id || activeRowEdit !== null) return;
+        if (!shipmentForm.supplier_id || (!canonicalDrafting && activeRowEdit !== null)) return;
 
         const nextIndex = linesForm.length;
         handleAddLineForm();
-        setActiveRowEdit({ index: nextIndex, original: null });
+        if (!canonicalDrafting) {
+            setActiveRowEdit({ index: nextIndex, original: null });
+        }
         setRowEditError(null);
 
         window.setTimeout(() => {
             const nextInput = document.getElementById(`search-input-${nextIndex}`);
             if (nextInput) nextInput.focus();
         }, 50);
-    }, [activeRowEdit, handleAddLineForm, linesForm.length, shipmentForm.supplier_id]);
+    }, [activeRowEdit, canonicalDrafting, handleAddLineForm, linesForm.length, shipmentForm.supplier_id]);
 
     const handleStartRowEdit = React.useCallback((index: number) => {
         if (activeRowEdit !== null || !linesForm[index]) return;
@@ -227,17 +237,17 @@ export function ShipmentFormModal({
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
             const isAddShortcut = (e.altKey && key === "a") || (e.altKey && key === "insert") || (e.ctrlKey && e.shiftKey && key === "a");
-            if (isAddShortcut && activeRowEdit === null) {
+            if (isAddShortcut && (canonicalDrafting || activeRowEdit === null)) {
                 e.preventDefault();
                 handleAddRow();
             }
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [activeRowEdit, handleAddRow, isModalOpen]);
+    }, [activeRowEdit, canonicalDrafting, handleAddRow, isModalOpen]);
 
     const handleFormSubmit = (event: React.FormEvent) => {
-        if (activeRowEdit !== null) {
+        if (!canonicalDrafting && activeRowEdit !== null) {
             event.preventDefault();
             setRowEditError("Save or cancel this row before submitting the purchase order.");
             return;
@@ -500,6 +510,11 @@ export function ShipmentFormModal({
                                         {priceMatrixStatus === "error" && (
                                             <p className="text-[10px] font-medium text-destructive" role="alert">{priceMatrixError}</p>
                                         )}
+                                        {priceMatrixStatus === "warning" && (
+                                            <p className="text-[10px] font-medium text-amber-700" role="status">
+                                                Price Control is not configured for {missingPriceControlProducts.join(", ") || "one or more selected products"}. Enter a positive unit price; that price will be used for this purchase order only. Submit a separate Price Control change for future purchase orders.
+                                            </p>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="space-y-1">
@@ -562,7 +577,7 @@ export function ShipmentFormModal({
                                     <button
                                         type="button"
                                         onClick={handleAddRow}
-                                        disabled={activeRowEdit !== null}
+                                        disabled={!canonicalDrafting && activeRowEdit !== null}
                                         aria-label="Add Row"
                                         title="Add Row"
                                         className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-all border border-primary/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -594,7 +609,7 @@ export function ShipmentFormModal({
                                                 <th className="p-2 border-r min-w-[140px]">Discount Type</th>
                                                 <th className="p-2 border-r text-right min-w-[120px]">Discount Value</th>
                                                 <th className="p-2 border-r text-right min-w-[130px]">Net ({currencyCode})</th>
-                                                <th className="p-2 text-center min-w-[180px]">Action</th>
+                                                <th className="p-2 text-center min-w-[100px]">Actions</th>
                                             </tr>
                                         </thead>
 
@@ -617,15 +632,16 @@ export function ShipmentFormModal({
                                                     : (grossForeign * Number(line.discount_percent || 0)) / 100;
                                                 const subtotal = grossForeign - discount;
                                                 const materialType = line.material_type || purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
-                                                const isRowEditing = activeRowEdit?.index === idx;
-                                                const hasActiveRowEdit = activeRowEdit !== null;
+                                                const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
+                                                const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
+                                                const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
 
                                                 return (
                                                     <tr 
                                                         key={idx} 
                                                         className={`hover:bg-muted/30 transition-colors group ${
                                                             hasSubmitted && lineErrors.length > 0 ? "bg-red-500/5" : ""
-                                                        } ${isRowEditing ? "bg-primary/5" : ""}`}
+                                                        } ${isFocusedRowEdit ? "bg-primary/5" : ""}`}
                                                     >
                                                         {/* Row Index */}
                                                         <td className="p-2 border-r text-center font-mono text-[10px] font-bold text-muted-foreground bg-muted/20">
@@ -686,6 +702,7 @@ export function ShipmentFormModal({
                                                                     return !isAlreadySelected;
                                                                 })}
                                                                 selectedProductId={line.product_id}
+                                                                parentProductId={line.parent_product_id}
                                                                 productName={line.product_name}
                                                                 materialType={materialType}
                                                                 disabled={!isRowEditing || !materialType}
@@ -902,6 +919,24 @@ export function ShipmentFormModal({
                                                             {formatMoney(subtotal, currencyCode)}
                                                         </td>
 
+                                                        {canonicalDrafting && (
+                                                            <td className="p-1.5 text-center align-middle min-w-[100px]">
+                                                                {linesForm.length > 1 && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleRemoveLineForm(idx)}
+                                                                        aria-label={`Delete Row ${idx + 1}`}
+                                                                        title={`Delete Row ${idx + 1}`}
+                                                                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-500/30 bg-red-500/10 text-red-600 shadow-sm transition-colors hover:bg-red-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        )}
+
+                                                        {!canonicalDrafting && (
+                                                            <>
                                                         {/* Actions */}
                                                         <td className="p-1.5 text-center align-middle min-w-[180px]">
                                                             <div className="flex flex-wrap items-center justify-center gap-1">
@@ -959,6 +994,8 @@ export function ShipmentFormModal({
                                                                 </p>
                                                             )}
                                                         </td>
+                                                            </>
+                                                        )}
                                                     </tr>
                                                 );
                                             })}
@@ -1035,9 +1072,8 @@ export function ShipmentFormModal({
                                 type="submit"
                     disabled={loading || listLoading || (canonicalDrafting && (
                         priceTypeResolution.status !== "resolved"
-                        || priceMatrixStatus !== "ready"
+                        || (priceMatrixStatus !== "ready" && priceMatrixStatus !== "warning")
                         || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
-                        || activeRowEdit !== null
                     ))}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >

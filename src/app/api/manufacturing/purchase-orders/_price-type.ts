@@ -1,9 +1,11 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
+import { DecimalValue } from "@/modules/manufacturing-management/decimal";
 
 export type PurchaseOrderPriceTypeErrorCode =
     | "PRICE_TYPE_NOT_CONFIGURED"
     | "MIXED_PRICE_TYPES"
     | "PRICE_MATRIX_NOT_CONFIGURED"
+    | "PRICE_FALLBACK_REQUIRED"
     | "PRICE_TYPE_LOOKUP_UNAVAILABLE";
 
 export interface PurchaseOrderPriceTypeRule {
@@ -18,6 +20,14 @@ export interface ResolvedPurchaseOrderPriceType {
     priceTypeName: string;
     productTypeIds: number[];
     pricesByProductId: Record<number, string>;
+    missingProductIds: number[];
+}
+
+export interface PurchaseOrderPriceControlWarning {
+    code: "PRICE_MATRIX_NOT_CONFIGURED";
+    priceTypeId: number;
+    missingProductIds: number[];
+    usingEnteredPrices: true;
 }
 
 export class PurchaseOrderPriceTypeError extends Error {
@@ -149,6 +159,46 @@ function productTypeId(value: DirectusRelation): number | null {
     return relationId(value, ["type_id", "product_type_id", "id"]);
 }
 
+function isPositiveDecimal(value: unknown): boolean {
+    if (value === null || value === undefined || value === "") return false;
+    try {
+        return DecimalValue.from(String(value)).compare(0) > 0;
+    } catch {
+        return false;
+    }
+}
+
+export function assertEnteredPricesForMissingPriceControl(
+    lines: readonly { productId: number; unitPrice: unknown }[],
+    missingProductIds: readonly number[]
+): void {
+    const missingProductIdSet = new Set(missingProductIds);
+    const invalidProductIds = lines
+        .filter(line => missingProductIdSet.has(line.productId) && !isPositiveDecimal(line.unitPrice))
+        .map(line => line.productId);
+
+    if (invalidProductIds.length === 0) return;
+
+    throw new PurchaseOrderPriceTypeError(
+        "Enter a positive unit price for each product without a configured Price Control value.",
+        "PRICE_FALLBACK_REQUIRED",
+        400,
+        { missingProductIds: [...new Set(invalidProductIds)] }
+    );
+}
+
+export function buildPriceControlWarning(
+    resolved: ResolvedPurchaseOrderPriceType
+): PurchaseOrderPriceControlWarning | null {
+    if (resolved.missingProductIds.length === 0) return null;
+    return {
+        code: "PRICE_MATRIX_NOT_CONFIGURED",
+        priceTypeId: resolved.priceTypeId,
+        missingProductIds: resolved.missingProductIds,
+        usingEnteredPrices: true
+    };
+}
+
 function resolveProductType(
     product: DirectusProductRow,
     productId: number,
@@ -231,22 +281,14 @@ export function resolvePurchaseOrderPriceTypeFromRows(
     }
 
     const missingProductIds = productIds.filter(productId => !matrixByProductId.has(productId));
-    if (missingProductIds.length > 0) {
-        throw new PurchaseOrderPriceTypeError(
-            "Price Control is not configured for one or more selected products.",
-            "PRICE_MATRIX_NOT_CONFIGURED",
-            400,
-            { priceTypeId, missingProductIds }
-        );
-    }
-
     const rule = resolutions[0].rule;
     const priceTypeName = rule.priceTypeName || `Price Type #${priceTypeId}`;
     return {
         priceTypeId,
         priceTypeName,
         productTypeIds: [...new Set(resolutions.map(resolution => resolution.productTypeId))],
-        pricesByProductId: Object.fromEntries(productIds.map(productId => [productId, matrixByProductId.get(productId)!]))
+        pricesByProductId: Object.fromEntries(matrixByProductId.entries()),
+        missingProductIds
     };
 }
 
