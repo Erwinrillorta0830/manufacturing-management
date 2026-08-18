@@ -83,8 +83,9 @@ export async function createSupplier(supplierData: Partial<Supplier>): Promise<u
     return handleResponse(res, "Failed to create supplier");
 }
 
-export async function fetchShipments(): Promise<IncomingShipment[]> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/shipments");
+export async function fetchShipments(options: { landedCostOnly?: boolean } = {}): Promise<IncomingShipment[]> {
+    const query = options.landedCostOnly ? "?landedCostOnly=true" : "";
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/shipments${query}`);
     return handleResponse(res, "Failed to fetch shipments");
 }
 

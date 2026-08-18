@@ -12,7 +12,6 @@ import {
     applyQaDecision,
     deriveReceivingDisposition,
     evaluateOverDelivery,
-    OVER_DELIVERY_EPSILON,
     ReceivingQuantityError
 } from "../../qa/_receiving-evaluation";
 import {
@@ -31,6 +30,7 @@ import {
     rejectedLotAllocationError
 } from "../_lot-allocation";
 import { summarizeReceivingHistory } from "../_receiving-history";
+import { evaluateReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 
@@ -271,6 +271,7 @@ export async function POST(request: Request) {
         const previouslyReceivedByLine = receivingHistory.byLine;
         const poLineById = new Map(poLines.map(line => [positiveInteger(line.purchase_order_product_id), line]));
         const remainingByLine = new Map<number, number>();
+        const remainingAcceptedByLine = new Map<number, number>();
         for (const line of lines) {
             const stored = poLineById.get(line.lineId);
             if (!stored || positiveInteger(stored.purchase_order_id, "purchase_order_id") !== shipmentId) {
@@ -288,30 +289,24 @@ export async function POST(request: Request) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid purchase intent.`);
             }
             const orderedQuantity = Number(stored.ordered_quantity || 0);
-            const previous = previouslyReceivedByLine.get(line.lineId) || { received: 0, rejected: 0 };
+            const previous = previouslyReceivedByLine.get(line.lineId) || { received: 0, rejected: 0, accepted: 0 };
             const remainingQuantity = replacementContext?.targetLineId === line.lineId
                 ? replacementContext.disposition.remainingQuantity
                 : Math.max(0, orderedQuantity - previous.received);
+            const remainingAcceptedQuantity = replacementContext?.targetLineId === line.lineId
+                ? replacementContext.disposition.remainingQuantity
+                : Math.max(0, orderedQuantity - previous.accepted);
             if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid ordered quantity.`);
             }
             remainingByLine.set(line.lineId, remainingQuantity);
+            remainingAcceptedByLine.set(line.lineId, remainingAcceptedQuantity);
         }
 
         const overDeliveryLines = lines.map(line => ({
             lineId: line.lineId,
             ...evaluateOverDelivery(line.receivedQuantity, remainingByLine.get(line.lineId) || 0)
         }));
-        const incompleteLines = overDeliveryLines.filter(line =>
-            line.overDeliveryQuantity <= OVER_DELIVERY_EPSILON
-            && lines.find(submittedLine => submittedLine.lineId === line.lineId)!.receivedQuantity < line.remainingQuantity - OVER_DELIVERY_EPSILON
-        );
-        if (!replacementFlow && receiptMode === "full" && incompleteLines.length > 0) {
-            throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining quantity.");
-        }
-        if (!replacementFlow && receiptMode === "partial" && incompleteLines.length === 0) {
-            throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining quantity.");
-        }
         const confirmedOverDeliveryLines = overDeliveryLines.filter(line => line.isOverReceived);
         if (!replacementFlow && confirmedOverDeliveryLines.length > 0 && !processOverDelivery) {
             const summary = confirmedOverDeliveryLines
@@ -409,6 +404,23 @@ export async function POST(request: Request) {
             };
         });
 
+        const receivingStatus = evaluateReceivingStatus(poLines.map(stored => {
+            const lineId = positiveInteger(stored.purchase_order_product_id) as number;
+            const previous = previouslyReceivedByLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
+            const current = evaluated.find(entry => entry.line.lineId === lineId)?.result;
+            return {
+                orderedQuantity: Number(stored.ordered_quantity || 0),
+                receivedQuantity: previous.received + (current?.receivedQuantity || 0),
+                rejectedQuantity: previous.rejected + (current?.rejectedQuantity || 0)
+            };
+        }));
+        if (!replacementFlow && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+            throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.");
+        }
+        if (!replacementFlow && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+            throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.");
+        }
+
         const receivedMrpEntries = replacementFlow ? [] : evaluated.filter(({ line, result }) => {
             const stored = poLineById.get(line.lineId)!;
             return result.receivedQuantity > 0 && stored.purchase_intent === "MRP_Demand";
@@ -504,7 +516,9 @@ export async function POST(request: Request) {
             return {
                 ...result,
                 previouslyReceivedQuantity: previouslyReceivedByLine.get(line.lineId)?.received || 0,
+                previouslyAcceptedQuantity: previouslyReceivedByLine.get(line.lineId)?.accepted || 0,
                 ...evaluateOverDelivery(result.receivedQuantity, remainingByLine.get(line.lineId) || 0),
+                remainingAcceptedQuantity: remainingAcceptedByLine.get(line.lineId) || 0,
                 routes: result.receivedQuantity === 0
                     ? []
                     : buildReceivingRoutes({

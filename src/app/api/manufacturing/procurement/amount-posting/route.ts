@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { processPurchaseAmountPosting } from "./amount-posting-helper";
+import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
 
 export async function GET(request: Request) {
     try {
@@ -40,6 +41,11 @@ export async function GET(request: Request) {
             });
         }
 
+        const purchaseOrderId = Number(poId);
+        if (!Number.isInteger(purchaseOrderId) || purchaseOrderId <= 0) {
+            return NextResponse.json({ error: "Invalid purchase order ID" }, { status: 400 });
+        }
+
         // Fetch purchase order details
         const poRes = await fetch(`${DIRECTUS_URL}/items/purchase_order/${poId}?fields=*,supplier_name.*`, {
             headers,
@@ -52,6 +58,7 @@ export async function GET(request: Request) {
 
         const poData = await poRes.json();
         const purchaseOrder = poData?.data;
+        await assertLandedCostStatus(purchaseOrderId);
 
         // Fetch PO line items from purchase_order_receiving
         const linesRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${poId}&filter[is_reverted][_eq]=0&fields=*,product_id.*&limit=-1`, {
@@ -86,7 +93,10 @@ export async function GET(request: Request) {
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Internal Server Error";
-        return NextResponse.json({ error: message }, { status: 500 });
+        return NextResponse.json({
+            error: message,
+            ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
+        }, { status: error instanceof LandedCostEligibilityError ? error.status : 500 });
     }
 }
 
@@ -104,6 +114,9 @@ export async function POST(request: Request) {
         return NextResponse.json(result);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Allocation Error";
-        return NextResponse.json({ error: message }, { status: 500 });
+        return NextResponse.json({
+            error: message,
+            ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
+        }, { status: error instanceof LandedCostEligibilityError ? error.status : 500 });
     }
 }

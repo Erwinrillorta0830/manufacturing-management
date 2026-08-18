@@ -188,6 +188,7 @@ export default function QAReceivingModule() {
                                 <ShipmentInspectionForm
                                     selectedShipment={selectedShipment}
                                     readOnly={readOnly}
+                                    isReplacement={Boolean(replacementDisposition)}
                                     lineItems={lineItems}
                                     branches={branches}
                                     storageLots={storageLots}

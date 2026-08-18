@@ -9,23 +9,26 @@ import {
     PurchaseOrderAuthorizationError,
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
+import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
 
 export async function GET(request: Request) {
     try {
         await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
         const { searchParams } = new URL(request.url);
-        const shipmentId = searchParams.get("shipmentId");
+        const shipmentId = Number(searchParams.get("shipmentId"));
 
-        if (!shipmentId) {
+        if (!Number.isInteger(shipmentId) || shipmentId <= 0) {
             return NextResponse.json({ error: "shipmentId is required" }, { status: 400 });
         }
 
-        const expenses = await fetchShipmentExpenses(parseInt(shipmentId));
+        await assertLandedCostStatus(shipmentId);
+        const expenses = await fetchShipmentExpenses(shipmentId);
         return NextResponse.json(expenses);
     } catch (e) {
         console.error("API Error fetching shipment expenses:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to fetch shipment expenses" }, {
-            status: e instanceof PurchaseOrderAuthorizationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof LandedCostEligibilityError ? e.status : 500,
+            ...(e instanceof LandedCostEligibilityError ? { code: e.code } : {})
         });
     }
 }
@@ -50,7 +53,8 @@ export async function POST(request: Request) {
     } catch (e) {
         console.error("API Error allocating shipment expenses:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to allocate shipment expenses" }, {
-            status: e instanceof PurchaseOrderAuthorizationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof LandedCostEligibilityError ? e.status : 500,
+            ...(e instanceof LandedCostEligibilityError ? { code: e.code } : {})
         });
     }
 }

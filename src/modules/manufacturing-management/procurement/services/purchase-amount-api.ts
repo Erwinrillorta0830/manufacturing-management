@@ -1,5 +1,5 @@
 export async function fetchEligibleOrders() {
-    const res = await fetch("/api/manufacturing/procurement/shipments");
+    const res = await fetch("/api/manufacturing/procurement/shipments?landedCostOnly=true");
     if (!res.ok) throw new Error("Failed to fetch purchase orders");
     const data = await res.json();
     return Array.isArray(data) ? data : data?.data || [];
@@ -7,7 +7,10 @@ export async function fetchEligibleOrders() {
 
 export async function fetchPurchaseAmountDetails(poId: number) {
     const res = await fetch(`/api/manufacturing/procurement/amount-posting?poId=${poId}`);
-    if (!res.ok) throw new Error("Failed to fetch amount posting details");
+    if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Failed to fetch amount posting details");
+    }
     return res.json();
 }
 

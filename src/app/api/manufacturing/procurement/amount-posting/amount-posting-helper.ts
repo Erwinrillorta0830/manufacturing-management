@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
 
 export interface POLineItemForPosting {
     purchase_order_product_id: number;
@@ -224,6 +225,8 @@ export async function processPurchaseAmountPosting(payload: {
     expenses?: LandedExpenseEntry[];
     line_items: POLineItemForPosting[];
 }) {
+    await assertLandedCostPostingEligible(payload.purchase_order_id);
+
     const exchangeRate = payload.is_foreign ? (payload.exchange_rate || 1.0) : 1.0;
     const expenses = payload.expenses || [];
     const lineItems = payload.line_items || [];
