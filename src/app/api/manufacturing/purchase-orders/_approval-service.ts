@@ -13,6 +13,10 @@ import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import type { z } from "zod";
 import type { purchaseOrderApprovalSchema } from "./_schemas";
 import { normalizeDecimal } from "@/modules/manufacturing-management/decimal";
+import {
+    parsePurchaseOrderRevisionSnapshot,
+    type PurchaseOrderRevisionSnapshot
+} from "@/modules/manufacturing-management/purchase-order/revision-snapshot";
 
 type ApprovalCommand = z.infer<typeof purchaseOrderApprovalSchema>;
 
@@ -26,6 +30,12 @@ interface ApprovalOrder {
     purchase_order_id: number;
     purchase_order_no?: string | null;
     reference?: string | null;
+    supplier_name?: number | string | { id?: number | string } | null;
+    branch_id?: number | null;
+    payment_type?: number | null;
+    payment_mode?: number | null;
+    price_type?: string | null;
+    remark?: string | null;
     encoder_id?: number | null;
     approver_id?: number | null;
     finance_id?: number | null;
@@ -45,7 +55,6 @@ interface ApprovalOrder {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | number | null;
     approval_allow_self_approval?: boolean | number | null;
-    remark?: string | null;
 }
 
 interface ApprovalHistoryRow {
@@ -59,6 +68,7 @@ interface ApprovalHistoryRow {
     to_inventory_status?: number | null;
     revision_before: number;
     revision_after: number;
+    revision_snapshot?: PurchaseOrderRevisionSnapshot | string | null;
     created_at: string;
 }
 
@@ -71,10 +81,10 @@ interface ApprovalActorRow {
 }
 
 const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "encoder_id", "approver_id", "finance_id",
-    "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "payment_terms", "total_amount", "gross_amount",
+    "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
+    "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
     "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
-    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "remark"
+    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval"
 ].join(",");
 
 const approvalLocks = new Map<number, Promise<void>>();
@@ -194,7 +204,7 @@ function approvalState(order: ApprovalOrder, requiresFinance: boolean) {
 
 async function loadHistory(id: number): Promise<ApprovalHistoryRow[]> {
     return directusData<ApprovalHistoryRow[]>(
-        `/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${id}&fields=history_id,action,approval_stage,actor_id,actor_role_id,remarks,from_inventory_status,to_inventory_status,revision_before,revision_after,created_at&sort=created_at,history_id&limit=-1`,
+        `/items/purchase_order_approval_history?filter[purchase_order_id][_eq]=${id}&fields=history_id,action,approval_stage,actor_id,actor_role_id,remarks,from_inventory_status,to_inventory_status,revision_before,revision_after,revision_snapshot,created_at&sort=created_at,history_id&limit=-1`,
         "Unable to load approval history."
     );
 }
@@ -253,6 +263,7 @@ export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?
         categoryIds,
         history: history.map(entry => ({
             ...entry,
+            revision_snapshot: parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot),
             actor_name: actorNames.get(Number(entry.actor_id)) || "Unknown user"
         }))
     };

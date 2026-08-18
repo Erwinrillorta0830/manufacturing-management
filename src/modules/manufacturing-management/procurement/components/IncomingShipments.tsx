@@ -147,7 +147,9 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     const supplierRawMaterials = useMemo(() => {
         if (!shipmentForm.supplier_id) return [];
         
+        const selectedSupplierId = Number(shipmentForm.supplier_id);
         const linkedIds = supplierLinkedProducts
+            .filter(lp => Number(lp.supplier_id) === selectedSupplierId)
             .map(lp => {
                 if (typeof lp.product_id === "object" && lp.product_id !== null) {
                     return Number((lp.product_id as { product_id?: number; id?: number }).product_id || (lp.product_id as { product_id?: number; id?: number }).id);
@@ -158,9 +160,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
             })
             .filter((id): id is number => id !== null && !isNaN(id));
 
-        if (linkedIds.length === 0) {
-            return rawMaterials;
-        }
+        if (linkedIds.length === 0) return [];
 
         return rawMaterials.filter(rm => {
             const rmId = Number(rm.product_id);

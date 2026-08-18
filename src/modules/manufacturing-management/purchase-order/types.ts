@@ -8,6 +8,9 @@ export type {
     PurchaseOrderPriceTypeRule
 } from "../procurement/types";
 import type { PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../procurement/types";
+import type { PurchaseOrderRevisionSnapshot } from "./revision-snapshot";
+
+export type { PurchaseOrderRevisionSnapshot } from "./revision-snapshot";
 
 export interface PurchaseOrderListMeta {
     page: number;
@@ -95,6 +98,7 @@ export interface PurchaseOrderApprovalHistory {
     to_inventory_status?: number | null;
     revision_before: number;
     revision_after: number;
+    revision_snapshot?: PurchaseOrderRevisionSnapshot | null;
     created_at: string;
 }
 
@@ -103,6 +107,12 @@ export interface PurchaseOrderApprovalDetail {
         purchase_order_id: number;
         purchase_order_no?: string | null;
         reference?: string | null;
+        supplier_name?: number | string | { id?: number | string } | null;
+        branch_id?: number | null;
+        payment_type?: number | null;
+        payment_mode?: number | null;
+        price_type?: string | null;
+        remark?: string | null;
         inventory_status: number;
         payment_status?: number | null;
         payment_terms?: number | null;

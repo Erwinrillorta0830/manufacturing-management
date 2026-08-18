@@ -56,6 +56,11 @@ export function useIncomingShipmentsForm({
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
     const fxRateController = React.useRef<AbortController | null>(null);
+    const linesFormRef = React.useRef(linesForm);
+
+    React.useEffect(() => {
+        linesFormRef.current = linesForm;
+    }, [linesForm]);
 
     const activeShipment = selectedShipment || null;
 
@@ -130,6 +135,23 @@ export function useIncomingShipmentsForm({
 
     const handleSupplierSelect = useCallback((val: string) => {
         const matchedSup = suppliers.find(s => String(s.id) === String(val));
+
+        if (String(shipmentForm.supplier_id || "") !== String(val)) {
+            setLinesForm(previous => previous.map(line => ({
+                ...line,
+                parent_product_id: "",
+                product_id: "",
+                product_name: "",
+                product_code: "",
+                selected_uom: "",
+                uom_options: [],
+                quantity_ordered: "",
+                base_unit_cost_php: "",
+                discount_type_id: "",
+                discount_amount: "0",
+                discount_percent: "0"
+            })));
+        }
         
         if (!matchedSup) {
             setShipmentForm(prev => ({ ...prev, supplier_id: val }));
@@ -165,7 +187,7 @@ export function useIncomingShipmentsForm({
 
             toast.info(`Automated Currency: Set to PHP for Local Supplier (${matchedSup.supplier_name})`);
         }
-    }, [loadCurrentFxRate, suppliers, isSupplierForeign, setShipmentForm]);
+    }, [loadCurrentFxRate, setLinesForm, shipmentForm.supplier_id, suppliers, isSupplierForeign, setShipmentForm]);
 
     const handleStartEdit = async () => {
         if (!activeShipment) return;
@@ -592,11 +614,35 @@ export function useIncomingShipmentsForm({
                 });
                 setPriceTypeRatesMap(map);
 
+                const resolvedLines = linesFormRef.current.map(line => {
+                    if (!line.product_id) return line;
+
+                    const directRate = map[Number(line.product_id)];
+                    if (directRate !== undefined && directRate > 0) return line;
+
+                    if (!canonicalDrafting || !Array.isArray(line.uom_options)) return line;
+
+                    const configuredUom = line.uom_options.find((option: { product_id?: number }) => {
+                        const rate = map[Number(option.product_id)];
+                        return Number.isFinite(rate) && rate > 0;
+                    }) as { product_id?: number; parent_product_id?: number; unit_shortcut?: string } | undefined;
+
+                    if (!configuredUom?.product_id) return line;
+
+                    return {
+                        ...line,
+                        product_id: String(configuredUom.product_id),
+                        parent_product_id: configuredUom.parent_product_id
+                            ? String(configuredUom.parent_product_id)
+                            : line.parent_product_id,
+                        selected_uom: configuredUom.unit_shortcut || line.selected_uom
+                    };
+                });
+
                 if (canonicalDrafting) {
-                    const missingProductIds = selectedProductIdsKey
-                        .split(",")
-                        .filter(Boolean)
-                        .map(Number)
+                    const missingProductIds = resolvedLines
+                        .filter(line => line.product_id)
+                        .map(line => Number(line.product_id))
                         .filter(productId => !Number.isFinite(map[productId]) || map[productId] <= 0);
                     if (missingProductIds.length > 0) {
                         setPriceMatrixStatus("error");
@@ -609,11 +655,14 @@ export function useIncomingShipmentsForm({
                     setPriceMatrixStatus("ready");
                 }
 
-                setLinesForm(prev => prev.map(line => {
-                    if (!line.product_id) return line;
-                    const prod = rawMaterials.find(rm => String(rm.product_id) === String(line.product_id));
+                setLinesForm(prev => prev.map((line, index) => {
+                    const resolvedLine = resolvedLines[index] || line;
+                    const productId = resolvedLine.product_id;
+                    if (!productId) return resolvedLine;
+
+                    const prod = rawMaterials.find(rm => String(rm.product_id) === String(productId));
                     const defaultCost = Number(prod?.cost_per_unit || prod?.estimated_unit_cost || 0);
-                    const specialPrice = map[Number(line.product_id)];
+                    const specialPrice = map[Number(productId)];
                     const resolvedPrice = canonicalDrafting
                         ? specialPrice
                         : (specialPrice !== undefined && specialPrice > 0) ? specialPrice : defaultCost;
@@ -623,9 +672,9 @@ export function useIncomingShipmentsForm({
                         const transactionPrice = canonicalDrafting && shipmentForm.currency_code === "USD"
                             ? resolvedPrice / rate
                             : resolvedPrice;
-                        return { ...line, base_unit_cost_php: String(transactionPrice) };
+                        return { ...resolvedLine, base_unit_cost_php: String(transactionPrice) };
                     }
-                    return canonicalDrafting ? { ...line, base_unit_cost_php: "" } : line;
+                    return canonicalDrafting ? { ...resolvedLine, base_unit_cost_php: "" } : resolvedLine;
                 }));
             })
             .catch(e => {

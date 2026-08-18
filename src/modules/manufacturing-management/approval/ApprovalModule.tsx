@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
+import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
 
 type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
@@ -387,12 +388,31 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 </div>
                             </div>
 
+                            {stage === "Finance" && (
+                                <RevisionSnapshotComparison
+                                    detail={approvalDetail}
+                                    selectedShipment={selectedShipment}
+                                    currentLines={selectedShipmentLines}
+                                    suppliers={suppliers}
+                                />
+                            )}
+
                             <div>
                                 <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold"><History className="h-4 w-4 text-primary" /> Approval history</h3>
                                 {approvalDetail.history.length === 0 ? <p className="text-xs text-muted-foreground">No workflow actions recorded.</p> : (
                                     <div className="divide-y rounded-md border">{approvalDetail.history.map(entry => (
                                         <div key={entry.history_id} className="flex flex-wrap items-start justify-between gap-2 p-3 text-xs">
-                                            <div><div className="font-semibold">{entry.action} <span className="text-muted-foreground">({entry.approval_stage})</span></div><div className="mt-1 text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div></div>
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-1.5 font-semibold">
+                                                    {entry.action} <span className="text-muted-foreground">({entry.approval_stage})</span>
+                                                    {entry.action === "Resubmitted" && (
+                                                        <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${entry.revision_snapshot ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-amber-300 bg-amber-50 text-amber-700"}`}>
+                                                            {entry.revision_snapshot ? "Snapshot available" : "Legacy revision"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="mt-1 text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div>
+                                            </div>
                                             <div className="text-right text-[10px] text-muted-foreground"><div>{dateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
                                         </div>
                                     ))}</div>
