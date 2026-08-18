@@ -15,6 +15,10 @@ import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPriceTypeError, resolvePurchaseOrderPriceType } from "./_price-type";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import {
+    buildPurchaseOrderRevisionSnapshot,
+    type PurchaseOrderRevisionSnapshot
+} from "@/modules/manufacturing-management/purchase-order/revision-snapshot";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
 type CancellationCommand = z.infer<typeof purchaseOrderCancellationSchema>;
@@ -26,6 +30,7 @@ export class PurchaseOrderLifecycleError extends Error {
 }
 
 interface PurchaseOrderRecord {
+    [key: string]: unknown;
     purchase_order_id: number;
     purchase_order_no?: string | null;
     reference?: string | null;
@@ -59,13 +64,6 @@ interface PurchaseOrderLineRecord {
     purchase_order_product_id: number;
     [key: string]: unknown;
 }
-
-const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "remark", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "price_type",
-    "currency_code", "exchange_rate", "total_foreign_currency", "gross_amount", "total_amount", "inventory_status", "date_received",
-    "lead_time_receiving", "approver_id", "date_approved", "finance_id", "date_financed", "workflow_revision", "approval_rule_id",
-    "approval_requires_finance", "approval_allow_self_approval", "is_import"
-].join(",");
 
 function asBoolean(value: unknown): boolean {
     return value === true || Number(value) === 1;
@@ -103,7 +101,7 @@ async function directusData<T>(path: string, message: string): Promise<T> {
 
 async function loadOrder(id: number): Promise<PurchaseOrderRecord> {
     return directusData<PurchaseOrderRecord>(
-        `/items/purchase_order/${id}?fields=${ORDER_FIELDS}`,
+        `/items/purchase_order/${id}?fields=*`,
         "Purchase order was not found."
     );
 }
@@ -347,7 +345,29 @@ async function restoreLine(line: PurchaseOrderLineRecord, purchaseOrderId: numbe
     await createLine({ ...payload, purchase_order_id: purchaseOrderId });
 }
 
-async function writeHistory(id: number, action: "Resubmitted" | "Cancelled", actor: AuthorizedPurchaseOrderUser, remarks: string, fromStatus: number, toStatus: number, revision: number, nextRevision: number) {
+async function assertRevisionSnapshotStorage() {
+    const response = await procurementDirectusFetch(
+        "/items/purchase_order_approval_history?fields=history_id,revision_snapshot&limit=1"
+    );
+    if (!response.ok) {
+        throw new PurchaseOrderLifecycleError(
+            "Purchase-order revision snapshots are not available. Apply the revision snapshot database and Directus setup first.",
+            503
+        );
+    }
+}
+
+async function writeHistory(
+    id: number,
+    action: "Resubmitted" | "Cancelled",
+    actor: AuthorizedPurchaseOrderUser,
+    remarks: string,
+    fromStatus: number,
+    toStatus: number,
+    revision: number,
+    nextRevision: number,
+    revisionSnapshot?: PurchaseOrderRevisionSnapshot | null
+) {
     const response = await procurementDirectusFetch("/items/purchase_order_approval_history", {
         method: "POST",
         body: JSON.stringify({
@@ -361,6 +381,7 @@ async function writeHistory(id: number, action: "Resubmitted" | "Cancelled", act
             to_inventory_status: toStatus,
             revision_before: revision,
             revision_after: nextRevision,
+            revision_snapshot: action === "Resubmitted" ? revisionSnapshot || null : null,
             created_at: new Date().toISOString()
         })
     });
@@ -393,7 +414,27 @@ async function rollbackRevision(
     return failures;
 }
 
-export async function reviseRejectedPurchaseOrder(id: number, command: RevisionCommand, actor: AuthorizedPurchaseOrderUser) {
+const revisionLocks = new Map<number, Promise<void>>();
+
+async function withRevisionLock<T>(purchaseOrderId: number, operation: () => Promise<T>): Promise<T> {
+    const previous = revisionLocks.get(purchaseOrderId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => {
+        release = resolve;
+    });
+    const queued = previous.then(() => current);
+    revisionLocks.set(purchaseOrderId, queued);
+
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (revisionLocks.get(purchaseOrderId) === queued) revisionLocks.delete(purchaseOrderId);
+    }
+}
+
+async function reviseRejectedPurchaseOrderUnlocked(id: number, command: RevisionCommand, actor: AuthorizedPurchaseOrderUser) {
     const order = await loadOrder(id);
     const revision = Number(order.workflow_revision || 0);
     if (Number(order.inventory_status) !== INVENTORY_STATUS.REJECTED) {
@@ -448,6 +489,19 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
     }
     const rule = await resolveApprovalRule(totals.netPhp, currencyCode, command.lineItems.map(line => Number(line.product_id)));
     const oldLines = await loadLines(id);
+    let revisionSnapshot: PurchaseOrderRevisionSnapshot;
+    try {
+        revisionSnapshot = buildPurchaseOrderRevisionSnapshot(
+            id,
+            revision,
+            order,
+            oldLines,
+            new Date().toISOString()
+        );
+    } catch {
+        throw new PurchaseOrderLifecycleError("The prior purchase-order version could not be captured for audit.", 503);
+    }
+    await assertRevisionSnapshotStorage();
     const nextRevision = revision + 1;
     const headerPayload = {
         reference: command.shipmentData.reference_number,
@@ -497,7 +551,8 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
             INVENTORY_STATUS.REJECTED,
             INVENTORY_STATUS.REQUESTED,
             revision,
-            nextRevision
+            nextRevision,
+            revisionSnapshot
         );
     } catch (error) {
         const failures = await rollbackRevision(id, nextRevision, order, oldLines, deletedLineIds, createdLineIds);
@@ -512,6 +567,10 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
     }
 
     return { success: true, purchaseOrderId: id, status: "For Approval", workflowRevision: nextRevision };
+}
+
+export async function reviseRejectedPurchaseOrder(id: number, command: RevisionCommand, actor: AuthorizedPurchaseOrderUser) {
+    return withRevisionLock(id, () => reviseRejectedPurchaseOrderUnlocked(id, command, actor));
 }
 
 export async function cancelRejectedPurchaseOrder(id: number, command: CancellationCommand, actor: AuthorizedPurchaseOrderUser) {
