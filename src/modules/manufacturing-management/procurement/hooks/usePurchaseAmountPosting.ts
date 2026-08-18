@@ -13,6 +13,11 @@ import {
     postPurchaseAmounts
 } from "../services/purchase-amount-api";
 import { isForeignCountry } from "../supplier-country";
+import {
+    hasLandedCostStatus,
+    isLandedCostPostingEligible,
+    isPurchaseOrderPosted
+} from "../landed-cost-eligibility";
 
 export interface PurchaseOrderOption {
     purchase_order_id?: number;
@@ -69,34 +74,23 @@ export function usePurchaseAmountPosting(
             .catch(() => {});
     }, [propShipments]);
 
-    const allOrders = useMemo(
-        () => (fetchedOrders.length > 0 ? fetchedOrders : propShipments || []),
-        [fetchedOrders, propShipments]
-    );
+    // The filtered API response is authoritative. Do not fall back to the broad
+    // shipment prop when it is empty, otherwise ineligible POs can re-enter the queue.
+    const allOrders = useMemo(() => fetchedOrders, [fetchedOrders]);
 
     const postedOrders = useMemo(() => {
-        return allOrders.filter(po => Number(po.is_posted) === 1 || Number(po.is_posted_amounts) === 1);
+        return allOrders.filter(po => hasLandedCostStatus(po) && isPurchaseOrderPosted(po));
     }, [allOrders]);
 
     const eligibleOrders = useMemo(() => {
-        return allOrders.filter(po => {
-            const isPosted = Number(po.is_posted) === 1 || Number(po.is_posted_amounts) === 1;
-            if (isPosted) return false;
-
-            const invStatus = Number(po.inventory_status || 0);
-            const payStatus = Number(po.payment_status || 0);
-            const statusStr = String(po.status || "").toLowerCase();
-
-            // Must be Received (6/10) or Partially Received (9)
-            const isReceived = invStatus === 6 || invStatus === 9 || invStatus === 10 || statusStr.includes("received");
-            // Must be Awaiting Payment (1 or 2)
-            const isAwaitingPayment = payStatus === 1 || payStatus === 2 || payStatus === 0 || po.payment_status == null;
-
-            return isReceived && isAwaitingPayment;
-        });
+        return allOrders.filter(isLandedCostPostingEligible);
     }, [allOrders]);
 
-    const selectedShipment = propSelectedShipment || internalSelected || (eligibleOrders.length > 0 ? eligibleOrders[0] : null);
+    const selectedShipment = useMemo(() => {
+        if (propSelectedShipment && isLandedCostPostingEligible(propSelectedShipment)) return propSelectedShipment;
+        if (internalSelected && isLandedCostPostingEligible(internalSelected)) return internalSelected;
+        return eligibleOrders[0] || null;
+    }, [eligibleOrders, internalSelected, propSelectedShipment]);
 
     const handleSelectPO = (po: PurchaseOrderOption) => {
         if (propSetSelectedShipment) propSetSelectedShipment(po);

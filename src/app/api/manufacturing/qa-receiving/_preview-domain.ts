@@ -53,7 +53,9 @@ export interface ReceivingMovementRoute {
 export interface ReceivingPreviewLineResult {
     lineId: number;
     previouslyReceivedQuantity: number;
+    previouslyAcceptedQuantity: number;
     remainingQuantity: number;
+    remainingAcceptedQuantity: number;
     overDeliveryQuantity: number;
     isOverReceived: boolean;
     disposition: ReceivingDisposition;

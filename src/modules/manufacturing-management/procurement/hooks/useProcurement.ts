@@ -25,6 +25,7 @@ import {
     isForeignCountry,
     normalizeSupplierCountry
 } from "../supplier-country";
+import { isLandedCostPostingEligible } from "../landed-cost-eligibility";
 
 export function useProcurement(defaultTab: string = "suppliers") {
     const [activeTab, setActiveTab] = useState(defaultTab);
@@ -200,16 +201,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
     }, [selectedShipmentExpenses]);
 
-    // Load sub-details when shipment is selected
-    useEffect(() => {
-        if (selectedShipment) {
-            loadShipmentDetails(selectedShipment.shipment_id);
-        } else {
-            setSelectedShipmentLines([]);
-            setSelectedShipmentExpenses([]);
-        }
-    }, [selectedShipment]);
-
     const loadSuppliers = useCallback(async (status: SupplierStatusFilter = activeTab === "suppliers" ? "all" : "active") => {
         try {
             const data = await fetchSuppliers(status);
@@ -222,15 +213,26 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     const loadShipments = useCallback(async () => {
         try {
-            const data = await fetchShipments();
-            setShipments(data);
-            return data;
+            const landedCostOnly = activeTab === "shipment-expenses";
+            const data = await fetchShipments({ landedCostOnly });
+            const visibleShipments = landedCostOnly
+                ? data.filter(isLandedCostPostingEligible)
+                : data;
+
+            if (landedCostOnly) {
+                setSelectedShipment(previous => previous && visibleShipments.some(
+                    shipment => shipment.shipment_id === previous.shipment_id
+                ) ? previous : null);
+            }
+
+            setShipments(visibleShipments);
+            return visibleShipments;
         } catch (e) {
             console.error(e);
             toast.error("Failed to load incoming shipments");
             return [];
         }
-    }, []);
+    }, [activeTab]);
 
     const loadRawMaterials = useCallback(async () => {
         setRawMaterialsLoading(true);
@@ -257,12 +259,14 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
     }, [activeTab, loadSuppliers, loadRawMaterials, loadShipments]);
 
-    async function loadShipmentDetails(shipmentId: number) {
+    const loadShipmentDetails = useCallback(async (shipmentId: number) => {
         setLoading(true);
         try {
             const [lines, exps] = await Promise.all([
                 fetchShipmentLineItems(shipmentId),
-                fetchShipmentExpenses(shipmentId)
+                activeTab === "shipment-expenses"
+                    ? fetchShipmentExpenses(shipmentId)
+                    : Promise.resolve([] as ShipmentExpense[])
             ]);
             setSelectedShipmentLines(lines);
             setSelectedShipmentExpenses(exps);
@@ -272,7 +276,20 @@ export function useProcurement(defaultTab: string = "suppliers") {
         } finally {
             setLoading(false);
         }
-    }
+    }, [activeTab]);
+
+    // Load sub-details when shipment is selected.
+    useEffect(() => {
+        const canLoadExpenses = activeTab !== "shipment-expenses"
+            || (selectedShipment ? isLandedCostPostingEligible(selectedShipment) : false);
+
+        if (selectedShipment && canLoadExpenses) {
+            loadShipmentDetails(selectedShipment.shipment_id);
+        } else {
+            setSelectedShipmentLines([]);
+            setSelectedShipmentExpenses([]);
+        }
+    }, [activeTab, loadShipmentDetails, selectedShipment]);
 
     function parseCreationError(errorMsg: string): string {
         const msg = errorMsg.toLowerCase();

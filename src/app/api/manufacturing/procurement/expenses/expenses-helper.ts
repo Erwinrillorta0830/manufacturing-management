@@ -2,6 +2,7 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { DirectusShipmentExpense } from "@/modules/manufacturing-management/procurement/types";
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
 import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
+import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
 
 export type AllocationMethod = "Value" | "Weight" | "Volume" | "Hybrid";
 
@@ -187,6 +188,7 @@ export async function processShipmentLandedCosts(
     allocationMethodInput: string,
     lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
 ): Promise<{ success: true; deferredInventoryUpdates: number }> {
+    await assertLandedCostPostingEligible(shipmentId);
     void status;
     void lineItemUpdates;
     const allocationMethod = normalizeAllocationMethod(allocationMethodInput);

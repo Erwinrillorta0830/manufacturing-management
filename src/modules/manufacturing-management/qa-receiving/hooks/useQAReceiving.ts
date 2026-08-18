@@ -58,7 +58,10 @@ function resizeLotAllocations(
 }
 
 function isLockedReceivingShipment(shipment: Shipment | null, replacementDisposition: QuarantineDisposition | null = null): boolean {
-    return shipment?.status === "Received" && !replacementDisposition;
+    return !replacementDisposition && (
+        shipment?.status === "Received"
+        || Number(shipment?.inventory_status) === INVENTORY_STATUS.RECEIVED
+    );
 }
 
 export function useQAReceiving() {
@@ -325,7 +328,8 @@ export function useQAReceiving() {
     const handleSelectShipment = async (shipment: Shipment, replacementContext: QuarantineDisposition | null = null) => {
         const isReplacement = Boolean(replacementContext);
         const isReceived = shipment.status === "Received" || Number(shipment.inventory_status) === INVENTORY_STATUS.RECEIVED;
-        const isPartiallyReceived = shipment.status === "Partially Received";
+        const isPartiallyReceived = shipment.status === "Partially Received"
+            || Number(shipment.inventory_status) === INVENTORY_STATUS.PARTIALLY_RECEIVED;
         if (!isReplacement && !isReceivingQueueShipmentStatus(shipment.inventory_status ?? shipment.status) && !isReceived) {
             toast.error("The purchase order must be Finance-approved before it can be received.");
             clearInspection();
@@ -367,10 +371,11 @@ export function useQAReceiving() {
                 // Guess if packaging based on name context
                 const isPkg = prodName.includes("box") || prodName.includes("bottle") || prodName.includes("cap") || prodName.includes("sticker") || prodName.includes("packaging") || prodName.includes("plastic") || prodName.includes("wrapper");
                 
-                const remainingForLine = Math.max(0, Number(l.remaining_quantity ?? (Number(l.quantity_ordered || 0) - Number(l.quantity_received || 0))));
+                const orderedQuantity = Number(l.quantity_ordered || 0);
                 const existingReceivedQuantity = Number(l.quantity_received || 0);
                 const existingRejectedQuantity = Number(l.quantity_rejected || 0);
                 const existingAcceptedQuantity = Math.max(0, existingReceivedQuantity - existingRejectedQuantity);
+                const remainingAcceptedForLine = Math.max(0, Number(l.remaining_accepted_quantity ?? (orderedQuantity - existingAcceptedQuantity)));
                 const initialRejectedQuantity = deriveRejectedQuantity(existingReceivedQuantity, existingAcceptedQuantity);
                 
                 rowsInit[l.line_id] = {
@@ -379,14 +384,14 @@ export function useQAReceiving() {
                         : isReceived
                         ? existingReceivedQuantity
                         : isPartiallyReceived
-                            ? (remainingForLine > 0 ? remainingForLine : 0)
+                            ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
                     acceptedQty: isReplacement
                         ? replacementContext?.remainingQuantity || ""
                         : isReceived
                         ? existingAcceptedQuantity
                         : isPartiallyReceived
-                            ? (remainingForLine > 0 ? remainingForLine : 0)
+                            ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
                     rejectedQty: isReceived && !isReplacement ? initialRejectedQuantity : 0,
                     batchNumber: isReplacement ? "" : isReceived ? (latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "") : "",
@@ -397,8 +402,8 @@ export function useQAReceiving() {
                         ? l.lot_id && existingAcceptedQuantity > 0
                             ? [{ storageLotId: String(l.lot_id), quantity: existingAcceptedQuantity }]
                             : []
-                        : isPartiallyReceived && remainingForLine > 0 && latestStorageLotId
-                            ? [{ storageLotId: String(latestStorageLotId), quantity: remainingForLine }]
+                        : isPartiallyReceived && remainingAcceptedForLine > 0 && latestStorageLotId
+                            ? [{ storageLotId: String(latestStorageLotId), quantity: remainingAcceptedForLine }]
                             : [],
                     rejectedLotAllocations: isReplacement
                         ? []
@@ -422,7 +427,7 @@ export function useQAReceiving() {
                     return receipt.endsWith(suffix) ? receipt.slice(0, -suffix.length) : receipt;
                 })
                 .find(Boolean) || "";
-            setReceivingTicketNumber(!isReplacement && (isReceived || isPartiallyReceived) ? storedReceivingTicketNumber : "");
+            setReceivingTicketNumber(!isReplacement && isReceived ? storedReceivingTicketNumber : "");
 
             // Reuse the last partial receipt branch when available; otherwise use the PO branch.
             const latestReceiptBranchId = isPartiallyReceived
@@ -730,9 +735,6 @@ export function useQAReceiving() {
                 ? replacementDisposition.remainingQuantity
                 : Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
 
-            if (!replacementDisposition && receiptMode === "full" && received < remaining - OVER_DELIVERY_EPSILON) {
-                addIssue({ lineId: line.line_id, productName, field: "receivedQuantity", message: "Complete the remaining quantities for Full Receipt, or select Partial Receipt." });
-            }
             if (received <= 0) continue;
 
             if (![received, accepted].every(Number.isFinite)
@@ -776,13 +778,35 @@ export function useQAReceiving() {
         }
 
         const completesPurchaseOrder = lineItems.length > 0 && lineItems.every(line => {
+            const accepted = Number(inspectionRows[line.line_id]?.acceptedQty || 0);
+            const ordered = Number(line.quantity_ordered || 0);
+            const previouslyAccepted = Number(line.previously_accepted_quantity ?? Math.max(
+                0,
+                Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)
+            ));
+            const remainingAccepted = Math.max(0, Number(line.remaining_accepted_quantity ?? (ordered - previouslyAccepted)));
+            return accepted >= remainingAccepted - OVER_DELIVERY_EPSILON;
+        });
+        const allLinesPhysicallyComplete = lineItems.length > 0 && lineItems.every(line => {
             const received = Number(inspectionRows[line.line_id]?.receivedQty || 0);
             const ordered = Number(line.quantity_ordered || 0);
             const remaining = Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
             return received >= remaining - OVER_DELIVERY_EPSILON;
         });
-        if (!replacementDisposition && receiptMode === "partial" && completesPurchaseOrder) {
-            addIssue({ field: "receiptMode", message: "Partial Receipt requires at least one line to remain below its remaining quantity." });
+        const cumulativeAccepted = lineItems.reduce((total, line) => {
+            const accepted = Number(inspectionRows[line.line_id]?.acceptedQty || 0);
+            const previouslyAccepted = Number(line.previously_accepted_quantity ?? Math.max(
+                0,
+                Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)
+            ));
+            return total + previouslyAccepted + accepted;
+        }, 0);
+        const fullyRejected = allLinesPhysicallyComplete && cumulativeAccepted <= OVER_DELIVERY_EPSILON;
+        if (!replacementDisposition && receiptMode === "full" && !completesPurchaseOrder && !fullyRejected) {
+            addIssue({ field: "receiptMode", message: "Full Receipt requires every line to meet or exceed its remaining accepted quantity, or be fully rejected." });
+        }
+        if (!replacementDisposition && receiptMode === "partial" && (completesPurchaseOrder || fullyRejected)) {
+            addIssue({ field: "receiptMode", message: "Partial Receipt requires at least one line to remain below its remaining accepted quantity." });
         }
 
         return issues;
@@ -791,9 +815,6 @@ export function useQAReceiving() {
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedShipment || isLockedReceivingShipment(selectedShipment, replacementDisposition)) {
-            if (selectedShipment?.status === "Partially Received") {
-                toast.error("Partially received purchase orders are view-only and cannot be received again.");
-            }
             return;
         }
 
@@ -947,10 +968,6 @@ export function useQAReceiving() {
 
     const handleCommitReceiving = useCallback(async () => {
         if (postingInspection) return;
-        if (!replacementDisposition && selectedShipment?.status === "Partially Received") {
-            toast.error("Partially received purchase orders are view-only and cannot be received again.");
-            return;
-        }
         if (!receivingCommitContext) {
             toast.error("The receiving preview is no longer valid. Generate a new preview before posting.");
             return;
@@ -980,7 +997,7 @@ export function useQAReceiving() {
         } finally {
             setPostingInspection(false);
         }
-    }, [postingInspection, replacementDisposition, selectedShipment?.status, receivingCommitContext, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
+    }, [postingInspection, receivingCommitContext, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
 
     const handlePreviewOpenChange = useCallback((open: boolean) => {
         setPreviewOpen(open);

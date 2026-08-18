@@ -9,11 +9,13 @@ export interface ReceivingHistoryReference {
     received_quantity?: unknown;
     quantity_rejected?: unknown;
     is_replacement?: unknown;
+    is_reverted?: unknown;
 }
 
 export interface ReceivingHistoryTotals {
     received: number;
     rejected: number;
+    accepted: number;
 }
 
 function relationId(value: unknown, key: string): number | null {
@@ -54,14 +56,16 @@ export function summarizeReceivingHistory(
 
     for (const receiving of receivingRows) {
         if (receiving.is_replacement === true || Number(receiving.is_replacement) === 1) continue;
+        if (receiving.is_reverted === true || Number(receiving.is_reverted) === 1) continue;
         const lineId = resolvePurchaseOrderLineId(receiving, purchaseOrderLines);
         if (!lineId) {
             unresolvedRows.push(receiving);
             continue;
         }
-        const totals = byLine.get(lineId) || { received: 0, rejected: 0 };
+        const totals = byLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
         totals.received += Math.max(0, Number(receiving.received_quantity || 0));
         totals.rejected += Math.max(0, Number(receiving.quantity_rejected || 0));
+        totals.accepted = Math.max(0, totals.received - totals.rejected);
         byLine.set(lineId, totals);
     }
 

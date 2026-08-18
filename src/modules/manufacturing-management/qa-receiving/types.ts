@@ -59,7 +59,9 @@ export interface ShipmentLineItem {
     quantity_rejected: number;
     previously_received_quantity?: number;
     previously_rejected_quantity?: number;
+    previously_accepted_quantity?: number;
     remaining_quantity?: number;
+    remaining_accepted_quantity?: number;
     is_over_received?: boolean;
     over_delivery_quantity?: number;
     latest_receipt?: {
@@ -133,7 +135,9 @@ export type QuarantineStock = import("@/app/api/manufacturing/qa-receiving/_quar
 export interface ReceivingQaEvaluation {
     lineId: number;
     previouslyReceivedQuantity: number;
+    previouslyAcceptedQuantity: number;
     remainingQuantity: number;
+    remainingAcceptedQuantity: number;
     overDeliveryQuantity: number;
     isOverReceived: boolean;
     disposition: ReceivingDisposition;

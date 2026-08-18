@@ -16,6 +16,7 @@ import {
 import { calculateLandedCostAllocations, fetchShipmentExpenses, normalizeAllocationMethod, toStandardKg } from "../expenses/expenses-helper";
 import { receiptNumberForLine, type FinalReceivingAllocation } from "../../qa-receiving/_commit-contract";
 import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
+import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-receiving/_receiving-status";
 import { sumMovementQuantitiesByLot } from "../../qa-receiving/_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
@@ -431,9 +432,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.REJECTED) {
             throw new ReceivingError("Rejected purchase orders cannot continue to receiving.", 409);
         }
-        if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
-            throw new ReceivingError("Partially received purchase orders are view-only and cannot be received again.", 409);
-        }
         if (existingReceipts.length === receiptNumbers.length) {
             for (const item of lineItemUpdates) {
                 const existingReceipt = existingReceipts.find((row: Record<string, unknown>) => String(row.receipt_no) === receiptNumberForLine(referenceNumber, item.line_id));
@@ -466,7 +464,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 throw error;
             }
         }
-        const receivableStatuses: number[] = [INVENTORY_STATUS.FOR_PICKUP];
+        const receivableStatuses: number[] = [INVENTORY_STATUS.FOR_PICKUP, INVENTORY_STATUS.PARTIALLY_RECEIVED];
         if (existingReceipts.length > 0) {
             throw new ReceivingError("This purchase order has a partial previous receiving attempt and requires reconciliation.", 409);
         }
@@ -501,7 +499,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             const declaredAccepted = Number(item.quantity_accepted);
             const rejected = deriveRejectedQuantity(received, declaredAccepted);
             const ordered = Number(poLine.ordered_quantity || 0);
-            const previous = previouslyReceivedByLine.get(item.line_id) || { received: 0, rejected: 0 };
+            const previous = previouslyReceivedByLine.get(item.line_id) || { received: 0, rejected: 0, accepted: 0 };
             const remaining = replacementContext?.targetLineId === item.line_id
                 ? replacementContext.disposition.remainingQuantity
                 : Math.max(0, ordered - previous.received);
@@ -582,18 +580,21 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         });
 
         const preparedByLine = new Map(prepared.map(line => [line.item.line_id, line]));
-        const incompleteFullLines = poLines.filter(poLine => {
+        const receivingStatus = evaluateReceivingStatus(poLines.map(poLine => {
             const lineId = Number(poLine.purchase_order_product_id);
-            const previous = previouslyReceivedByLine.get(lineId)?.received || 0;
-            const current = preparedByLine.get(lineId)?.received || 0;
-            return previous + current < Number(poLine.ordered_quantity || 0) - 1e-9;
-        });
-        const allLinesAccounted = incompleteFullLines.length === 0;
-        if (!replacementDispositionId && receiptMode === "full" && !allLinesAccounted) {
-            throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining quantity.", 422);
+            const previous = previouslyReceivedByLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
+            const current = preparedByLine.get(lineId);
+            return {
+                orderedQuantity: Number(poLine.ordered_quantity || 0),
+                receivedQuantity: previous.received + (current?.received || 0),
+                rejectedQuantity: previous.rejected + (current?.rejected || 0)
+            };
+        }));
+        if (!replacementDispositionId && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+            throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.", 422);
         }
-        if (!replacementDispositionId && receiptMode === "partial" && allLinesAccounted) {
-            throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining quantity.", 422);
+        if (!replacementDispositionId && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+            throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.", 422);
         }
 
 
@@ -734,9 +735,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     }
                 }
                 if (!replacementDispositionId) {
-                    const cumulativeReceived = (previouslyReceivedByLine.get(line.item.line_id)?.received || 0) + line.received;
+                    const previous = previouslyReceivedByLine.get(line.item.line_id) || { received: 0, rejected: 0, accepted: 0 };
+                    const cumulativeAccepted = previous.accepted + line.accepted;
                     lineChanges.push({ id: line.item.line_id, received: line.poLine.received });
-                    const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeReceived >= Number(line.poLine.ordered_quantity || 0) ? 1 : 0 });
+                    const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeAccepted >= Number(line.poLine.ordered_quantity || 0) - RECEIVING_STATUS_EPSILON ? 1 : 0 });
                     if (!lineUpdateRes.ok) throw new Error(`Failed to mark line ${line.item.line_id} as received.`);
                 }
             }
@@ -788,21 +790,15 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 allocationChanges
             );
 
-            const totalAccepted = poLines.reduce((sum, poLine) => {
-                const previous = previouslyReceivedByLine.get(Number(poLine.purchase_order_product_id));
-                const current = prepared.find(line => line.item.line_id === Number(poLine.purchase_order_product_id));
-                return sum + Math.max(0, (previous?.received || 0) - (previous?.rejected || 0)) + (current?.accepted || 0);
-            }, 0);
             if (!replacementDispositionId) {
-                const allRejected = allLinesAccounted && totalAccepted <= 1e-9;
                 commitPhase = "status";
                 const statusRes = await mutate("purchase_order", shipmentId, "PATCH", {
-                    inventory_status: !allLinesAccounted
+                    inventory_status: receivingStatus.status === "Partially Received"
                         ? INVENTORY_STATUS.PARTIALLY_RECEIVED
-                        : allRejected
+                        : receivingStatus.status === "Rejected"
                             ? INVENTORY_STATUS.REJECTED
                             : INVENTORY_STATUS.RECEIVED,
-                    ...(allLinesAccounted ? { date_received: todayInManila() } : {})
+                    ...(receivingStatus.status !== "Partially Received" ? { date_received: todayInManila() } : {})
                 });
                 if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
             }

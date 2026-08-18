@@ -9,6 +9,7 @@ import ProductQaChecklist from "./ProductQaChecklist";
 interface ShipmentInspectionFormProps {
     selectedShipment: Shipment;
     readOnly: boolean;
+    isReplacement?: boolean;
     lineItems: ShipmentLineItem[];
     branches: Branch[];
     storageLots: StorageLot[];
@@ -171,10 +172,13 @@ function SearchableStorageLotSelect({
 export default function ShipmentInspectionForm({
     selectedShipment,
     readOnly,
+    isReplacement = false,
     lineItems,
     branches,
     storageLots,
     receivingTicketNumber,
+    receiptMode,
+    setReceiptMode,
     selectedBranchId,
     setSelectedBranchId,
     processOverDelivery,
@@ -480,6 +484,25 @@ export default function ShipmentInspectionForm({
                     </div>
                     {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
                 </div>
+
+                <div className="space-y-1">
+                    <label htmlFor="receiving-mode" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Receipt Mode {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
+                    </label>
+                    <select
+                        id="receiving-mode"
+                        value={receiptMode || "full"}
+                        onChange={event => setReceiptMode?.(event.target.value as "full" | "partial")}
+                        disabled={readOnly || isReplacement || !setReceiptMode}
+                        className="w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold px-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer disabled:cursor-not-allowed disabled:bg-muted/40"
+                    >
+                        <option value="full">Full Receipt</option>
+                        <option value="partial">Partial Receipt</option>
+                    </select>
+                    <p className="text-[9px] text-muted-foreground">
+                        {isReplacement ? "Replacement receipts use the linked quarantine disposition." : "Completion is based on cumulative accepted quantity."}
+                    </p>
+                </div>
             </div>
 
             {!readOnly && overDeliveryLines.length > 0 && (
@@ -538,6 +561,8 @@ export default function ShipmentInspectionForm({
                         const orderedVal = Number(line.quantity_ordered || 0);
                         const previouslyReceivedVal = Number(line.previously_received_quantity ?? Math.max(0, orderedVal - Number(line.remaining_quantity ?? orderedVal)));
                         const remainingVal = Math.max(0, Number(line.remaining_quantity ?? (orderedVal - previouslyReceivedVal)));
+                        const previouslyAcceptedVal = Number(line.previously_accepted_quantity ?? Math.max(0, Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)));
+                        const remainingAcceptedVal = Math.max(0, Number(line.remaining_accepted_quantity ?? (orderedVal - previouslyAcceptedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
                         const rejectedVal = Math.max(0, deriveRejectedQuantity(receivedVal, acceptedVal));
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
@@ -618,6 +643,13 @@ export default function ShipmentInspectionForm({
                                             .join(" ")}
                                     </p>
                                 )}
+
+                                <div className="flex flex-wrap gap-x-5 gap-y-1 border-y py-2 text-[9px] font-semibold text-muted-foreground">
+                                    <span>Previously received: <strong className="text-foreground">{previouslyReceivedVal.toLocaleString()}</strong></span>
+                                    <span>Previously accepted: <strong className="text-emerald-700">{previouslyAcceptedVal.toLocaleString()}</strong></span>
+                                    <span>Remaining accepted: <strong className="text-primary">{remainingAcceptedVal.toLocaleString()}</strong></span>
+                                    <span>Physical remaining: <strong className="text-foreground">{remainingVal.toLocaleString()}</strong></span>
+                                </div>
 
                                  {/* QA Inputs Grid - Touch Optimized layout */}
                                  {(() => {

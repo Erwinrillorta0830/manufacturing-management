@@ -19,6 +19,7 @@ import {
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
+import { hasLandedCostStatus } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
 
 const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
 
@@ -208,7 +209,9 @@ export interface ExtendedShipmentLineItem {
     quantity_rejected?: number;
     previously_received_quantity?: number;
     previously_rejected_quantity?: number;
+    previously_accepted_quantity?: number;
     remaining_quantity?: number;
+    remaining_accepted_quantity?: number;
     is_over_received?: boolean;
     over_delivery_quantity?: number;
     latest_receipt?: LatestReceivingSnapshot | null;
@@ -533,12 +536,18 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     };
 }
 
-export async function fetchIncomingShipments(): Promise<unknown[]> {
+export async function fetchIncomingShipments(options: { landedCostOnly?: boolean } = {}): Promise<unknown[]> {
     try {
-        const url = `${DIRECTUS_URL}/items/purchase_order?fields=*&sort=-date_encoded&limit=-1`;
+        const landedCostFilter = options.landedCostOnly
+            ? `&filter[inventory_status][_eq]=${INVENTORY_STATUS.RECEIVED}&filter[payment_status][_eq]=${PAYMENT_STATUS.AWAITING_PAYMENT}`
+            : "";
+        const url = `${DIRECTUS_URL}/items/purchase_order?fields=*&sort=-date_encoded&limit=-1${landedCostFilter}`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) return [];
-        const poList = ((await res.json()).data || []) as DirectusPO[];
+        const fetchedPOList = ((await res.json()).data || []) as DirectusPO[];
+        const poList = options.landedCostOnly
+            ? fetchedPOList.filter(hasLandedCostStatus)
+            : fetchedPOList;
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
         const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));
         const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(poList.map(row => ({
@@ -612,7 +621,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const rawProdId = typeof line.product_id === "object" && line.product_id ? line.product_id.product_id : line.product_id;
             const product = products.find(p => Number(p.product_id) === Number(rawProdId));
             const lineId = Number(line.purchase_order_product_id);
-            const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0 };
+            const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
             const qty = Math.max(0, history.received || Number(line.ordered_quantity || 0));
             const rawW = Number((product as Record<string, unknown> | undefined)?.weight || (product as Record<string, unknown> | undefined)?.product_weight || 0);
             const weightUnitObj = (product as Record<string, unknown> | undefined)?.weight_unit_id as Record<string, unknown> | undefined;
@@ -646,10 +655,12 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const receivingIdsForProduct = originalReceivingData
                 .filter(row => relationId(row.product_id, "product_id") === Number(rawProdId))
                 .map(row => receivingRecordId(row.purchase_order_product_id));
-            const lineHistory = receivingHistory.byLine.get(Number(pop.purchase_order_product_id)) || { received: 0, rejected: 0 };
+            const lineHistory = receivingHistory.byLine.get(Number(pop.purchase_order_product_id)) || { received: 0, rejected: 0, accepted: 0 };
             const previouslyReceivedQuantity = lineHistory.received;
             const previouslyRejectedQuantity = lineHistory.rejected;
+            const previouslyAcceptedQuantity = lineHistory.accepted;
             const remainingQuantity = Math.max(0, Number(pop.ordered_quantity || 0) - previouslyReceivedQuantity);
+            const remainingAcceptedQuantity = Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity);
             const lineId = Number(pop.purchase_order_product_id);
             const latestReceipt = originalReceivingData
                 .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)
@@ -726,7 +737,9 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 quantity_rejected: previouslyRejectedQuantity,
                 previously_received_quantity: previouslyReceivedQuantity,
                  previously_rejected_quantity: previouslyRejectedQuantity,
+                 previously_accepted_quantity: previouslyAcceptedQuantity,
                  remaining_quantity: remainingQuantity,
+                 remaining_accepted_quantity: remainingAcceptedQuantity,
                  is_over_received: latestSnapshot?.is_over_received || false,
                  over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
                  latest_receipt: latestSnapshot,
