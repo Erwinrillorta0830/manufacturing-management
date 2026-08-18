@@ -51,7 +51,7 @@ const HEADER_FIELDS = [
     { key: "gross_amount", label: "Gross Total (PHP)" },
     { key: "total_amount", label: "Net Total (PHP)" },
     { key: "total_foreign_currency", label: "Foreign Total" },
-    { key: "remark", label: "Remarks" }
+    { key: "remark", label: "PO Remarks" }
 ] as const;
 
 const LINE_FIELDS = [

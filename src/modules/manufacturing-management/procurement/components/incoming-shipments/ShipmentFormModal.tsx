@@ -559,6 +559,21 @@ export function ShipmentFormModal({
                                     </div>
                                 )}
                             </div>
+                            {canonicalDrafting && (
+                                <div className="space-y-1.5 border-t pt-3">
+                                    <label htmlFor="purchase-order-remarks" className="text-[10px] font-bold text-muted-foreground uppercase">
+                                        Remarks
+                                    </label>
+                                    <textarea
+                                        id="purchase-order-remarks"
+                                        rows={3}
+                                        value={shipmentForm.remark || ""}
+                                        onChange={event => setShipmentForm({ ...shipmentForm, remark: event.target.value })}
+                                        placeholder="Enter purchase notes, special terms, and other relevant details..."
+                                        className="w-full resize-y rounded-lg border bg-background px-2.5 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                            )}
                         </div>
 
                         {/* Excel Spreadsheet Table Container */}

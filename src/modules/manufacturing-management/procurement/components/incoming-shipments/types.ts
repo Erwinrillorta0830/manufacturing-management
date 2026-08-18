@@ -44,6 +44,7 @@ export interface ManifestLineFormItem {
 
 export interface ShipmentFormState {
     reference_number: string;
+    remark?: string;
     supplier_id: string;
     exchange_rate: string;
     total_foreign_currency: string;

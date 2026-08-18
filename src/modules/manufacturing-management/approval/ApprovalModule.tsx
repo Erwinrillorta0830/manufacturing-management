@@ -93,6 +93,18 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
         return suppliers.find(supplier => supplier.id === Number(value))?.supplier_name || "Unknown supplier";
     }, [selectedShipment, suppliers]);
 
+    const financeFeedback = useMemo(
+        () => approvalDetail?.history
+            .filter(entry =>
+                entry.approval_stage === "Finance"
+                && (entry.action === "Rejected" || entry.action === "Cancelled")
+                && Boolean(entry.remarks?.trim())
+            )
+            .slice()
+            .reverse() || [],
+        [approvalDetail]
+    );
+
     const handleApprove = async () => {
         if (!selectedShipment || !approvalDetail) return;
         if (approvalDetail.stage !== stage) {
@@ -279,6 +291,31 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{Number(approvalDetail.order.exchange_rate || 1).toFixed(4)}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Revision</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.workflow_revision || 0}</div></div>
+                            </div>
+
+                            <div className="grid gap-3 lg:grid-cols-2">
+                                <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3">
+                                    <div className="text-[10px] font-semibold uppercase text-blue-700">PO Remarks</div>
+                                    <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">
+                                        {approvalDetail.order.remark || "No purchase notes or special terms entered."}
+                                    </p>
+                                </div>
+                                {financeFeedback.length > 0 && (
+                                    <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3">
+                                        <div className="text-[10px] font-semibold uppercase text-amber-700">Finance Feedback</div>
+                                        <div className="mt-2 space-y-2">
+                                            {financeFeedback.map(entry => (
+                                                <div key={entry.history_id} className="border-t border-amber-200/70 pt-2 first:border-t-0 first:pt-0">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-amber-800">
+                                                        <span>{entry.action} · {entry.actor_name}</span>
+                                                        <span>{dateTime(entry.created_at)}</span>
+                                                    </div>
+                                                    <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">{entry.remarks}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             {stage === "Finance" && (

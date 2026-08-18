@@ -53,6 +53,7 @@ export interface PurchaseOrderCatalog {
 
 export interface PurchaseOrderDraftPayload {
     externalReference?: string;
+    remark?: string;
     supplierId: number;
     branchId: number;
     paymentArrangementId: number;
