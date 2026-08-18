@@ -22,6 +22,11 @@ import { POST as previewReceiving } from "../preview/route";
 import { normalizeReceivingLotAllocations, normalizeRejectedLotAllocations } from "../_lot-allocation";
 import { fetchQaResults, qaResultsMatch, type QaResultExpectation } from "../../procurement/qa-receiving/_qa-results";
 import {
+    completeReplacementDisposition,
+    fetchQuarantineDisposition,
+    QuarantineDispositionError
+} from "../_quarantine-disposition";
+import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
     markReceivingTicketFailed,
@@ -52,12 +57,13 @@ async function directusRows(path: string, message: string) {
     return rows(await response.json());
 }
 
-async function assertReceivingStatusOpen(shipmentId: number) {
+async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null) {
     const headerRows = await directusRows(
         `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,inventory_status&limit=1`,
         "Unable to verify the current purchase-order status."
     );
     const status = Number(headerRows[0]?.inventory_status);
+    if (replacementDispositionId) return;
     if (status === INVENTORY_STATUS.RECEIVED) return;
     if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
         throw new CommitError(409, "The purchase order must be in Receiving (QA) before it can be received.");
@@ -153,7 +159,7 @@ async function persistedResult(
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -175,6 +181,12 @@ async function persistedResult(
         || new Set(receivingRows.map(row => String(row.receipt_no))).size !== receiptNumbers.length
     ) {
         throw new CommitError(409, "The purchase order status changed but its receiving records are incomplete. Reconciliation is required.");
+    }
+    if (input.replacementDispositionId && receivingRows.some(row =>
+        !(row.is_replacement === true || Number(row.is_replacement) === 1)
+        || relationId(row.quarantine_disposition_id, "id") !== input.replacementDispositionId
+    )) {
+        throw new CommitError(409, "The replacement receiving record is not linked to its quarantine disposition. Reconciliation is required.");
     }
     const receivingIds = receivingRows.map(row => Number(row.purchase_order_product_id));
     if (receivingIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
@@ -406,6 +418,25 @@ async function persistedResult(
     };
 }
 
+async function settleReplacementAfterReceiving(
+    dispositionId: number | null | undefined,
+    result: ReceivingCommitResult,
+    actorUserId: number,
+    operationKey: string
+) {
+    if (!dispositionId) return null;
+    const disposition = await fetchQuarantineDisposition(dispositionId);
+    const receiving = result.receivingRecords.find(record => record.lineId === disposition.purchaseOrderLineId);
+    if (!receiving) throw new CommitError(409, "The replacement receipt could not be linked to its quarantine line.");
+    return completeReplacementDisposition({
+        dispositionId,
+        acceptedQuantity: Math.max(0, receiving.receivedQuantity - receiving.rejectedQuantity),
+        replacementReceivingId: receiving.receivingRecordId,
+        operationKey,
+        actorUserId
+    });
+}
+
 export async function POST(request: Request) {
     let allocatedTicketId: number | null = null;
     let ticketPosted = false;
@@ -420,11 +451,14 @@ export async function POST(request: Request) {
         if (!parsed.success) {
             return NextResponse.json({ error: "Invalid receiving commit request.", details: parsed.error.flatten() }, { status: 400 });
         }
-        await assertReceivingStatusOpen(parsed.data.shipmentId);
+        await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
         const existingTicket = await fetchReceivingTicketByIdempotencyKey(idempotencyKey);
         if (existingTicket?.posting_status === "Posted" && existingTicket.receiving_ticket_no) {
             const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true);
-            if (completed) return NextResponse.json({ data: completed });
+            if (completed) {
+                await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
+                return NextResponse.json({ data: completed });
+            }
         }
         if (existingTicket?.posting_status === "Reserved") {
             throw new CommitError(409, "A receiving commit with this idempotency key is already in progress.");
@@ -440,6 +474,7 @@ export async function POST(request: Request) {
                 shipmentId: parsed.data.shipmentId,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
+                replacementDispositionId: parsed.data.replacementDispositionId || null,
                 destinationBranchId: parsed.data.destinationBranchId,
                 lines: parsed.data.lines
             })
@@ -461,7 +496,7 @@ export async function POST(request: Request) {
             "Unable to verify complete purchase-order quantities."
         );
         const previewByLine = new Map(preview.lines.map(line => [line.lineId, line]));
-        if (poLines.length === 0 || poLines.length !== preview.lines.length) {
+        if (poLines.length === 0 || (!parsed.data.replacementDispositionId && poLines.length !== preview.lines.length)) {
             throw new CommitError(422, "Every purchase-order line must be included before final receiving can be posted.");
         }
         for (const poLine of poLines) {
@@ -474,7 +509,9 @@ export async function POST(request: Request) {
         }
 
         const requestLineById = new Map(parsed.data.lines.map(line => [line.lineId, line]));
-        const mrpAllocationDrafts = preview.lines.flatMap(result => {
+        const mrpAllocationDrafts = parsed.data.replacementDispositionId
+            ? []
+            : preview.lines.flatMap(result => {
             const line = requestLineById.get(result.lineId);
             if (!line) return [];
             return result.routes.flatMap(route => route.allocationDrafts.map(allocation => ({
@@ -484,7 +521,7 @@ export async function POST(request: Request) {
                 job_order_material_id: allocation.jobOrderMaterialId,
                 quantity: allocation.quantity
                 })));
-        });
+            });
         const receivingTicket = await allocateReceivingTicket({
             purchaseOrderId: parsed.data.shipmentId,
             branchId: parsed.data.destinationBranchId,
@@ -500,7 +537,10 @@ export async function POST(request: Request) {
         if (receivingTicket.posting_status === "Posted") {
             ticketPosted = true;
             const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)));
-            if (completed) return NextResponse.json({ data: completed });
+            if (completed) {
+                await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
+                return NextResponse.json({ data: completed });
+            }
             throw new CommitError(409, "The existing receiving ticket could not be reconciled with its persisted records.");
         }
         const legacyResponse = await handleQaReceivingPost(new Request(request.url, {
@@ -508,6 +548,7 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
+                replacementDispositionId: parsed.data.replacementDispositionId || null,
                 referenceNumber: receivingTicket.receiving_ticket_no,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
@@ -548,7 +589,7 @@ export async function POST(request: Request) {
                     };
                 })
             })
-        }), { actorUserId: actor.userId, receivingHeaderId: receivingTicket.id });
+        }), { actorUserId: actor.userId, receivingHeaderId: receivingTicket.id, replacementDispositionId: parsed.data.replacementDispositionId });
         const legacyBody = await legacyResponse.json();
         if (!legacyResponse.ok) {
             throw new CommitError(legacyResponse.status, legacyBody.error || "Failed to post receiving records.");
@@ -563,6 +604,7 @@ export async function POST(request: Request) {
         if (!committed) {
             throw new CommitError(500, "Receiving completed but persisted records could not be fully verified. Reconciliation is required.");
         }
+        await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, committed, actor.userId, idempotencyKey);
         await markReceivingTicketPosted(receivingTicket.id);
         ticketPosted = true;
         return NextResponse.json({ data: committed }, { status: legacyBody.idempotent ? 200 : 201 });
@@ -572,6 +614,8 @@ export async function POST(request: Request) {
         }
         const status = error instanceof PurchaseOrderAuthorizationError
             ? error.status
+            : error instanceof QuarantineDispositionError
+                ? error.statusCode
             : error instanceof CommitError
                 ? error.statusCode
                 : error instanceof ReceivingTicketError

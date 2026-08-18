@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { validateReceivingQuantities } from "../qa/_receiving-evaluation";
+import { deriveRejectedQuantity, validateReceivingQuantities } from "../qa/_receiving-evaluation";
 import { receivingLotAllocationError, rejectedLotAllocationError } from "../qa-receiving/_lot-allocation";
 
 const positiveId = z.coerce.number().int().positive();
@@ -65,10 +65,14 @@ export const receivingLineSchema = z.object({
         line.lot_id
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejected_lot_allocations"], message: rejectedAllocationMessage });
-});
+}).transform(line => ({
+    ...line,
+    quantity_rejected: deriveRejectedQuantity(line.quantity_received, line.quantity_accepted)
+}));
 
 export const receivingSubmissionSchema = z.object({
     shipmentId: positiveId,
+    replacementDispositionId: positiveId.nullable().optional(),
     referenceNumber: z.string().trim().min(1),
     receiptMode: z.enum(["full", "partial"]).default("full"),
     processOverDelivery: z.boolean().default(false),

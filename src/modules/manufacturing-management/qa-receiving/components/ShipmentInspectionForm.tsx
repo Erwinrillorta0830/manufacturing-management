@@ -2,6 +2,7 @@ import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
+import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
 import ProductQaChecklist from "./ProductQaChecklist";
 
@@ -234,15 +235,11 @@ export default function ShipmentInspectionForm({
         const row = inspectionRows[line.line_id];
         const received = Number(row?.receivedQty || 0);
         const accepted = Number(row?.acceptedQty || 0);
-        const rejected = Number(row?.rejectedQty || 0);
-        if (![received, accepted, rejected].every(Number.isFinite)) return true;
-        if (received === 0 && accepted === 0 && rejected === 0) return false;
+        if (![received, accepted].every(Number.isFinite)) return true;
+        if (received === 0 && accepted === 0) return false;
         return received <= 0
             || accepted < 0
-            || rejected < 0
-            || accepted > received
-            || rejected > received
-            || Math.abs(received - accepted - rejected) > 1e-9;
+            || accepted > received;
     }), [inspectionRows, lineItems]);
 
     const hasAllocationMismatch = React.useMemo(() => lineItems.some(line => {
@@ -256,7 +253,11 @@ export default function ShipmentInspectionForm({
 
     const hasRejectedAllocationMismatch = React.useMemo(() => lineItems.some(line => {
         const row = inspectionRows[line.line_id];
-        const rejected = Number(row?.rejectedQty || 0);
+        const received = Number(row?.receivedQty || 0);
+        const accepted = Number(row?.acceptedQty || 0);
+        const rejected = Number.isFinite(received) && Number.isFinite(accepted)
+            ? Math.max(0, deriveRejectedQuantity(received, accepted))
+            : 0;
         const allocations = row?.rejectedLotAllocations || [];
         if (rejected <= 0) return allocations.length > 0;
         const total = allocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
@@ -521,7 +522,7 @@ export default function ShipmentInspectionForm({
                         const row = inspectionRows[line.line_id] || {
                             receivedQty: "",
                             acceptedQty: "",
-                            rejectedQty: "",
+                            rejectedQty: 0,
                             batchNumber: "",
                             lotId: "",
                             manufacturingDate: "",
@@ -538,14 +539,11 @@ export default function ShipmentInspectionForm({
                         const previouslyReceivedVal = Number(line.previously_received_quantity ?? Math.max(0, orderedVal - Number(line.remaining_quantity ?? orderedVal)));
                         const remainingVal = Math.max(0, Number(line.remaining_quantity ?? (orderedVal - previouslyReceivedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
-                        const rejectedVal = row.rejectedQty !== "" ? Number(row.rejectedQty) : 0;
+                        const rejectedVal = Math.max(0, deriveRejectedQuantity(receivedVal, acceptedVal));
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
-                        const quantitiesReconcile = [receivedVal, acceptedVal, rejectedVal].every(Number.isFinite)
+                        const quantitiesReconcile = [receivedVal, acceptedVal].every(Number.isFinite)
                             && acceptedVal >= 0
-                            && rejectedVal >= 0
-                            && acceptedVal <= receivedVal
-                            && rejectedVal <= receivedVal
-                            && Math.abs(receivedVal - acceptedVal - rejectedVal) <= 1e-9;
+                            && acceptedVal <= receivedVal;
                         const isRemarksMandatory = rejectedVal > 0 || (receivedVal > 0 && receivedVal !== remainingVal);
                         const evaluation = qaEvaluationResults[line.line_id];
                         const lineIssue = (field: string) => issueFor(line.line_id, field);
@@ -723,38 +721,16 @@ export default function ShipmentInspectionForm({
                                             {/* Rejected Quantity */}
                                             <div className="space-y-1">
                                                 <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                                     This Receipt - Rejected Quantity {!readOnly && receivedVal > 0 && <span className="text-red-500">*</span>}
+                                                     This Receipt - Rejected Quantity <span className="text-[8px] normal-case font-semibold text-muted-foreground">(calculated)</span>
                                                 </label>
-                                                <div className="flex items-center">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "rejectedQty", Math.max(0, rejectedVal - 1))}
-                                                        disabled={readOnly}
-                                                        className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors shrink-0"
-                                                    >
-                                                        <Minus className="h-3.5 w-3.5" />
-                                                    </button>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        max={receivedVal || undefined}
-                                                        step="any"
-                                                        placeholder="Rejected qty"
-                                                        value={row.rejectedQty}
-                                                        onChange={event => handleUpdateRow(line.line_id, "rejectedQty", event.target.value === "" ? "" : Number(event.target.value))}
-                                                        disabled={readOnly}
-                                                         aria-invalid={!readOnly && (!quantitiesReconcile || Boolean(quantityIssue))}
-                                                         className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && !quantitiesReconcile ? "border-red-500 bg-red-500/5" : ""}`}
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateRow(line.line_id, "rejectedQty", Math.min(receivedVal, rejectedVal + 1))}
-                                                        disabled={readOnly}
-                                                        className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors shrink-0"
-                                                    >
-                                                        <Plus className="h-3.5 w-3.5" />
-                                                    </button>
+                                                <div
+                                                    role="status"
+                                                    aria-label="Rejected quantity (calculated)"
+                                                    className={`flex h-10 items-center justify-center rounded-lg border bg-muted/40 px-3 text-center text-xs font-semibold text-foreground ${!readOnly && (!quantitiesReconcile || Boolean(quantityIssue)) ? "border-red-500 bg-red-500/5" : "border-border"}`}
+                                                >
+                                                    {Number.isFinite(rejectedVal) ? rejectedVal.toLocaleString() : "—"}
                                                 </div>
+                                                <span className="text-[9px] text-muted-foreground block mt-1">Received − Accepted</span>
                                                 {rejectedEquiv > 0 && convFactor !== 1 && (
                                                     <span className="text-[9px] text-red-600 font-bold block mt-1 bg-red-500/5 px-2 py-0.5 rounded border border-red-500/10 w-fit select-none">
                                                         = {rejectedEquiv.toLocaleString()} {baseUom}
@@ -1051,9 +1027,9 @@ export default function ShipmentInspectionForm({
                                  {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
                                     <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />
-                                        <span>{acceptedVal > receivedVal || rejectedVal > receivedVal
-                                            ? "Accepted and rejected quantities cannot exceed received quantity."
-                                            : `Received (${receivedVal.toLocaleString()}) must equal accepted (${acceptedVal.toLocaleString()}) plus rejected (${rejectedVal.toLocaleString()}).`}</span>
+                                        <span>{acceptedVal > receivedVal
+                                            ? "Accepted quantity cannot exceed received quantity."
+                                            : "Enter valid received and accepted quantities."}</span>
                                     </div>
                                 )}
                                  {!readOnly && rejectedVal > 0 && (

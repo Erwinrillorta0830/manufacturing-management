@@ -1,4 +1,9 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock } from "../types";
+
+export interface QuarantineDispositionResponse {
+    stock: QuarantineStock[];
+    dispositions: QuarantineDisposition[];
+}
 
 export async function fetchActiveShipments(filters: {
     search?: string;
@@ -53,6 +58,7 @@ export async function fetchProductQaSpecifications(productId: number, signal?: A
 
 export async function previewReceivingQa(payload: {
     shipmentId: number;
+    replacementDispositionId?: number | null;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;
@@ -123,6 +129,57 @@ export async function commitReceivingQa(payload: ReceivingCommitPayload, idempot
         throw new Error("Receiving commit returned an invalid response.");
     }
     return body.data as ReceivingCommitResult;
+}
+
+export async function fetchQuarantineDispositions(signal?: AbortSignal): Promise<QuarantineDispositionResponse> {
+    const res = await fetch("/api/manufacturing/qa-receiving/quarantine", { signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to load quarantined stock.");
+    if (!Array.isArray(body.stock) || !Array.isArray(body.dispositions)) {
+        throw new Error("Quarantine response returned an invalid shape.");
+    }
+    return body as QuarantineDispositionResponse;
+}
+
+export async function createQuarantineDisposition(payload: {
+    sourceReceivingId: number;
+    lotId: number;
+    batchNo: string;
+    dispositionType: "VENDOR_RETURN" | "REPLACEMENT";
+    requestedQuantity: number;
+    reason: string;
+    supplierReference: string | null;
+}): Promise<QuarantineDisposition> {
+    const res = await fetch("/api/manufacturing/qa-receiving/quarantine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, idempotencyKey: crypto.randomUUID() })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to create quarantine disposition.");
+    return body.data as QuarantineDisposition;
+}
+
+export async function processQuarantineReturn(dispositionId: number, quantity: number): Promise<QuarantineDisposition> {
+    const res = await fetch(`/api/manufacturing/qa-receiving/quarantine/${dispositionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ action: "PROCESS_RETURN", quantity, operationKey: crypto.randomUUID() })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to process the vendor return.");
+    return body.data as QuarantineDisposition;
+}
+
+export async function cancelQuarantineDisposition(dispositionId: number): Promise<QuarantineDisposition> {
+    const res = await fetch(`/api/manufacturing/qa-receiving/quarantine/${dispositionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "CANCEL" })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to cancel the quarantine disposition.");
+    return body.data as QuarantineDisposition;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
