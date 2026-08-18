@@ -3,6 +3,7 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { evaluateShelfLife, INVENTORY_STATUS, todayInManila } from "../_domain";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
+    deriveRejectedQuantity,
     evaluateOverDelivery,
     validateReceivingQuantities
 } from "../../qa/_receiving-evaluation";
@@ -16,6 +17,7 @@ import { calculateLandedCostAllocations, fetchShipmentExpenses, normalizeAllocat
 import { receiptNumberForLine, type FinalReceivingAllocation } from "../../qa-receiving/_commit-contract";
 import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { sumMovementQuantitiesByLot } from "../../qa-receiving/_movement-stock";
+import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 
 class ReceivingError extends Error {
@@ -27,6 +29,7 @@ class ReceivingError extends Error {
 interface ReceivingPostOptions {
     actorUserId: number;
     receivingHeaderId?: number;
+    replacementDispositionId?: number | null;
 }
 
 interface MrpAllocationDraft {
@@ -301,7 +304,35 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             throw new ReceivingError("The receiving user could not be verified.", 401);
         }
 
-        const { shipmentId, referenceNumber, receiptMode, processOverDelivery, branchId, lineItemUpdates } = parsed.data;
+        const {
+            shipmentId,
+            replacementDispositionId: submittedReplacementDispositionId,
+            referenceNumber,
+            receiptMode,
+            processOverDelivery,
+            branchId,
+            lineItemUpdates: submittedLineItemUpdates
+        } = parsed.data;
+        const replacementDispositionId = submittedReplacementDispositionId ?? options.replacementDispositionId ?? null;
+        if (submittedReplacementDispositionId && options.replacementDispositionId && submittedReplacementDispositionId !== options.replacementDispositionId) {
+            throw new ReceivingError("The replacement disposition context does not match the receiving request.", 409);
+        }
+        const replacementContext = replacementDispositionId
+            ? await validateReplacementContext({
+                dispositionId: replacementDispositionId,
+                shipmentId,
+                lines: submittedLineItemUpdates.map(item => ({
+                    lineId: item.line_id,
+                    productId: item.product_id,
+                    receivedQuantity: Number(item.quantity_received),
+                    acceptedQuantity: Number(item.quantity_accepted)
+                }))
+            })
+            : null;
+        const lineItemUpdates = submittedLineItemUpdates.map(item => ({
+            ...item,
+            quantity_rejected: deriveRejectedQuantity(item.quantity_received, item.quantity_accepted)
+        }));
         lockedShipmentId = shipmentId;
         if (activeShipments.has(shipmentId)) throw new ReceivingError("This shipment is already being received.", 409);
         activeShipments.add(shipmentId);
@@ -348,7 +379,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
-        if (receiptMode === "full" && missingLineIds.length > 0) {
+        if (!replacementDispositionId && receiptMode === "full" && missingLineIds.length > 0) {
             throw new ReceivingError(`Full receipt requires every purchase-order line to be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
         if (lineItemUpdates.some(item => item.lot_id && !validLotIds.has(item.lot_id))) throw new ReceivingError("One or more storage lots do not exist.", 400);
@@ -390,17 +421,17 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
         const receiptNumbers = lineItemUpdates.map(item => receiptNumberForLine(referenceNumber, item.line_id));
-        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,received_quantity,quantity_rejected&limit=-1`, { headers, cache: "no-store" });
+        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,received_quantity,quantity_rejected,is_replacement&limit=-1`, { headers, cache: "no-store" });
         if (!receiptsRes.ok) {
-            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,received_quantity,quantity_rejected&limit=-1`, { headers, cache: "no-store" });
+            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,received_quantity,quantity_rejected,is_replacement&limit=-1`, { headers, cache: "no-store" });
         }
         if (!receiptsRes.ok) throw new Error("Failed to validate previous receiving attempts.");
         const allExistingReceipts = (await receiptsRes.json()).data || [];
         const existingReceipts = allExistingReceipts.filter((row: Record<string, unknown>) => receiptNumbers.includes(String(row.receipt_no)));
-        if (Number(shipment.inventory_status) === INVENTORY_STATUS.REJECTED) {
+        if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.REJECTED) {
             throw new ReceivingError("Rejected purchase orders cannot continue to receiving.", 409);
         }
-        if (Number(shipment.inventory_status) === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+        if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
             throw new ReceivingError("Partially received purchase orders are view-only and cannot be received again.", 409);
         }
         if (existingReceipts.length === receiptNumbers.length) {
@@ -439,7 +470,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (existingReceipts.length > 0) {
             throw new ReceivingError("This purchase order has a partial previous receiving attempt and requires reconciliation.", 409);
         }
-        if (!receivableStatuses.includes(Number(shipment.inventory_status))) {
+        if (!replacementDispositionId && !receivableStatuses.includes(Number(shipment.inventory_status))) {
             throw new ReceivingError("The purchase order must be in Receiving (QA) before it can be received.", 409);
         }
 
@@ -468,10 +499,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
             const received = Number(item.quantity_received);
             const declaredAccepted = Number(item.quantity_accepted);
-            const rejected = Number(item.quantity_rejected);
+            const rejected = deriveRejectedQuantity(received, declaredAccepted);
             const ordered = Number(poLine.ordered_quantity || 0);
             const previous = previouslyReceivedByLine.get(item.line_id) || { received: 0, rejected: 0 };
-            const remaining = Math.max(0, ordered - previous.received);
+            const remaining = replacementContext?.targetLineId === item.line_id
+                ? replacementContext.disposition.remainingQuantity
+                : Math.max(0, ordered - previous.received);
             const overDelivery = evaluateOverDelivery(received, remaining);
             const quantityError = validateReceivingQuantities({
                 receivedQuantity: received,
@@ -482,7 +515,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (!Number.isFinite(ordered) || ordered <= 0) {
                 throw new ReceivingError(`Invalid ordered quantity for product ${productId}.`, 400);
             }
-            if (overDelivery.isOverReceived && !processOverDelivery) {
+            if (overDelivery.isOverReceived && !processOverDelivery && !replacementDispositionId) {
                 throw new ReceivingError(`Over-delivery of ${overDelivery.overDeliveryQuantity} unit(s) for product ${productId} requires explicit processing confirmation.`, 422);
             }
             if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
@@ -556,10 +589,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             return previous + current < Number(poLine.ordered_quantity || 0) - 1e-9;
         });
         const allLinesAccounted = incompleteFullLines.length === 0;
-        if (receiptMode === "full" && !allLinesAccounted) {
+        if (!replacementDispositionId && receiptMode === "full" && !allLinesAccounted) {
             throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining quantity.", 422);
         }
-        if (receiptMode === "partial" && allLinesAccounted) {
+        if (!replacementDispositionId && receiptMode === "partial" && allLinesAccounted) {
             throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining quantity.", 422);
         }
 
@@ -627,6 +660,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
                     receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: new Date().toISOString(),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
+                    quarantine_disposition_id: replacementDispositionId || null,
+                    is_replacement: Boolean(replacementDispositionId),
                     is_over_received: line.isOverReceived,
                     over_delivery_quantity: line.overDeliveryQuantity
                 }) });
@@ -698,10 +733,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                         addPendingMovement("Rejected", inventoryLotId, Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedMovementTypeId, rejectedAllocation.quantity, line.item.rejection_reason);
                     }
                 }
-                const cumulativeReceived = (previouslyReceivedByLine.get(line.item.line_id)?.received || 0) + line.received;
-                lineChanges.push({ id: line.item.line_id, received: line.poLine.received });
-                const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeReceived >= Number(line.poLine.ordered_quantity || 0) ? 1 : 0 });
-                if (!lineUpdateRes.ok) throw new Error(`Failed to mark line ${line.item.line_id} as received.`);
+                if (!replacementDispositionId) {
+                    const cumulativeReceived = (previouslyReceivedByLine.get(line.item.line_id)?.received || 0) + line.received;
+                    lineChanges.push({ id: line.item.line_id, received: line.poLine.received });
+                    const lineUpdateRes = await mutate("purchase_order_products", line.item.line_id, "PATCH", { received: cumulativeReceived >= Number(line.poLine.ordered_quantity || 0) ? 1 : 0 });
+                    if (!lineUpdateRes.ok) throw new Error(`Failed to mark line ${line.item.line_id} as received.`);
+                }
             }
 
             for (const productId of productIds) {
@@ -756,17 +793,19 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 const current = prepared.find(line => line.item.line_id === Number(poLine.purchase_order_product_id));
                 return sum + Math.max(0, (previous?.received || 0) - (previous?.rejected || 0)) + (current?.accepted || 0);
             }, 0);
-            const allRejected = allLinesAccounted && totalAccepted <= 1e-9;
-            commitPhase = "status";
-            const statusRes = await mutate("purchase_order", shipmentId, "PATCH", {
-                inventory_status: !allLinesAccounted
-                    ? INVENTORY_STATUS.PARTIALLY_RECEIVED
-                    : allRejected
-                        ? INVENTORY_STATUS.REJECTED
-                        : INVENTORY_STATUS.RECEIVED,
-                ...(allLinesAccounted ? { date_received: todayInManila() } : {})
-            });
-            if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
+            if (!replacementDispositionId) {
+                const allRejected = allLinesAccounted && totalAccepted <= 1e-9;
+                commitPhase = "status";
+                const statusRes = await mutate("purchase_order", shipmentId, "PATCH", {
+                    inventory_status: !allLinesAccounted
+                        ? INVENTORY_STATUS.PARTIALLY_RECEIVED
+                        : allRejected
+                            ? INVENTORY_STATUS.REJECTED
+                            : INVENTORY_STATUS.RECEIVED,
+                    ...(allLinesAccounted ? { date_received: todayInManila() } : {})
+                });
+                if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
+            }
         } catch (error) {
             let persistedMovementIds: number[] = finalMovements.map(movement => movement.movementId);
             if (movementWriteAttempted && pendingMovements.length > 0 && persistedMovementIds.length !== pendingMovements.length) {
@@ -800,6 +839,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         return NextResponse.json({ error: (error as Error).message || "Failed to process QA receiving" }, {
             status: error instanceof ReceivingError
                 ? error.status
+                : error instanceof QuarantineDispositionError
+                    ? error.statusCode
                 : error instanceof QaResultPersistenceError
                     ? error.status
                     : 500

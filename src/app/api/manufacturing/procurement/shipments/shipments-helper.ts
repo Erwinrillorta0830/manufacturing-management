@@ -156,6 +156,7 @@ interface DirectusReceivingRecord {
     lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
     quantity_rejected?: number | string | null;
+    is_replacement?: boolean | number | null;
     is_over_received?: boolean | number | null;
     over_delivery_quantity?: number | string | null;
     expiry_date?: string | null;
@@ -570,17 +571,18 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,batch_no,lot_id,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,batch_no,lot_id,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,batch_no,lot_id,received_quantity,quantity_rejected,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,batch_no,lot_id,received_quantity,quantity_rejected,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
         const receivingData = (receivingRes.ok ? (await receivingRes.json()).data || [] : []) as DirectusReceivingRecord[];
-        const receivingHistory = summarizeReceivingHistory(receivingData, popData);
-        const receivingIds = receivingData
+        const originalReceivingData = receivingData.filter(row => row.is_replacement !== true && Number(row.is_replacement) !== 1);
+        const receivingHistory = summarizeReceivingHistory(originalReceivingData, popData);
+        const receivingIds = originalReceivingData
             .map(row => receivingRecordId(row.purchase_order_product_id))
             .filter(id => Number.isSafeInteger(id) && id > 0);
         let movementData: DirectusInventoryMovement[] = [];
@@ -641,7 +643,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 product_name: `Product ID: ${rawProdId}`,
                 product_code: `ID-${rawProdId}`
             };
-            const receivingIdsForProduct = receivingData
+            const receivingIdsForProduct = originalReceivingData
                 .filter(row => relationId(row.product_id, "product_id") === Number(rawProdId))
                 .map(row => receivingRecordId(row.purchase_order_product_id));
             const lineHistory = receivingHistory.byLine.get(Number(pop.purchase_order_product_id)) || { received: 0, rejected: 0 };
@@ -649,7 +651,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const previouslyRejectedQuantity = lineHistory.rejected;
             const remainingQuantity = Math.max(0, Number(pop.ordered_quantity || 0) - previouslyReceivedQuantity);
             const lineId = Number(pop.purchase_order_product_id);
-            const latestReceipt = receivingData
+            const latestReceipt = originalReceivingData
                 .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)
                 .sort((left, right) => {
                     const rightDate = Date.parse(String(right.received_date || "")) || 0;

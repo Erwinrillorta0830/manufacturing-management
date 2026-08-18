@@ -32,6 +32,7 @@ import {
 } from "../_lot-allocation";
 import { summarizeReceivingHistory } from "../_receiving-history";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
+import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -158,7 +159,20 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
+            ? await validateReplacementContext({
+                dispositionId: replacementDispositionId,
+                shipmentId,
+                lines: lines.map(line => ({
+                    lineId: line.lineId,
+                    productId: line.productId,
+                    receivedQuantity: line.receivedQuantity,
+                    acceptedQuantity: line.acceptedQuantity
+                }))
+            })
+            : null;
+        const replacementFlow = Boolean(replacementContext);
         const previewSourceDocumentNo = "Generated on commit";
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
@@ -214,13 +228,13 @@ export async function POST(request: Request) {
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
             procurementDirectusFetch(`/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,lot_name,max_batch_capacity&limit=${requestedLotIds.length}`),
             procurementDirectusFetch(`/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`),
-            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected&limit=-1`),
+            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`),
             loadBranch(destinationBranchId),
             procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1")
         ]);
         let receivingResponse = receivingResponseWithLine;
         if (!receivingResponse.ok) {
-            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected&limit=-1`);
+            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`);
         }
         if (headerResponse.status === 404) throw new ReceivingPreviewError("Purchase order not found.", 404);
         if (!headerResponse.ok || !lineResponse.ok || !lotResponse.ok || !lotInventoryResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok) {
@@ -229,7 +243,7 @@ export async function POST(request: Request) {
 
         const header = (await headerResponse.json()).data as Record<string, unknown>;
         const statusId = positiveInteger(header.inventory_status, "transaction_status_id") || Number(header.inventory_status);
-        if (!RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(eligible => eligible === statusId)) {
+        if (!replacementFlow && !RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(eligible => eligible === statusId)) {
             throw new ReceivingPreviewError("The purchase order must be moved to QA (Receiving) before it can be received.", 409);
         }
         if (!enabled(destinationBranch.isActive) || enabled(destinationBranch.isBadStock)) {
@@ -245,10 +259,10 @@ export async function POST(request: Request) {
         const poLineIdSet = new Set(poLineIds);
         const missingLineIds = poLineIds.filter(lineId => !submittedLineIds.has(lineId));
         const unknownLineIds = lineIds.filter(lineId => !poLineIdSet.has(lineId));
-        if (poLineIds.length !== poLines.length || missingLineIds.length > 0 || unknownLineIds.length > 0) {
+        if (poLineIds.length !== poLines.length || (!replacementFlow && missingLineIds.length > 0) || unknownLineIds.length > 0) {
             const missing = missingLineIds.length > 0 ? ` Missing line(s): ${missingLineIds.join(", ")}.` : "";
             const unknown = unknownLineIds.length > 0 ? ` Unknown line(s): ${unknownLineIds.join(", ")}.` : "";
-            throw new ReceivingPreviewError(`Every purchase-order line must be included in the receiving submission.${missing}${unknown}`);
+            throw new ReceivingPreviewError(`${replacementFlow ? "The replacement receiving submission contains an invalid line." : "Every purchase-order line must be included in the receiving submission."}${missing}${unknown}`);
         }
         const receivingHistory = summarizeReceivingHistory(rows(await receivingResponse.json()), poLines);
         if (receivingHistory.unresolvedRows.length > 0) {
@@ -275,7 +289,9 @@ export async function POST(request: Request) {
             }
             const orderedQuantity = Number(stored.ordered_quantity || 0);
             const previous = previouslyReceivedByLine.get(line.lineId) || { received: 0, rejected: 0 };
-            const remainingQuantity = Math.max(0, orderedQuantity - previous.received);
+            const remainingQuantity = replacementContext?.targetLineId === line.lineId
+                ? replacementContext.disposition.remainingQuantity
+                : Math.max(0, orderedQuantity - previous.received);
             if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid ordered quantity.`);
             }
@@ -290,14 +306,14 @@ export async function POST(request: Request) {
             line.overDeliveryQuantity <= OVER_DELIVERY_EPSILON
             && lines.find(submittedLine => submittedLine.lineId === line.lineId)!.receivedQuantity < line.remainingQuantity - OVER_DELIVERY_EPSILON
         );
-        if (receiptMode === "full" && incompleteLines.length > 0) {
+        if (!replacementFlow && receiptMode === "full" && incompleteLines.length > 0) {
             throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining quantity.");
         }
-        if (receiptMode === "partial" && incompleteLines.length === 0) {
+        if (!replacementFlow && receiptMode === "partial" && incompleteLines.length === 0) {
             throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining quantity.");
         }
         const confirmedOverDeliveryLines = overDeliveryLines.filter(line => line.isOverReceived);
-        if (confirmedOverDeliveryLines.length > 0 && !processOverDelivery) {
+        if (!replacementFlow && confirmedOverDeliveryLines.length > 0 && !processOverDelivery) {
             const summary = confirmedOverDeliveryLines
                 .map(line => `line ${line.lineId}: excess ${line.overDeliveryQuantity}`)
                 .join(", ");
@@ -393,7 +409,7 @@ export async function POST(request: Request) {
             };
         });
 
-        const receivedMrpEntries = evaluated.filter(({ line, result }) => {
+        const receivedMrpEntries = replacementFlow ? [] : evaluated.filter(({ line, result }) => {
             const stored = poLineById.get(line.lineId)!;
             return result.receivedQuantity > 0 && stored.purchase_intent === "MRP_Demand";
         });
@@ -518,6 +534,7 @@ export async function POST(request: Request) {
                 receivingTicketNumber: null,
                 receiptMode,
                 processOverDelivery,
+                replacementDispositionId: replacementDispositionId || null,
                 workflowRevision: Number(header.workflow_revision || 0),
                 postingEnabled: RECEIVING_POSTING_ENABLED,
                 destinationBranch: passedBranch,
@@ -528,6 +545,8 @@ export async function POST(request: Request) {
     } catch (error) {
         const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError
             ? error.status
+            : error instanceof QuarantineDispositionError
+                ? error.statusCode
             : error instanceof ReceivingPreviewError
                 ? error.status
                 : error instanceof ReceivingQuantityError

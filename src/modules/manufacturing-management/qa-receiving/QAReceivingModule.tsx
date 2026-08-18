@@ -1,13 +1,14 @@
 "use client";
 
 import React from "react";
-import { ShieldAlert, Boxes, History } from "lucide-react";
+import { ShieldAlert, Boxes, History, RotateCcw } from "lucide-react";
 
 import { useQAReceiving } from "./hooks/useQAReceiving";
 import InboundShipmentsList from "./components/InboundShipmentsList";
 import ShipmentInspectionForm from "./components/ShipmentInspectionForm";
 import FIFOInventoryList from "./components/FIFOInventoryList";
 import MovementPayloadModal from "./components/MovementPayloadModal";
+import QuarantineDispositions from "./components/QuarantineDispositions";
 
 export default function QAReceivingModule() {
     const {
@@ -20,6 +21,7 @@ export default function QAReceivingModule() {
         lineItems,
         loadingLines,
         readOnly,
+        replacementDisposition,
         receivingTicketNumber,
         receiptMode,
         setReceiptMode,
@@ -46,6 +48,7 @@ export default function QAReceivingModule() {
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleSelectShipment,
+        handleStartReplacement,
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,
@@ -71,7 +74,15 @@ export default function QAReceivingModule() {
         startDate,
         setStartDate,
         endDate,
-        setEndDate
+        setEndDate,
+        quarantineStock,
+        quarantineDispositions,
+        loadingQuarantine,
+        quarantineError,
+        loadQuarantine,
+        handleCreateQuarantineDisposition,
+        handleProcessQuarantineReturn,
+        handleCancelQuarantineDisposition
     } = useQAReceiving();
 
     return (
@@ -120,6 +131,24 @@ export default function QAReceivingModule() {
                         <History className="h-3.5 w-3.5" />
                         FIFO Inventory Reading
                     </button>
+                    <button
+                        onClick={() => {
+                            setActiveTab("quarantine");
+                            clearInspection();
+                            void loadQuarantine();
+                        }}
+                        className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                            activeTab === "quarantine"
+                                ? "bg-primary text-primary-foreground shadow"
+                                : "text-muted-foreground hover:bg-muted"
+                        }`}
+                    >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Quarantine
+                        <span className="text-[9px] bg-background/80 text-foreground px-1.5 py-0.5 rounded-full font-extrabold">
+                            {quarantineStock.length}
+                        </span>
+                    </button>
                 </div>
             </div>
 
@@ -151,39 +180,45 @@ export default function QAReceivingModule() {
                         selectedShipment ? "block" : "hidden md:flex"
                     }`}>
                         {selectedShipment ? (
-                            <ShipmentInspectionForm
-                                selectedShipment={selectedShipment}
-                                readOnly={readOnly}
-                                lineItems={lineItems}
-                                branches={branches}
-                                storageLots={storageLots}
-                                receivingTicketNumber={receivingTicketNumber}
-                                receiptMode={receiptMode}
-                                setReceiptMode={setReceiptMode}
-                                processOverDelivery={processOverDelivery}
-                                setProcessOverDelivery={setProcessOverDelivery}
-                                overDeliveryLines={overDeliveryLines}
-                                selectedBranchId={selectedBranchId}
-                                setSelectedBranchId={setSelectedBranchId}
-                                inspectionRows={inspectionRows}
-                                qaSpecificationStates={qaSpecificationStates}
-                                qaReadings={qaReadings}
-                                qaEvaluationResults={qaEvaluationResults}
-                                hasPreview={Boolean(receivingPreview)}
-                                previewAcknowledged={previewAcknowledged}
-                                validatingInspection={validatingInspection}
-                                previewError={previewError}
-                                qaSubmissionBlockReason={qaSubmissionBlockReason}
-                                receivingValidationIssues={receivingValidationIssues}
-                                loadingLines={loadingLines}
-                                handleUpdateRow={handleUpdateRow}
-                                handleUpdateAllocations={handleUpdateAllocations}
-                                handleUpdateRejectedAllocations={handleUpdateRejectedAllocations}
-                                handleUpdateQaReading={handleUpdateQaReading}
-                                handleSubmitInspection={handleSubmitInspection}
-                                onReviewPreview={() => setPreviewOpen(true)}
-                                onCancel={clearInspection}
-                            />
+                            <>
+                                {replacementDisposition && <div className="border-b bg-primary/5 px-4 py-3 text-[11px] text-primary">
+                                    <div className="font-extrabold">Replacement receiving context</div>
+                                    <div>Disposition #{replacementDisposition.id} · {replacementDisposition.remainingQuantity.toLocaleString()} unit(s) remain. The replacement receipt will not increase the original PO fulfillment totals.</div>
+                                </div>}
+                                <ShipmentInspectionForm
+                                    selectedShipment={selectedShipment}
+                                    readOnly={readOnly}
+                                    lineItems={lineItems}
+                                    branches={branches}
+                                    storageLots={storageLots}
+                                    receivingTicketNumber={receivingTicketNumber}
+                                    receiptMode={receiptMode}
+                                    setReceiptMode={setReceiptMode}
+                                    processOverDelivery={processOverDelivery}
+                                    setProcessOverDelivery={setProcessOverDelivery}
+                                    overDeliveryLines={overDeliveryLines}
+                                    selectedBranchId={selectedBranchId}
+                                    setSelectedBranchId={setSelectedBranchId}
+                                    inspectionRows={inspectionRows}
+                                    qaSpecificationStates={qaSpecificationStates}
+                                    qaReadings={qaReadings}
+                                    qaEvaluationResults={qaEvaluationResults}
+                                    hasPreview={Boolean(receivingPreview)}
+                                    previewAcknowledged={previewAcknowledged}
+                                    validatingInspection={validatingInspection}
+                                    previewError={previewError}
+                                    qaSubmissionBlockReason={qaSubmissionBlockReason}
+                                    receivingValidationIssues={receivingValidationIssues}
+                                    loadingLines={loadingLines}
+                                    handleUpdateRow={handleUpdateRow}
+                                    handleUpdateAllocations={handleUpdateAllocations}
+                                    handleUpdateRejectedAllocations={handleUpdateRejectedAllocations}
+                                    handleUpdateQaReading={handleUpdateQaReading}
+                                    handleSubmitInspection={handleSubmitInspection}
+                                    onReviewPreview={() => setPreviewOpen(true)}
+                                    onCancel={clearInspection}
+                                />
+                            </>
                         ) : (
                             <div className="flex flex-col items-center justify-center flex-1 p-8 text-center space-y-3">
                                 <Boxes className="h-12 w-12 text-muted-foreground/45" />
@@ -209,6 +244,20 @@ export default function QAReceivingModule() {
                     expandedProducts={expandedProducts}
                     toggleProductExpand={toggleProductExpand}
                     handleLoadFifoInventory={handleLoadFifoInventory}
+                />
+            )}
+
+            {activeTab === "quarantine" && (
+                <QuarantineDispositions
+                    stock={quarantineStock}
+                    dispositions={quarantineDispositions}
+                    loading={loadingQuarantine}
+                    error={quarantineError}
+                    onRefresh={loadQuarantine}
+                    onCreate={handleCreateQuarantineDisposition}
+                    onProcessReturn={handleProcessQuarantineReturn}
+                    onCancel={handleCancelQuarantineDisposition}
+                    onStartReplacement={handleStartReplacement}
                 />
             )}
 

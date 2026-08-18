@@ -95,7 +95,7 @@ export interface ShipmentLineItem {
 export interface InspectionRow {
     receivedQty: number | string;
     acceptedQty: number | string;
-    rejectedQty: number | string;
+    rejectedQty: number;
     batchNumber: string;
     lotId: string;
     manufacturingDate: string;
@@ -127,6 +127,8 @@ export type QaSpecificationReadings = Record<number, Record<number, string>>;
 
 export type ReceivingDisposition = import("@/app/api/manufacturing/qa/_receiving-evaluation").ReceivingDisposition;
 export type QaChecklistItemEvaluation = import("@/app/api/manufacturing/qa/_purchase-specification-domain").QaChecklistItemEvaluation;
+export type QuarantineDisposition = import("@/app/api/manufacturing/qa-receiving/_quarantine-disposition").QuarantineDisposition;
+export type QuarantineStock = import("@/app/api/manufacturing/qa-receiving/_quarantine-disposition").QuarantineStock;
 
 export interface ReceivingQaEvaluation {
     lineId: number;
@@ -146,6 +148,7 @@ export interface ReceivingQaEvaluation {
 
 export interface ReceivingPreview {
     shipmentId: number;
+    replacementDispositionId?: number | null;
     receivingTicketNumber: string | null;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
@@ -160,6 +163,7 @@ export interface ReceivingCommitPayload {
     contractVersion: "v1";
     workflowRevision: number;
     shipmentId: number;
+    replacementDispositionId?: number | null;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;

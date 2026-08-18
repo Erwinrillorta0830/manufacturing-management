@@ -8,6 +8,7 @@ export interface ReceivingHistoryReference {
     product_id?: unknown;
     received_quantity?: unknown;
     quantity_rejected?: unknown;
+    is_replacement?: unknown;
 }
 
 export interface ReceivingHistoryTotals {
@@ -52,6 +53,7 @@ export function summarizeReceivingHistory(
     const unresolvedRows: ReceivingHistoryReference[] = [];
 
     for (const receiving of receivingRows) {
+        if (receiving.is_replacement === true || Number(receiving.is_replacement) === 1) continue;
         const lineId = resolvePurchaseOrderLineId(receiving, purchaseOrderLines);
         if (!lineId) {
             unresolvedRows.push(receiving);
