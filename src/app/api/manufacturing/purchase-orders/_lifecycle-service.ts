@@ -13,7 +13,12 @@ import type { AuthorizedPurchaseOrderUser } from "./_auth";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "./_payment-modes";
-import { PurchaseOrderPriceTypeError, resolvePurchaseOrderPriceType } from "./_price-type";
+import {
+    assertEnteredPricesForMissingPriceControl,
+    buildPriceControlWarning,
+    PurchaseOrderPriceTypeError,
+    resolvePurchaseOrderPriceType
+} from "./_price-type";
 import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 import {
     buildPurchaseOrderRevisionSnapshot,
@@ -466,6 +471,13 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
     let resolvedPriceType;
     try {
         resolvedPriceType = await resolvePurchaseOrderPriceType(command.lineItems.map(line => Number(line.product_id)));
+        assertEnteredPricesForMissingPriceControl(
+            command.lineItems.map(line => ({
+                productId: Number(line.product_id),
+                unitPrice: line.base_unit_cost_php
+            })),
+            resolvedPriceType.missingProductIds
+        );
     } catch (error) {
         if (error instanceof PurchaseOrderPriceTypeError) {
             throw new PurchaseOrderLifecycleError(error.message, error.status, {
@@ -566,7 +578,13 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         throw error;
     }
 
-    return { success: true, purchaseOrderId: id, status: "For Approval", workflowRevision: nextRevision };
+    return {
+        success: true,
+        purchaseOrderId: id,
+        status: "For Approval",
+        workflowRevision: nextRevision,
+        priceControlWarning: buildPriceControlWarning(resolvedPriceType)
+    };
 }
 
 export async function reviseRejectedPurchaseOrder(id: number, command: RevisionCommand, actor: AuthorizedPurchaseOrderUser) {

@@ -50,8 +50,9 @@ export function useIncomingShipmentsForm({
     const [hasSubmitted, setHasSubmitted] = useState(false);
     const [fxRateStatus, setFxRateStatus] = useState<FxRateStatus>("idle");
     const [fxRateError, setFxRateError] = useState<string | null>(null);
-    const [priceMatrixStatus, setPriceMatrixStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+    const [priceMatrixStatus, setPriceMatrixStatus] = useState<"idle" | "loading" | "ready" | "warning" | "error">("idle");
     const [priceMatrixError, setPriceMatrixError] = useState<string | null>(null);
+    const [priceMatrixMissingProductIds, setPriceMatrixMissingProductIds] = useState<number[]>([]);
     const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
@@ -302,6 +303,12 @@ export function useIncomingShipmentsForm({
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
         if (!isNonNegativeDecimal(unitPrice)) {
             errors.push(`Unit Price must be a non-negative decimal with at most ${UNIT_PRICE_DECIMAL_SCALE} decimal places`);
+        } else if (
+            canonicalDrafting &&
+            priceMatrixMissingProductIds.includes(Number(line.product_id)) &&
+            DecimalValue.from(unitPrice).compare(0) <= 0
+        ) {
+            errors.push("Unit Price must be greater than zero when Price Control is not configured");
         }
         if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") errors.push("Discount Type must be Percentage or Fixed Amount");
         if (discountMode === "Percentage" && (discount < 0 || discount > 100)) errors.push("Discount % must be between 0 and 100");
@@ -313,7 +320,7 @@ export function useIncomingShipmentsForm({
             else if (DecimalValue.from(discountAmount).compare(gross) > 0) errors.push("Discount Amount cannot exceed Gross Amount");
         }
         return errors;
-    }, [rawMaterials]);
+    }, [canonicalDrafting, priceMatrixMissingProductIds, rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -328,7 +335,11 @@ export function useIncomingShipmentsForm({
             toast.error(priceTypeResolution.message || "Price Type could not be determined from the selected products.");
             return;
         }
-        if (canonicalDrafting && priceMatrixStatus !== "ready") {
+        if (
+            canonicalDrafting &&
+            priceMatrixStatus !== "ready" &&
+            priceMatrixStatus !== "warning"
+        ) {
             toast.error(priceMatrixError || "Wait for the Price Control matrix to finish loading before submitting.");
             return;
         }
@@ -552,6 +563,7 @@ export function useIncomingShipmentsForm({
                 setPriceTypeRatesMap({});
                 setPriceMatrixStatus("idle");
                 setPriceMatrixError(null);
+                setPriceMatrixMissingProductIds([]);
             }, 0);
             return () => {
                 active = false;
@@ -564,6 +576,7 @@ export function useIncomingShipmentsForm({
                 setPriceTypeRatesMap({});
                 setPriceMatrixStatus("idle");
                 setPriceMatrixError(null);
+                setPriceMatrixMissingProductIds([]);
             }, 0);
             return () => {
                 active = false;
@@ -586,6 +599,7 @@ export function useIncomingShipmentsForm({
                 setPriceTypeRatesMap({});
                 setPriceMatrixStatus("idle");
                 setPriceMatrixError(null);
+                setPriceMatrixMissingProductIds([]);
             }, 0);
             return () => {
                 active = false;
@@ -597,6 +611,7 @@ export function useIncomingShipmentsForm({
             if (!active) return;
             setPriceMatrixStatus("loading");
             setPriceMatrixError(null);
+            setPriceMatrixMissingProductIds([]);
         }, 0);
         fetch(`/api/manufacturing/finished-goods/price-types?priceTypeId=${match.price_type_id}`)
             .then(async res => {
@@ -645,14 +660,17 @@ export function useIncomingShipmentsForm({
                         .map(line => Number(line.product_id))
                         .filter(productId => !Number.isFinite(map[productId]) || map[productId] <= 0);
                     if (missingProductIds.length > 0) {
-                        setPriceMatrixStatus("error");
-                        setPriceMatrixError("Price Control is not configured for one or more selected products.");
+                        setPriceMatrixStatus("warning");
+                        setPriceMatrixError(null);
+                        setPriceMatrixMissingProductIds(missingProductIds);
                     } else {
                         setPriceMatrixStatus("ready");
                         setPriceMatrixError(null);
+                        setPriceMatrixMissingProductIds([]);
                     }
                 } else {
                     setPriceMatrixStatus("ready");
+                    setPriceMatrixMissingProductIds([]);
                 }
 
                 setLinesForm(prev => prev.map((line, index) => {
@@ -674,7 +692,7 @@ export function useIncomingShipmentsForm({
                             : resolvedPrice;
                         return { ...resolvedLine, base_unit_cost_php: String(transactionPrice) };
                     }
-                    return canonicalDrafting ? { ...resolvedLine, base_unit_cost_php: "" } : resolvedLine;
+                    return resolvedLine;
                 }));
             })
             .catch(e => {
@@ -682,6 +700,7 @@ export function useIncomingShipmentsForm({
                     console.error("Error fetching price type rates:", e);
                     setPriceMatrixStatus("error");
                     setPriceMatrixError(e instanceof Error ? e.message : "Unable to load the Price Control matrix.");
+                    setPriceMatrixMissingProductIds([]);
                     if (canonicalDrafting) setPriceTypeRatesMap({});
                 }
             });
@@ -803,6 +822,7 @@ export function useIncomingShipmentsForm({
         priceTypeResolution,
         priceMatrixStatus,
         priceMatrixError,
+        priceMatrixMissingProductIds,
         fxRateStatus,
         fxRateError
     };

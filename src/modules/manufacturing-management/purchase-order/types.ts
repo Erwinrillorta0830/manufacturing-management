@@ -83,6 +83,41 @@ export interface PurchaseOrderDraftPayload {
     }>;
 }
 
+export interface PurchaseOrderPriceControlWarning {
+    code: "PRICE_MATRIX_NOT_CONFIGURED";
+    priceTypeId: number;
+    missingProductIds: number[];
+    usingEnteredPrices: true;
+}
+
+export interface PurchaseOrderDraftResponse {
+    success: true;
+    purchaseOrderId: number;
+    purchaseOrderNo: string;
+    status: string;
+    currencyCode: "PHP" | "USD";
+    exchangeRate: number | string;
+    priceType: string;
+    priceTypeId: number;
+    priceControlWarning: PurchaseOrderPriceControlWarning | null;
+    totals: {
+        grossPhp: number | string;
+        discountPhp: number | string;
+        vatPhp: number | string;
+        withholdingPhp: number | string;
+        netPhp: number | string;
+        netForeign: number | string;
+    };
+}
+
+export interface PurchaseOrderRevisionResponse {
+    success: true;
+    purchaseOrderId: number;
+    status: string;
+    workflowRevision: number;
+    priceControlWarning: PurchaseOrderPriceControlWarning | null;
+}
+
 export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected";
 export type PurchaseOrderDecisionStage = "Finance";
 
