@@ -8,6 +8,27 @@ export interface ReceivingQuantities {
 
 export class ReceivingQuantityError extends Error {}
 
+export const OVER_DELIVERY_EPSILON = 1e-9;
+
+export interface OverDeliveryEvaluation {
+    remainingQuantity: number;
+    overDeliveryQuantity: number;
+    isOverReceived: boolean;
+}
+
+export function evaluateOverDelivery(receivedQuantity: number, remainingQuantity: number): OverDeliveryEvaluation {
+    const received = Number(receivedQuantity);
+    const remaining = Math.max(0, Number(remainingQuantity));
+    const overDeliveryQuantity = Number.isFinite(received) && Number.isFinite(remaining)
+        ? Math.max(0, received - remaining)
+        : 0;
+    return {
+        remainingQuantity: remaining,
+        overDeliveryQuantity,
+        isOverReceived: overDeliveryQuantity > OVER_DELIVERY_EPSILON
+    };
+}
+
 export function validateReceivingQuantities(quantities: ReceivingQuantities): string | null {
     const { receivedQuantity, acceptedQuantity, rejectedQuantity } = quantities;
     if (![receivedQuantity, acceptedQuantity, rejectedQuantity].every(Number.isFinite)) {

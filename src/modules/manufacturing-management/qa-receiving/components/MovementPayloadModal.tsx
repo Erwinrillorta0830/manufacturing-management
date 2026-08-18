@@ -125,7 +125,7 @@ export default function MovementPayloadModal({
                     <DialogDescription className="text-xs">
                         {committedResult
                             ? `Receipt ${committedResult.commitReference} was posted successfully. Confirm the persisted records below.`
-                            : `Receipt ${preview?.receiptNumber} for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
+                            : `Receipt Number will be generated on commit for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -133,9 +133,7 @@ export default function MovementPayloadModal({
                     {committedResult ? (
                         <>
                             {(() => {
-                                const rawReceipts = committedResult.receiptNumbers || [];
-                                const cleanReceipts = [...new Set(rawReceipts.map(r => r.includes("-") ? r.split("-")[0] : r))];
-                                const displayReceipt = cleanReceipts.join(", ") || committedResult.commitReference || "N/A";
+                                const displayReceipt = committedResult.receivingTicketNumber || committedResult.commitReference || "N/A";
                                 return (
                                     <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs border-y py-2.5 bg-muted/20 font-medium">
                                         <span><strong>PO Number:</strong> {purchaseOrderReference || "Current purchase order"}</span>
@@ -161,6 +159,7 @@ export default function MovementPayloadModal({
                                                 <th className="px-2 py-2 text-left">Storage lot</th>
                                                 <th className="px-2 py-2 text-right">Received</th>
                                                 <th className="px-2 py-2 text-right">Rejected</th>
+                                                <th className="px-2 py-2 text-right">Over-delivery</th>
                                                 <th className="px-2 py-2 text-left">QA status</th>
                                             </tr>
                                         </thead>
@@ -170,14 +169,14 @@ export default function MovementPayloadModal({
                                                     {(() => {
                                                         const product = getProduct(record.lineId);
                                                         const route = getPreviewRoute(record.lineId, record.storageLotId);
-                                                        const cleanNo = record.receiptNumber.includes("-") ? record.receiptNumber.split("-")[0] : record.receiptNumber;
                                                         return (
                                                             <>
                                                                 <td className="px-2 py-2 align-top"><strong>{product?.product_name || "Unknown product"}</strong><br /><span className="text-muted-foreground">{product?.product_code || "N/A"}</span></td>
-                                                                <td className="px-2 py-2 align-top font-mono"><strong>{cleanNo}</strong><br /><span className="text-muted-foreground">Batch: {record.batchNumber}</span></td>
+                                                                <td className="px-2 py-2 align-top font-mono"><strong>{record.receiptNumber}</strong><br /><span className="text-muted-foreground">Batch: {record.batchNumber}</span></td>
                                                                 <td className="px-2 py-2 align-top">{route?.storageLotName || "N/A"}</td>
                                                                 <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.receivedQuantity.toLocaleString()}</td>
                                                                 <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.rejectedQuantity.toLocaleString()}</td>
+                                                                <td className="px-2 py-2 align-top text-right font-bold tabular-nums">{record.isOverReceived ? record.overDeliveryQuantity.toLocaleString() : "—"}</td>
                                                                 <td className="px-2 py-2 align-top">{record.qaStatus || "N/A"}</td>
                                                             </>
                                                         );
@@ -276,6 +275,20 @@ export default function MovementPayloadModal({
                         <span><strong>Inspector:</strong> {preview!.inspectorName}</span>
                         <span><strong>Status:</strong> Ready to post</span>
                     </div>
+
+                    {preview!.lines.some(line => line.isOverReceived) && (
+                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-800" role="alert">
+                            <p className="font-extrabold">Process Over-Delivery confirmed</p>
+                            {preview!.lines.filter(line => line.isOverReceived).map(line => {
+                                const product = getProduct(line.lineId);
+                                return (
+                                    <p key={line.lineId}>
+                                        {product?.product_name || `Line ${line.lineId}`}: received {line.receivedQuantity.toLocaleString()}, expected {line.remainingQuantity.toLocaleString()}, excess {line.overDeliveryQuantity.toLocaleString()}
+                                    </p>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     {movementTable(passedRows, "Passed")}
                     {movementTable(rejectedRows, "Rejected")}

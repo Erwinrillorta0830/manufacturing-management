@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput } from "../types";
+import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
 import {
     fetchActiveShipments, 
     fetchBranches, 
@@ -14,7 +14,7 @@ import {
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
 import { validateReceivingMetadata, type ReceivingValidationIssue } from "../receiving-metadata";
-import { deriveReceivingDisposition } from "@/app/api/manufacturing/qa/_receiving-evaluation";
+import { deriveReceivingDisposition, evaluateOverDelivery, OVER_DELIVERY_EPSILON } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
 
 interface ReceivingCommitContext {
@@ -77,8 +77,9 @@ export function useQAReceiving() {
     const [loadingLines, setLoadingLines] = useState(false);
 
     // Inspection form state
-    const [receiptNumber, setReceiptNumber] = useState<string>("");
+    const [receivingTicketNumber, setReceivingTicketNumber] = useState<string>("");
     const [receiptMode, setReceiptMode] = useState<"full" | "partial">("full");
+    const [processOverDelivery, setProcessOverDeliveryState] = useState(false);
     const [selectedBranchId, setSelectedBranchId] = useState<string>("");
     const [inspectionRows, setInspectionRows] = useState<Record<number, InspectionRow>>({});
     const [qaSpecificationStates, setQaSpecificationStates] = useState<Record<number, QaSpecificationLoadState>>({});
@@ -94,9 +95,10 @@ export function useQAReceiving() {
     const receivingPreview = receivingCommitContext?.preview ?? null;
     const receivingCommitReady = Boolean(receivingCommitContext?.preview.postingEnabled);
 
-    const handleReceiptNumberChange = useCallback((value: string) => {
+    const handleDestinationBranchChange = useCallback((value: string) => {
         previewController.current?.abort();
-        setReceiptNumber(value);
+        setSelectedBranchId(value);
+        setProcessOverDeliveryState(false);
         setQaEvaluationResults({});
         setReceivingCommitContext(null);
         setCommittedResult(null);
@@ -106,9 +108,9 @@ export function useQAReceiving() {
         setValidatingInspection(false);
     }, []);
 
-    const handleDestinationBranchChange = useCallback((value: string) => {
+    const handleProcessOverDeliveryChange = useCallback((value: boolean) => {
         previewController.current?.abort();
-        setSelectedBranchId(value);
+        setProcessOverDeliveryState(value);
         setQaEvaluationResults({});
         setReceivingCommitContext(null);
         setCommittedResult(null);
@@ -134,8 +136,9 @@ export function useQAReceiving() {
         setLineItems([]);
         setLoadingLines(false);
         setInspectionRows({});
-        setReceiptNumber("");
+        setReceivingTicketNumber("");
         setReceiptMode("full");
+        setProcessOverDeliveryState(false);
         setSelectedBranchId("");
         setQaSpecificationStates({});
         setQaReadings({});
@@ -272,8 +275,9 @@ export function useQAReceiving() {
         const controller = new AbortController();
         detailController.current = controller;
         setSelectedShipment(shipment);
-        setReceiptNumber("");
+        setReceivingTicketNumber("");
         setReceiptMode(isPartiallyReceived ? "partial" : "full");
+        setProcessOverDeliveryState(false);
         setQaSpecificationStates({});
         setQaReadings({});
         setQaEvaluationResults({});
@@ -332,14 +336,14 @@ export function useQAReceiving() {
             });
             setInspectionRows(rowsInit);
 
-            const storedReceiptNumber = lines
+            const storedReceivingTicketNumber = lines
                 .map(line => {
                     const receipt = line.latest_receipt?.receipt_number?.trim() || "";
                     const suffix = `-${line.line_id}`;
                     return receipt.endsWith(suffix) ? receipt.slice(0, -suffix.length) : receipt;
                 })
                 .find(Boolean) || "";
-            setReceiptNumber(isReceived || isPartiallyReceived ? storedReceiptNumber : "");
+            setReceivingTicketNumber(isReceived || isPartiallyReceived ? storedReceivingTicketNumber : "");
 
             // Reuse the last partial receipt branch when available; otherwise use the PO branch.
             const latestReceiptBranchId = isPartiallyReceived
@@ -404,6 +408,7 @@ export function useQAReceiving() {
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
         setPreviewError(null);
+        setProcessOverDeliveryState(false);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -487,6 +492,7 @@ export function useQAReceiving() {
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
         setPreviewError(null);
+        setProcessOverDeliveryState(false);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -511,6 +517,7 @@ export function useQAReceiving() {
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
         setPreviewError(null);
+        setProcessOverDeliveryState(false);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -535,6 +542,7 @@ export function useQAReceiving() {
         setPreviewOpen(false);
         setPreviewAcknowledged(false);
         setPreviewError(null);
+        setProcessOverDeliveryState(false);
         setQaEvaluationResults(previous => {
             if (!previous[lineId]) return previous;
             const next = { ...previous };
@@ -561,10 +569,27 @@ export function useQAReceiving() {
         return null;
     }, [lineItems, qaSpecificationStates]);
 
+    const overDeliveryLines = useMemo<OverDeliveryLine[]>(() => lineItems.flatMap(line => {
+        const row = inspectionRows[line.line_id];
+        const receivedQuantity = Number(row?.receivedQty || 0);
+        const orderedQuantity = Number(line.quantity_ordered || 0);
+        const remainingQuantity = Math.max(0, Number(line.remaining_quantity ?? (orderedQuantity - Number(line.quantity_received || 0))));
+        const evaluation = evaluateOverDelivery(receivedQuantity, remainingQuantity);
+        return evaluation.isOverReceived
+            ? [{
+                lineId: line.line_id,
+                productName: line.product_id?.product_name || `Item ${line.line_id}`,
+                receivedQuantity,
+                remainingQuantity,
+                overDeliveryQuantity: evaluation.overDeliveryQuantity
+            }]
+            : [];
+    }), [inspectionRows, lineItems]);
+
     const receivingValidationIssues = useMemo<ReceivingValidationIssue[]>(() => {
         if (isLockedReceivingShipment(selectedShipment)) return [];
 
-        const issues = validateReceivingMetadata(receiptNumber, selectedBranchId, lineItems.map(line => {
+        const issues = validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
             const row = inspectionRows[line.line_id];
             return {
                 lineId: line.line_id,
@@ -597,7 +622,7 @@ export function useQAReceiving() {
             const ordered = Number(line.quantity_ordered || 0);
             const remaining = Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
 
-            if (receiptMode === "full" && Math.abs(received - remaining) > 1e-9) {
+            if (receiptMode === "full" && received < remaining - OVER_DELIVERY_EPSILON) {
                 addIssue({ lineId: line.line_id, productName, field: "receivedQuantity", message: "Complete the remaining quantities for Full Receipt, or select Partial Receipt." });
             }
             if (received <= 0) continue;
@@ -638,18 +663,25 @@ export function useQAReceiving() {
             }
         }
 
+        if (overDeliveryLines.length > 0 && !processOverDelivery) {
+            addIssue({
+                field: "processOverDelivery",
+                message: "Confirm Process Over-Delivery before previewing quantities above the remaining purchase-order quantity."
+            });
+        }
+
         const completesPurchaseOrder = lineItems.length > 0 && lineItems.every(line => {
             const received = Number(inspectionRows[line.line_id]?.receivedQty || 0);
             const ordered = Number(line.quantity_ordered || 0);
             const remaining = Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
-            return Math.abs(received - remaining) <= 1e-9;
+            return received >= remaining - OVER_DELIVERY_EPSILON;
         });
         if (receiptMode === "partial" && completesPurchaseOrder) {
             addIssue({ field: "receiptMode", message: "Partial Receipt requires at least one line to remain below its remaining quantity." });
         }
 
         return issues;
-    }, [inspectionRows, lineItems, qaReadings, qaSpecificationStates, receiptMode, receiptNumber, selectedBranchId, selectedShipment]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptMode, selectedBranchId, selectedShipment]);
 
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -756,8 +788,8 @@ export function useQAReceiving() {
 
             const preview = await previewReceivingQa({
                 shipmentId: selectedShipment.shipment_id,
-                receiptNumber: receiptNumber.trim(),
                 receiptMode,
+                processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
             }, controller.signal);
@@ -767,8 +799,8 @@ export function useQAReceiving() {
                 contractVersion: "v1",
                 workflowRevision: preview.workflowRevision,
                 shipmentId: selectedShipment.shipment_id,
-                receiptNumber: receiptNumber.trim(),
                 receiptMode,
+                processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
             };
@@ -819,6 +851,7 @@ export function useQAReceiving() {
         try {
             const result = await commitReceivingQa(receivingCommitContext.payload, receivingCommitContext.idempotencyKey);
             toast.success(`Receiving ${result.commitReference} posted as ${result.status}.`);
+            setReceivingTicketNumber(result.receivingTicketNumber);
             setCommittedResult(result);
             setPreviewAcknowledged(true);
             setPreviewOpen(true);
@@ -956,10 +989,12 @@ export function useQAReceiving() {
         loadingLines,
         selectedBranchId,
         setSelectedBranchId: handleDestinationBranchChange,
-        receiptNumber,
-        setReceiptNumber: handleReceiptNumberChange,
+        receivingTicketNumber,
         receiptMode,
         setReceiptMode,
+        processOverDelivery,
+        setProcessOverDelivery: handleProcessOverDeliveryChange,
+        overDeliveryLines,
         inspectionRows,
         qaSpecificationStates,
         qaReadings,

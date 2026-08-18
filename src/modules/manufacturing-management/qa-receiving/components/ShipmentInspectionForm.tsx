@@ -1,7 +1,7 @@
 import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText } from "lucide-react";
-import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput } from "../types";
+import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
 import ProductQaChecklist from "./ProductQaChecklist";
 
@@ -11,10 +11,12 @@ interface ShipmentInspectionFormProps {
     lineItems: ShipmentLineItem[];
     branches: Branch[];
     storageLots: StorageLot[];
-    receiptNumber: string;
-    setReceiptNumber: (val: string) => void;
+    receivingTicketNumber: string;
     receiptMode?: "full" | "partial";
     setReceiptMode?: (val: "full" | "partial") => void;
+    processOverDelivery: boolean;
+    setProcessOverDelivery: (value: boolean) => void;
+    overDeliveryLines: OverDeliveryLine[];
     selectedBranchId: string;
     setSelectedBranchId: (val: string) => void;
     inspectionRows: Record<number, InspectionRow>;
@@ -171,10 +173,12 @@ export default function ShipmentInspectionForm({
     lineItems,
     branches,
     storageLots,
-    receiptNumber,
-    setReceiptNumber,
+    receivingTicketNumber,
     selectedBranchId,
     setSelectedBranchId,
+    processOverDelivery,
+    setProcessOverDelivery,
+    overDeliveryLines,
     inspectionRows,
     qaSpecificationStates,
     qaReadings,
@@ -435,25 +439,19 @@ export default function ShipmentInspectionForm({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 border-b bg-background shrink-0">
                 <div className="space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Receiving Ticket / DR Number {!readOnly && <span className="text-red-500">*</span>}
+                        Receipt Number
                     </label>
-                    <div className="relative">
-                        <ReceiptText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
-                        <input
-                            id="receiving-receipt-number"
-                            type="text"
-                            required={!readOnly}
-                            maxLength={50}
-                            placeholder="Enter supplier receipt or DR number"
-                            value={receiptNumber}
-                            onChange={(event) => setReceiptNumber(event.target.value)}
-                            disabled={readOnly}
-                            aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
-                            aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""}`}
-                        />
+                    <div
+                        id="receiving-receipt-number"
+                        role="status"
+                        className="w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 flex items-center relative"
+                    >
+                        <ReceiptText className="absolute left-3 h-4 w-4 text-primary" />
+                        <span className={receivingTicketNumber ? "font-mono text-primary" : "text-muted-foreground"}>
+                            {receivingTicketNumber || "Auto-Generated on commit"}
+                        </span>
                     </div>
-                    {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
+                    <p className="text-[9px] text-muted-foreground">Unique delivery receipt document identifier.</p>
                 </div>
 
 
@@ -483,6 +481,37 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
+            {!readOnly && overDeliveryLines.length > 0 && (
+                <div className="mx-4 mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-amber-800" role="alert">
+                    <div className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+                        <div className="space-y-2 flex-1">
+                            <div>
+                                <p className="text-[11px] font-extrabold uppercase tracking-wide">Over-delivery detected</p>
+                                <p className="text-[10px]">The counted quantity is above the remaining purchase-order quantity. Confirm the excess before generating the receiving preview.</p>
+                            </div>
+                            <div className="space-y-1 text-[10px] font-semibold">
+                                {overDeliveryLines.map(line => (
+                                    <p key={line.lineId}>
+                                        {line.productName}: received {line.receivedQuantity.toLocaleString()}, expected {line.remainingQuantity.toLocaleString()}, excess {line.overDeliveryQuantity.toLocaleString()}
+                                    </p>
+                                ))}
+                            </div>
+                            <label className="flex items-center gap-2 text-[10px] font-extrabold cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    data-testid="process-over-delivery"
+                                    checked={processOverDelivery}
+                                    onChange={event => setProcessOverDelivery(event.target.checked)}
+                                    className="h-4 w-4 rounded border-amber-500 text-primary focus:ring-primary"
+                                />
+                                Process Over-Delivery
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Manifest Items Table */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {loadingLines ? (
@@ -510,6 +539,7 @@ export default function ShipmentInspectionForm({
                         const remainingVal = Math.max(0, Number(line.remaining_quantity ?? (orderedVal - previouslyReceivedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
                         const rejectedVal = row.rejectedQty !== "" ? Number(row.rejectedQty) : 0;
+                        const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
                         const quantitiesReconcile = [receivedVal, acceptedVal, rejectedVal].every(Number.isFinite)
                             && acceptedVal >= 0
                             && rejectedVal >= 0
@@ -1010,12 +1040,14 @@ export default function ShipmentInspectionForm({
                                 </div>
 
                                 {/* Discrepancy warnings */}
-                                 {!readOnly && receivedVal > 0 && receivedVal !== orderedVal && (
-                                    <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
-                                        <AlertTriangle className="h-4 w-4 shrink-0" />
-                                        <span>Logistics discrepancy detected (Counted quantity differs from original purchase order).</span>
-                                    </div>
-                                )}
+                                 {!readOnly && receivedVal > 0 && receivedVal !== remainingVal && (
+                                     <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-amber-600 animate-in fade-in duration-200">
+                                         <AlertTriangle className="h-4 w-4 shrink-0" />
+                                         <span>{overDeliveryQuantity > 1e-9
+                                             ? `Over-delivery warning: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()} (excess ${overDeliveryQuantity.toLocaleString()}).`
+                                             : `Logistics discrepancy detected: received ${receivedVal.toLocaleString()} vs expected ${remainingVal.toLocaleString()}.`}</span>
+                                     </div>
+                                 )}
                                  {!readOnly && !quantitiesReconcile && (receivedVal > 0 || acceptedVal > 0 || rejectedVal > 0) && (
                                     <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-2.5 flex items-center gap-2 text-[10px] text-red-600 animate-in fade-in duration-200">
                                         <AlertTriangle className="h-4 w-4 shrink-0" />

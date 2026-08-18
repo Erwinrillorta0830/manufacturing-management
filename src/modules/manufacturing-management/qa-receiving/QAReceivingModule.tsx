@@ -20,10 +20,12 @@ export default function QAReceivingModule() {
         lineItems,
         loadingLines,
         readOnly,
-        receiptNumber,
-        setReceiptNumber,
+        receivingTicketNumber,
         receiptMode,
         setReceiptMode,
+        processOverDelivery,
+        setProcessOverDelivery,
+        overDeliveryLines,
         selectedBranchId,
         setSelectedBranchId,
         inspectionRows,
@@ -155,10 +157,12 @@ export default function QAReceivingModule() {
                                 lineItems={lineItems}
                                 branches={branches}
                                 storageLots={storageLots}
-                                receiptNumber={receiptNumber}
-                                setReceiptNumber={setReceiptNumber}
+                                receivingTicketNumber={receivingTicketNumber}
                                 receiptMode={receiptMode}
                                 setReceiptMode={setReceiptMode}
+                                processOverDelivery={processOverDelivery}
+                                setProcessOverDelivery={setProcessOverDelivery}
+                                overDeliveryLines={overDeliveryLines}
                                 selectedBranchId={selectedBranchId}
                                 setSelectedBranchId={setSelectedBranchId}
                                 inspectionRows={inspectionRows}

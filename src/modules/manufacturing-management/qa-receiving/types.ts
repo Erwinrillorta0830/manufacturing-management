@@ -60,6 +60,8 @@ export interface ShipmentLineItem {
     previously_received_quantity?: number;
     previously_rejected_quantity?: number;
     remaining_quantity?: number;
+    is_over_received?: boolean;
+    over_delivery_quantity?: number;
     latest_receipt?: {
         receipt_number: string;
         received_quantity: number;
@@ -74,6 +76,8 @@ export interface ShipmentLineItem {
         rejection_reason: string;
         qa_status: string;
         branch_id: number | null;
+        is_over_received: boolean;
+        over_delivery_quantity: number;
     } | null;
     base_unit_cost_php: number;
     lot_number?: string;
@@ -102,6 +106,14 @@ export interface InspectionRow {
     rejectedLotAllocations: ReceivingLotAllocationInput[];
 }
 
+export interface OverDeliveryLine {
+    lineId: number;
+    productName: string;
+    receivedQuantity: number;
+    remainingQuantity: number;
+    overDeliveryQuantity: number;
+}
+
 export type QaSpecification = import("@/app/api/manufacturing/qa/_purchase-specification-domain").ProductQaSpecification;
 export type QaSpecificationLoadStatus = "loading" | "loaded" | "error";
 
@@ -118,6 +130,10 @@ export type QaChecklistItemEvaluation = import("@/app/api/manufacturing/qa/_purc
 
 export interface ReceivingQaEvaluation {
     lineId: number;
+    previouslyReceivedQuantity: number;
+    remainingQuantity: number;
+    overDeliveryQuantity: number;
+    isOverReceived: boolean;
     disposition: ReceivingDisposition;
     receivedQuantity: number;
     acceptedQuantity: number;
@@ -130,12 +146,13 @@ export interface ReceivingQaEvaluation {
 
 export interface ReceivingPreview {
     shipmentId: number;
-    receiptNumber: string;
+    receivingTicketNumber: string | null;
+    receiptMode: "full" | "partial";
+    processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;
     destinationBranch: { id: number; name: string; code: string };
     inspectorName: string;
-    receiptMode: "full" | "partial";
     lines: ReceivingQaEvaluation[];
 }
 
@@ -143,8 +160,8 @@ export interface ReceivingCommitPayload {
     contractVersion: "v1";
     workflowRevision: number;
     shipmentId: number;
-    receiptNumber: string;
     receiptMode: "full" | "partial";
+    processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{
         lineId: number;
@@ -167,6 +184,7 @@ export interface ReceivingCommitPayload {
 export interface ReceivingCommitResult {
     mode: "compatibility";
     commitReference: string;
+    receivingTicketNumber: string;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
     workflowRevision: number;
@@ -191,6 +209,8 @@ export interface FinalReceivingRecord {
     batchNumber: string;
     receivedQuantity: number;
     rejectedQuantity: number;
+    isOverReceived: boolean;
+    overDeliveryQuantity: number;
     unitPrice: number;
     finalLandedUnitCost: number;
     qaStatus: string;

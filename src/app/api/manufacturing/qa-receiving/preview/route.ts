@@ -8,7 +8,13 @@ import {
 } from "../../purchase-orders/_auth";
 import { fetchProductQaSpecifications, PurchaseQaConfigurationError } from "../../qa/_purchase-specifications";
 import { evaluateQaChecklist } from "../../qa/_purchase-specification-domain";
-import { applyQaDecision, deriveReceivingDisposition, ReceivingQuantityError } from "../../qa/_receiving-evaluation";
+import {
+    applyQaDecision,
+    deriveReceivingDisposition,
+    evaluateOverDelivery,
+    OVER_DELIVERY_EPSILON,
+    ReceivingQuantityError
+} from "../../qa/_receiving-evaluation";
 import {
     buildMrpAllocationDrafts,
     buildReceivingRoutes,
@@ -152,7 +158,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, receiptNumber, receiptMode, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const previewSourceDocumentNo = "Generated on commit";
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
             throw new ReceivingPreviewError("Duplicate purchase-order lines are not allowed.");
@@ -273,6 +280,28 @@ export async function POST(request: Request) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} has an invalid ordered quantity.`);
             }
             remainingByLine.set(line.lineId, remainingQuantity);
+        }
+
+        const overDeliveryLines = lines.map(line => ({
+            lineId: line.lineId,
+            ...evaluateOverDelivery(line.receivedQuantity, remainingByLine.get(line.lineId) || 0)
+        }));
+        const incompleteLines = overDeliveryLines.filter(line =>
+            line.overDeliveryQuantity <= OVER_DELIVERY_EPSILON
+            && lines.find(submittedLine => submittedLine.lineId === line.lineId)!.receivedQuantity < line.remainingQuantity - OVER_DELIVERY_EPSILON
+        );
+        if (receiptMode === "full" && incompleteLines.length > 0) {
+            throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining quantity.");
+        }
+        if (receiptMode === "partial" && incompleteLines.length === 0) {
+            throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining quantity.");
+        }
+        const confirmedOverDeliveryLines = overDeliveryLines.filter(line => line.isOverReceived);
+        if (confirmedOverDeliveryLines.length > 0 && !processOverDelivery) {
+            const summary = confirmedOverDeliveryLines
+                .map(line => `line ${line.lineId}: excess ${line.overDeliveryQuantity}`)
+                .join(", ");
+            throw new ReceivingPreviewError(`Over-delivery processing must be explicitly confirmed (${summary}).`);
         }
 
         const storageLots = rows(await lotResponse.json());
@@ -459,7 +488,7 @@ export async function POST(request: Request) {
             return {
                 ...result,
                 previouslyReceivedQuantity: previouslyReceivedByLine.get(line.lineId)?.received || 0,
-                remainingQuantity: remainingByLine.get(line.lineId) || 0,
+                ...evaluateOverDelivery(result.receivedQuantity, remainingByLine.get(line.lineId) || 0),
                 routes: result.receivedQuantity === 0
                     ? []
                     : buildReceivingRoutes({
@@ -468,7 +497,7 @@ export async function POST(request: Request) {
                     rejectedQuantity: result.rejectedQuantity,
                     rejectedLotAllocations,
                     createdBy: actor.userId,
-                    sourceDocumentNo: receiptNumber,
+                    sourceDocumentNo: previewSourceDocumentNo,
                     storageLotId: primaryStorageLotId as number,
                     storageLotName: String(storageLot?.lot_name || "Unknown storage lot"),
                     storageLotNames,
@@ -486,8 +515,9 @@ export async function POST(request: Request) {
         return NextResponse.json({
             data: {
                 shipmentId,
-                receiptNumber,
+                receivingTicketNumber: null,
                 receiptMode,
+                processOverDelivery,
                 workflowRevision: Number(header.workflow_revision || 0),
                 postingEnabled: RECEIVING_POSTING_ENABLED,
                 destinationBranch: passedBranch,

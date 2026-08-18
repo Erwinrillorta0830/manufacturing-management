@@ -53,8 +53,8 @@ export async function fetchProductQaSpecifications(productId: number, signal?: A
 
 export async function previewReceivingQa(payload: {
     shipmentId: number;
-    receiptNumber: string;
     receiptMode: "full" | "partial";
+    processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{
         lineId: number;
@@ -103,6 +103,7 @@ export async function commitReceivingQa(payload: ReceivingCommitPayload, idempot
     if (
         body.data?.mode !== "compatibility"
         || !body.data?.commitReference
+        || typeof body.data?.receivingTicketNumber !== "string"
         || !Array.isArray(body.data?.receivingRecords)
         || body.data.receivingRecords.some((record: Record<string, unknown>) =>
             !Number.isSafeInteger(Number(record.receivingRecordId))
