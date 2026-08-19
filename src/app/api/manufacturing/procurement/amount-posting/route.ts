@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { processPurchaseAmountPosting } from "./amount-posting-helper";
 import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
+import {
+    ProductWeightValidationError,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
+import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from "../_category-type";
 
 export async function GET(request: Request) {
     try {
@@ -61,15 +66,47 @@ export async function GET(request: Request) {
         await assertLandedCostStatus(purchaseOrderId);
 
         // Fetch PO line items from purchase_order_receiving
-        const linesRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${poId}&filter[is_reverted][_eq]=0&fields=*,product_id.*&limit=-1`, {
+        const linesRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${poId}&filter[is_reverted][_eq]=0&fields=*,product_id.*,product_id.weight_unit_id.*&limit=-1`, {
             headers,
             cache: "no-store"
         });
 
-        let lineItems = [];
+        let lineItems: Record<string, unknown>[] = [];
         if (linesRes.ok) {
             const linesData = await linesRes.json();
-            lineItems = linesData?.data || [];
+            const persistedLines = (linesData?.data || []) as Record<string, unknown>[];
+            const productIds = persistedLines
+                .map(item => {
+                    const product = item.product_id;
+                    return Number(product && typeof product === "object"
+                        ? (product as Record<string, unknown>).product_id
+                        : product);
+                })
+                .filter(id => Number.isInteger(id) && id > 0);
+            const categoryTypes = await resolveProductCategoryTypes(productIds);
+            lineItems = persistedLines.map((item: Record<string, unknown>) => {
+                const product = item.product_id;
+                const productId = Number(product && typeof product === "object"
+                    ? (product as Record<string, unknown>).product_id
+                    : product);
+                const weightBreakdown = resolveProductWeightBreakdown(item.product_id, {
+                    requireComplete: categoryTypes.get(productId) === "PACKAGING"
+                });
+                return {
+                ...item,
+                category_type: categoryTypes.get(productId),
+                gross_weight: weightBreakdown.grossWeightKg,
+                net_weight: weightBreakdown.netWeight,
+                outer_carton_weight: weightBreakdown.outerCartonWeight,
+                pallet_weight: weightBreakdown.palletWeight,
+                unit_gross_weight_kg: weightBreakdown.grossWeightKg,
+                unit_net_weight_kg: weightBreakdown.netWeightKg,
+                unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
+                unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
+                weight_unit: weightBreakdown.weightUnitCode,
+                line_gross_weight_kg: weightBreakdown.grossWeightKg * Number(item.received_quantity || 0)
+                };
+            });
         }
 
         // Fetch existing import landed cost entries
@@ -96,7 +133,9 @@ export async function GET(request: Request) {
         return NextResponse.json({
             error: message,
             ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
-        }, { status: error instanceof LandedCostEligibilityError ? error.status : 500 });
+        }, { status: error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError
+            ? error.status
+            : 500 });
     }
 }
 
@@ -117,6 +156,8 @@ export async function POST(request: Request) {
         return NextResponse.json({
             error: message,
             ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
-        }, { status: error instanceof LandedCostEligibilityError ? error.status : 500 });
+        }, { status: error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError
+            ? error.status
+            : 500 });
     }
 }

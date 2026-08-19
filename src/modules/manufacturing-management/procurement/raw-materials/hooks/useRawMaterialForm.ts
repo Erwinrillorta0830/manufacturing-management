@@ -20,9 +20,43 @@ import {
     fetchProductPurchaseQa,
     fetchPurchaseQaParameters
 } from "../services/raw-materials.service";
+import { resolveProductWeightBreakdown } from "../../packaging-weight";
 
 function emptyPurchaseQaConfig(): PurchaseQaConfig {
     return { inspectionRequired: false, specifications: [] };
+}
+
+function parseWeightForm(
+    netWeight: string,
+    outerCartonWeight: string,
+    palletWeight: string,
+    weightUnitId: number | "",
+    legacyGrossWeight: string,
+    requireComplete: boolean
+): { hasComponents: boolean; valid: boolean; grossWeight: number | null } {
+    const values = [netWeight, outerCartonWeight, palletWeight];
+    const hasComponents = values.some(value => value.trim() !== "");
+    if (!hasComponents && !requireComplete) {
+        if (!legacyGrossWeight.trim()) return { hasComponents: false, valid: true, grossWeight: null };
+        const legacy = Number(legacyGrossWeight);
+        return {
+            hasComponents: false,
+            valid: Number.isFinite(legacy) && legacy > 0 && weightUnitId !== "",
+            grossWeight: Number.isFinite(legacy) && legacy > 0 ? legacy : null
+        };
+    }
+
+    try {
+        const breakdown = resolveProductWeightBreakdown({
+            net_weight: netWeight,
+            outer_carton_weight: outerCartonWeight,
+            pallet_weight: palletWeight,
+            weight_unit_id: weightUnitId
+        }, { requireComplete: true });
+        return { hasComponents: true, valid: true, grossWeight: breakdown.grossWeight };
+    } catch {
+        return { hasComponents: true, valid: false, grossWeight: null };
+    }
 }
 
 function validatePurchaseQaConfig(
@@ -102,6 +136,9 @@ export function useRawMaterialForm(
     const [formUom, setFormUom] = useState<number | "">("");
     const [formDensity, setFormDensity] = useState("");
     const [formWeight, setFormWeight] = useState("");
+    const [formNetWeight, setFormNetWeight] = useState("");
+    const [formOuterCartonWeight, setFormOuterCartonWeight] = useState("");
+    const [formPalletWeight, setFormPalletWeight] = useState("");
     const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
@@ -177,6 +214,9 @@ export function useRawMaterialForm(
         setPackagingVariants([...packagingVariants, {
             uomId: "",
             count: "",
+            netWeight: "",
+            outerCartonWeight: "",
+            palletWeight: "",
             codeSuffix: "",
             isActive: true,
             barcode: "",
@@ -235,6 +275,9 @@ export function useRawMaterialForm(
         setPackagingVariants([...packagingVariants, {
             uomId,
             count,
+            netWeight: "",
+            outerCartonWeight: "",
+            palletWeight: "",
             codeSuffix,
             isActive: true,
             barcode: "",
@@ -304,6 +347,9 @@ export function useRawMaterialForm(
         setFormUom("");
         setFormDensity("");
         setFormWeight("");
+        setFormNetWeight("");
+        setFormOuterCartonWeight("");
+        setFormPalletWeight("");
         setFormWeightUnitId("");
         setFormBrand("");
         setFormCategory("");
@@ -360,6 +406,9 @@ export function useRawMaterialForm(
         setFormUom(item.unit_of_measurement?.unit_id || "");
         setFormDensity(String(item.density_factor || "1.000"));
         setFormWeight(item.weight && Number(item.weight) > 0 ? String(item.weight) : "");
+        setFormNetWeight(item.net_weight != null ? String(item.net_weight) : "");
+        setFormOuterCartonWeight(item.outer_carton_weight != null ? String(item.outer_carton_weight) : "");
+        setFormPalletWeight(item.pallet_weight != null ? String(item.pallet_weight) : "");
 
         let existingWeightUnitId: number | "" = "";
         if (item.weight_unit_id) {
@@ -414,6 +463,9 @@ export function useRawMaterialForm(
                     productId: c.product_id,
                     uomId: c.unit_of_measurement?.unit_id || "",
                     count: String(c.unit_of_measurement_count || "1"),
+                    netWeight: c.net_weight != null ? String(c.net_weight) : "",
+                    outerCartonWeight: c.outer_carton_weight != null ? String(c.outer_carton_weight) : "",
+                    palletWeight: c.pallet_weight != null ? String(c.pallet_weight) : "",
                     codeSuffix: suffix,
                     isExisting: true,
                     isActive: c.isActive !== 0,
@@ -523,14 +575,24 @@ export function useRawMaterialForm(
         const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(parsedWeight) || (parsedWeight as number) <= 0);
         const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(parsedWeightUnitId) || (parsedWeightUnitId as number) <= 0);
         const isWeightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
+        const weightForm = parseWeightForm(
+            formNetWeight,
+            formOuterCartonWeight,
+            formPalletWeight,
+            formWeightUnitId,
+            formWeight,
+            isPackagingMaterial
+        );
         const isWeightInvalid = isPackagingMaterial
-            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
-            : isWeightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid;
+            ? !weightForm.valid || !hasWeightUnitValue
+            : weightForm.hasComponents
+                ? !weightForm.valid || !hasWeightUnitValue
+                : isWeightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid;
 
         if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
             toast.error(isPackagingMaterial
-                ? "Please fill out all mandatory fields correctly, including Gross Weight and Weight Unit."
+                ? "Please fill out Net Weight, Outer Carton Weight, Pallet Weight, and Weight Unit. Gross Weight is calculated automatically."
                 : "Please fill out all mandatory fields correctly.");
             return;
         }
@@ -595,7 +657,15 @@ export function useRawMaterialForm(
             !v.uomId ||
             !v.count ||
             !Number.isFinite(Number(v.count)) ||
-            Number(v.count) <= 0
+            Number(v.count) <= 0 ||
+            (isPackagingMaterial && !parseWeightForm(
+                v.netWeight,
+                v.outerCartonWeight,
+                v.palletWeight,
+                formWeightUnitId,
+                "",
+                true
+            ).valid)
         );
         if (hasInvalidVariant) {
             toast.error("Please fill out all packaging variant fields with valid units and conversion counts.");
@@ -617,13 +687,16 @@ export function useRawMaterialForm(
             }
         }
 
-        if (packagingVariants.length > 0 && (!hasWeightValue || !hasWeightUnitValue)) {
-            toast.error("Gross Weight and Weight Unit are required when packaging variants are added.");
+        if (packagingVariants.length > 0 && isPackagingMaterial && (!weightForm.valid || !hasWeightUnitValue)) {
+            toast.error("Weight components and Weight Unit are required for the packaging family and every variant.");
             setShowValidationErrors(true);
             return;
         }
 
-        const parsedBaseWeight = parsedWeight;
+        const parsedBaseWeight = weightForm.grossWeight ?? parsedWeight;
+        const parsedNetWeight = weightForm.hasComponents ? Number(formNetWeight) : null;
+        const parsedOuterCartonWeight = weightForm.hasComponents ? Number(formOuterCartonWeight) : null;
+        const parsedPalletWeight = weightForm.hasComponents ? Number(formPalletWeight) : null;
         const selectedWeightUnitIdNum = parsedWeightUnitId;
         const parsedDensity = Number(formDensity);
         const parsedUomCount = Number(formUomCount);
@@ -632,13 +705,26 @@ export function useRawMaterialForm(
             const vUomShortcut = units.find(u => u.unit_id === Number(v.uomId))?.unit_shortcut || "Unit";
             const cleanSuffix = v.codeSuffix.trim() || `${vUomShortcut.toUpperCase()}${v.count}`;
             const variantCount = parseFloat(v.count);
+            const variantWeight = parseWeightForm(
+                v.netWeight,
+                v.outerCartonWeight,
+                v.palletWeight,
+                formWeightUnitId,
+                "",
+                isPackagingMaterial
+            );
             return {
                 product_id: v.productId,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
                 density_factor: parsedDensity,
-                weight: (parsedBaseWeight as number) * variantCount,
+                weight: isPackagingMaterial
+                    ? variantWeight.grossWeight
+                    : (parsedBaseWeight == null ? null : parsedBaseWeight * variantCount),
+                net_weight: variantWeight.hasComponents ? Number(v.netWeight) : undefined,
+                outer_carton_weight: variantWeight.hasComponents ? Number(v.outerCartonWeight) : undefined,
+                pallet_weight: variantWeight.hasComponents ? Number(v.palletWeight) : undefined,
                 weight_unit_id: selectedWeightUnitIdNum as number,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
@@ -671,6 +757,9 @@ export function useRawMaterialForm(
             unit_of_measurement: Number(formUom),
             density_factor: parsedDensity,
             weight: parsedBaseWeight,
+            net_weight: parsedNetWeight,
+            outer_carton_weight: parsedOuterCartonWeight,
+            pallet_weight: parsedPalletWeight,
             weight_unit_id: selectedWeightUnitIdNum,
             product_brand: formBrand ? Number(formBrand) : undefined,
             product_category: formCategory ? Number(formCategory) : undefined,
@@ -732,6 +821,12 @@ export function useRawMaterialForm(
         setFormDensity,
         formWeight,
         setFormWeight,
+        formNetWeight,
+        setFormNetWeight,
+        formOuterCartonWeight,
+        setFormOuterCartonWeight,
+        formPalletWeight,
+        setFormPalletWeight,
         formWeightUnitId,
         setFormWeightUnitId,
         formBrand,

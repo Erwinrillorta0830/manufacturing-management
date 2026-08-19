@@ -23,6 +23,11 @@ import {
     PurchaseOrderPriceTypeError,
     resolvePurchaseOrderPriceType
 } from "./_price-type";
+import { validatePurchaseOrderCategoryTypes } from "../procurement/_category-type";
+import {
+    ProductWeightValidationError,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
 
@@ -36,13 +41,21 @@ type DirectusCategoryReference = number | string | { category_id?: number | stri
 type DirectusParentReference = number | string | {
     product_id?: number | string;
     id?: number | string;
+    product_type?: unknown;
     product_category?: DirectusCategoryReference;
 } | null;
 
 interface DirectusProduct {
     product_id: number | string;
     parent_id?: DirectusParentReference;
+    product_type?: unknown;
     product_category?: DirectusCategoryReference;
+    weight?: number | string | null;
+    product_weight?: number | string | null;
+    net_weight?: number | string | null;
+    outer_carton_weight?: number | string | null;
+    pallet_weight?: number | string | null;
+    weight_unit_id?: unknown;
 }
 
 interface DirectusPurchaseOrder {
@@ -118,7 +131,7 @@ async function validateDraft(order: PurchaseOrderDraft) {
             "Unable to validate the supplier."
         ),
         directusData<DirectusProduct[]>(
-            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,parent_id.product_id,parent_id.product_category.category_id,product_category.category_id&limit=${productIds.length}`,
+            `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type,parent_id,parent_id.product_id,parent_id.product_category.category_id,product_category.category_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=${productIds.length}`,
             "Unable to validate purchase-order products."
         ),
         directusData<Array<{ product_id: number | string | { product_id?: number | string; id?: number | string } }>>(
@@ -176,6 +189,24 @@ async function validateDraft(order: PurchaseOrderDraft) {
     const missingProductIds = productIds.filter(productId => !productsById.has(productId));
     if (missingProductIds.length > 0) {
         throw new PurchaseOrderDraftError("One or more selected products do not exist.", 400, { missingProductIds });
+    }
+    const categoryTypes = await validatePurchaseOrderCategoryTypes(order.lines.map(line => ({
+        productId: line.productId,
+        categoryType: line.categoryType
+    })));
+    for (const line of order.lines) {
+        const product = productsById.get(line.productId);
+        if (!product) continue;
+        try {
+            resolveProductWeightBreakdown(product, {
+                requireComplete: categoryTypes.get(line.productId) === "PACKAGING"
+            });
+        } catch (error) {
+            if (error instanceof ProductWeightValidationError) {
+                throw new PurchaseOrderDraftError(`Product ${line.productId}: ${error.message}`, error.status);
+            }
+            throw error;
+        }
     }
     if (jobOrders.length !== jobOrderIds.length) throw new PurchaseOrderDraftError("One or more selected job orders do not exist.");
     await assertMrpProductJobOrderPairs(order.lines);

@@ -10,6 +10,7 @@ import { purchaseOrderCreateSchema } from "./_schemas";
 import { createPurchaseOrderDraft, PurchaseOrderDraftError } from "./_service";
 import { MrpPairValidationError } from "./_mrp-validation";
 import { PurchaseOrderDiscountError } from "./_domain";
+import { ProductCategoryTypeValidationError } from "../procurement/_category-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,10 +51,12 @@ export async function POST(request: Request) {
                     ? error.status
                 : error instanceof PurchaseOrderDiscountError
                     ? 400
+                : error instanceof ProductCategoryTypeValidationError
+                    ? error.status
                 : 500;
         return NextResponse.json({
             error: (error as Error).message || "Failed to create purchase order.",
-            details: error instanceof PurchaseOrderDraftError || error instanceof MrpPairValidationError || error instanceof PurchaseOrderDiscountError ? error.details : undefined,
+            details: error instanceof PurchaseOrderDraftError || error instanceof MrpPairValidationError || error instanceof PurchaseOrderDiscountError || error instanceof ProductCategoryTypeValidationError ? error.details : undefined,
             code: error instanceof PurchaseOrderDiscountError ? error.code : undefined
         }, { status });
     }

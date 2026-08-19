@@ -83,7 +83,12 @@ export default function RawMaterialsModule({
                 formDensity={formHook.formDensity}
                 setFormDensity={formHook.setFormDensity}
                 formWeight={formHook.formWeight}
-                setFormWeight={formHook.setFormWeight}
+                formNetWeight={formHook.formNetWeight}
+                setFormNetWeight={formHook.setFormNetWeight}
+                formOuterCartonWeight={formHook.formOuterCartonWeight}
+                setFormOuterCartonWeight={formHook.setFormOuterCartonWeight}
+                formPalletWeight={formHook.formPalletWeight}
+                setFormPalletWeight={formHook.setFormPalletWeight}
                 formWeightUnitId={formHook.formWeightUnitId}
                 setFormWeightUnitId={formHook.setFormWeightUnitId}
                 formBrand={formHook.formBrand}

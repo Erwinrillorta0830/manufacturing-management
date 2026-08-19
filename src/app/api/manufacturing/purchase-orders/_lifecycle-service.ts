@@ -24,6 +24,14 @@ import {
     buildPurchaseOrderRevisionSnapshot,
     type PurchaseOrderRevisionSnapshot
 } from "@/modules/manufacturing-management/purchase-order/revision-snapshot";
+import {
+    validatePurchaseOrderCategoryTypes,
+    type PurchaseOrderCategoryType
+} from "../procurement/_category-type";
+import {
+    ProductWeightValidationError,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
 type CancellationCommand = z.infer<typeof purchaseOrderCancellationSchema>;
@@ -136,6 +144,31 @@ async function loadCategoryIds(productIds: number[]): Promise<number[]> {
     }))];
 }
 
+async function validateRevisionProductWeights(
+    productIds: number[],
+    categoryTypes: ReadonlyMap<number, PurchaseOrderCategoryType>
+) {
+    const rows = await directusData<Array<Record<string, unknown>>>(
+        `/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=-1`,
+        "Unable to validate revised product weights."
+    );
+    const products = new Map(rows.map(row => [Number(row.product_id), row]));
+    for (const productId of productIds) {
+        const product = products.get(productId);
+        if (!product) throw new PurchaseOrderLifecycleError(`Product ${productId} was not found while validating the revision.`, 400);
+        try {
+            resolveProductWeightBreakdown(product, {
+                requireComplete: categoryTypes.get(productId) === "PACKAGING"
+            });
+        } catch (error) {
+            if (error instanceof ProductWeightValidationError) {
+                throw new PurchaseOrderLifecycleError(`Product ${productId}: ${error.message}`, error.status);
+            }
+            throw error;
+        }
+    }
+}
+
 async function validateRevisionReferences(command: RevisionCommand) {
     const productIds = command.lineItems.map(line => Number(line.product_id));
     const jobOrderIds = command.lineItems
@@ -213,6 +246,11 @@ async function validateRevisionReferences(command: RevisionCommand) {
     if (!isBranchActive(branch)) {
         throw new PurchaseOrderLifecycleError("The revised branch is inactive.", 400);
     }
+    const categoryTypes = await validatePurchaseOrderCategoryTypes(command.lineItems.map(line => ({
+        productId: Number(line.product_id),
+        categoryType: line.category_type
+    })));
+    await validateRevisionProductWeights(productIds, categoryTypes);
     await loadCategoryIds(productIds);
     const distinctJobOrderIds = [...new Set(jobOrderIds)];
     if (distinctJobOrderIds.length > 0) {

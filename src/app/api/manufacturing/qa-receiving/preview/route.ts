@@ -33,6 +33,7 @@ import { summarizeReceivingHistory } from "../_receiving-history";
 import { evaluateReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
+import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from "../../procurement/_category-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -270,6 +271,9 @@ export async function POST(request: Request) {
         }
         const previouslyReceivedByLine = receivingHistory.byLine;
         const poLineById = new Map(poLines.map(line => [positiveInteger(line.purchase_order_product_id), line]));
+        const categoryTypes = await resolveProductCategoryTypes(poLines
+            .map(line => positiveInteger(line.product_id, "product_id"))
+            .filter((productId): productId is number => productId !== null));
         const remainingByLine = new Map<number, number>();
         const remainingAcceptedByLine = new Map<number, number>();
         for (const line of lines) {
@@ -279,6 +283,13 @@ export async function POST(request: Request) {
             }
             if (positiveInteger(stored.product_id, "product_id") !== line.productId) {
                 throw new ReceivingPreviewError(`Product mismatch for line ${line.lineId}.`);
+            }
+            const categoryType = categoryTypes.get(line.productId);
+            if (!categoryType) {
+                throw new ReceivingPreviewError(`Product ${line.productId} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+            }
+            if (line.isPackaging !== (categoryType === "PACKAGING")) {
+                throw new ReceivingPreviewError(`Line ${line.lineId} Category_Type does not match the product master classification.`);
             }
             const intent = String(stored.purchase_intent || "Buffer_Stock");
             const jobOrderId = positiveInteger(stored.job_order_id, "job_order_id");
@@ -557,7 +568,7 @@ export async function POST(request: Request) {
             }
         });
     } catch (error) {
-        const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError
+        const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError || error instanceof ProductCategoryTypeValidationError
             ? error.status
             : error instanceof QuarantineDispositionError
                 ? error.statusCode

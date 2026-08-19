@@ -22,9 +22,10 @@ import {
     cancelRejectedPurchaseOrder
 } from "../services/purchase-order-api";
 import { resolveProductParentId } from "../../procurement/product-relation";
+import { purchaseOrderMaterialTypeFromProduct } from "../../procurement/components/incoming-shipments/types";
 
 const blankLine = (): ManifestLineFormItem => ({
-    parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "",
+    parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
     purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "", vat_percent: "", withholding_percent: ""
 });
 const blankForm = (): ShipmentFormState => ({
@@ -168,8 +169,12 @@ export function usePurchaseOrder() {
             const discountAmount = Number(line.discount_amount || 0);
             const vat = Number(line.vat_percent || 0);
             const withholding = Number(line.withholding_percent || 0);
+            const product = rawMaterials.find(material => Number(material.product_id) === Number(line.product_id));
+            const masterMaterialType = purchaseOrderMaterialTypeFromProduct(product, rawMaterials);
 
             if (!line.product_id) errors.push("select a product");
+            if (!line.material_type) errors.push("select a Category Type");
+            if (line.material_type && masterMaterialType !== line.material_type) errors.push("select a Category Type matching the product master");
             if (!Number.isInteger(quantity) || quantity <= 0) errors.push("enter a positive whole quantity");
             if (line.base_unit_cost_php === "" || !Number.isFinite(unitPrice) || unitPrice < 0) errors.push("enter a non-negative unit price");
             if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") errors.push("select a valid Discount Type");
@@ -239,6 +244,7 @@ export function usePurchaseOrder() {
 
             return {
                 productId,
+                categoryType: line.material_type === "raw_material" ? "RAW_MATERIAL" : "PACKAGING",
                 parentProductId: canonicalParentId,
                 purchaseIntent: line.purchase_intent || "Buffer_Stock",
                 jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,

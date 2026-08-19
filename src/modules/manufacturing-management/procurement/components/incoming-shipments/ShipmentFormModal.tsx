@@ -4,7 +4,6 @@ import {
     ManifestLineFormItem,
     ShipmentFormState,
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
-    purchaseOrderMaterialTypeFromProductType,
     FxRateStatus
 } from "./types";
 import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
@@ -632,12 +631,6 @@ export function ShipmentFormModal({
                                         <tbody className="divide-y divide-border/60">
                                             {linesForm.map((line, idx) => {
                                                 const lineErrors = getLineErrors(line);
-                                                const selectedMaterial = rawMaterials.find(material =>
-                                                    String(material.product_id) === String(line.product_id)
-                                                ) || rawMaterials.find(material =>
-                                                    String(material.product_id) === String(line.parent_product_id)
-                                                );
-
                                                 const qty = Number(line.quantity_ordered || 0);
                                                 const unitPrice = Number(line.base_unit_cost_php || 0);
                                                 const grossForeign = qty * unitPrice;
@@ -646,7 +639,7 @@ export function ShipmentFormModal({
                                                     ? Number(line.discount_amount || 0)
                                                     : (grossForeign * Number(line.discount_percent || 0)) / 100;
                                                 const subtotal = grossForeign - discount;
-                                                const materialType = line.material_type || purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
+                                                const materialType = line.material_type || "";
                                                 const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
                                                 const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
                                                 const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;

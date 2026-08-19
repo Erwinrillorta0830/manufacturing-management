@@ -43,6 +43,9 @@ export interface PackagingVariantFormState {
     productId?: number;
     uomId: number | "";
     count: string;
+    netWeight: string;
+    outerCartonWeight: string;
+    palletWeight: string;
     codeSuffix: string;
     isExisting?: boolean;
     isActive: boolean;
@@ -59,7 +62,10 @@ export interface PackagingVariantPayload {
     unit_of_measurement: number;
     unit_of_measurement_count: number;
     density_factor: number;
-    weight: number;
+    weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id: number;
     product_brand?: number;
     product_category?: number;
@@ -80,6 +86,9 @@ export interface RegisterRawMaterialPayload {
     unit_of_measurement_count: number;
     density_factor: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | null;
     product_brand?: number;
     product_category?: number;
@@ -110,6 +119,9 @@ export interface RawMaterialItem {
     estimated_unit_cost?: number;
     density_factor?: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | string | { category_id?: number; category_name?: string } | null;
     category_name?: string;

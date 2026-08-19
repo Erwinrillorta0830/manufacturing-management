@@ -109,12 +109,18 @@ export interface ShipmentLineItem {
         product_id: number;
         product_name: string;
         product_code?: string;
+        weight?: number | string | null;
+        net_weight?: number | string | null;
+        outer_carton_weight?: number | string | null;
+        pallet_weight?: number | string | null;
+        weight_unit_id?: unknown;
         unit_of_measurement?: {
             unit_id: number;
             unit_shortcut: string;
             unit_name: string;
         };
     };
+    category_type?: "RAW_MATERIAL" | "PACKAGING";
     quantity_ordered?: number;
     quantity_received?: number | null;
     base_unit_cost_php: number | string;
@@ -160,6 +166,9 @@ export interface RawMaterial {
     estimated_unit_cost: number;
     density_factor: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | null;
     product_brand?: number | null;
@@ -197,6 +206,9 @@ export interface RegisterRawMaterialPayload {
     cost_per_unit?: number;
     density_factor?: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | null;
     unit_of_measurement?: number;
     price_per_unit?: number;
@@ -294,7 +306,10 @@ export interface PackagingVariant {
     unit_of_measurement?: number;
     unit_of_measurement_count?: number;
     density_factor?: number;
-    weight?: number;
+    weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | null;
     product_brand?: number | null;
     product_category?: number | null;
@@ -362,6 +377,9 @@ export interface BFFCatalogProduct {
     estimated_unit_cost?: number | string;
     density_factor?: number | string;
     weight?: number | string | null;
+    net_weight?: number | string | null;
+    outer_carton_weight?: number | string | null;
+    pallet_weight?: number | string | null;
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
