@@ -28,6 +28,15 @@ import {
 } from "../supplier-country";
 import { isLandedCostPostingEligible } from "../landed-cost-eligibility";
 
+type ShipmentAllocationRule = "" | "Value" | "Weight" | "Volume" | "Hybrid";
+
+function normalizeShipmentAllocationRule(value: string | null | undefined): ShipmentAllocationRule {
+    const normalized = String(value || "").replace(/^By\s+/i, "");
+    return normalized === "Value" || normalized === "Weight" || normalized === "Volume" || normalized === "Hybrid"
+        ? normalized
+        : "";
+}
+
 export function useProcurement(defaultTab: string = "suppliers") {
     const [activeTab, setActiveTab] = useState(defaultTab);
     const [loading, setLoading] = useState(false);
@@ -106,10 +115,10 @@ export function useProcurement(defaultTab: string = "suppliers") {
     const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
 
     const [expenseAllocationForm, setExpenseAllocationForm] = useState<{
-        allocation_method: "Value" | "Weight" | "Volume";
+        allocation_method: ShipmentAllocationRule;
         expenses: Array<{ overhead_id: string; expense_type: string; amount_php: string }>;
     }>({
-        allocation_method: "Value",
+        allocation_method: "",
         expenses: [{ overhead_id: "", expense_type: "", amount_php: "" }]
     });
 
@@ -184,8 +193,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
     useEffect(() => {
         if (selectedShipmentExpenses && selectedShipmentExpenses.length > 0) {
             setExpenseAllocationForm({
-                allocation_method: selectedShipmentExpenses[0].allocation_method === "By Weight" ? "Weight" :
-                    selectedShipmentExpenses[0].allocation_method === "By Volume" ? "Volume" : "Value",
+                allocation_method: normalizeShipmentAllocationRule(selectedShipmentExpenses[0].allocation_method),
                 expenses: selectedShipmentExpenses.map(x => ({
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     overhead_id: x.overhead_id ? String(typeof x.overhead_id === "object" ? (x.overhead_id as any).id : x.overhead_id) : "",
@@ -196,7 +204,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             });
         } else {
             setExpenseAllocationForm({
-                allocation_method: "Value",
+                allocation_method: "",
                 expenses: [{ overhead_id: "", expense_type: "", amount_php: "" }]
             });
         }
@@ -611,7 +619,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
         lineItemUpdates?: any[]
     ) => {
         e.preventDefault();
-        const validExps = expenseAllocationForm.expenses.filter(x => x.overhead_id && x.amount_php);
+        if (!expenseAllocationForm.allocation_method) {
+            toast.error("Select an allocation rule before finalizing landed costs.");
+            return;
+        }
+        const validExps = expenseAllocationForm.expenses.filter(x => x.overhead_id && Number(x.amount_php) > 0);
         
         setSubmittingExpenses(true);
         try {
@@ -621,10 +633,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 amount_php: parseFloat(x.amount_php)
             }));
 
-            // Map UI allocation method to DB ENUM values ('By Value', 'By Weight', 'By Volume')
-            const dbAllocationMethod =
-                expenseAllocationForm.allocation_method === "Weight" ? "By Weight" :
-                    expenseAllocationForm.allocation_method === "Volume" ? "By Volume" : "By Value";
+            const dbAllocationMethod = expenseAllocationForm.allocation_method;
 
             await saveAndAllocateExpenses(
                 shipmentId,

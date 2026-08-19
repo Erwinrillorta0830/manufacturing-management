@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
-import { processPurchaseAmountPosting } from "./amount-posting-helper";
 import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
+import { finalizeLandedCost, getLandedCostComputation, isLandedCostError } from "../landed-cost/_domain";
+import {
+    PURCHASE_ORDER_MODULE_PATHS,
+    PurchaseOrderAuthorizationError,
+    requirePurchaseOrderModuleAccess
+} from "../../purchase-orders/_auth";
 import {
     ProductWeightValidationError,
     resolveProductWeightBreakdown
@@ -10,6 +15,7 @@ import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from 
 
 export async function GET(request: Request) {
     try {
+        await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
         const { searchParams } = new URL(request.url);
         const poId = searchParams.get("poId");
 
@@ -121,10 +127,18 @@ export async function GET(request: Request) {
             importExpenses = importData?.data || [];
         }
 
+        let landedCost = { computation: null, attachments: [], expenses: [] } as Awaited<ReturnType<typeof getLandedCostComputation>>;
+        try {
+            landedCost = await getLandedCostComputation(purchaseOrderId);
+        } catch (error) {
+            console.warn("[Manufacturing] Canonical landed-cost draft unavailable; using compatibility import rows.", error);
+        }
+
         return NextResponse.json({
             purchaseOrder,
             lineItems,
             importExpenses,
+            landedCost,
             chartOfAccounts,
             activeForexRate
         });
@@ -141,22 +155,42 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
         const body = await request.json();
 
         if (!body.purchase_order_id || !Array.isArray(body.line_items) || body.line_items.length === 0) {
             return NextResponse.json({ error: "Missing required purchase_order_id or line_items" }, { status: 400 });
         }
 
-        // Process posting and hybrid landed cost allocation
-        const result = await processPurchaseAmountPosting(body);
+        const allocationRule = body.allocation_rule || body.allocationMethod;
+        if (!allocationRule) {
+            return NextResponse.json({ error: "Select an allocation rule before posting purchase amounts.", code: "ALLOCATION_RULE_REQUIRED" }, { status: 400 });
+        }
+        const expenses = Array.isArray(body.expenses)
+            ? body.expenses.map((expense: Record<string, unknown>) => ({
+                chart_of_account_id: Number(expense.chart_of_account_id) || null,
+                expense_type: typeof expense.expense_type === "string" ? expense.expense_type : "",
+                amount_php: Number(expense.amount || expense.amount_php || 0)
+            }))
+            : [];
+        const result = await finalizeLandedCost({
+            purchaseOrderId: Number(body.purchase_order_id),
+            computationId: body.computation_id ? Number(body.computation_id) : null,
+            allocationRule,
+            expenses,
+            actorId: actor.userId,
+            sourceFlow: "PURCHASE_AMOUNT_POSTING"
+        });
 
         return NextResponse.json(result);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Allocation Error";
         return NextResponse.json({
             error: message,
-            ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
-        }, { status: error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError
+            ...(error instanceof LandedCostEligibilityError || isLandedCostError(error) ? { code: (error as { code?: string }).code } : {})
+        }, { status: error instanceof PurchaseOrderAuthorizationError
+            ? error.status
+            : error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError || isLandedCostError(error)
             ? error.status
             : 500 });
     }

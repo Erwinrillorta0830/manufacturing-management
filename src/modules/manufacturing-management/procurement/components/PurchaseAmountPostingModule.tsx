@@ -9,6 +9,7 @@ import ForexSubPoolHeader from "./purchase-amount/ForexSubPoolHeader";
 import LandedExpensesTable from "./purchase-amount/LandedExpensesTable";
 import LineItemsPostingTable from "./purchase-amount/LineItemsPostingTable";
 import PostedPOLedgerTable from "./purchase-amount/PostedPOLedgerTable";
+import LandedCostAttachments from "./LandedCostAttachments";
 
 export default function PurchaseAmountPostingModule({
     shipments,
@@ -30,6 +31,8 @@ export default function PurchaseAmountPostingModule({
         setExchangeRate,
         setLineItems,
         landedExpenses,
+        allocationRule,
+        setAllocationRule,
         chartOfAccounts,
         calculationResult,
         handleAddExpenseRow,
@@ -142,6 +145,36 @@ export default function PurchaseAmountPostingModule({
                                 />
                             )}
 
+                            <div className="rounded-xl border bg-card p-4 space-y-3">
+                                <div>
+                                    <h3 className="text-xs font-bold uppercase tracking-wider">Landed-Cost Allocation Rule</h3>
+                                    <p className="text-[11px] text-muted-foreground mt-1">Choose the rule used by the server for every landed-cost allocation. This selection is required before posting.</p>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                    {(["Value", "Weight", "Volume", "Hybrid"] as const).map(rule => (
+                                        <button
+                                            key={rule}
+                                            type="button"
+                                            onClick={() => setAllocationRule(rule)}
+                                            className={`rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${allocationRule === rule ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted"}`}
+                                        >
+                                            {rule === "Value" ? "Commercial Value" : rule === "Hybrid" ? "Hybrid (RM Qty / PKG Weight)" : rule}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <LandedCostAttachments
+                                purchaseOrderId={Number(selectedShipment.purchase_order_id || selectedShipment.shipment_id || selectedShipment.id)}
+                                allocationRule={allocationRule}
+                                expenses={landedExpenses.map(expense => ({
+                                    chart_of_account_id: expense.chart_of_account_id || null,
+                                    amount_php: expense.amount
+                                }))}
+                                sourceFlow="PURCHASE_AMOUNT_POSTING"
+                                disabled={posting}
+                            />
+
                             {/* Line Items Calculations & Landed Unit Cost Preview Table */}
                             <LineItemsPostingTable
                                 isForeignPO={isForeignPO}
@@ -150,6 +183,7 @@ export default function PurchaseAmountPostingModule({
                                 setLineItems={setLineItems}
                                 onExecutePosting={handleExecutePosting}
                                 posting={posting}
+                                allocationRuleSelected={Boolean(allocationRule)}
                             />
                         </div>
                     ) : (

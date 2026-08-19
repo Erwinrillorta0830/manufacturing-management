@@ -11,6 +11,7 @@ interface LineItemsPostingTableProps {
     setLineItems?: React.Dispatch<React.SetStateAction<POLineItem[]>>;
     onExecutePosting: () => void;
     posting: boolean;
+    allocationRuleSelected: boolean;
 }
 
 export default function LineItemsPostingTable({
@@ -18,7 +19,8 @@ export default function LineItemsPostingTable({
     exchangeRate,
     calculationResult,
     onExecutePosting,
-    posting
+    posting,
+    allocationRuleSelected
 }: LineItemsPostingTableProps) {
     return (
         <div className="space-y-3">
@@ -110,7 +112,7 @@ export default function LineItemsPostingTable({
             <div className="flex justify-end pt-2">
                 <button
                     type="button"
-                    disabled={posting}
+                    disabled={posting || !allocationRuleSelected}
                     onClick={onExecutePosting}
                     className="h-10 px-5 rounded-lg bg-primary text-primary-foreground font-bold text-xs flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
                 >
@@ -118,6 +120,11 @@ export default function LineItemsPostingTable({
                     {posting ? "Posting Amounts..." : "Post Purchase Amounts & Lock Costs"}
                 </button>
             </div>
+            {!allocationRuleSelected && (
+                <p className="text-right text-[11px] text-muted-foreground">
+                    Select an allocation rule before posting purchase amounts.
+                </p>
+            )}
         </div>
     );
 }

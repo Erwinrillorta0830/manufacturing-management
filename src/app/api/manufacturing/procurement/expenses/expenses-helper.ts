@@ -3,6 +3,7 @@ import { DirectusShipmentExpense } from "@/modules/manufacturing-management/proc
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
 import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
 import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
+import { getLandedCostComputation } from "../landed-cost/_domain";
 import {
     deriveLineGrossWeightKg,
     resolveProductWeightBreakdown
@@ -172,6 +173,22 @@ export function calculateLandedCostAllocations(
 }
 
 export async function fetchShipmentExpenses(shipmentId: number): Promise<StoredExpense[]> {
+    try {
+        const canonical = await getLandedCostComputation(shipmentId);
+        if (canonical.computation) {
+            return canonical.expenses.map(expense => ({
+                expense_id: expense.expense_id,
+                shipment_id: shipmentId,
+                purchase_order_id: shipmentId,
+                overhead_id: expense.overhead_id,
+                expense_type: expense.expense_type || "",
+                amount_php: Number(expense.amount_php || 0),
+                allocation_method: canonical.computation?.allocation_rule || ""
+            }));
+        }
+    } catch (error) {
+        console.warn("[Manufacturing] Falling back to compatibility landed-cost expenses.", error);
+    }
     const url = `${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,overhead_id.*&limit=-1`;
     const res = await fetch(url, { headers, cache: "no-store" });
     if (!res.ok) throw new Error(`Failed to load shipment expenses (${res.status}).`);

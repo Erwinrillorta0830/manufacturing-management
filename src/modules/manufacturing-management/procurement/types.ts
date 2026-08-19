@@ -146,6 +146,43 @@ export interface ShipmentExpense {
     allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
+export type LandedCostAllocationRule = "Value" | "Weight" | "Volume" | "Hybrid";
+
+export interface LandedCostExpenseDraft {
+    expense_id?: number;
+    overhead_id?: number | null;
+    chart_of_account_id?: number | null;
+    expense_type?: string | null;
+    amount_php: number | string;
+}
+
+export interface LandedCostAttachmentRecord {
+    id: number;
+    computation_id: number;
+    directus_file_id: string;
+    document_type: "CARRIER_INVOICE" | "FREIGHT_BILL" | "BROKER_ASSESSMENT_SHEET" | "OTHER";
+    file_name: string;
+    mime_type?: string | null;
+    file_size?: number | null;
+    uploaded_at?: string | null;
+}
+
+export interface LandedCostComputationRecord {
+    id: number;
+    purchase_order_id: number;
+    allocation_rule: LandedCostAllocationRule;
+    status: "DRAFT" | "FINALIZING" | "FINALIZED" | "FAILED";
+    total_landed_fee?: number | null;
+    rounding_variance?: number | null;
+}
+
+export interface LandedCostDraftResponse {
+    computation: LandedCostComputationRecord | null;
+    attachments: LandedCostAttachmentRecord[];
+    expenses: LandedCostExpenseDraft[];
+    preview?: unknown;
+}
+
 export interface RawMaterial {
     product_id: number;
     parent_id?: number | null;
