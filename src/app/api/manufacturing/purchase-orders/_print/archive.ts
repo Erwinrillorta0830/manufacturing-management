@@ -4,6 +4,14 @@ import type { PurchaseOrderPrintableSnapshot } from "./types";
 
 const ARCHIVE_COLLECTION = "purchase_order_print_documents";
 
+export const PURCHASE_ORDER_ARCHIVE_CORE_DOCUMENT_TYPES = [
+    "PURCHASE_ORDER",
+    "QA_GOODS_RECEIPT",
+    "LANDED_COST"
+] as const;
+
+export type PurchaseOrderArchiveCoreDocumentType = typeof PURCHASE_ORDER_ARCHIVE_CORE_DOCUMENT_TYPES[number];
+
 export class PurchaseOrderPrintArchiveError extends Error {
     constructor(public readonly status: number, message: string) {
         super(message);
@@ -13,9 +21,19 @@ export class PurchaseOrderPrintArchiveError extends Error {
 
 interface ArchiveRecord {
     id?: number | string;
+    archive_key?: string | null;
+    purchase_order_id?: number | string | null;
+    document_type?: string | null;
+    source_history_id?: number | string | null;
+    source_receiving_header_id?: number | string | null;
+    source_computation_id?: number | string | null;
+    workflow_revision?: number | string | null;
     directus_file_id?: string | { id?: string } | null;
     content_sha256?: string | null;
     file_name?: string | null;
+    page_count?: number | string | null;
+    generated_by?: string | null;
+    generated_at?: string | null;
 }
 
 function archiveFileId(value: ArchiveRecord["directus_file_id"]): string {
@@ -29,6 +47,86 @@ function safeFileName(value: string): string {
 async function responseData<T>(response: Response): Promise<T> {
     const body = await response.json().catch(() => ({}));
     return body.data as T;
+}
+
+export interface PurchaseOrderArchiveDocument {
+    archiveId: string;
+    documentType: string;
+    fileId: string;
+    fileName: string;
+    workflowRevision: number;
+    generatedBy: string;
+    generatedAt: string;
+    pageCount: number;
+}
+
+export interface PurchaseOrderArchiveStatus {
+    purchaseOrderId: number;
+    status: "NOT_ARCHIVED" | "PARTIALLY_ARCHIVED" | "ARCHIVED";
+    complete: boolean;
+    requiredDocumentTypes: PurchaseOrderArchiveCoreDocumentType[];
+    archivedDocumentTypes: string[];
+    missingDocumentTypes: PurchaseOrderArchiveCoreDocumentType[];
+    documents: PurchaseOrderArchiveDocument[];
+}
+
+export async function loadPurchaseOrderArchiveStatus(purchaseOrderId: number): Promise<PurchaseOrderArchiveStatus> {
+    const fields = [
+        "id",
+        "archive_key",
+        "purchase_order_id",
+        "document_type",
+        "workflow_revision",
+        "directus_file_id",
+        "file_name",
+        "page_count",
+        "generated_by",
+        "generated_at"
+    ].join(",");
+    const response = await procurementDirectusFetch(
+        `/items/${ARCHIVE_COLLECTION}?filter[purchase_order_id][_eq]=${encodeURIComponent(purchaseOrderId)}&fields=${encodeURIComponent(fields)}&sort=-generated_at,-id&limit=-1`
+    );
+    if (!response.ok) {
+        throw new PurchaseOrderPrintArchiveError(
+            response.status === 404 ? 503 : response.status >= 500 ? 503 : response.status,
+            response.status === 404
+                ? "Printable archive storage is not configured. Apply the purchase-order print archive migration first."
+                : "Unable to load the purchase-order printable archive."
+        );
+    }
+
+    const records = (await responseData<ArchiveRecord[]>(response)) || [];
+    const documents = records
+        .map(record => ({
+            archiveId: String(record.id || ""),
+            documentType: String(record.document_type || ""),
+            fileId: archiveFileId(record.directus_file_id),
+            fileName: String(record.file_name || ""),
+            workflowRevision: Number(record.workflow_revision) || 0,
+            generatedBy: String(record.generated_by || ""),
+            generatedAt: String(record.generated_at || ""),
+            pageCount: Number(record.page_count) || 0
+        }))
+        .filter(document => document.archiveId && document.documentType && document.fileId);
+    const archivedDocumentTypes = [...new Set(documents.map(document => document.documentType))];
+    const missingDocumentTypes = PURCHASE_ORDER_ARCHIVE_CORE_DOCUMENT_TYPES.filter(
+        documentType => !archivedDocumentTypes.includes(documentType)
+    );
+    const complete = missingDocumentTypes.length === 0;
+
+    return {
+        purchaseOrderId,
+        status: complete
+            ? "ARCHIVED"
+            : documents.length > 0
+                ? "PARTIALLY_ARCHIVED"
+                : "NOT_ARCHIVED",
+        complete,
+        requiredDocumentTypes: [...PURCHASE_ORDER_ARCHIVE_CORE_DOCUMENT_TYPES],
+        archivedDocumentTypes,
+        missingDocumentTypes,
+        documents
+    };
 }
 
 function stableSnapshotHash(data: PurchaseOrderPrintableSnapshot): string {
