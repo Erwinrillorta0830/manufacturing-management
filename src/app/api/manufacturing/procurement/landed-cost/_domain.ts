@@ -13,6 +13,7 @@ import {
     calculateLandedCost,
     type LandedCostCalculationResult
 } from "@/modules/manufacturing-management/procurement/landed-cost-calculation";
+import { resolvePurchaseOrderLineId } from "../../qa-receiving/_receiving-history";
 
 export const COMPUTATION_COLLECTION = "purchase_order_landed_cost_computations";
 export const ATTACHMENT_COLLECTION = "purchase_order_landed_cost_attachments";
@@ -50,9 +51,12 @@ interface DirectusRecord {
 interface ReceivingRecord extends DirectusRecord {
     id?: number;
     purchase_order_product_id?: unknown;
+    purchase_order_line_id?: unknown;
     product_id?: unknown;
     received_quantity?: number | string | null;
     quantity_rejected?: number | string | null;
+    is_replacement?: boolean | number | null;
+    is_reverted?: boolean | number | null;
     allocated_expense_php?: number | string | null;
     final_landed_unit_cost?: number | string | null;
     is_posted_amounts?: number | boolean | null;
@@ -241,6 +245,12 @@ export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<L
         "purchase_order_receiving",
         `filter[purchase_order_id][_eq]=${purchaseOrderId}&filter[is_reverted][_eq]=0&fields=*&limit=-1`
     ) as ReceivingRecord[];
+    const activeReceivingRows = receivingRows.filter(row =>
+        row.is_replacement !== true
+        && Number(row.is_replacement) !== 1
+        && row.is_reverted !== true
+        && Number(row.is_reverted) !== 1
+    );
     const productIds = lineRows.map(line => relationId(line.product_id, "product_id")).filter((id): id is number => id !== null);
     const categoryTypes = await resolveProductCategoryTypes(productIds);
     const products = new Map<number, ProductRecord>();
@@ -284,7 +294,7 @@ export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<L
         }
         const product = products.get(productId) || {};
         const weight = resolveProductWeightBreakdown(product, { requireComplete: categoryType === "PACKAGING" });
-        const lineReceipts = receivingRows.filter(row => relationId(row.purchase_order_product_id, "purchase_order_product_id") === key);
+        const lineReceipts = activeReceivingRows.filter(row => resolvePurchaseOrderLineId(row, lineRows) === key);
         const quantity = lineReceipts.reduce((sum, row) => Math.max(0, sum + asNumber(row.received_quantity) - asNumber(row.quantity_rejected)), 0);
         if (quantity <= 0) continue;
         const transactionUnitPrice = asNumber(isForeign ? line.unit_price_foreign ?? line.unit_price : line.unit_price);
@@ -307,7 +317,7 @@ export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<L
         throw new LandedCostDomainError(409, "NO_ACCEPTED_RECEIPTS", "No accepted received quantities are available for landed-cost finalization.");
     }
 
-    return { purchaseOrder, lines, products, receivingRows, isForeign, exchangeRate };
+    return { purchaseOrder, lines, products, receivingRows: activeReceivingRows, isForeign, exchangeRate };
 }
 
 export async function getComputationAttachments(computationId: number): Promise<LandedCostAttachment[]> {
