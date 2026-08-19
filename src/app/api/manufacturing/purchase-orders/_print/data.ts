@@ -581,7 +581,10 @@ export async function loadPurchaseOrderPrintableData(input: {
         totalForeignCurrency: number(purchaseOrder.total_foreign_currency),
         remark: text(purchaseOrder.remark, ""),
         isPosted: boolean(purchaseOrder.is_posted),
-        isPostedAmounts: boolean(purchaseOrder.is_posted_amounts)
+        isPostedAmounts: boolean(purchaseOrder.is_posted_amounts),
+        isForceReceived: Boolean(text(purchaseOrder.force_received_at, "")),
+        forceReceivedAt: text(purchaseOrder.force_received_at, ""),
+        forceReceivedReason: text(purchaseOrder.force_received_reason, "")
     };
     return {
         documentType: input.documentType,

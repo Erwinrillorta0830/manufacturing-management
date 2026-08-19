@@ -100,6 +100,10 @@ export interface IncomingShipment {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    isForceReceived?: boolean;
+    forceReceivedAt?: string | null;
+    forceReceivedBy?: number | null;
+    forceReceivedReason?: string | null;
 }
 
 export interface ShipmentLineItem {

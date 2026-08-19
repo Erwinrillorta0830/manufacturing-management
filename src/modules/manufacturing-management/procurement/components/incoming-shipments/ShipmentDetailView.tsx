@@ -147,6 +147,16 @@ export function ShipmentDetailView({
                                     Payment Status:{" "}
                                     <strong className="text-foreground font-bold">{paymentStatusLabel(activeShipment.payment_status)}</strong>
                                 </span>
+                                {(activeShipment.isForceReceived || activeShipment.forceReceivedAt) && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span className="text-violet-700">
+                                            Closure:{" "}
+                                            <strong className="font-bold">Force Received</strong>
+                                            {activeShipment.forceReceivedReason ? ` — ${activeShipment.forceReceivedReason}` : ""}
+                                        </span>
+                                    </>
+                                )}
                                 {queuedForPurchaseAmountPosting && (
                                     <>
                                         <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
