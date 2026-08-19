@@ -51,7 +51,8 @@ export async function GET(request: Request) {
         }
 
         const landedCostOnly = searchParams.get("landedCostOnly") === "true";
-        const shipments = await fetchIncomingShipments({ landedCostOnly });
+        const includePosted = searchParams.get("includePosted") === "true";
+        const shipments = await fetchIncomingShipments({ landedCostOnly, includePosted });
         return NextResponse.json(shipments);
     } catch (e) {
         console.error("API Error fetching shipments:", e);

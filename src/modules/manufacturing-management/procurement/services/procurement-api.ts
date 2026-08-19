@@ -1,4 +1,4 @@
-import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft } from "../types";
+import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
@@ -126,6 +126,11 @@ export async function saveAndAllocateExpenses(
 export async function fetchLandedCostDraft(purchaseOrderId: number): Promise<LandedCostDraftResponse> {
     const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/landed-cost?purchaseOrderId=${encodeURIComponent(purchaseOrderId)}`);
     return handleResponse(res, "Failed to load landed-cost computation");
+}
+
+export async function fetchLandedCostAudit(purchaseOrderId: number, signal?: AbortSignal): Promise<LandedCostAuditResponse> {
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/landed-cost/audit?purchaseOrderId=${encodeURIComponent(purchaseOrderId)}`, { signal });
+    return handleResponse(res, "Failed to load landed-cost audit");
 }
 
 export async function saveLandedCostDraft(

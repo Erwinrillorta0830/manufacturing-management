@@ -47,10 +47,11 @@ export default function POSelectionCard({
                     const isImp = po.is_import === 1 || po.currency_code === "USD";
                     const curr = isImp ? "USD" : "PHP";
                     const amt = po.total_amount ? Number(po.total_amount).toLocaleString("en-US", { minimumFractionDigits: 2 }) : "0.00";
+                    const forceClosed = Boolean(po.isForceReceived || po.forceReceivedAt);
                     const statusLabel = Number(po.inventory_status) === LANDED_COST_INVENTORY_STATUS ? "Received" : "Not eligible";
                     return {
                         value: idVal,
-                        label: `${poNo} — ${suppName} | Status: ${statusLabel} | Payment: Awaiting Payment | Currency: ${curr} | Total: ${curr === "USD" ? "$" : "₱"}${amt}`
+                        label: `${poNo} — ${suppName} | Status: ${statusLabel}${forceClosed ? " | Force Received" : ""} | Payment: Awaiting Payment | Currency: ${curr} | Total: ${curr === "USD" ? "$" : "₱"}${amt}`
                     };
                 })}
                 value={selectedShipment ? String(selectedShipment.purchase_order_id || selectedShipment.shipment_id) : ""}

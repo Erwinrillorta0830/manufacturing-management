@@ -122,6 +122,13 @@ async function renderPoDocument(doc: PdfDocument, data: PurchaseOrderPrintableSn
         `${po.currencyCode} @ ${po.exchangeRate.toFixed(4)}`,
         `${po.inventoryStatus}\n${po.paymentStatus}`
     ]]);
+    if (po.isForceReceived) {
+        y = drawSectionTitle(doc, "Force Received", y);
+        y = await renderTable(doc, y, ["Closed at", "Force Close Reason"], [[
+            po.forceReceivedAt || "N/A",
+            po.forceReceivedReason || "N/A"
+        ]]);
+    }
     y = drawSectionTitle(doc, "Purchase-order lines", y);
     y = await renderTable(doc, y,
         ["Product", "Category", "UOM", "Ordered", "Received", "Accepted", "Rejected", "Unit price", "Net amount"],

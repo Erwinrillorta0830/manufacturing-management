@@ -67,6 +67,9 @@ export interface PurchaseOrderPrintHeader {
     remark: string;
     isPosted: boolean;
     isPostedAmounts: boolean;
+    isForceReceived: boolean;
+    forceReceivedAt: string;
+    forceReceivedReason: string;
 }
 
 export interface ApprovalPrintEntry {

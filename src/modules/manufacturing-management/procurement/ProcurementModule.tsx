@@ -7,6 +7,7 @@ import ShipmentExpenses from "./components/ShipmentExpenses";
 import RawMaterialsMaster from "./components/RawMaterialsMaster";
 import ForexManagementModule from "./components/ForexManagementModule";
 import PurchaseAmountPostingModule from "./components/PurchaseAmountPostingModule";
+import LandedCostAuditSummary from "./components/LandedCostAuditSummary";
 import { useProcurement } from "./hooks/useProcurement";
 import type { IncomingShipment } from "./types";
 import { CreatableSelect } from "../finished-goods/components/CreatableSelect";
@@ -33,6 +34,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         setSelectedShipment,
         selectedShipmentLines,
         selectedShipmentExpenses,
+        lastFinalizedShipmentId,
         isSupplierModalOpen,
         setIsSupplierModalOpen,
         isShipmentModalOpen,
@@ -169,9 +171,10 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                                     <CreatableSelect
                                         options={shipments.map(s => {
                                             const poNo = (s as { purchase_order_no?: string }).purchase_order_no ? ` / ${(s as { purchase_order_no?: string }).purchase_order_no}` : "";
+                                            const forceClosed = Boolean(s.isForceReceived || s.forceReceivedAt);
                                             return {
                                                 value: String(s.shipment_id),
-                                                label: `BL/PO: ${s.reference_number}${poNo} (${s.status})`
+                                                label: `BL/PO: ${s.reference_number}${poNo} (${s.status}${forceClosed ? " | Force Received" : ""})`
                                             };
                                         })}
                                         value={selectedShipment ? String(selectedShipment.shipment_id) : ""}
@@ -197,8 +200,16 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                                         submitting={submittingExpenses}
                                     />
                                 ) : (
-                                    <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl text-xs text-amber-600 font-semibold">
-                                        Please select a shipment from the dropdown above to calculate and allocate landed costs.
+                                    <div className="space-y-4">
+                                        <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl text-xs text-amber-600 font-semibold">
+                                            Please select a shipment from the dropdown above to calculate and allocate landed costs.
+                                        </div>
+                                        {lastFinalizedShipmentId && (
+                                            <LandedCostAuditSummary
+                                                purchaseOrderId={lastFinalizedShipmentId}
+                                                title="Last Finalized Cargo: Inventory Valuation & Accounting Variance Audit"
+                                            />
+                                        )}
                                     </div>
                                 )}
                             </div>

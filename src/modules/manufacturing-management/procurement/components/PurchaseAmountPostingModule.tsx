@@ -114,6 +114,14 @@ export default function PurchaseAmountPostingModule({
                                 {isForeignPO ? <DollarSign className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}
                                 {isForeignPO ? "FOREIGN IMPORTATION (USD)" : "LOCAL PURCHASE (PHP)"}
                             </div>
+                            {(selectedShipment.isForceReceived || selectedShipment.forceReceivedAt) && (
+                                <div className="px-3 py-1.5 rounded-full text-xs font-bold bg-violet-500/10 text-violet-700 border border-violet-500/20">
+                                    Force Received
+                                    {typeof selectedShipment.forceReceivedReason === "string" && selectedShipment.forceReceivedReason
+                                        ? `: ${selectedShipment.forceReceivedReason}`
+                                        : ""}
+                                </div>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => void handlePrintLandedCost()}

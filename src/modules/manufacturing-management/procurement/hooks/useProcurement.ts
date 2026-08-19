@@ -53,6 +53,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
     const [selectedShipment, setSelectedShipment] = useState<IncomingShipment | null>(null);
     const [selectedShipmentLines, setSelectedShipmentLines] = useState<ShipmentLineItem[]>([]);
     const [selectedShipmentExpenses, setSelectedShipmentExpenses] = useState<ShipmentExpense[]>([]);
+    const [lastFinalizedShipmentId, setLastFinalizedShipmentId] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (activeTab !== "shipment-expenses") setLastFinalizedShipmentId(null);
+    }, [activeTab]);
 
     // Modals
     const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -643,6 +648,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 lineItemUpdates
             );
             toast.success("Landed costs calculated and updated successfully");
+            setLastFinalizedShipmentId(shipmentId);
             
             setExpenseAllocationForm({
                 allocation_method: expenseAllocationForm.allocation_method,
@@ -805,6 +811,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         setSelectedShipment,
         selectedShipmentLines,
         selectedShipmentExpenses,
+        lastFinalizedShipmentId,
         isSupplierModalOpen,
         setIsSupplierModalOpen,
         isShipmentModalOpen,

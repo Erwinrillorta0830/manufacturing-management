@@ -24,6 +24,7 @@ import {
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
 import {
+    hasLandedCostStatus,
     isLandedCostPostingEligible
 } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
 import { getLandedCostComputation } from "../landed-cost/_domain";
@@ -564,7 +565,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     };
 }
 
-export async function fetchIncomingShipments(options: { landedCostOnly?: boolean } = {}): Promise<unknown[]> {
+export async function fetchIncomingShipments(options: { landedCostOnly?: boolean; includePosted?: boolean } = {}): Promise<unknown[]> {
     try {
         const landedCostFilter = options.landedCostOnly
             ? `&filter[inventory_status][_eq]=${INVENTORY_STATUS.RECEIVED}&filter[payment_status][_eq]=${PAYMENT_STATUS.AWAITING_PAYMENT}`
@@ -574,7 +575,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
         if (!res.ok) return [];
         const fetchedPOList = ((await res.json()).data || []) as DirectusPO[];
         const poList = options.landedCostOnly
-            ? fetchedPOList.filter(isLandedCostPostingEligible)
+            ? fetchedPOList.filter(row => hasLandedCostStatus(row) && (options.includePosted || isLandedCostPostingEligible(row)))
             : fetchedPOList;
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
         const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));
