@@ -8,6 +8,7 @@ import {
     fetchShipmentDetails, 
     previewReceivingQa,
     commitReceivingQa,
+    forceReceivePurchaseOrder,
     fetchFifoInventory,
     fetchStorageLots,
     fetchProductQaSpecifications,
@@ -58,9 +59,11 @@ function resizeLotAllocations(
 }
 
 function isLockedReceivingShipment(shipment: Shipment | null, replacementDisposition: QuarantineDisposition | null = null): boolean {
+    if (!shipment) return false;
+    if (shipment.isForceReceived || shipment.forceReceivedAt) return true;
     return !replacementDisposition && (
-        shipment?.status === "Received"
-        || Number(shipment?.inventory_status) === INVENTORY_STATUS.RECEIVED
+        shipment.status === "Received"
+        || Number(shipment.inventory_status) === INVENTORY_STATUS.RECEIVED
     );
 }
 
@@ -100,6 +103,7 @@ export function useQAReceiving() {
     const [validatingInspection, setValidatingInspection] = useState(false);
     const [previewError, setPreviewError] = useState<string | null>(null);
     const [postingInspection, setPostingInspection] = useState(false);
+    const [forceReceivedSubmitting, setForceReceivedSubmitting] = useState(false);
     const [replacementDisposition, setReplacementDisposition] = useState<QuarantineDisposition | null>(null);
     const receivingPreview = receivingCommitContext?.preview ?? null;
     const receivingCommitReady = Boolean(receivingCommitContext?.preview.postingEnabled);
@@ -115,6 +119,7 @@ export function useQAReceiving() {
         setPreviewAcknowledged(false);
         setPreviewError(null);
         setValidatingInspection(false);
+        setForceReceivedSubmitting(false);
     }, []);
 
     const handleProcessOverDeliveryChange = useCallback((value: boolean) => {
@@ -163,6 +168,7 @@ export function useQAReceiving() {
         setPreviewError(null);
         setValidatingInspection(false);
         setPostingInspection(false);
+        setForceReceivedSubmitting(false);
         setReplacementDisposition(null);
     }, []);
 
@@ -1000,6 +1006,49 @@ export function useQAReceiving() {
         }
     }, [postingInspection, receivingCommitContext, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
 
+    const handleForceReceived = useCallback(async (reason: string) => {
+        if (forceReceivedSubmitting || !selectedShipment) return;
+        setForceReceivedSubmitting(true);
+        try {
+            const result = await forceReceivePurchaseOrder({
+                shipmentId: selectedShipment.shipment_id,
+                workflowRevision: Number(selectedShipment.workflow_revision || 0),
+                reason
+            }, uuidv4());
+            toast.success(`${selectedShipment.reference_number} was force-received.`);
+            const updatedShipment: Shipment = {
+                ...selectedShipment,
+                status: "Received",
+                inventory_status: result.inventoryStatus,
+                payment_status: result.paymentStatus,
+                workflow_revision: result.workflowRevision,
+                isForceReceived: true,
+                forceReceivedAt: result.forceReceivedAt,
+                forceReceivedBy: result.forceReceivedBy,
+                forceReceivedByName: result.forceReceivedByName,
+                forceReceivedReason: result.forceReceivedReason
+            };
+            await loadShipments({
+                search: searchPO.trim() || undefined,
+                status: searchStatus || undefined,
+                startDate: startDate || undefined,
+                endDate: endDate || undefined,
+                includeReceived: showReceived
+            });
+            if (showReceived) {
+                setSelectedShipment(updatedShipment);
+                setLineItems(await fetchShipmentDetails(updatedShipment.shipment_id));
+            } else {
+                clearInspection();
+            }
+        } catch (error) {
+            toast.error((error as Error).message || "Failed to force-receive the purchase order.");
+            throw error;
+        } finally {
+            setForceReceivedSubmitting(false);
+        }
+    }, [forceReceivedSubmitting, selectedShipment, loadShipments, searchPO, searchStatus, startDate, endDate, showReceived, clearInspection]);
+
     const handlePreviewOpenChange = useCallback((open: boolean) => {
         setPreviewOpen(open);
         if (!open && committedResult) clearInspection();
@@ -1143,6 +1192,8 @@ export function useQAReceiving() {
         previewAcknowledged,
         postingInspection,
         handleCommitReceiving,
+        handleForceReceived,
+        forceReceivedSubmitting,
         validatingInspection,
         previewError,
         qaSubmissionBlockReason,

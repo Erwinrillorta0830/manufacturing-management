@@ -34,6 +34,7 @@ import { evaluateReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from "../../procurement/_category-type";
+import { forceReceivedIntakeMessage } from "../_force-received";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -225,7 +226,7 @@ export async function POST(request: Request) {
                     .map(allocation => allocation.storageLotId)
             ]))];
         const [headerResponse, lineResponse, lotResponse, lotInventoryResponse, receivingResponseWithLine, destinationBranch, movementTypeResponse] = await Promise.all([
-            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,workflow_revision`),
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,workflow_revision,force_received_at`),
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
             procurementDirectusFetch(`/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,lot_name,max_batch_capacity&limit=${requestedLotIds.length}`),
             procurementDirectusFetch(`/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`),
@@ -243,6 +244,8 @@ export async function POST(request: Request) {
         }
 
         const header = (await headerResponse.json()).data as Record<string, unknown>;
+        const forceClosedMessage = forceReceivedIntakeMessage(header.force_received_at);
+        if (forceClosedMessage) throw new ReceivingPreviewError(forceClosedMessage, 409);
         const statusId = positiveInteger(header.inventory_status, "transaction_status_id") || Number(header.inventory_status);
         if (!replacementFlow && !RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(eligible => eligible === statusId)) {
             throw new ReceivingPreviewError("The purchase order must be moved to QA (Receiving) before it can be received.", 409);

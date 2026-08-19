@@ -34,6 +34,11 @@ export interface Shipment {
     date_received: string;
     branch_id?: number | null;
     workflow_revision?: number;
+    isForceReceived?: boolean;
+    forceReceivedAt?: string | null;
+    forceReceivedBy?: number | null;
+    forceReceivedByName?: string | null;
+    forceReceivedReason?: string | null;
 }
 
 export interface Product {
@@ -306,4 +311,28 @@ export interface FIFOInventoryItem {
     isPackaging: boolean;
     totalQty: number;
     batches: FIFOBatch[];
+}
+
+export interface ForceReceivedLineResult {
+    lineId: number;
+    orderedQuantity: number;
+    receivedQuantity: number;
+    acceptedQuantity: number;
+    remainingQuantity: number;
+    remainingAcceptedQuantity: number;
+}
+
+export interface ForceReceivedResult {
+    shipmentId: number;
+    status: "Received";
+    inventoryStatus: number;
+    paymentStatus: number;
+    workflowRevision: number;
+    isForceReceived: true;
+    forceReceivedAt: string | null;
+    forceReceivedBy: number;
+    forceReceivedByName: string;
+    forceReceivedReason: string | null;
+    idempotent: boolean;
+    lines: ForceReceivedLineResult[];
 }

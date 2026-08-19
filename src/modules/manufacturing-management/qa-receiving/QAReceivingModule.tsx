@@ -42,6 +42,8 @@ export default function QAReceivingModule() {
         previewAcknowledged,
         postingInspection,
         handleCommitReceiving,
+        handleForceReceived,
+        forceReceivedSubmitting,
         handleFinishCommitted,
         validatingInspection,
         previewError,
@@ -218,6 +220,8 @@ export default function QAReceivingModule() {
                                     handleSubmitInspection={handleSubmitInspection}
                                     onReviewPreview={() => setPreviewOpen(true)}
                                     onCancel={clearInspection}
+                                    onForceReceived={handleForceReceived}
+                                    forceReceivedSubmitting={forceReceivedSubmitting}
                                 />
                             </>
                         ) : (

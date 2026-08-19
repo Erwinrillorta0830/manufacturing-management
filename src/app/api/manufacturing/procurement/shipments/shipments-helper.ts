@@ -11,6 +11,7 @@ import { DirectusShipment } from "@/modules/manufacturing-management/procurement
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
+import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
     fetchCurrentPurchaseOrderRejectionStages,
@@ -104,6 +105,9 @@ interface DirectusPO {
     approval_allow_self_approval?: boolean | null;
     is_posted?: number | boolean | null;
     is_posted_amounts?: number | boolean | null;
+    force_received_at?: string | null;
+    force_received_by?: number | Record<string, unknown> | null;
+    force_received_reason?: string | null;
 }
 
 interface DirectusPaymentMode {
@@ -346,6 +350,9 @@ function mapPurchaseOrder(
         reference_number: po.reference || po.purchase_order_no || "",
         purchase_order_no: po.purchase_order_no || "",
         supplier_id: supplier,
+        // Keep the normalized supplier relation available under the legacy
+        // field name consumed by purchase-amount selectors and ledgers.
+        supplier_name: supplier,
         date_received: po.date_received || null,
         lead_time_receiving: po.lead_time_receiving || null,
         total_foreign_currency: foreignCurrency,
@@ -373,7 +380,11 @@ function mapPurchaseOrder(
         approval_requires_finance: po.approval_requires_finance == null ? null : Number(po.approval_requires_finance) === 1,
         approval_allow_self_approval: po.approval_allow_self_approval == null ? null : Number(po.approval_allow_self_approval) === 1,
         is_posted: po.is_posted === true || Number(po.is_posted) === 1 ? 1 : 0,
-        is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0
+        is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0,
+        isForceReceived: isForceReceived(po.force_received_at),
+        forceReceivedAt: po.force_received_at || null,
+        forceReceivedBy: forceReceivedById(po.force_received_by),
+        forceReceivedReason: po.force_received_reason || null
     };
 }
 
@@ -534,7 +545,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -597,6 +608,14 @@ export async function fetchShipmentLineItems(
     options: { requireCompletePackagingWeight?: boolean } = {}
 ): Promise<ExtendedShipmentLineItem[]> {
     try {
+        // Fetch the header first so force-closed orders can expose zero remaining intake.
+        const headerRes = await fetch(
+            `${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,force_received_at`,
+            { headers, cache: "no-store" }
+        );
+        const header = headerRes.ok ? ((await headerRes.json()).data || {}) as { force_received_at?: unknown } : {};
+        const forceClosed = isForceReceived(header.force_received_at);
+
         // Fetch purchase_order_products
         const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*,discount_type.*&limit=-1`;
         const popRes = await fetch(popUrl, { headers, cache: "no-store" });
@@ -724,8 +743,14 @@ export async function fetchShipmentLineItems(
             const previouslyReceivedQuantity = lineHistory.received;
             const previouslyRejectedQuantity = lineHistory.rejected;
             const previouslyAcceptedQuantity = lineHistory.accepted;
-            const remainingQuantity = Math.max(0, Number(pop.ordered_quantity || 0) - previouslyReceivedQuantity);
-            const remainingAcceptedQuantity = Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity);
+            const remainingQuantity = remainingReceivingQuantity(
+                forceClosed,
+                Math.max(0, Number(pop.ordered_quantity || 0) - previouslyReceivedQuantity)
+            );
+            const remainingAcceptedQuantity = remainingReceivingQuantity(
+                forceClosed,
+                Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
+            );
             const lineId = Number(pop.purchase_order_product_id);
             const latestReceipt = originalReceivingData
                 .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)

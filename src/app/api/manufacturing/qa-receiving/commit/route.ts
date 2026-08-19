@@ -26,6 +26,7 @@ import {
     fetchQuarantineDisposition,
     QuarantineDispositionError
 } from "../_quarantine-disposition";
+import { forceReceivedIntakeMessage } from "../_force-received";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
@@ -59,10 +60,12 @@ async function directusRows(path: string, message: string) {
 
 async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null) {
     const headerRows = await directusRows(
-        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,inventory_status&limit=1`,
+        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,inventory_status,force_received_at&limit=1`,
         "Unable to verify the current purchase-order status."
     );
     const status = Number(headerRows[0]?.inventory_status);
+    const forceClosedMessage = forceReceivedIntakeMessage(headerRows[0]?.force_received_at);
+    if (forceClosedMessage) throw new CommitError(409, forceClosedMessage);
     if (replacementDispositionId) return;
     if (status === INVENTORY_STATUS.RECEIVED) return;
     if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
