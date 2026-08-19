@@ -84,7 +84,13 @@ export default function WorkStationsModule() {
     const formatTimestamp = (dateStr?: string | null) => {
         if (!dateStr) return "N/A";
         try {
-            const date = new Date(dateStr);
+            let normalizedStr = dateStr.trim();
+            // Normalize ISO date strings without explicit timezone suffix by treating them as UTC
+            if (!normalizedStr.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(normalizedStr)) {
+                normalizedStr = normalizedStr.replace(" ", "T") + "Z";
+            }
+            const date = new Date(normalizedStr);
+            if (isNaN(date.getTime())) return dateStr;
             return date.toLocaleString("en-PH", {
                 timeZone: "Asia/Manila",
                 year: "numeric",
@@ -136,25 +142,46 @@ export default function WorkStationsModule() {
         );
         const filtered = workCenters.filter(wc => {
             const query = searchQuery.toLowerCase().trim();
+            const linkedAsset = wc.asset || assets.find(a => a.id === wc.asset_id);
+            let deptId: number | null = null;
+            let deptName = "";
+
+            if (linkedAsset) {
+                const deptRaw = linkedAsset.department as unknown;
+                if (deptRaw && typeof deptRaw === "object") {
+                    const deptObj = deptRaw as Record<string, unknown>;
+                    deptId = Number(deptObj.department_id ?? deptObj.id) || null;
+                    deptName = String(deptObj.department_name ?? deptObj.name ?? "");
+                } else if (typeof deptRaw === "number" && !isNaN(deptRaw)) {
+                    deptId = deptRaw;
+                    const found = departmentsById.get(deptId);
+                    deptName = found ? found.department_name : "";
+                }
+            } else if (wc.department_id) {
+                deptId = Number(wc.department_id);
+                const found = departmentsById.get(deptId);
+                deptName = found ? found.department_name : (wc.department?.department_name || "");
+            }
+
             const matchesQuery = !query || 
                 wc.work_center_name.toLowerCase().includes(query) ||
                 (typeof wc.asset?.item_id === 'object' ? wc.asset?.item_id?.item_name || "" : "").toLowerCase().includes(query) ||
                 (wc.asset?.rfid_code || "").toLowerCase().includes(query) ||
                 (wc.asset?.barcode || "").toLowerCase().includes(query) ||
-                (wc.department || departmentsById.get(Number(wc.department_id)))?.department_name?.toLowerCase().includes(query);
+                (deptName ? deptName.toLowerCase().includes(query) : false);
 
             const matchesStatus = statusFilter === "ALL" || 
                 (statusFilter === "ACTIVE" ? Boolean(wc.is_active) : !Boolean(wc.is_active));
 
             const matchesDept = departmentFilter === "ALL" || 
-                Number(wc.department_id) === Number(departmentFilter);
+                (deptId !== null && deptId !== undefined && Number(deptId) === Number(departmentFilter));
 
             return matchesQuery && matchesStatus && matchesDept;
         });
 
         // Priority the newly created data to show first (newest ID first)
         return [...filtered].sort((a, b) => b.work_center_id - a.work_center_id);
-    }, [departments, workCenters, searchQuery, statusFilter, departmentFilter]);
+    }, [departments, workCenters, searchQuery, statusFilter, departmentFilter, assets]);
 
     // Reset page to 1 when search query, filter result length, or page size changes
     useEffect(() => {
@@ -231,11 +258,6 @@ export default function WorkStationsModule() {
             return;
         }
 
-        if (!selectedDeptId) {
-            toast.error("Owner Department is required.");
-            return;
-        }
-
         const costNum = Number(overheadCost);
         if (isNaN(costNum) || costNum < 0) {
             toast.error("Overhead cost per hour must be a number greater than or equal to zero.");
@@ -259,12 +281,14 @@ export default function WorkStationsModule() {
             return;
         }
 
+        const finalDeptId = selectedAssetId ? (linkedDeptId ?? null) : null;
+
         setSaving(true);
         try {
             const payload = {
                 work_center_name: trimmedName,
                 asset_id: selectedAssetId,
-                department_id: selectedDeptId,
+                department_id: finalDeptId,
                 overhead_cost_per_hour: parseFloat(overheadCost) || 0,
                 capacity_per_hour: parseInt(capacity, 10) || 0,
                 is_active: isActive
@@ -310,6 +334,60 @@ export default function WorkStationsModule() {
                 (a.barcode || "").toLowerCase().includes(search);
         });
     }, [assets, assetSearch, selectedAssetId]);
+
+    // Auto-derive department from currently selected asset
+    const selectedAsset = useMemo(() => {
+        if (!selectedAssetId) return null;
+        return assets.find(a => a.id === selectedAssetId) || null;
+    }, [assets, selectedAssetId]);
+
+    const linkedDeptId = useMemo(() => {
+        if (!selectedAsset) return null;
+        const deptRaw = selectedAsset.department as unknown;
+        if (deptRaw && typeof deptRaw === "object") {
+            const deptObj = deptRaw as Record<string, unknown>;
+            const dId = deptObj.department_id ?? deptObj.id;
+            return dId ? Number(dId) : null;
+        }
+        if (typeof deptRaw === "number" && !isNaN(deptRaw)) {
+            return deptRaw;
+        }
+        return null;
+    }, [selectedAsset]);
+
+    const linkedDept = useMemo(() => {
+        if (!linkedDeptId && !selectedAsset?.department) return null;
+        if (linkedDeptId) {
+            const found = departments.find(d => Number(d.department_id) === Number(linkedDeptId));
+            if (found) return found;
+        }
+        if (selectedAsset?.department && typeof selectedAsset.department === "object") {
+            return selectedAsset.department as unknown as DepartmentRecord;
+        }
+        return null;
+    }, [departments, linkedDeptId, selectedAsset]);
+
+    const linkedDeptName = useMemo(() => {
+        if (!selectedAsset) return null;
+        const deptRaw = selectedAsset.department as unknown;
+        if (typeof deptRaw === "string" && deptRaw.trim()) {
+            return deptRaw;
+        }
+        if (deptRaw && typeof deptRaw === "object") {
+            const deptObj = deptRaw as Record<string, unknown>;
+            if (typeof deptObj.department_name === "string" && deptObj.department_name.trim()) {
+                return deptObj.department_name;
+            }
+            if (typeof deptObj.name === "string" && deptObj.name.trim()) {
+                return deptObj.name;
+            }
+        }
+        if (linkedDeptId) {
+            const found = departments.find(d => Number(d.department_id) === Number(linkedDeptId) || Number((d as unknown as { id?: number }).id) === Number(linkedDeptId));
+            if (found) return found.department_name || (found as unknown as { name?: string }).name || null;
+        }
+        return linkedDept?.department_name || null;
+    }, [selectedAsset, linkedDeptId, departments, linkedDept]);
 
 
 
@@ -546,10 +624,24 @@ export default function WorkStationsModule() {
                                     </td>
                                     <td className="p-4 align-middle text-muted-foreground">
                                         {(() => {
-                                            const dept = departments.find(d => d.department_id === wc.department_id) || wc.department;
-                                            return dept ? (
+                                            const linkedAsset = wc.asset || assets.find(a => a.id === wc.asset_id);
+                                            let deptName = "";
+                                            if (linkedAsset) {
+                                                const deptRaw = linkedAsset.department as unknown;
+                                                if (deptRaw && typeof deptRaw === "object") {
+                                                    const deptObj = deptRaw as Record<string, unknown>;
+                                                    deptName = String(deptObj.department_name ?? deptObj.name ?? "");
+                                                } else if (typeof deptRaw === "number" && !isNaN(deptRaw)) {
+                                                    const found = departments.find(d => Number(d.department_id) === deptRaw);
+                                                    deptName = found ? found.department_name : "";
+                                                }
+                                            } else if (wc.department_id) {
+                                                const found = departments.find(d => Number(d.department_id) === Number(wc.department_id));
+                                                deptName = found ? found.department_name : (wc.department?.department_name || "");
+                                            }
+                                            return deptName ? (
                                                 <span className="bg-primary/5 text-primary border border-primary/10 px-2 py-0.5 rounded font-medium">
-                                                    {dept.department_name}
+                                                    {deptName}
                                                 </span>
                                             ) : (
                                                 <span className="text-muted-foreground/50 italic">None mapped</span>
@@ -673,7 +765,7 @@ export default function WorkStationsModule() {
                                     <h3 className="text-base font-bold text-foreground">
                                         {editingWorkCenter ? "Edit Work Station" : "Register Work Station"}
                                     </h3>
-                                    <p className="text-xs text-muted-foreground">Specify machinery, line costs, capacity, and owner department.</p>
+                                    <p className="text-xs text-muted-foreground">Specify machinery, line costs, and capacity. Department is linked automatically.</p>
                                 </div>
                             </div>
                         </div>
@@ -855,31 +947,24 @@ export default function WorkStationsModule() {
                                 })()}
                             </div>
 
-                            {/* Owner Department */}
+                            {/* Auto-resolved Owner Department (Inherited from Linked Asset) */}
                             <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Owner Department <span className="text-destructive">*</span></label>
-                                <Select
-                                    value={selectedDeptId ? String(selectedDeptId) : "none"}
-                                    onValueChange={(val) => {
-                                        if (val === "none") {
-                                            setSelectedDeptId(null);
-                                        } else {
-                                            setSelectedDeptId(Number(val));
-                                        }
-                                    }}
-                                >
-                                    <SelectTrigger className={`w-full h-[38px] rounded-lg bg-background border text-foreground text-sm ${validationAttempted && !selectedDeptId ? "border-destructive focus:ring-destructive" : "border-border"}`}>
-                                        <SelectValue placeholder="Select department..." />
-                                    </SelectTrigger>
-                                    <SelectContent position="popper" sideOffset={4} className="bg-popover border border-border text-foreground">
-                                        <SelectItem value="none">None</SelectItem>
-                                        {departments.map((dept) => (
-                                            <SelectItem key={dept.department_id} value={String(dept.department_id)}>
-                                                {dept.department_name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                                    Owner Department
+                                </label>
+                                <div className="w-full rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm flex items-center min-h-[38px]">
+                                    {selectedAsset ? (
+                                        linkedDeptName ? (
+                                            <span className="font-semibold text-foreground">
+                                                {linkedDeptName}
+                                            </span>
+                                        ) : (
+                                            <span className="text-muted-foreground italic text-xs">No department assigned to this asset</span>
+                                        )
+                                    ) : (
+                                        <span className="text-muted-foreground/60 italic text-xs">Select an asset equipment above to link owner department</span>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Status */}
@@ -974,10 +1059,24 @@ export default function WorkStationsModule() {
                                     <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Owner Department</span>
                                     <span className="text-xs font-semibold text-foreground">
                                         {(() => {
-                                            const dept = departments.find(d => d.department_id === viewingWorkCenter.department_id) || viewingWorkCenter.department;
-                                            return dept ? (
+                                            const linkedAsset = viewingWorkCenter.asset || assets.find(a => a.id === viewingWorkCenter.asset_id);
+                                            let deptName = "";
+                                            if (linkedAsset) {
+                                                const deptRaw = linkedAsset.department as unknown;
+                                                if (deptRaw && typeof deptRaw === "object") {
+                                                    const deptObj = deptRaw as Record<string, unknown>;
+                                                    deptName = String(deptObj.department_name ?? deptObj.name ?? "");
+                                                } else if (typeof deptRaw === "number" && !isNaN(deptRaw)) {
+                                                    const found = departments.find(d => Number(d.department_id) === deptRaw);
+                                                    deptName = found ? found.department_name : "";
+                                                }
+                                            } else if (viewingWorkCenter.department_id) {
+                                                const found = departments.find(d => Number(d.department_id) === Number(viewingWorkCenter.department_id));
+                                                deptName = found ? found.department_name : (viewingWorkCenter.department?.department_name || "");
+                                            }
+                                            return deptName ? (
                                                 <span className="bg-primary/5 text-primary border border-primary/10 px-2 py-0.5 rounded font-medium inline-block mt-0.5">
-                                                    {dept.department_name}
+                                                    {deptName}
                                                 </span>
                                             ) : (
                                                 <span className="text-muted-foreground/50 italic">None mapped</span>
@@ -1071,7 +1170,7 @@ export default function WorkStationsModule() {
                                     <Calendar className="h-4 w-4 text-muted-foreground/60 shrink-0" />
                                     <div className="min-w-0">
                                         <span className="text-[9px] font-bold uppercase tracking-wider block text-muted-foreground/50">Created At</span>
-                                        <span className="font-medium text-foreground/80 truncate block">{formatTimestamp(viewingWorkCenter.created_at)}</span>
+                                        <span className="font-medium text-foreground/80 truncate block">{formatTimestamp(viewingWorkCenter.created_at || (viewingWorkCenter as unknown as { date_created?: string }).date_created)}</span>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
