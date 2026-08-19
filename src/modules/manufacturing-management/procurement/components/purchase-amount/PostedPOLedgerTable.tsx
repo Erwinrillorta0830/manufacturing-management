@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { fetchPurchaseAmountDetails } from "../../services/purchase-amount-api";
 import { ChartOfAccount, POLineItem, LandedExpenseRow, PurchaseOrderHeader } from "./types";
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
+import LandedCostAuditSummary from "../LandedCostAuditSummary";
 import { downloadPurchaseOrderPrintable } from "../../../purchase-order/services/purchase-order-print-api";
 
 export type PostedOrder = IncomingShipment & Partial<PurchaseOrderHeader> & {
@@ -350,6 +351,11 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                             </table>
                                         </div>
                                     </div>
+
+                                    <LandedCostAuditSummary
+                                        purchaseOrderId={Number(selectedDetailPo.purchase_order_id || selectedDetailPo.shipment_id || selectedDetailPo.id || 0)}
+                                        compact
+                                    />
                                 </div>
                             ) : (
                                 <div className="p-8 text-center text-xs text-red-500 font-bold">
