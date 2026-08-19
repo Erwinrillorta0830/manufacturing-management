@@ -19,7 +19,9 @@ import {
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
-import { hasLandedCostStatus } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import {
+    isLandedCostPostingEligible
+} from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
 
 const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
 
@@ -546,7 +548,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
         if (!res.ok) return [];
         const fetchedPOList = ((await res.json()).data || []) as DirectusPO[];
         const poList = options.landedCostOnly
-            ? fetchedPOList.filter(hasLandedCostStatus)
+            ? fetchedPOList.filter(isLandedCostPostingEligible)
             : fetchedPOList;
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
         const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));

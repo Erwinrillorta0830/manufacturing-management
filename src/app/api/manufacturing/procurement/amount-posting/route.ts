@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
 
-        if (!body.purchase_order_id || !Array.isArray(body.line_items)) {
+        if (!body.purchase_order_id || !Array.isArray(body.line_items) || body.line_items.length === 0) {
             return NextResponse.json({ error: "Missing required purchase_order_id or line_items" }, { status: 400 });
         }
 
