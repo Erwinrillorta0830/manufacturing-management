@@ -187,6 +187,100 @@ export interface LandedCostDraftResponse {
     preview?: unknown;
 }
 
+export type LandedCostAuditStatus = "VERIFIED" | "NOT_VERIFIED" | "NOT_APPLICABLE";
+export type LandedCostAccountingAuditStatus = "POSTED" | "NOT_VERIFIED" | "NOT_APPLICABLE";
+
+export interface LandedCostAuditAllocationLine {
+    id: number | null;
+    purchaseOrderProductId: number | null;
+    receivingLineId: number | null;
+    productId: number | null;
+    productName: string;
+    categoryType: string | null;
+    receivedQuantity: number;
+    baseUnitCostPhp: number;
+    allocatedFee: number;
+    addedUnitCost: number;
+    finalLandedUnitCost: number;
+    roundingVariance: number;
+    isRoundingRecipient: boolean;
+}
+
+export interface LandedCostAuditValuationRow {
+    id: number | null;
+    productId: number | null;
+    productName: string;
+    quantity: number;
+    unitCostBefore: number;
+    unitCostAfter: number;
+    valuationDelta: number;
+    expectedValuationDelta: number;
+    currentProductCost: number | null;
+    equationMatches: boolean;
+    matchesProductCost: boolean;
+}
+
+export interface LandedCostAuditAccountingLine {
+    id: number | null;
+    accountId: number | null;
+    lineCode: string;
+    debit: number;
+    credit: number;
+    remarks: string;
+}
+
+export interface LandedCostAuditResponse {
+    purchaseOrderId: number;
+    computationId: number | null;
+    auditStatus: LandedCostAuditStatus;
+    computation: {
+        id: number;
+        purchaseOrderId: number;
+        allocationRule: LandedCostAllocationRule;
+        status: LandedCostComputationRecord["status"];
+        totalLandedFee: number;
+        roundingVariance: number;
+        finalizationKey: string | null;
+        finalizedAt: string | null;
+    } | null;
+    allocation: {
+        totalAllocatedFee: number;
+        expectedFee: number;
+        matchesTotal: boolean;
+        lines: LandedCostAuditAllocationLine[];
+    };
+    valuation: {
+        rowCount: number;
+        totalQuantity: number;
+        expectedQuantity: number;
+        totalDelta: number;
+        matches: boolean;
+        masterCostDriftCount: number;
+        rows: LandedCostAuditValuationRow[];
+    };
+    accountingVariance: {
+        required: boolean;
+        variance: number;
+        expectedAmount: number;
+        debitTotal: number;
+        creditTotal: number;
+        balanced: boolean;
+        status: LandedCostAccountingAuditStatus;
+        entry: {
+            id: number;
+            entryNo: string | null;
+            status: string | null;
+            totalDebit: number;
+            totalCredit: number;
+            postingDate: string | null;
+        } | null;
+        lines: LandedCostAuditAccountingLine[];
+        configuredInventoryAccountId: number | null;
+        configuredVarianceAccountId: number | null;
+    };
+    reasons: string[];
+}
+
 export interface RawMaterial {
     product_id: number;
     parent_id?: number | null;
