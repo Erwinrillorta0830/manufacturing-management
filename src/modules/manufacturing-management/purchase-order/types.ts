@@ -71,6 +71,7 @@ export interface PurchaseOrderDraftPayload {
     };
     lines: Array<{
         productId: number;
+        categoryType: "RAW_MATERIAL" | "PACKAGING";
         parentProductId?: number | null;
         purchaseIntent: "MRP_Demand" | "Buffer_Stock";
         jobOrderId: number | null;

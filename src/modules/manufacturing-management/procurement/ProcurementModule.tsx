@@ -225,7 +225,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                     <ForexManagementModule />
                 )}
 
-                {activeTab === "purchase-amount" && (
+                {(activeTab === "posting" || activeTab === "purchase-amount") && (
                     <div className="border rounded-xl p-6 bg-card shadow-sm h-full overflow-y-auto flex flex-col space-y-6">
                         <PurchaseAmountPostingModule
                             shipments={shipments}

@@ -9,6 +9,7 @@ import {
     PurchaseOrderAuthorizationError,
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
+import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 
 interface DirectusLotLog {
     id: number;
@@ -31,6 +32,7 @@ interface DirectusProductMin {
     product_id: number;
     product_name: string;
     product_code: string;
+    category_type?: PurchaseOrderCategoryType;
 }
 
 interface DirectusPurchaseOrderMin {
@@ -192,6 +194,7 @@ export async function GET(request: Request) {
                     products = (await prodRes.json()).data || [];
                 }
             }
+            const categoryTypes = await resolveProductCategoryTypes(productIds.map(Number));
 
             interface DirectusBranch {
                 id: number;
@@ -220,10 +223,13 @@ export async function GET(request: Request) {
 
             const mapped = rawLogs.map((r) => {
                 const rawProdId = typeof r.product_id === "object" && r.product_id ? r.product_id.product_id : r.product_id;
-                const productObj = products.find((p) => Number(p.product_id) === Number(rawProdId)) || {
+                const productObj = {
+                    ...(products.find((p) => Number(p.product_id) === Number(rawProdId)) || {
                     product_id: Number(rawProdId) || 0,
                     product_name: `Product ID: ${rawProdId}`,
                     product_code: `ID-${rawProdId}`
+                    }),
+                    category_type: categoryTypes.get(Number(rawProdId))
                 };
 
                 const poRef = r.source_reference || "";
@@ -272,6 +278,7 @@ export async function GET(request: Request) {
                     products = (await prodRes.json()).data || [];
                 }
             }
+            const categoryTypes = await resolveProductCategoryTypes(productIds.map(Number));
 
             const poMap: Record<string, DirectusPurchaseOrderMin> = {};
             if (rawLogs.length > 0) {
@@ -287,10 +294,13 @@ export async function GET(request: Request) {
 
             const mapped = rawLogs.map((r) => {
                 const rawProdId = typeof r.product_id === "object" && r.product_id ? r.product_id.product_id : r.product_id;
-                const productObj = products.find((p) => Number(p.product_id) === Number(rawProdId)) || {
+                const productObj = {
+                    ...(products.find((p) => Number(p.product_id) === Number(rawProdId)) || {
                     product_id: Number(rawProdId) || 0,
                     product_name: `Product ID: ${rawProdId}`,
                     product_code: `ID-${rawProdId}`
+                    }),
+                    category_type: categoryTypes.get(Number(rawProdId))
                 };
 
                 const poRef = r.source_reference || "";
@@ -332,7 +342,7 @@ export async function GET(request: Request) {
     } catch (e) {
         console.error("API Error in QA Receiving route:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Internal server error" }, {
-            status: e instanceof PurchaseOrderAuthorizationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError ? e.status : 500
         });
     }
 }

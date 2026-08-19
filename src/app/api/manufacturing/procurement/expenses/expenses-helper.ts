@@ -3,6 +3,13 @@ import { DirectusShipmentExpense } from "@/modules/manufacturing-management/proc
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
 import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
 import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
+import { getLandedCostComputation } from "../landed-cost/_domain";
+import {
+    deriveLineGrossWeightKg,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
+import type { PurchaseOrderCategoryType } from "../_category-type";
+export { toStandardKg } from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 export type AllocationMethod = "Value" | "Weight" | "Volume" | "Hybrid";
 
@@ -10,6 +17,10 @@ interface ExtendedProduct {
     product_id: number;
     weight?: number | string | null;
     product_weight?: number | string | null;
+    net_weight?: number | string | null;
+    outer_carton_weight?: number | string | null;
+    pallet_weight?: number | string | null;
+    weight_unit_id?: unknown;
     cbm_height?: number | string | null;
     cbm_width?: number | string | null;
     cbm_length?: number | string | null;
@@ -21,9 +32,10 @@ interface ExtendedShipmentLineItem {
     quantity_ordered: number;
     quantity_received: number;
     base_unit_cost_php: number;
+    category_type: PurchaseOrderCategoryType;
 }
 
-export function toStandardKg(w: number, unitCodeOrShortcut?: string): number {
+export function legacyToStandardKg(w: number, unitCodeOrShortcut?: string): number {
     if (!w || w <= 0) return 0;
     const unit = (unitCodeOrShortcut || "kg").toLowerCase().trim();
     switch (unit) {
@@ -69,8 +81,9 @@ export interface LandedCostInput {
     quantity: number;
     baseUnitCost: number;
     weight?: number;
+    lineGrossWeightKg?: number;
     volume?: number;
-    category?: string;
+    category_type: PurchaseOrderCategoryType;
     weightUnit?: string;
 }
 
@@ -122,11 +135,14 @@ export function calculateLandedCostAllocations(
         return calculateHybridLandedCostAllocation(
             lines.map(line => ({
                 key: line.key,
-                category: line.category || "RM",
+                category_type: line.category_type,
                 quantity: line.quantity,
                 baseUnitCost: line.baseUnitCost,
-                weight: line.weight || 0,
-                weightUnit: line.weightUnit
+                lineGrossWeightKg: line.lineGrossWeightKg ?? deriveLineGrossWeightKg(
+                    line.weight || 0,
+                    line.weightUnit,
+                    line.quantity
+                )
             })),
             totalExpensesPhp
         );
@@ -157,6 +173,22 @@ export function calculateLandedCostAllocations(
 }
 
 export async function fetchShipmentExpenses(shipmentId: number): Promise<StoredExpense[]> {
+    try {
+        const canonical = await getLandedCostComputation(shipmentId);
+        if (canonical.computation) {
+            return canonical.expenses.map(expense => ({
+                expense_id: expense.expense_id,
+                shipment_id: shipmentId,
+                purchase_order_id: shipmentId,
+                overhead_id: expense.overhead_id,
+                expense_type: expense.expense_type || "",
+                amount_php: Number(expense.amount_php || 0),
+                allocation_method: canonical.computation?.allocation_rule || ""
+            }));
+        }
+    } catch (error) {
+        console.warn("[Manufacturing] Falling back to compatibility landed-cost expenses.", error);
+    }
     const url = `${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,overhead_id.*&limit=-1`;
     const res = await fetch(url, { headers, cache: "no-store" });
     if (!res.ok) throw new Error(`Failed to load shipment expenses (${res.status}).`);
@@ -193,6 +225,26 @@ export async function processShipmentLandedCosts(
     void lineItemUpdates;
     const allocationMethod = normalizeAllocationMethod(allocationMethodInput);
     const previousExpenses = await fetchShipmentExpenses(shipmentId);
+    const totalExpensesPhp = expenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0);
+    const lines = await fetchShipmentLineItems(shipmentId) as ExtendedShipmentLineItem[];
+    const inputs: LandedCostInput[] = lines.map(line => {
+        const product = line.product_id as unknown as Record<string, unknown>;
+        const quantity = Number(line.quantity_received || line.quantity_ordered || 0);
+        const weightBreakdown = resolveProductWeightBreakdown(product, {
+            requireComplete: line.category_type === "PACKAGING"
+        });
+        return {
+            key: line.line_id,
+            quantity,
+            baseUnitCost: Number(line.base_unit_cost_php || 0),
+            weight: weightBreakdown.grossWeightKg,
+            lineGrossWeightKg: weightBreakdown.grossWeightKg * quantity,
+            volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0),
+            category_type: line.category_type,
+            weightUnit: weightBreakdown.weightUnitCode
+        };
+    });
+    const allocations = calculateLandedCostAllocations(inputs, totalExpensesPhp, allocationMethod);
     const deletedExpenses: StoredExpense[] = [];
     const createdExpenseIds: number[] = [];
     const updatedProductCosts = new Map<number, { cost_per_unit: unknown; estimated_unit_cost: unknown }>();
@@ -205,7 +257,6 @@ export async function processShipmentLandedCosts(
             }
         }
 
-        let totalExpensesPhp = 0;
         for (const expense of expenses) {
             const amountPhp = Number(expense.amount_php || 0);
             const expenseId = await createExpense({
@@ -216,28 +267,7 @@ export async function processShipmentLandedCosts(
             });
             if (!expenseId) throw new Error("Directus did not return the created expense ID.");
             createdExpenseIds.push(expenseId);
-            totalExpensesPhp += amountPhp;
         }
-
-        const lines = await fetchShipmentLineItems(shipmentId) as ExtendedShipmentLineItem[];
-        const inputs: LandedCostInput[] = lines.map(line => {
-            const product = line.product_id as unknown as Record<string, unknown>;
-            const quantity = Number(line.quantity_received || line.quantity_ordered || 0);
-            
-            const productType = product?.product_type as Record<string, unknown> | undefined;
-            const weightUnit = product?.weight_unit_id as Record<string, unknown> | undefined;
-            
-            return {
-                key: line.line_id,
-                quantity,
-                baseUnitCost: Number(line.base_unit_cost_php || 0),
-                weight: Number(product?.weight || product?.product_weight || 0),
-                volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0),
-                category: (productType?.name as string) || (productType?.type_name as string) || "RM",
-                weightUnit: (weightUnit?.code as string) || (weightUnit?.unit_shortcut as string)
-            };
-        });
-        const allocations = calculateLandedCostAllocations(inputs, totalExpensesPhp, allocationMethod);
         // Resolve inventory movements to check if receiving records exist
         const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id&limit=-1`;
         const receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
