@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import type { Brand, Category, Supplier, Unit, FilterState, PriceType } from "../types";
+import type { Brand, Category, Supplier, Unit, FilterState, PriceType, ProductType } from "../types";
 import * as api from "../providers/printablesApi";
 
 export function useLookups(filters?: Partial<FilterState>) {
@@ -12,6 +12,7 @@ export function useLookups(filters?: Partial<FilterState>) {
     const [units, setUnits] = React.useState<Unit[]>([]);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [priceTypes, setPriceTypes] = React.useState<PriceType[]>([]);
+    const [productTypes, setProductTypes] = React.useState<ProductType[]>([]);
     const [error, setError] = React.useState<string | null>(null);
 
     const supplierIdsKey = filters?.supplier_ids?.join(",") ?? "";
@@ -39,6 +40,7 @@ export function useLookups(filters?: Partial<FilterState>) {
                 setBrands(res.data.brands ?? []);
                 setUnits(res.data.units ?? []);
                 setSuppliers(res.data.suppliers ?? []);
+                setProductTypes(res.data.productTypes ?? []);
                 setPriceTypes(ptRes.data ?? []);
             } catch (err: unknown) {
                 if (mounted) setError(err instanceof Error ? err.message : "Failed to load lookups");
@@ -49,5 +51,5 @@ export function useLookups(filters?: Partial<FilterState>) {
         return () => { mounted = false; };
     }, [supplierIdsKey, supplierScope, categoryId, brandId]);
 
-    return { loading, error, categories, brands, units, suppliers, priceTypes };
+    return { loading, error, categories, brands, units, suppliers, priceTypes, productTypes };
 }

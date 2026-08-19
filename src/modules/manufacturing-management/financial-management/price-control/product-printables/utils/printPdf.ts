@@ -268,8 +268,8 @@ export async function generateProductMatrixPdf(rows: MatrixRow[], options: Matri
         });
     }
 
-    const body = rows.map((row) => {
-        const cells: (string | PdfCell)[] = [
+    const body = rows.flatMap((row) => {
+        const baseCells: (string | PdfCell)[] = [
             {
                 content: row.brand_name || "-",
                 styles: { overflow: "ellipsize" },
@@ -292,7 +292,7 @@ export async function generateProductMatrixPdf(rows: MatrixRow[], options: Matri
                 })
                 .filter((line): line is string => line != null);
 
-            cells.push({
+            baseCells.push({
                 content: priceLines.length > 0 ? priceLines.join("\n") : "-",
                 styles: {
                     halign: "left",
@@ -305,7 +305,43 @@ export async function generateProductMatrixPdf(rows: MatrixRow[], options: Matri
                 },
             });
         }
-        return cells;
+        
+        const versionRows = (row.versions || []).map((v) => {
+            const vCells: (string | PdfCell)[] = [
+                { content: "", styles: { overflow: "ellipsize" } },
+                { content: "", styles: { overflow: "ellipsize" } },
+                {
+                    content: `   |_  ${v.version.version_name}`,
+                    styles: { fontStyle: "normal", overflow: "ellipsize" },
+                },
+            ];
+
+            for (const tier of activeTiers) {
+                const priceLines = unitsForRow(row, usedUnits)
+                    .map((unit) => {
+                        const isMatchingUnit = Number(unit.unit_id) === Number(v.version.uom_id);
+                        const price = isMatchingUnit ? v.tiers[tier.key] : null;
+                        return price != null ? `${unitLabel(unit)}: ${money(price)}` : null;
+                    })
+                    .filter((line): line is string => line != null);
+
+                vCells.push({
+                    content: priceLines.length > 0 ? priceLines.join("\n") : "-",
+                    styles: {
+                        halign: "left",
+                        valign: "middle",
+                        fillColor: groupColors[tier.key],
+                        textColor: groupTextColors[tier.key],
+                        cellWidth: matrixLayout.priceW,
+                        minCellWidth: matrixLayout.priceW,
+                        overflow: "linebreak",
+                    },
+                });
+            }
+            return vCells;
+        });
+
+        return [baseCells, ...versionRows];
     });
 
 

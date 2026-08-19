@@ -1,5 +1,16 @@
 // src/modules/financial-management/printables-management/product-printables/types.ts
 
+export type ProductVersion = {
+    version_id: number;
+    product_id: number;
+    version_name: string;
+    base_quantity: number | string | null;
+    uom_id: number | string | null;
+    expected_yield_percentage?: number | string | null;
+    status?: string;
+    prices?: Record<number, { cost_per_unit: number; price_per_unit: number }>;
+};
+
 export type ProductRow = {
     product_id: number;
     parent_id: number | null;
@@ -17,6 +28,7 @@ export type ProductRow = {
     priceD?: number | string | null;
     priceE?: number | string | null;
     cost_per_unit?: number | string | null;
+    versions?: ProductVersion[];
 };
 
 export type VariantCell = {
@@ -24,10 +36,16 @@ export type VariantCell = {
     tiers: Record<string, number | null>;
 };
 
+export type VersionRow = {
+    version: ProductVersion;
+    tiers: Record<string, number | null>;
+};
+
 export type MatrixRow = {
     group_id: number;
     display: ProductRow;
     variantsByUnitId: Record<number, VariantCell>;
+    versions: VersionRow[];
     category_name?: string | null;
     brand_name?: string | null;
 };
@@ -68,6 +86,11 @@ export type Supplier = {
     state_province?: string;
 };
 
+export type ProductType = {
+    id: number;
+    name: string;
+};
+
 export type FilterState = {
     q: string;
     category_ids: string[];
@@ -75,6 +98,7 @@ export type FilterState = {
     unit_ids: string[];
     supplier_ids: string[];
     price_type_ids: string[];
+    product_type_ids: string[];
     supplier_scope: "ALL" | "LINKED_ONLY";
     active_only: boolean;
     page: number;

@@ -13,6 +13,7 @@ export const defaultFilters: FilterState = {
     unit_ids: [],
     supplier_ids: [],
     price_type_ids: [],
+    product_type_ids: [],
     supplier_scope: "ALL",
     active_only: true,
     page: 1,
@@ -55,6 +56,7 @@ export function useProductPrintables(
             if (filters.brand_ids.length) sp.set("brand_ids", filters.brand_ids.join(","));
             if (filters.unit_ids.length) sp.set("unit_ids", filters.unit_ids.join(","));
             if (filters.supplier_ids.length) sp.set("supplier_ids", filters.supplier_ids.join(","));
+            if (filters.product_type_ids?.length) sp.set("product_type_ids", filters.product_type_ids.join(","));
             sp.set("supplier_scope", filters.supplier_scope);
             sp.set("active_only", filters.active_only ? "1" : "0");
             sp.set("page", String(filters.page));
@@ -114,10 +116,45 @@ export function useProductPrintables(
                     };
                 }
 
+                const allVersions = variants.flatMap(v => v.versions || []);
+                const uniqueVersions = [];
+                const seenVids = new Set<number>();
+                for (const ver of allVersions) {
+                    const vid = Number(ver.version_id);
+                    if (!seenVids.has(vid)) {
+                        seenVids.add(vid);
+                        uniqueVersions.push(ver);
+                    }
+                }
+
+                const versionRows = uniqueVersions.map(v => {
+                    const uomId = Number(v.uom_id);
+                    if (Number.isFinite(uomId)) unitIds.add(uomId);
+                    
+                    const vTiers: Record<string, number | null> = { ...emptyTierValues };
+                    if (v.prices) {
+                        for (const pt of priceTypes) {
+                            const pId = pt.price_type_id;
+                            if (v.prices[pId]) {
+                                vTiers[String(pId)] = v.prices[pId].price_per_unit;
+                            }
+                        }
+                        if (v.prices[priceTypes[0]?.price_type_id]) {
+                            vTiers["LIST"] = v.prices[priceTypes[0]?.price_type_id]?.cost_per_unit ?? null;
+                        }
+                    }
+
+                    return {
+                        version: v,
+                        tiers: vTiers,
+                    };
+                });
+
                 assembled.push({
                     group_id: groupId,
                     display,
                     variantsByUnitId,
+                    versions: versionRows,
                     category_name: catMap.get(Number(display.product_category)) || "—",
                     brand_name: brandMap.get(Number(display.product_brand)) || "—",
                 });
@@ -137,7 +174,7 @@ export function useProductPrintables(
         } finally {
             setLoading(false);
         }
-    }, [categories, brands, enabled, priceTypes, setFilters, filters.active_only, filters.brand_ids, filters.category_ids, filters.page, filters.q, filters.supplier_ids, filters.supplier_scope, filters.unit_ids]);
+    }, [categories, brands, enabled, priceTypes, setFilters, filters.active_only, filters.brand_ids, filters.category_ids, filters.page, filters.q, filters.supplier_ids, filters.supplier_scope, filters.unit_ids, filters.product_type_ids]);
 
     React.useEffect(() => {
         if (!enabled) {

@@ -2,40 +2,40 @@ import type { PriceType, Unit } from "../types";
 
 export const MATRIX_PRICE_TYPE_COLORS = [
     {
-        className: "bg-[#F3F4F6] text-[#374151] border-[#D1D5DB]",
+        className: "bg-slate-100 dark:bg-slate-900/50 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800",
         fill: "FFF3F4F6",
         font: "FF374151",
-        border: "FFD1D5DB",
+        border: "FFE2E8F0",
     },
     {
-        className: "bg-[#EAF4FF] text-[#1E4D8C] border-[#B8D1F3]",
+        className: "bg-blue-50 dark:bg-blue-950/50 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-800/50",
         fill: "FFEAF4FF",
         font: "FF1E4D8C",
-        border: "FFB8D1F3",
+        border: "FFBFDBFE",
     },
     {
-        className: "bg-[#F0FFF4] text-[#1D5C2E] border-[#C6F6D5]",
+        className: "bg-green-50 dark:bg-green-950/50 text-green-800 dark:text-green-200 border-green-200 dark:border-green-800/50",
         fill: "FFF0FFF4",
         font: "FF1D5C2E",
-        border: "FFC6F6D5",
+        border: "FFBBF7D0",
     },
     {
-        className: "bg-[#FFF9E6] text-[#8C6D1E] border-[#FCEFB4]",
+        className: "bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800/50",
         fill: "FFFFF9E6",
         font: "FF8C6D1E",
-        border: "FFFCEFB4",
+        border: "FFFDE68A",
     },
     {
-        className: "bg-[#FFF5F5] text-[#8C1E1E] border-[#FED7D7]",
+        className: "bg-red-50 dark:bg-red-950/50 text-red-800 dark:text-red-200 border-red-200 dark:border-red-800/50",
         fill: "FFFFF5F5",
         font: "FF8C1E1E",
-        border: "FFFED7D7",
+        border: "FFFECACA",
     },
     {
-        className: "bg-[#F7F0FF] text-[#4D1E8C] border-[#E9D8FD]",
+        className: "bg-purple-50 dark:bg-purple-950/50 text-purple-800 dark:text-purple-200 border-purple-200 dark:border-purple-800/50",
         fill: "FFF7F0FF",
         font: "FF4D1E8C",
-        border: "FFE9D8FD",
+        border: "FFE9D5FF",
     },
 ] as const;
 

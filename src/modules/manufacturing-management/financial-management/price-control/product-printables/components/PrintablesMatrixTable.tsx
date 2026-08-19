@@ -46,25 +46,25 @@ export default function PrintablesMatrixTable({
 }: Props) {
     if (loading) {
         return (
-            <div className="overflow-hidden rounded-xl border border-[#D1D5DB]">
+            <div className="overflow-hidden rounded-xl border border-border/50">
                 <div className="min-w-[900px]">
-                    <div className="grid grid-cols-[100px_100px_180px_repeat(6,minmax(70px,1fr))] gap-px border-b bg-[#D1D5DB]">
+                    <div className="grid grid-cols-[100px_100px_180px_repeat(6,minmax(70px,1fr))] gap-px border-b border-border/50 bg-muted/50">
                         {Array.from({ length: 9 }).map((_, index) => (
-                            <div key={`header-${index}`} className="bg-[#F9FAFB] p-3">
-                                <Skeleton className="h-4 w-full" />
+                            <div key={`header-${index}`} className="bg-muted/30 p-3">
+                                <Skeleton className="h-4 w-full animate-pulse" />
                             </div>
                         ))}
                     </div>
                     {Array.from({ length: 8 }).map((_, rowIndex) => (
                         <div
                             key={`row-${rowIndex}`}
-                            className="grid grid-cols-[100px_100px_180px_repeat(6,minmax(70px,1fr))] gap-px border-b bg-[#E5E7EB] last:border-b-0"
+                            className="grid grid-cols-[100px_100px_180px_repeat(6,minmax(70px,1fr))] gap-px border-b border-border/50 bg-border/20 last:border-b-0"
                         >
                             {Array.from({ length: 9 }).map((_, columnIndex) => (
                                 <div key={`cell-${columnIndex}`} className="bg-background p-3">
                                     <Skeleton
                                         className={cn(
-                                            "h-4",
+                                            "h-4 animate-pulse",
                                             columnIndex === 2 ? "w-4/5" : columnIndex < 3 ? "w-3/5" : "ml-auto w-2/3",
                                         )}
                                     />
@@ -102,25 +102,25 @@ export default function PrintablesMatrixTable({
     const totalMatrixCols = activePriceTypes.length * (visibleUnits.length || 1);
 
     return (
-        <div className="rounded-xl border border-[#D1D5DB] overflow-hidden overflow-x-auto shadow-md">
+        <div className="rounded-xl border border-border/50 overflow-hidden overflow-x-auto shadow-md">
             <Table className="border-collapse border-hidden">
-                <TableHeader className="bg-[#F9FAFB]">
+                <TableHeader className="bg-muted/30">
                     {/* Level 1: Global Header */}
-                    <TableRow className="border-b border-[#D1D5DB]">
-                        <TableHead colSpan={3} className="border-r border-[#D1D5DB] sticky left-0 top-0 z-40 bg-[#F9FAFB] h-8"></TableHead>
+                    <TableRow className="border-b border-border/50">
+                        <TableHead colSpan={3} className="border-r border-border/50 sticky left-0 top-0 z-40 bg-muted/30 h-8 backdrop-blur-md"></TableHead>
                         <TableHead 
                             colSpan={totalMatrixCols || 1} 
-                            className="text-center font-bold text-[11px] uppercase tracking-[0.2em] text-[#4B5563] py-1 border-r border-[#D1D5DB] sticky top-0 z-30 bg-[#F9FAFB]"
+                            className="text-center font-bold text-xs uppercase tracking-[0.2em] text-muted-foreground py-1 border-r border-border/50 sticky top-0 z-30 bg-muted/30 backdrop-blur-md"
                         >
                             Price Type
                         </TableHead>
                     </TableRow>
                     
                     {/* Level 2: Price Tiers (Selected) */}
-                    <TableRow className="border-b border-[#D1D5DB]">
-                        <TableHead className="font-bold sticky left-0 top-8 z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] min-w-[100px] text-[10px] uppercase text-[#374151] h-10">Brand</TableHead>
-                        <TableHead className="font-bold sticky left-[100px] top-8 z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] min-w-[100px] text-[10px] uppercase text-[#374151] h-10">Category</TableHead>
-                        <TableHead className="font-bold sticky left-[200px] top-8 z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] min-w-[180px] text-[10px] uppercase text-[#374151] h-10">Product Name</TableHead>
+                    <TableRow className="border-b border-border/50">
+                        <TableHead className="font-bold sticky left-0 top-8 z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 min-w-[100px] text-xs uppercase text-foreground h-10 whitespace-nowrap">Brand</TableHead>
+                        <TableHead className="font-bold sticky left-[100px] top-8 z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 min-w-[100px] text-xs uppercase text-foreground h-10 whitespace-nowrap">Category</TableHead>
+                        <TableHead className="font-bold sticky left-[200px] top-8 z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 min-w-[180px] text-xs uppercase text-foreground h-10 whitespace-nowrap">Product Name</TableHead>
                         {activePriceTypes.map((pt) => {
                             const absoluteIndex = priceTypes.indexOf(pt);
                             return (
@@ -128,7 +128,7 @@ export default function PrintablesMatrixTable({
                                     key={pt.price_type_id} 
                                     colSpan={visibleUnits.length || 1} 
                                     className={cn(
-                                        "text-center font-black text-xs border-r border-[#D1D5DB] py-1.5 sticky top-8 z-30",
+                                        "text-center font-black text-sm border-r border-border/50 py-1.5 sticky top-8 z-30 backdrop-blur-md",
                                         matrixPriceTypeColor(absoluteIndex).className
                                     )}
                                 >
@@ -139,21 +139,21 @@ export default function PrintablesMatrixTable({
                     </TableRow>
 
                     {/* Level 3: Units (BOX, PCS, etc.) */}
-                    <TableRow className="border-b border-[#D1D5DB]">
-                        <TableHead className="sticky left-0 top-[72px] z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] h-8"></TableHead>
-                        <TableHead className="sticky left-[100px] top-[72px] z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] h-8"></TableHead>
-                        <TableHead className="sticky left-[200px] top-[72px] z-40 bg-[#F9FAFB] border-r border-[#D1D5DB] h-8"></TableHead>
+                    <TableRow className="border-b border-border/50">
+                        <TableHead className="sticky left-0 top-[72px] z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 h-8"></TableHead>
+                        <TableHead className="sticky left-[100px] top-[72px] z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 h-8"></TableHead>
+                        <TableHead className="sticky left-[200px] top-[72px] z-40 bg-muted/30 backdrop-blur-md border-r border-border/50 h-8"></TableHead>
                         {activePriceTypes.map((pt) => (
                             <React.Fragment key={pt.price_type_id}>
                                 {visibleUnits.length > 0 ? visibleUnits.map((u) => (
                                     <TableHead 
                                         key={u.unit_id} 
-                                        className="text-center font-bold text-[9px] uppercase text-[#6B7280] py-1 border-r border-[#E5E7EB] min-w-[70px] sticky top-[72px] z-30 bg-[#F9FAFB]"
+                                        className="text-center font-bold text-[10px] uppercase text-muted-foreground py-1 border-r border-border/30 min-w-[70px] sticky top-[72px] z-30 bg-muted/30 backdrop-blur-md"
                                     >
                                         {u.unit_shortcut}
                                     </TableHead>
                                 )) : (
-                                    <TableHead className="min-w-[70px] border-r border-[#E5E7EB]">—</TableHead>
+                                    <TableHead className="min-w-[70px] border-r border-border/30">—</TableHead>
                                 )}
                             </React.Fragment>
                         ))}
@@ -161,49 +161,96 @@ export default function PrintablesMatrixTable({
                 </TableHeader>
                 <TableBody>
                     {rows.map((row) => (
-                        <TableRow key={row.group_id} className="hover:bg-[#F3F4F6] transition-colors border-b border-[#E5E7EB]">
-                            <TableCell className="sticky left-0 bg-white z-10 border-r border-[#D1D5DB] py-2 text-[10px] text-[#4B5563]">
-                                {row.brand_name}
-                            </TableCell>
-                            <TableCell className="sticky left-[100px] bg-white z-10 border-r border-[#D1D5DB] py-2 text-[10px] text-[#4B5563]">
-                                {row.category_name}
-                            </TableCell>
-                            <TableCell className="font-semibold sticky left-[200px] bg-white z-10 border-r border-[#D1D5DB] py-2 text-[11px] text-[#111827]">
-                                {row.display.product_name}
-                            </TableCell>
-                            {activePriceTypes.map((pt) => {
-                                const ptSuffix = priceTypeTierKey(pt);
-                                
-                                return (
-                                    <React.Fragment key={pt.price_type_id}>
-                                        {visibleUnits.length > 0 ? visibleUnits.map((u) => {
-                                            const variant = row.variantsByUnitId[Number(u.unit_id)];
-                                            const price = (variant?.tiers as Record<string, number | null>)?.[ptSuffix];
+                        <React.Fragment key={row.group_id}>
+                            <TableRow className="hover:bg-muted/50 transition-colors border-b-2 border-border/80">
+                                <TableCell className="sticky left-0 bg-background z-10 border-r border-border/50 py-2.5 text-xs font-medium text-foreground/80 whitespace-nowrap">
+                                    {row.brand_name}
+                                </TableCell>
+                                <TableCell className="sticky left-[100px] bg-background z-10 border-r border-border/50 py-2.5 text-xs font-medium text-foreground/80 whitespace-nowrap">
+                                    {row.category_name}
+                                </TableCell>
+                                <TableCell className="font-semibold sticky left-[200px] bg-background z-10 border-r border-border/50 py-2.5 text-sm text-foreground whitespace-nowrap">
+                                    {row.display.product_name}
+                                </TableCell>
+                                {activePriceTypes.map((pt) => {
+                                    const ptSuffix = priceTypeTierKey(pt);
+                                    
+                                    return (
+                                        <React.Fragment key={pt.price_type_id}>
+                                            {visibleUnits.length > 0 ? visibleUnits.map((u) => {
+                                                const variant = row.variantsByUnitId[Number(u.unit_id)];
+                                                const price = (variant?.tiers as Record<string, number | null>)?.[ptSuffix];
 
-                                            return (
-                                                <TableCell 
-                                                    key={u.unit_id} 
-                                                    className={cn(
-                                                        "text-right border-r border-[#E5E7EB] px-3 py-2 font-mono text-[10px]",
-                                                        price == null ? "bg-[#F9FAFB]/50" : ""
-                                                    )}
-                                                >
-                                                    {price != null ? (
-                                                        <span className="font-bold text-[#374151]">
-                                                            {formatPriceNumber(price, "\u2014")}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-[#D1D5DB]">—</span>
-                                                    )}
-                                                </TableCell>
-                                            );
-                                        }) : (
-                                            <TableCell className="border-r border-[#E5E7EB] bg-[#F9FAFB]/50">—</TableCell>
-                                        )}
-                                    </React.Fragment>
-                                );
-                            })}
-                        </TableRow>
+                                                return (
+                                                    <TableCell 
+                                                        key={u.unit_id} 
+                                                        className={cn(
+                                                            "text-right border-r border-border/50 px-3 py-2.5 font-mono text-xs",
+                                                            price == null ? "bg-muted/20" : ""
+                                                        )}
+                                                    >
+                                                        {price != null ? (
+                                                            <span className="font-bold text-foreground">
+                                                                {formatPriceNumber(price, "\u2014")}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-muted-foreground/30">—</span>
+                                                        )}
+                                                    </TableCell>
+                                                );
+                                            }) : (
+                                                <TableCell className="border-r border-border/50 bg-muted/20">—</TableCell>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </TableRow>
+                            {/* Render Versions (Nested Rows) */}
+                            {(row.versions || []).map((v) => (
+                                <TableRow key={`v-${v.version.version_id}`} className="hover:bg-muted/40 transition-colors border-b border-border/80 bg-muted/30">
+                                    <TableCell className="sticky left-0 bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5"></TableCell>
+                                    <TableCell className="sticky left-[100px] bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5"></TableCell>
+                                    <TableCell className="sticky left-[200px] bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5 text-xs text-foreground/90 whitespace-nowrap">
+                                        <div className="flex items-center pl-3 relative">
+                                            <div className="absolute left-1.5 top-0 bottom-1/2 w-3 border-l-2 border-b-2 border-border/70 rounded-bl-sm" />
+                                            <span className="ml-3 font-medium">{v.version.version_name}</span>
+                                        </div>
+                                    </TableCell>
+                                    {activePriceTypes.map((pt) => {
+                                        const ptSuffix = priceTypeTierKey(pt);
+                                        
+                                        return (
+                                            <React.Fragment key={pt.price_type_id}>
+                                                {visibleUnits.length > 0 ? visibleUnits.map((u) => {
+                                                    const isMatchingUnit = Number(u.unit_id) === Number(v.version.uom_id);
+                                                    const price = isMatchingUnit ? v.tiers[ptSuffix] : null;
+
+                                                    return (
+                                                        <TableCell 
+                                                            key={u.unit_id} 
+                                                            className={cn(
+                                                                "text-right border-r border-border/50 px-3 py-2.5 font-mono text-xs",
+                                                                price == null ? "text-muted-foreground/30" : ""
+                                                            )}
+                                                        >
+                                                            {price != null ? (
+                                                                <span className="font-semibold text-foreground/90">
+                                                                    {formatPriceNumber(price, "\u2014")}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-muted-foreground/20">—</span>
+                                                            )}
+                                                        </TableCell>
+                                                    );
+                                                }) : (
+                                                    <TableCell className="border-r border-border/50 text-muted-foreground/20">—</TableCell>
+                                                )}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </TableRow>
+                            ))}
+                        </React.Fragment>
                     ))}
                 </TableBody>
             </Table>

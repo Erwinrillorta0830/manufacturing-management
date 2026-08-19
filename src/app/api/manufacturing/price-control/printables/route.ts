@@ -83,6 +83,7 @@ function buildProductParams(
     brandIds: string[],
     unitIds: string[],
     q: string,
+    productTypeIds: string[],
     inProductIds?: number[],
 ): URLSearchParams {
     const params = new URLSearchParams();
@@ -93,6 +94,7 @@ function buildProductParams(
     if (categoryIds.length) addAnd("[product_category][_in]", categoryIds.join(","));
     if (brandIds.length) addAnd("[product_brand][_in]", brandIds.join(","));
     if (unitIds.length) addAnd("[unit_of_measurement][_in]", unitIds.join(","));
+    if (productTypeIds.length) addAnd("[product_type][_in]", productTypeIds.join(","));
     if (q) {
         addAnd("[_or][0][product_name][_contains]", q);
         params.set(`filter[_and][${andIdx - 1}][_or][1][product_code][_contains]`, q);
@@ -116,6 +118,7 @@ export async function GET(req: NextRequest) {
         const brandIds = searchParams.get("brand_ids")?.split(",").filter(Boolean) || [];
         const unitIds = searchParams.get("unit_ids")?.split(",").filter(Boolean) || [];
         const supplierIds = searchParams.get("supplier_ids")?.split(",").filter(Boolean) || [];
+        const productTypeIds = searchParams.get("product_type_ids")?.split(",").filter(Boolean) || [];
         const supplierScope = searchParams.get("supplier_scope") || "ALL";
         const activeOnly = searchParams.get("active_only") === "1";
 
@@ -163,7 +166,7 @@ export async function GET(req: NextRequest) {
 
         // Step 1: fetch matched products (all filters applied)
         let rows: ProductRow[];
-        const buildParams = (ids?: number[]) => buildProductParams(fields, activeOnly, categoryIds, brandIds, unitIds, q, ids);
+        const buildParams = (ids?: number[]) => buildProductParams(fields, activeOnly, categoryIds, brandIds, unitIds, q, productTypeIds, ids);
 
         if (supplierProductIdsIn && supplierProductIdsIn.length > 0) {
             const idChunks = chunkArray(supplierProductIdsIn, 200);
@@ -224,8 +227,88 @@ export async function GET(req: NextRequest) {
             if (group) pagedRows.push(...group);
         }
 
+        // Fetch Versions and Prices
+        const finalProductIdsSet = new Set<number>();
+        for (const p of pagedRows) {
+            const pid = pickId(p.product_id);
+            if (pid) finalProductIdsSet.add(pid);
+            const parentId = pickId(p.parent_id);
+            if (parentId) finalProductIdsSet.add(parentId);
+        }
+        const finalProductIds = Array.from(finalProductIdsSet);
+        
+        let versionRows: Record<string, unknown>[] = [];
+        let versionPriceRows: Record<string, unknown>[] = [];
+        
+        if (finalProductIds.length > 0) {
+            const versionChunks = chunkArray(finalProductIds, 150);
+            const vRows = await Promise.all(versionChunks.map(chunk => 
+                fetchAllPages<Record<string, unknown>>("product_manufacturing_version", () => {
+                    const sp = new URLSearchParams();
+                    sp.set("fields", "version_id,product_id,version_name,base_quantity,uom_id,expected_yield_percentage,status");
+                    sp.set("filter[product_id][_in]", chunk.join(","));
+                    return sp;
+                })
+            ));
+            versionRows = vRows.flat();
+            
+            const versionIds = Array.from(new Set(versionRows.map(v => pickId(v.version_id)).filter((id): id is number => id !== null)));
+            if (versionIds.length > 0) {
+                const vpChunks = chunkArray(versionIds, 200);
+                const vpRows = await Promise.all(vpChunks.map(chunk => 
+                    fetchAllPages<Record<string, unknown>>("product_version_prices", () => {
+                        const sp = new URLSearchParams();
+                        sp.set("fields", "version_price_id,version_id,price_type_id,cost_per_unit,price_per_unit");
+                        sp.set("filter[version_id][_in]", chunk.join(","));
+                        sp.set("filter[is_active][_eq]", "1");
+                        return sp;
+                    })
+                ));
+                versionPriceRows = vpRows.flat();
+            }
+        }
+
+        const pricesByVersion = new Map<number, Record<number, { cost_per_unit: number; price_per_unit: number }>>();
+        for (const vp of versionPriceRows) {
+            const vid = pickId(vp.version_id);
+            const ptid = pickId(vp.price_type_id);
+            if (vid === null || ptid === null) continue;
+            
+            if (!pricesByVersion.has(vid)) pricesByVersion.set(vid, {});
+            pricesByVersion.get(vid)![ptid] = {
+                cost_per_unit: Number(vp.cost_per_unit) || 0,
+                price_per_unit: Number(vp.price_per_unit) || 0,
+            };
+        }
+
+        const versionsByProduct = new Map<number, any[]>();
+        for (const v of versionRows) {
+            const pid = pickId(v.product_id);
+            const vid = pickId(v.version_id);
+            if (pid === null || vid === null) continue;
+            
+            if (!versionsByProduct.has(pid)) versionsByProduct.set(pid, []);
+            versionsByProduct.get(pid)!.push({
+                ...v,
+                prices: pricesByVersion.get(vid) || {},
+            });
+        }
+
+        const finalData = pagedRows.map(p => {
+            const pid = pickId(p.product_id);
+            const gid = pickId(p.parent_id) ?? pid;
+            
+            const v1 = pid ? versionsByProduct.get(pid) || [] : [];
+            const v2 = (gid && gid !== pid) ? versionsByProduct.get(gid) || [] : [];
+            
+            return {
+                ...p,
+                versions: [...v1, ...v2],
+            };
+        });
+
         return NextResponse.json({
-            data: pagedRows,
+            data: finalData,
             meta: { total_groups: totalGroups, total_pages: totalPages, page, page_size: pageSize },
         });
 

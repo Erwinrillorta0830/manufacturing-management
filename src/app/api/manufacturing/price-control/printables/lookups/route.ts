@@ -134,17 +134,19 @@ export async function GET(req: NextRequest) {
         const brandId = Number(searchParams.get("brand_id")) || 0;
 
         // Fetch Base Lookups
-        const [catJson, brandJson, unitJson, supplierJson] = await Promise.all([
+        const [catJson, brandJson, unitJson, supplierJson, typeJson] = await Promise.all([
             fetchDirectus<{ data: Record<string, unknown>[] }>(`${DIRECTUS_URL}/items/${CATEGORIES}?limit=-1&fields=category_id,category_name&sort=category_name`),
             fetchDirectus<{ data: Record<string, unknown>[] }>(`${DIRECTUS_URL}/items/${BRAND}?limit=-1&fields=brand_id,brand_name&sort=brand_name`),
             fetchDirectus<{ data: Record<string, unknown>[] }>(`${DIRECTUS_URL}/items/${UNITS}?limit=-1&fields=unit_id,unit_name,unit_shortcut,order&sort=order,unit_name`),
             fetchDirectus<{ data: Record<string, unknown>[] }>(`${DIRECTUS_URL}/items/${SUPPLIERS}?limit=-1&fields=id,supplier_name,supplier_shortcut,isActive,address,tin_number,contact_person,phone_number,email_address,city,state_province,supplier_type&sort=supplier_name&filter[isActive][_eq]=1&filter[supplier_type][_eq]=TRADE`),
+            fetchDirectus<{ data: Record<string, unknown>[] }>(`${DIRECTUS_URL}/items/product_type?limit=-1&fields=id,name&sort=name`),
         ]);
 
         let categories = catJson.data ?? [];
         let brands = brandJson.data ?? [];
         let units = unitJson.data ?? [];
         const suppliers = supplierJson.data ?? [];
+        const productTypes = typeJson.data ?? [];
 
         const shouldScopeBySupplier = supplierIds.length > 0 || supplierScope === "LINKED_ONLY";
         let universeProductIds: number[] | null = null;
@@ -196,7 +198,7 @@ export async function GET(req: NextRequest) {
             units = units.filter((u) => unitsResult.unitSet.has(String(u.unit_id)));
         }
 
-        return NextResponse.json({ data: { categories, brands, units, suppliers } });
+        return NextResponse.json({ data: { categories, brands, units, suppliers, productTypes } });
     } catch (error: unknown) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 });
     }

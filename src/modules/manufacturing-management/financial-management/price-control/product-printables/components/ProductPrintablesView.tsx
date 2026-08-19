@@ -25,6 +25,7 @@ import {
 import { sanitizePdfFilenamePart } from "../../shared/print/pdfFileNames";
 import { exportProductPrintablesExcel } from "../utils/productPrintablesExcel";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { ChevronLeft, ChevronRight, FileDown, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,12 +49,13 @@ function buildPrintFilterParams(filters: FilterState): PrintFilterParams {
         supplier_ids: filters.supplier_ids.length ? filters.supplier_ids.join(",") : undefined,
         supplier_scope: filters.supplier_ids.length ? "LINKED_ONLY" : filters.supplier_scope,
         active_only: filters.active_only ? "1" : "0",
+        product_type_ids: filters.product_type_ids?.length ? filters.product_type_ids.join(",") : undefined,
     };
 }
 
 export default function ProductPrintablesView({ userName }: { userName?: string }) {
     const [filters, setFilters] = React.useState<FilterState>(defaultFilters);
-    const { categories, brands, units, suppliers, priceTypes, loading: lookupsLoading } = useLookups(filters);
+    const { categories, brands, units, suppliers, priceTypes, productTypes, loading: lookupsLoading } = useLookups(filters);
     const {
         matrixRows,
         usedUnitIds,
@@ -114,6 +116,13 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
             if (names.length) parts.push(`Categories: ${names.join(", ")}`);
         } else {
             parts.push(`Categories: All Categories`);
+        }
+
+        if (filters.product_type_ids?.length) {
+            const names = filters.product_type_ids.map(id => productTypes.find(pt => String(pt.id) === String(id))?.name).filter(Boolean);
+            if (names.length) parts.push(`Product Types: ${names.join(", ")}`);
+        } else {
+            parts.push(`Product Types: All Types`);
         }
 
         if (filters.unit_ids.length) {
@@ -395,43 +404,50 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
 
     return (
         <div className="flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">
-                        Filter and generate spreadsheet-style matrix reports for your products.
-                    </p>
+            <Card className="border-border/50 shadow-sm bg-background/60 backdrop-blur-md overflow-hidden">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-6 pb-4">
+                    <div className="space-y-1.5">
+                        <h2 className="text-2xl font-bold tracking-tight text-foreground">Product Printables</h2>
+                        <p className="text-sm text-muted-foreground">
+                            Filter and generate spreadsheet-style matrix reports for your products.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            onClick={handleExportPdf}
+                            disabled={productsLoading || lookupsLoading || isPrinting}
+                            className="rounded-xl px-6 gap-2 shadow-sm"
+                        >
+                            <FileDown className="w-4 h-4" />
+                            {isPrinting ? "Preparing..." : "Export PDF"}
+                        </Button>
+                        <Button
+                            onClick={handleExportExcel}
+                            disabled={productsLoading || lookupsLoading || isPrinting}
+                            variant="outline"
+                            className="rounded-xl px-6 gap-2 shadow-sm bg-background hover:bg-muted/50"
+                        >
+                            <FileSpreadsheet className="w-4 h-4" />
+                            {isPrinting ? "Preparing..." : "Export Excel"}
+                        </Button>
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                    <Button
-                        onClick={handleExportPdf}
-                        disabled={productsLoading || lookupsLoading || isPrinting}
-                        className="rounded-xl px-6 gap-2"
-                    >
-                        <FileDown className="w-4 h-4" />
-                        {isPrinting ? "Preparing..." : "Export PDF"}
-                    </Button>
-                    <Button
-                        onClick={handleExportExcel}
-                        disabled={productsLoading || lookupsLoading || isPrinting}
-                        variant="outline"
-                        className="rounded-xl px-6 gap-2"
-                    >
-                        <FileSpreadsheet className="w-4 h-4" />
-                        {isPrinting ? "Preparing..." : "Export Excel"}
-                    </Button>
-                </div>
-            </div>
 
-            <PrintablesFiltersBar
-                filters={filters}
-                setFilters={setFilters}
-                resetFilters={resetFilters}
-                categories={categories}
-                brands={brands}
-                units={units}
-                suppliers={suppliers}
-                priceTypes={priceTypes}
-            />
+                <div className="px-6 pb-6">
+                    <PrintablesFiltersBar
+                        filters={filters}
+                        setFilters={setFilters}
+                        resetFilters={resetFilters}
+                        categories={categories}
+                        brands={brands}
+                        units={units}
+                        suppliers={suppliers}
+                        priceTypes={priceTypes}
+                        productTypes={productTypes}
+                        loading={lookupsLoading}
+                    />
+                </div>
+            </Card>
 
             <PrintablesMatrixTable
                 rows={matrixRows}

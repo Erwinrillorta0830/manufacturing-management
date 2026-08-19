@@ -144,6 +144,7 @@ export type PrintFilterParams = {
     supplier_scope?: "ALL" | "LINKED_ONLY";
     active_only?: "0" | "1";
     missing_tier?: "0" | "1";
+    product_type_ids?: string;
 };
 
 export type PrintMatrixMetaResponse = {

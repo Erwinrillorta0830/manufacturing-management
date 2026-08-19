@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import type { FilterState, Category, Brand, Unit, Supplier, PriceType } from "../types";
+import type { FilterState, Category, Brand, Unit, Supplier, PriceType, ProductType } from "../types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/command";
 import { Search, X, Filter, Check, ChevronsUpDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -27,6 +28,8 @@ type Props = {
     units: Unit[];
     suppliers: Supplier[];
     priceTypes: PriceType[];
+    productTypes: ProductType[];
+    loading?: boolean;
 };
 
 const FilterSelector = ({ 
@@ -88,7 +91,9 @@ export default function PrintablesFiltersBar({
     brands,
     units,
     suppliers,
-    priceTypes
+    priceTypes,
+    productTypes,
+    loading = false
 }: Props) {
     const [localQ, setLocalQ] = React.useState(filters.q);
 
@@ -132,11 +137,22 @@ export default function PrintablesFiltersBar({
         (filters.unit_ids?.length || 0) + 
         (filters.supplier_ids?.length || 0) + 
         (filters.price_type_ids?.length || 0) +
+        (filters.product_type_ids?.length || 0) +
         (filters.q ? 1 : 0);
 
     return (
-        <div className="flex flex-col gap-4 bg-background/60 backdrop-blur-md p-6 rounded-2xl border border-border/50 shadow-sm">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+        <div className="flex flex-col gap-4">
+            {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                    <Skeleton className="h-9 w-full rounded-xl animate-pulse" />
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div className="relative group lg:col-span-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-primary z-10" />
                     <Input
@@ -180,6 +196,14 @@ export default function PrintablesFiltersBar({
                 />
 
                 <FilterSelector
+                    label="Product Type"
+                    selectedIds={filters.product_type_ids || []}
+                    options={productTypes.map(pt => ({ label: pt.name, value: String(pt.id) }))}
+                    onToggle={(id) => toggleFilter("product_type_ids", id)}
+                    onClear={() => setFilters(prev => ({ ...prev, product_type_ids: [], page: 1 }))}
+                />
+
+                <FilterSelector
                     label="Units"
                     selectedIds={filters.unit_ids || []}
                     options={units.map(u => ({ label: u.unit_shortcut, value: String(u.unit_id) }))}
@@ -194,7 +218,8 @@ export default function PrintablesFiltersBar({
                     onToggle={(id) => toggleFilter("price_type_ids", id)}
                     onClear={() => setFilters(prev => ({ ...prev, price_type_ids: [] }))}
                 />
-            </div>
+                </div>
+            )}
 
             {/* Active Filters Catalog */}
             {activeFiltersCount > 0 && (
@@ -228,6 +253,24 @@ export default function PrintablesFiltersBar({
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         removeFilter("category_ids", id);
+                                    }}
+                                    className="ml-1 p-0.5 rounded-md hover:bg-muted-foreground/10 transition-colors"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </Badge>
+                        );
+                    })}
+                    {(filters.product_type_ids || []).map(id => {
+                        const name = productTypes.find(pt => String(pt.id) === id)?.name;
+                        return (
+                            <Badge key={id} variant="secondary" className="gap-1 rounded-lg px-2 py-0.5 pr-1">
+                                Type: {name || id}
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeFilter("product_type_ids", id);
                                     }}
                                     className="ml-1 p-0.5 rounded-md hover:bg-muted-foreground/10 transition-colors"
                                 >
