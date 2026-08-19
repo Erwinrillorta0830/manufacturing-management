@@ -153,12 +153,13 @@ function parseWeightComponent(value: unknown, label: string, required: boolean):
 
 export function resolveProductWeightBreakdown(
     product: unknown,
-    options: { requireComplete?: boolean } = {}
+    options: { requireComplete?: boolean; allowIncomplete?: boolean } = {}
 ): ProductWeightBreakdown {
     const value = product && typeof product === "object"
         ? product as Record<string, unknown>
         : {};
     const requireComplete = options.requireComplete === true;
+    const allowIncomplete = options.allowIncomplete === true && !requireComplete;
     const unitCode = productWeightUnitCode(value.weight_unit_id);
     const hasAnyComponent = [
         value.net_weight,
@@ -167,17 +168,17 @@ export function resolveProductWeightBreakdown(
     ].some(hasProvidedWeightValue);
 
     if (requireComplete || hasAnyComponent) {
-        if (!hasProvidedWeightValue(value.weight_unit_id)) {
+        if (!hasProvidedWeightValue(value.weight_unit_id) && !allowIncomplete) {
             throw new ProductWeightValidationError("Weight unit is required for weight components.");
         }
 
-        const netWeight = parseWeightComponent(value.net_weight, "Net weight", true);
-        const outerCartonWeight = parseWeightComponent(value.outer_carton_weight, "Outer carton weight", true);
-        const palletWeight = parseWeightComponent(value.pallet_weight, "Pallet weight", true);
-        if (netWeight === null || outerCartonWeight === null || palletWeight === null) {
+        const netWeight = parseWeightComponent(value.net_weight, "Net weight", !allowIncomplete);
+        const outerCartonWeight = parseWeightComponent(value.outer_carton_weight, "Outer carton weight", !allowIncomplete);
+        const palletWeight = parseWeightComponent(value.pallet_weight, "Pallet weight", !allowIncomplete);
+        if (!allowIncomplete && (netWeight === null || outerCartonWeight === null || palletWeight === null)) {
             throw new ProductWeightValidationError("All weight components are required.");
         }
-        const grossWeight = netWeight + outerCartonWeight + palletWeight;
+        const grossWeight = (netWeight || 0) + (outerCartonWeight || 0) + (palletWeight || 0);
         if (grossWeight <= 0) {
             throw new ProductWeightValidationError("Gross weight must be greater than 0.");
         }

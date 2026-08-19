@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2 } from "lucide-react";
+import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer } from "lucide-react";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
@@ -22,6 +22,8 @@ export interface ShipmentDetailViewProps {
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
     onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     handleStartEdit: () => void;
+    onPrintPurchaseOrder?: () => void;
+    printLoading?: boolean;
     onCancelRejectedPurchaseOrder?: (shipmentId: number, workflowRevision: number, remarks?: string) => void | Promise<boolean>;
     lines: ShipmentLineItem[];
     hasShipments: boolean;
@@ -38,6 +40,8 @@ export function ShipmentDetailView({
     isSupplierForeign,
     onUpdateShipmentStatus,
     handleStartEdit,
+    onPrintPurchaseOrder,
+    printLoading = false,
     onCancelRejectedPurchaseOrder,
     lines,
     hasShipments
@@ -307,6 +311,17 @@ export function ShipmentDetailView({
 
                             </div>
                         </div>
+                        {canonicalDrafting && onPrintPurchaseOrder && (
+                            <button
+                                type="button"
+                                onClick={onPrintPurchaseOrder}
+                                disabled={printLoading}
+                                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {printLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                                {printLoading ? "Preparing..." : "Print PO"}
+                            </button>
+                        )}
                     </div>
 
                     {/* Totals Summary */}
