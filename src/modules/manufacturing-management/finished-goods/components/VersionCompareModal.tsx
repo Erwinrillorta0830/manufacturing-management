@@ -7,6 +7,7 @@ import {
     X, 
     Loader2, 
     ArrowRight, 
+    ArrowLeftRight,
     TrendingUp, 
     TrendingDown, 
     Package, 
@@ -43,34 +44,43 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
     versions,
     currentVersionId
 }) => {
-    const [targetVersionId, setTargetVersionId] = useState<number | "">(currentVersionId || (versions[0]?.version_id || ""));
-    const [baseVersionId, setBaseVersionId] = useState<number | "">(() => {
-        const activeVer = versions.find(v => v.is_active || v.status === "Active");
-        if (activeVer && activeVer.version_id !== currentVersionId) return activeVer.version_id;
-        const otherVer = versions.find(v => v.version_id !== currentVersionId);
-        return otherVer ? otherVer.version_id : "";
-    });
+    const [baseVersionId, setBaseVersionId] = useState<number | "">(
+        currentVersionId || (versions[0]?.version_id || "")
+    );
+    const [targetVersionId, setTargetVersionId] = useState<number | "">("");
 
     const [activeSubTab, setActiveSubTab] = useState<"summary" | "bom_routes" | "labor" | "overheads">("summary");
     const [loading, setLoading] = useState(false);
     const [compareData, setCompareData] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
 
+    const handleSwapVersions = () => {
+        if (!baseVersionId || !targetVersionId) return;
+        const prevBase = baseVersionId;
+        const prevTarget = targetVersionId;
+        setBaseVersionId(prevTarget);
+        setTargetVersionId(prevBase);
+    };
+
     useEffect(() => {
         if (!isOpen) return;
-        if (!targetVersionId && versions.length > 0) {
-            setTargetVersionId(versions[0].version_id);
-        }
-        if (!baseVersionId && versions.length > 1) {
-            const secondary = versions.find(v => v.version_id !== (targetVersionId || versions[0].version_id));
-            if (secondary) setBaseVersionId(secondary.version_id);
-        }
-    }, [isOpen, versions, targetVersionId, baseVersionId]);
+        setBaseVersionId(currentVersionId || (versions[0]?.version_id || ""));
+        setTargetVersionId("");
+        setCompareData(null);
+        setError(null);
+    }, [isOpen, currentVersionId, versions]);
 
     useEffect(() => {
-        if (!isOpen || !targetVersionId) return;
+        if (!isOpen) return;
 
-        if (baseVersionId && String(baseVersionId) === String(targetVersionId)) {
+        if (!targetVersionId || !baseVersionId) {
+            setLoading(false);
+            setCompareData(null);
+            setError(null);
+            return;
+        }
+
+        if (String(baseVersionId) === String(targetVersionId)) {
             setLoading(false);
             setCompareData(null);
             setError("Base version and Target version cannot be identical. Please select different versions to compare.");
@@ -81,8 +91,7 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
             setLoading(true);
             setError(null);
             try {
-                let url = `/api/manufacturing/finished-goods/versions/approvals/compare?targetVersionId=${targetVersionId}`;
-                if (baseVersionId) url += `&baseVersionId=${baseVersionId}`;
+                let url = `/api/manufacturing/finished-goods/versions/approvals/compare?targetVersionId=${targetVersionId}&baseVersionId=${baseVersionId}`;
 
                 const res = await fetch(url);
                 if (!res.ok) {
@@ -159,16 +168,32 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
                                 className="rounded-lg border px-3 py-1.5 bg-background text-xs font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
                             >
                                 <option value="">Select Base Version...</option>
-                                {versions.map((v) => (
-                                    <option key={`base-${v.version_id}`} value={v.version_id} disabled={v.version_id === targetVersionId}>
-                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){v.version_id === targetVersionId ? " (Selected Target)" : ""}
-                                    </option>
-                                ))}
+                                {versions.map((v) => {
+                                    const isSelectedInTarget = Boolean(targetVersionId && v.version_id === targetVersionId);
+                                    return (
+                                        <option 
+                                            key={`base-${v.version_id}`} 
+                                            value={v.version_id}
+                                            disabled={isSelectedInTarget}
+                                        >
+                                            {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){isSelectedInTarget ? " (Selected in Target)" : ""}
+                                        </option>
+                                    );
+                                })}
                             </select>
                         </div>
 
-                        <div className="pt-4 text-muted-foreground shrink-0">
-                            <ArrowRight className="h-4 w-4" />
+                        {/* Interactive Swap Button */}
+                        <div className="pt-4 flex items-center justify-center shrink-0">
+                            <button
+                                type="button"
+                                onClick={handleSwapVersions}
+                                disabled={!baseVersionId || !targetVersionId}
+                                className="p-2 rounded-lg border bg-background hover:bg-primary/10 hover:text-primary hover:border-primary/40 text-muted-foreground transition-all cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Swap Base and Target Versions"
+                            >
+                                <ArrowLeftRight className="h-4 w-4" />
+                            </button>
                         </div>
 
                         <div className="flex flex-col gap-1 flex-1">
@@ -180,16 +205,24 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
                                 onChange={(e) => setTargetVersionId(e.target.value ? Number(e.target.value) : "")}
                                 className="rounded-lg border border-primary/50 px-3 py-1.5 bg-background text-xs font-bold text-foreground outline-none focus:ring-1 focus:ring-primary"
                             >
-                                {versions.map((v) => (
-                                    <option key={`target-${v.version_id}`} value={v.version_id} disabled={v.version_id === baseVersionId}>
-                                        {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){v.version_id === baseVersionId ? " (Selected Base)" : ""}
-                                    </option>
-                                ))}
+                                <option value="">Select Target Version...</option>
+                                {versions.map((v) => {
+                                    const isSelectedInBase = Boolean(baseVersionId && v.version_id === baseVersionId);
+                                    return (
+                                        <option 
+                                            key={`target-${v.version_id}`} 
+                                            value={v.version_id}
+                                            disabled={isSelectedInBase}
+                                        >
+                                            {v.version_name} {v.is_active ? "[ACTIVE]" : ""} ({v.status || "Draft"}){isSelectedInBase ? " (Selected in Base)" : ""}
+                                        </option>
+                                    );
+                                })}
                             </select>
                         </div>
                     </div>
 
-                    {costImpact && !loading && (
+                    {costImpact && !loading && targetVersionId && (
                         <div className="flex items-center gap-3 shrink-0 pl-4 border-l border-border/60">
                             <div className="text-right">
                                 <span className="text-[10px] uppercase font-bold text-muted-foreground block">Cost Delta</span>
@@ -235,7 +268,17 @@ export const VersionCompareModal: React.FC<VersionCompareModalProps> = ({
 
                 {/* Modal Content */}
                 <div className="flex-1 overflow-y-auto p-6 min-h-0 relative">
-                    {loading ? (
+                    {!targetVersionId ? (
+                        <div className="flex flex-col items-center justify-center p-16 text-center max-w-md mx-auto my-auto h-full">
+                            <div className="p-4 rounded-2xl bg-primary/10 border border-primary/20 text-primary mb-4">
+                                <GitCompare className="h-10 w-10" />
+                            </div>
+                            <h4 className="text-base font-bold text-foreground mb-1">Select a Target Version</h4>
+                            <p className="text-xs text-muted-foreground">
+                                Choose a target version from the dropdown above to compare BOM components, routings, labor standards, and overheads side-by-side against the selected base version.
+                            </p>
+                        </div>
+                    ) : loading ? (
                         <div className="flex flex-col items-center justify-center p-20 text-muted-foreground h-full">
                             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
                             <span className="text-xs font-semibold">Comparing version parameters...</span>

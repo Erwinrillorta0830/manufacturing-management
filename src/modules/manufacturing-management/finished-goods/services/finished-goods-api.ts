@@ -49,6 +49,18 @@ export function normalizeProductActiveState(value: unknown): boolean {
     return true;
 }
 
+export function resolveProductMasterStatus(statusValue: unknown, isActiveValue: unknown): "Active" | "Inactive" {
+    const isActive = normalizeProductActiveState(isActiveValue);
+    if (!isActive) return "Inactive";
+    if (typeof statusValue === "string") {
+        const s = statusValue.trim().toLowerCase();
+        if (s === "inactive" || s === "archived" || s === "disabled" || s === "deactivated" || s === "draft") {
+            return "Inactive";
+        }
+    }
+    return "Active";
+}
+
 export async function fetchProducts(search?: string, limit: number = 100): Promise<Product[]> {
     const query = new URLSearchParams();
     if (search) query.append("search", search);
@@ -62,8 +74,7 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
     // Map Directus model to local Product interface
     return data.map((p: BFFCatalogProduct) => {
         const parentId = extractId(p.parent_id) ?? null;
-        const isActive = normalizeProductActiveState(p.isActive);
-        const resolvedStatus = (p as unknown as { status?: string }).status || (isActive ? "Active" : "Inactive");
+        const resolvedStatus = resolveProductMasterStatus((p as unknown as { status?: string }).status, p.isActive);
 
         return {
             id: String(p.product_id),
@@ -78,7 +89,7 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
             parentProduct: parentId === null,
             parent_id: parentId,
             status: resolvedStatus,
-            isActive: resolvedStatus !== "Inactive" && isActive,
+            isActive: resolvedStatus === "Active",
             bom: [],
             routings: [],
             densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,

@@ -60,6 +60,42 @@ const getUnitOrderValue = (u: { value: string; label: string; order?: number }):
     return 2;
 };
 
+const getUomDisplayName = (uomValue: string, options: { value: string; label: string }[]): string => {
+    if (!uomValue) return "Box";
+    const found = options.find(o => o.value === uomValue || o.value.toLowerCase() === uomValue.toLowerCase());
+    if (found) {
+        const namePart = found.label.split("(")[0].trim();
+        return namePart || found.value;
+    }
+    return uomValue;
+};
+
+const formatChildVariantSku = (parentSku: string, uomValue: string): string => {
+    const rawParent = (parentSku || "").trim();
+    if (!rawParent) return "";
+    const cleanUom = (uomValue || "").trim().toUpperCase();
+    if (!cleanUom) return rawParent;
+
+    if (rawParent.toUpperCase().endsWith(`-${cleanUom}`)) {
+        return rawParent;
+    }
+    return `${rawParent}-${cleanUom}`;
+};
+
+const formatChildVariantTitle = (
+    parentTitle: string,
+    uomValue: string,
+    count: number | string,
+    uomOptionsList: { value: string; label: string }[]
+): string => {
+    const countNum = Number(count) || 0;
+    const uomName = getUomDisplayName(uomValue, uomOptionsList);
+    if (countNum > 0) {
+        return `${parentTitle} (${uomName} of ${countNum})`;
+    }
+    return `${parentTitle} (${uomName})`;
+};
+
 export function RegisterProductModal({
     isOpen,
     onClose,
@@ -90,16 +126,54 @@ export function RegisterProductModal({
     const [registerImagePreview, setRegisterImagePreview] = useState<string | null>(null);
     const [registerImageError, setRegisterImageError] = useState<string | null>(null);
 
-    const filteredUomOptions = React.useMemo(() => {
-        return uomOptions.filter(u => {
-            const order = getUnitOrderValue(u);
-            if (registrationType === "parent") {
-                return order <= 1;
-            } else {
-                return order > 1;
+    const usedUomsForParent = React.useMemo(() => {
+        if (registrationType !== "child" || !registerForm.parentId) return new Set<string>();
+        const parentIdStr = String(registerForm.parentId);
+        const parent = products.find(p => p.id === parentIdStr);
+        const childVariants = products.filter(p => {
+            const pParentId = extractId(p.parent_id);
+            return String(pParentId) === parentIdStr && p.isActive !== false;
+        });
+
+        const used = new Set<string>();
+        if (parent?.baseUom) {
+            used.add(parent.baseUom.trim().toUpperCase());
+        }
+        childVariants.forEach(c => {
+            if (c.baseUom) {
+                used.add(c.baseUom.trim().toUpperCase());
             }
         });
-    }, [uomOptions, registrationType]);
+        return used;
+    }, [registrationType, registerForm.parentId, products]);
+
+    const filteredUomOptions = React.useMemo(() => {
+        return uomOptions
+            .filter(u => {
+                const order = getUnitOrderValue(u);
+                if (registrationType === "parent") {
+                    return order <= 1;
+                } else {
+                    return order > 1;
+                }
+            })
+            .map(u => {
+                const uomUpper = (u.value || "").trim().toUpperCase();
+                const isUsed = usedUomsForParent.has(uomUpper);
+                return {
+                    ...u,
+                    disabled: isUsed,
+                    labelNode: isUsed ? (
+                        <div className="flex items-center justify-between w-full text-muted-foreground opacity-50 select-none">
+                            <span className="line-through">{u.label}</span>
+                            <span className="text-[10px] font-bold no-underline bg-muted/90 border px-1.5 py-0.5 rounded ml-2 text-muted-foreground">
+                                Already Registered
+                            </span>
+                        </div>
+                    ) : undefined
+                };
+            });
+    }, [uomOptions, registrationType, usedUomsForParent]);
 
     useEffect(() => {
         if (isOpen) return;
@@ -257,9 +331,17 @@ export function RegisterProductModal({
                                     id="register-sku"
                                     type="text"
                                     required
-                                    placeholder="e.g. FG-SOYA-2L"
+                                    placeholder="e.g. FG-SOYA-2L-BOX"
                                     value={registerForm.sku}
-                                    onChange={e => updateRegisterField("sku", e.target.value)}
+                                    onChange={e => {
+                                        const newSku = e.target.value;
+                                        updateRegisterField("sku", newSku);
+                                        const trimmedSku = newSku.trim();
+                                        const curVer = registerForm.versionName?.trim() || "";
+                                        if (!curVer || curVer === "v1.0" || curVer.endsWith(" - v1.0")) {
+                                            updateRegisterField("versionName", trimmedSku ? `${trimmedSku} - v1.0` : "v1.0");
+                                        }
+                                    }}
                                     aria-invalid={!!registerError("sku")}
                                     aria-describedby={registerError("sku") ? "register-sku-error" : undefined}
                                     className={registerInputClass("sku")}
@@ -346,13 +428,37 @@ export function RegisterProductModal({
                                                     const parentSegmentId = extractId(parentProd.product_segment);
                                                     const parentSectionId = extractId(parentProd.product_section);
 
+                                                    const childVariants = products.filter(p => {
+                                                        const pParentId = extractId(p.parent_id);
+                                                        return String(pParentId) === String(selectedId) && p.isActive !== false;
+                                                    });
+                                                    const used = new Set<string>();
+                                                    if (parentProd.baseUom) used.add(parentProd.baseUom.trim().toUpperCase());
+                                                    childVariants.forEach(c => {
+                                                        if (c.baseUom) used.add(c.baseUom.trim().toUpperCase());
+                                                    });
+
+                                                    const availableUom = uomOptions.find(u => {
+                                                        const order = getUnitOrderValue(u);
+                                                        return order > 1 && !used.has((u.value || "").trim().toUpperCase());
+                                                    });
+
+                                                    const chosenUom = (prev.baseUom && !used.has(prev.baseUom.trim().toUpperCase()))
+                                                        ? prev.baseUom
+                                                        : (availableUom?.value || "Box");
+
+                                                    const dynamicTitle = formatChildVariantTitle(parentProd.title, chosenUom, count, uomOptions);
+                                                    const dynamicSku = formatChildVariantSku(parentProd.sku, chosenUom);
+                                                    const dynamicVersion = dynamicSku ? `${dynamicSku} - v1.0` : "v1.0";
+
                                                     return {
                                                         ...prev,
                                                         parentId: selectedId,
-                                                        title: `${parentProd.title} (Box of ${count})`,
-                                                        sku: parentProd.sku || "",
-                                                        baseUom: "Case",
+                                                        title: dynamicTitle,
+                                                        sku: dynamicSku,
+                                                        baseUom: chosenUom,
                                                         targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
+                                                        costPerUnit: parentProd.cost_per_unit ? String(parentProd.cost_per_unit * count) : prev.costPerUnit,
                                                         uomCount: String(count),
                                                         expectedYield: "100",
                                                         description: parentProd.description || prev.description,
@@ -364,7 +470,8 @@ export function RegisterProductModal({
                                                         shelfLife: parentProd.product_shelf_life ? String(parentProd.product_shelf_life) : prev.shelfLife,
                                                         densityFactor: parentProd.densityFactor !== undefined
                                                             ? String(parentProd.densityFactor)
-                                                            : prev.densityFactor
+                                                            : prev.densityFactor,
+                                                        versionName: dynamicVersion
                                                     };
                                                 }
                                                 return {
@@ -402,7 +509,26 @@ export function RegisterProductModal({
                                     id="register-base-uom"
                                     options={filteredUomOptions}
                                     value={registerForm.baseUom}
-                                    onValueChange={(val) => updateRegisterField("baseUom", val)}
+                                    onValueChange={(val) => {
+                                        updateRegisterField("baseUom", val);
+                                        if (registrationType === "child" && registerForm.parentId) {
+                                            const parentProd = products.find(p => p.id === registerForm.parentId);
+                                            if (parentProd) {
+                                                const count = Number(registerForm.uomCount) || 20;
+                                                const newTitle = formatChildVariantTitle(parentProd.title, val, count, uomOptions);
+                                                const newSku = formatChildVariantSku(parentProd.sku, val);
+                                                const newVersion = newSku ? `${newSku} - v1.0` : "v1.0";
+                                                setRegisterForm(prev => ({
+                                                    ...prev,
+                                                    baseUom: val,
+                                                    title: newTitle,
+                                                    sku: newSku,
+                                                    versionName: newVersion,
+                                                    uomCount: prev.uomCount || "20"
+                                                }));
+                                            }
+                                        }
+                                    }}
                                     placeholder="Select Base UOM..."
                                     aria-invalid={!!registerError("baseUom")}
                                     aria-describedby={registerError("baseUom") ? "register-baseUom-error" : undefined}
@@ -426,11 +552,14 @@ export function RegisterProductModal({
                                         setRegisterForm(prev => {
                                             const parent = products.find(p => p.id === prev.parentId);
                                             if (parent) {
-                                                const targetSellingPrice = String((parent.targetSellingPrice || 0) * count);
-                                                const costPerUnit = parent.cost_per_unit ? String(parent.cost_per_unit * count) : prev.costPerUnit;
+                                                const chosenUom = prev.baseUom || "Box";
+                                                const newTitle = formatChildVariantTitle(parent.title, chosenUom, count, uomOptions);
+                                                const targetSellingPrice = parent.targetSellingPrice && count > 0 ? String(parent.targetSellingPrice * count) : prev.targetSellingPrice;
+                                                const costPerUnit = parent.cost_per_unit && count > 0 ? String(parent.cost_per_unit * count) : prev.costPerUnit;
                                                 return {
                                                     ...prev,
                                                     uomCount: val,
+                                                    title: newTitle,
                                                     targetSellingPrice,
                                                     costPerUnit
                                                 };
@@ -700,7 +829,7 @@ export function RegisterProductModal({
                                     id="register-versionName"
                                     type="text"
                                     required
-                                    placeholder="e.g. OIL 1ST VERSION"
+                                    placeholder="e.g. FG-SOYA-2L - v1.0"
                                     value={registerForm.versionName}
                                     onChange={e => updateRegisterField("versionName", e.target.value)}
                                     aria-invalid={!!registerError("versionName")}

@@ -236,7 +236,7 @@ export async function POST(request: Request) {
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
             isActive: 1,
-            status: "Approved",
+            status: "Active",
             item_type: "regular",
             product_type: 388,
             date_added: productDetails.date_added || todayStr,
@@ -261,16 +261,16 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
-        // 2. Create Product Version (Draft status by default for first version)
+        // 2. Create Product Version (For Approval status by default for first version)
         const versionPayload = {
             product_id: productId,
             version_name: validatedDetails.versionName,
-            base_quantity: 1,
+            base_quantity: 1.0,
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
-            status: "Draft",
-            is_primary: false,
-            valid_from: todayStr
+            status: "For Approval",
+            valid_from: todayStr,
+            created_by: userId ? Number(userId) : null
         };
 
 

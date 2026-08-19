@@ -311,7 +311,7 @@ export async function calculateRollupCost(
 
                 materialsBatchSubtotal += lineCost;
 
-                const ingName = compProduct ? compProduct.product_name : `Component #${bomItem.product_id}`;
+                const ingName = compProduct ? compProduct.product_name : `Unresolved Material (ID #${bomItem.product_id} - Archived or Missing)`;
                 const uomName = bomItem.unit_of_measurement
                     ? (typeof bomItem.unit_of_measurement === "number"
                         ? (unitsMap.get(bomItem.unit_of_measurement) || "pc")

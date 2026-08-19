@@ -479,9 +479,8 @@ export async function createProductVersion(
             version_name: versionName,
             expected_yield_percentage: expectedYield,
             base_quantity: baseQuantity,
-            uom_id: uomId || null,
-            status: "Draft",
-            is_primary: false,
+            uom_id: uomId || 1,
+            status: "For Approval",
             valid_from: todayStr
         };
         const res = await fetch(url, {
