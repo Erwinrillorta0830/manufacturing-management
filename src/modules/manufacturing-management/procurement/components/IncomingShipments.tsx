@@ -5,6 +5,8 @@ import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
 import { ShipmentFormModal } from "./incoming-shipments/ShipmentFormModal";
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
+import { toast } from "sonner";
+import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 
 export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } from "./incoming-shipments/types";
 
@@ -43,6 +45,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     const [statusFilter, setStatusFilter] = useState("All");
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(5);
+    const [printLoading, setPrintLoading] = useState(false);
 
     const {
         editingShipmentId,
@@ -145,6 +148,22 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
 
     const hasListFilters = Boolean(search.trim() || statusFilter !== "All");
 
+    const handlePrintPurchaseOrder = async () => {
+        if (!activeShipment) return;
+        try {
+            setPrintLoading(true);
+            await downloadPurchaseOrderPrintable({
+                purchaseOrderId: activeShipment.shipment_id,
+                documentType: "PURCHASE_ORDER"
+            });
+            toast.success("Purchase-order printable downloaded.");
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the purchase-order printable.");
+        } finally {
+            setPrintLoading(false);
+        }
+    };
+
     const supplierRawMaterials = useMemo(() => {
         if (!shipmentForm.supplier_id) return [];
         
@@ -238,6 +257,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 isSupplierForeign={isSupplierForeign}
                 onUpdateShipmentStatus={onUpdateShipmentStatus}
                 handleStartEdit={handleStartEdit}
+                onPrintPurchaseOrder={handlePrintPurchaseOrder}
+                printLoading={printLoading}
                 onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
                 lines={lines}
                 hasShipments={filteredShipments.length > 0}

@@ -10,11 +10,15 @@ import {
     Layers,
     X,
     TrendingUp,
-    ShieldCheck
+    ShieldCheck,
+    Printer,
+    Loader2
 } from "lucide-react";
+import { toast } from "sonner";
 import { fetchPurchaseAmountDetails } from "../../services/purchase-amount-api";
 import { ChartOfAccount, POLineItem, LandedExpenseRow, PurchaseOrderHeader } from "./types";
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
+import { downloadPurchaseOrderPrintable } from "../../../purchase-order/services/purchase-order-print-api";
 
 export type PostedOrder = IncomingShipment & Partial<PurchaseOrderHeader> & {
     id?: number;
@@ -41,6 +45,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
     const [selectedDetailPo, setSelectedDetailPo] = useState<PostedOrder | null>(null);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [poDetails, setPoDetails] = useState<PODetails | null>(null);
+    const [printLoading, setPrintLoading] = useState(false);
 
     const filteredOrders = postedOrders.filter(po => {
         const poNo = String(po.purchase_order_no || po.reference_number || po.purchase_order_id || "").toLowerCase();
@@ -64,6 +69,21 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
             setPoDetails(null);
         } finally {
             setLoadingDetails(false);
+        }
+    };
+
+    const handlePrintLandedCost = async () => {
+        if (!selectedDetailPo) return;
+        const purchaseOrderId = Number(selectedDetailPo.purchase_order_id || selectedDetailPo.shipment_id || selectedDetailPo.id);
+        if (!purchaseOrderId) return;
+        try {
+            setPrintLoading(true);
+            await downloadPurchaseOrderPrintable({ purchaseOrderId, documentType: "LANDED_COST" });
+            toast.success("Landed-cost printable downloaded.");
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the landed-cost printable.");
+        } finally {
+            setPrintLoading(false);
         }
     };
 
@@ -209,13 +229,24 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                     Historical breakdown of posted purchase amounts, GL code entries, and final landed unit costs.
                                 </p>
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => { setSelectedDetailPo(null); setPoDetails(null); }}
-                                className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors"
-                            >
-                                <X className="h-4 w-4" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => void handlePrintLandedCost()}
+                                    disabled={printLoading}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                                    Print landed cost
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setSelectedDetailPo(null); setPoDetails(null); }}
+                                    className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Modal Body */}
