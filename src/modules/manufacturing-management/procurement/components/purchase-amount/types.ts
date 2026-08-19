@@ -13,9 +13,18 @@ export interface POLineItem {
     product_id: number | { product_id: number; product_name?: string; category?: string; weight?: number };
     product_name?: string;
     product_category?: string;
+    category_type?: "RAW_MATERIAL" | "PACKAGING";
     received_quantity: number;
     unit_price: number;
     gross_weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
+    unit_gross_weight_kg?: number;
+    unit_net_weight_kg?: number | null;
+    unit_outer_carton_weight_kg?: number | null;
+    unit_pallet_weight_kg?: number | null;
+    line_gross_weight_kg?: number;
     discount_type?: number;
     discounted_amount?: number;
     vat_amount?: number;

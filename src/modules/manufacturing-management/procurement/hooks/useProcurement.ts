@@ -18,6 +18,7 @@ import {
     fetchLinkedProducts
 } from "../services/procurement-api";
 import type { SupplierStatusFilter } from "../services/procurement-api";
+import { purchaseOrderMaterialTypeFromProduct } from "../components/incoming-shipments/types";
 import { fetchPurchaseOrderCatalog } from "../../purchase-order/services/purchase-order-api";
 import {
     PHILIPPINES_COUNTRY,
@@ -518,6 +519,16 @@ export function useProcurement(defaultTab: string = "suppliers") {
             return;
         }
 
+        const invalidCategoryLine = validLines.find(line => {
+            const product = rawMaterials.find(material => String(material.product_id) === String(line.product_id));
+            const masterType = purchaseOrderMaterialTypeFromProduct(product, rawMaterials);
+            return !line.material_type || !product || masterType !== line.material_type;
+        });
+        if (invalidCategoryLine) {
+            toast.error("Every purchase-order line must select a Category Type matching the product master.");
+            return;
+        }
+
         const productIds = validLines.map(l => l.product_id);
         const uniqueProductIds = new Set(productIds);
         if (productIds.length !== uniqueProductIds.size) {
@@ -529,6 +540,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             setLoading(true);
             const linesPayload = validLines.map(l => ({
                 product_id: parseInt(l.product_id),
+                category_type: l.material_type === "raw_material" ? "RAW_MATERIAL" : "PACKAGING",
                 quantity_ordered: parseFloat(l.quantity_ordered),
                 base_unit_cost_php: parseFloat(l.base_unit_cost_php),
                 discount_type: l.discount_type_id ? Number(l.discount_type_id) : null,

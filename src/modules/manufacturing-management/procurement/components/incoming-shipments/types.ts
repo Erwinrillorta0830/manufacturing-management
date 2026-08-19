@@ -1,7 +1,9 @@
 import React from "react";
 import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+import { normalizeProductRelationId } from "../../product-relation";
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging";
+export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING";
 
 export type FxRateStatus = "idle" | "loading" | "ready" | "error";
 
@@ -21,9 +23,39 @@ export function purchaseOrderMaterialTypeFromProductType(
     return PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(option => option.productTypeId === normalizedProductType)?.value || "";
 }
 
+export function purchaseOrderCategoryTypeFromMaterialType(
+    materialType: PurchaseOrderMaterialType | "" | undefined
+): PurchaseOrderCategoryType | "" {
+    if (materialType === "raw_material") return "RAW_MATERIAL";
+    if (materialType === "packaging") return "PACKAGING";
+    return "";
+}
+
+export function purchaseOrderMaterialTypeFromCategoryType(
+    categoryType: PurchaseOrderCategoryType | null | undefined
+): PurchaseOrderMaterialType | "" {
+    if (categoryType === "RAW_MATERIAL") return "raw_material";
+    if (categoryType === "PACKAGING") return "packaging";
+    return "";
+}
+
+export function purchaseOrderMaterialTypeFromProduct(
+    product: RawMaterial | null | undefined,
+    rawMaterials: RawMaterial[]
+): PurchaseOrderMaterialType | "" {
+    const ownType = purchaseOrderMaterialTypeFromProductType(product?.product_type);
+    if (ownType) return ownType;
+    const parentId = normalizeProductRelationId(product?.parent_id);
+    const parent = parentId === null
+        ? undefined
+        : rawMaterials.find(material => normalizeProductRelationId(material.product_id) === parentId);
+    return purchaseOrderMaterialTypeFromProductType(parent?.product_type);
+}
+
 export interface ManifestLineFormItem {
     product_id: string;
     material_type?: PurchaseOrderMaterialType | "";
+    category_type?: PurchaseOrderCategoryType | "";
     quantity_ordered: string;
     base_unit_cost_php: string;
     parent_product_id: string;

@@ -23,6 +23,7 @@ const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).co
 const percentage = z.coerce.number().finite().min(0).max(100);
 const discountMode = z.enum(["Percentage", "Fixed Amount"]);
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING"]);
 
 export const purchaseOrderStatusSchema = z.enum([
     "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
@@ -44,6 +45,7 @@ export const purchaseOrderApprovalStageSchema = z.enum(["Finance"]);
 
 export const purchaseOrderLineSchema = z.object({
     product_id: positiveId,
+    category_type: purchaseOrderCategoryType,
     quantity_ordered: z.coerce.number().finite().positive(),
     base_unit_cost_php: nonNegativeMoney,
     discount_mode: discountMode.optional(),
@@ -96,6 +98,7 @@ export const purchaseOrderExpectedTotalsSchema = z.object({
 
 export const purchaseOrderDraftLineSchema = z.object({
     productId: positiveId,
+    categoryType: purchaseOrderCategoryType,
     parentProductId: positiveId.nullable().optional(),
     purchaseIntent: z.enum(["MRP_Demand", "Buffer_Stock"]),
     jobOrderId: positiveId.nullable(),

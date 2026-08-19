@@ -20,6 +20,7 @@ import {
 import { MrpPairValidationError } from "../../purchase-orders/_mrp-validation";
 import { PurchaseOrderDiscountError } from "../../purchase-orders/_domain";
 import { PurchaseOrderPaymentModeError } from "../../purchase-orders/_payment-modes";
+import { ProductCategoryTypeValidationError } from "../_category-type";
 
 class InvalidTransitionError extends Error {}
 
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
     } catch (e) {
         console.error("API Error fetching shipments:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to fetch shipments" }, {
-            status: e instanceof PurchaseOrderAuthorizationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError ? e.status : 500
         });
     }
 }
@@ -81,10 +82,12 @@ export async function POST(request: Request) {
     } catch (e) {
         console.error("API Error creating incoming shipment:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to create shipment" }, {
-            status: e instanceof PurchaseOrderAuthorizationError || e instanceof MrpPairValidationError || e instanceof PurchaseOrderPaymentModeError
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof MrpPairValidationError || e instanceof PurchaseOrderPaymentModeError || e instanceof ProductCategoryTypeValidationError
                 ? e.status
                 : e instanceof PurchaseOrderDiscountError ? 400 : 500,
-            ...(e instanceof PurchaseOrderDiscountError ? { code: e.code, details: e.details } : {})
+            ...(e instanceof PurchaseOrderDiscountError || e instanceof ProductCategoryTypeValidationError
+                ? { code: e instanceof PurchaseOrderDiscountError ? e.code : e.code, details: e.details }
+                : {})
         });
     }
 }

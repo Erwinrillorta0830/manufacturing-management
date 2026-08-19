@@ -613,17 +613,15 @@ export default function ShipmentInspectionForm({
                                     </div>
 
                                     <div className="flex flex-col items-end gap-1.5 shrink-0">
-                                        <button
-                                            type="button"
-                                            onClick={() => handleUpdateRow(line.line_id, "isPackaging", !row.isPackaging)}
-                                            disabled={readOnly}
+                                        <div
+                                            aria-label="Product Category Type"
                                             className={`px-2.5 py-1 rounded-lg text-[8px] uppercase font-extrabold border transition-all ${row.isPackaging
                                                     ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
                                                     : "bg-amber-500/10 text-amber-600 border-amber-500/20"
                                                 }`}
                                         >
                                             {row.isPackaging ? "Packaging (Lot Req)" : "Raw Material (Expiry Req)"}
-                                        </button>
+                                        </div>
                                     </div>
                                 </div>
 

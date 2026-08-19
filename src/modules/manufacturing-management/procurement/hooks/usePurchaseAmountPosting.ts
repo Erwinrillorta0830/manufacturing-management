@@ -18,6 +18,10 @@ import {
     isLandedCostPostingEligible,
     isPurchaseOrderPosted
 } from "../landed-cost-eligibility";
+import {
+    calculatePackagingWeightShares,
+    resolveProductWeightBreakdown
+} from "../packaging-weight";
 
 export interface PurchaseOrderOption {
     purchase_order_id?: number;
@@ -130,27 +134,32 @@ export function usePurchaseAmountPosting(
                 if (data.lineItems) {
                     setLineItems(data.lineItems.map((item: Record<string, unknown>) => {
                         const prodObj = typeof item.product_id === "object" && item.product_id !== null ? (item.product_id as Record<string, unknown>) : null;
-                        const pType = prodObj?.product_type ?? prodObj?.product_type_id;
-                        const pCode = String(prodObj?.product_code || "").toUpperCase();
-
-                        let categoryVal = "389";
-                        if (pType === 390 || String(pType) === "390" || pCode.startsWith("PKG-")) {
-                            categoryVal = "390";
-                        } else if (pType === 388 || String(pType) === "388" || pCode.startsWith("FG-")) {
-                            categoryVal = "388";
-                        } else if (pType === 389 || String(pType) === "389" || pCode.startsWith("RM-")) {
-                            categoryVal = "389";
-                        } else if (prodObj?.product_category) {
-                            categoryVal = String(prodObj.product_category);
+                        const categoryType = item.category_type;
+                        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING") {
+                            throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
                         }
 
-                        const weightVal = Number(item.gross_weight) || Number(prodObj?.weight) || Number(prodObj?.product_weight) || 0;
+                        const weightBreakdown = resolveProductWeightBreakdown(prodObj, {
+                            requireComplete: categoryType === "PACKAGING"
+                        });
+                        const persistedLineGrossWeight = Number(item.line_gross_weight_kg);
+                        const lineGrossWeightKg = Number.isFinite(persistedLineGrossWeight)
+                            ? persistedLineGrossWeight
+                            : weightBreakdown.grossWeightKg * Number(item.received_quantity || 0);
 
                         return {
                             ...item,
                             product_name: (prodObj?.product_name as string) || `Product #${item.product_id}`,
-                            product_category: categoryVal,
-                            gross_weight: weightVal
+                            category_type: categoryType,
+                            gross_weight: Number(item.gross_weight) || weightBreakdown.grossWeightKg,
+                            net_weight: weightBreakdown.netWeight,
+                            outer_carton_weight: weightBreakdown.outerCartonWeight,
+                            pallet_weight: weightBreakdown.palletWeight,
+                            unit_gross_weight_kg: weightBreakdown.grossWeightKg,
+                            unit_net_weight_kg: weightBreakdown.netWeightKg,
+                            unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
+                            unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
+                            line_gross_weight_kg: lineGrossWeightKg
                         } as POLineItem;
                     }));
                 }
@@ -194,41 +203,27 @@ export function usePurchaseAmountPosting(
             };
         }
 
-        const isPkg = (item: POLineItem) => {
-            const p = item.product_id;
-            const typeId = typeof p === "object" && p !== null ? (p as { product_type?: number; category?: string | number }).product_type || (p as { product_type?: number; category?: string | number }).category : null;
-            const cat = String(item.product_category || typeId || "").toUpperCase();
-            return typeId === 390 || cat === "390" || cat === "PKG" || cat === "PACKAGING" || cat === "PACKAGING ITEMS";
-        };
-
-        const isRm = (item: POLineItem) => {
-            const p = item.product_id;
-            const typeId = typeof p === "object" && p !== null ? (p as { product_type?: number; category?: string | number }).product_type || (p as { product_type?: number; category?: string | number }).category : null;
-            const cat = String(item.product_category || typeId || "").toUpperCase();
-            return typeId === 389 || cat === "389" || cat === "RM" || cat === "RAW MATERIAL" || cat === "RAW MATERIALS";
-        };
-
-        const rmItems = lineItems.filter(i => isRm(i));
-        const pkgItems = lineItems.filter(i => isPkg(i));
-        const fgItems = lineItems.filter(i => !isRm(i) && !isPkg(i));
+        const rmItems = lineItems.filter(i => i.category_type === "RAW_MATERIAL");
+        const pkgItems = lineItems.filter(i => i.category_type === "PACKAGING");
 
         const totalRMCommercialVal = rmItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);
         const totalPKGCommercialVal = pkgItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);
-        const totalFGCommercialVal = fgItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);
-        const totalPOCommercialVal = totalRMCommercialVal + totalPKGCommercialVal + totalFGCommercialVal;
+        const totalPOCommercialVal = totalRMCommercialVal + totalPKGCommercialVal;
 
         const rmRatio = totalPOCommercialVal > 0 ? totalRMCommercialVal / totalPOCommercialVal : 0;
         const pkgRatio = totalPOCommercialVal > 0 ? totalPKGCommercialVal / totalPOCommercialVal : 0;
-        const fgRatio = totalPOCommercialVal > 0 ? totalFGCommercialVal / totalPOCommercialVal : 0;
 
         const rmSubPool = totalLandedFee * rmRatio;
         const pkgSubPool = totalLandedFee * pkgRatio;
-        const fgSubPool = totalLandedFee * fgRatio;
 
         const totalRMQty = rmItems.reduce((sum, i) => sum + (i.received_quantity || 0), 0);
-        const totalPKGWeight = pkgItems.reduce((sum, i) => sum + (Number(i.gross_weight) || 0) * (i.received_quantity || 0), 0);
-
-        const missingWeightItems = pkgItems.filter(i => !i.gross_weight || Number(i.gross_weight) <= 0).map(i => i.product_name || `Product #${i.product_id}`);
+        const missingWeightItems = pkgItems
+            .filter(i => !Number.isFinite(Number(i.line_gross_weight_kg)) || Number(i.line_gross_weight_kg) <= 0)
+            .map(i => i.product_name || `Product #${i.product_id}`);
+        const packageWeightShares = calculatePackagingWeightShares(pkgItems.map(item => ({
+            key: item.purchase_order_product_id,
+            lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0
+        })));
 
         const rawAllocations = new Map<number, number>();
 
@@ -238,14 +233,8 @@ export function usePurchaseAmountPosting(
         }
 
         for (const item of pkgItems) {
-            const w = Number(item.gross_weight) || 0;
-            const fee = totalPKGWeight > 0 ? pkgSubPool * ((w * (item.received_quantity || 1)) / totalPKGWeight) : pkgSubPool / (pkgItems.length || 1);
-            rawAllocations.set(item.purchase_order_product_id, fee);
-        }
-
-        for (const item of fgItems) {
-            const itemCommVal = (item.received_quantity || 0) * (item.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0);
-            const fee = totalFGCommercialVal > 0 ? fgSubPool * (itemCommVal / totalFGCommercialVal) : fgSubPool / (fgItems.length || 1);
+            const weightShare = packageWeightShares.get(item.purchase_order_product_id) || 0;
+            const fee = weightShare > 0 ? pkgSubPool * weightShare : pkgSubPool / (pkgItems.length || 1);
             rawAllocations.set(item.purchase_order_product_id, fee);
         }
 
@@ -321,7 +310,7 @@ export function usePurchaseAmountPosting(
         if (!selectedShipment) return;
 
         if (isForeignPO && calculationResult.hasMissingWeight) {
-            setErrorMessage(`Gross Weight is required for Packaging items (${calculationResult.missingWeightItems.join(", ")}).`);
+            setErrorMessage(`Complete net, outer carton, and pallet weights are required for Packaging items (${calculationResult.missingWeightItems.join(", ")}).`);
             return;
         }
 
@@ -339,8 +328,9 @@ export function usePurchaseAmountPosting(
                 line_items: calculationResult.lineCalculations.map(calc => ({
                     purchase_order_product_id: calc.purchase_order_product_id,
                     product_id: typeof calc.product_id === "object" && calc.product_id !== null ? (calc.product_id as { product_id: number }).product_id : calc.product_id,
-                    product_category: calc.product_category,
+                    category_type: calc.category_type,
                     gross_weight: calc.gross_weight,
+                    line_gross_weight_kg: calc.line_gross_weight_kg,
                     received_quantity: calc.received_quantity,
                     unit_price: calc.unit_price,
                     discount_type: calc.discount_type,

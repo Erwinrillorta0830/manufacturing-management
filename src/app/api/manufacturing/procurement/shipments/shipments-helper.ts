@@ -1,7 +1,11 @@
 import { DIRECTUS_URL, headers } from "../_directus";
 import { INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { toStandardKg, calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
+import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
+import {
+    ProductWeightValidationError,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 import { DirectusShipment } from "@/modules/manufacturing-management/procurement/types";
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
@@ -22,6 +26,12 @@ import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from 
 import {
     isLandedCostPostingEligible
 } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import {
+    ProductCategoryTypeValidationError,
+    resolveProductCategoryTypes,
+    validatePurchaseOrderCategoryTypes,
+    type PurchaseOrderCategoryType
+} from "../_category-type";
 
 const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
 
@@ -131,9 +141,19 @@ interface ProductMin {
     product_id: number;
     product_name?: string;
     product_code?: string;
+    product_type?: unknown;
     unit_of_measurement?: unknown;
     unit_of_measurement_count?: number;
     parent_id?: unknown;
+    weight?: number | string | null;
+    product_weight?: number | string | null;
+    net_weight?: number | string | null;
+    outer_carton_weight?: number | string | null;
+    pallet_weight?: number | string | null;
+    weight_unit_id?: unknown;
+    cbm_height?: number | string | null;
+    cbm_width?: number | string | null;
+    cbm_length?: number | string | null;
 }
 
 interface DirectusInventoryLot {
@@ -205,7 +225,12 @@ interface LatestReceivingSnapshot {
 export interface ExtendedShipmentLineItem {
     line_id?: number;
     shipment_id?: number;
-    product_id: number | { product_id: number; product_name?: string; product_code?: string };
+    product_id: number | ProductMin;
+    unit_gross_weight_kg?: number;
+    unit_net_weight_kg?: number | null;
+    unit_outer_carton_weight_kg?: number | null;
+    unit_pallet_weight_kg?: number | null;
+    category_type?: PurchaseOrderCategoryType;
     quantity_ordered?: number;
     quantity_received?: number;
     quantity_rejected?: number;
@@ -611,12 +636,19 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         const productIds = popData.map((p) => typeof p.product_id === "object" && p.product_id ? p.product_id.product_id : p.product_id).filter(Boolean);
         let products: ProductMin[] = [];
         if (productIds.length > 0) {
-            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,weight_unit_id.*,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,weight_unit_id,cbm_height,cbm_width,cbm_length,product_type.name,product_type.type_name&limit=-1`;
+            const prodUrl = `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*,weight_unit_id.*,parent_id,parent_id.unit_of_measurement.unit_shortcut,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,cbm_height,cbm_width,cbm_length,product_type&limit=-1`;
             const prodRes = await fetch(prodUrl, { headers, cache: "no-store" });
             if (prodRes.ok) {
                 products = (await prodRes.json()).data as ProductMin[] || [];
             }
         }
+
+        const categoryTypes = await resolveProductCategoryTypes(
+            productIds.map(Number),
+            fetch
+        );
+
+        const weightBreakdowns = new Map<number, ReturnType<typeof resolveProductWeightBreakdown>>();
 
         // Calculate allocations dynamically
         const inputs = popData.map(line => {
@@ -625,11 +657,19 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const lineId = Number(line.purchase_order_product_id);
             const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
             const qty = Math.max(0, history.received || Number(line.ordered_quantity || 0));
-            const rawW = Number((product as Record<string, unknown> | undefined)?.weight || (product as Record<string, unknown> | undefined)?.product_weight || 0);
-            const weightUnitObj = (product as Record<string, unknown> | undefined)?.weight_unit_id as Record<string, unknown> | undefined;
-            const wUnitCode = (weightUnitObj?.code as string) || (weightUnitObj?.unit_shortcut as string);
-            const normW = toStandardKg(rawW, wUnitCode);
-            const productTypeObj = (product as Record<string, unknown> | undefined)?.product_type as Record<string, unknown> | undefined;
+            const categoryType = categoryTypes.get(Number(rawProdId));
+            if (!categoryType) {
+                throw new ProductCategoryTypeValidationError(
+                    400,
+                    "PRODUCT_CATEGORY_TYPE_REQUIRED",
+                    `Product ${rawProdId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                    { productId: Number(rawProdId), lineId }
+                );
+            }
+            const weightBreakdown = resolveProductWeightBreakdown(product, {
+                requireComplete: categoryType === "PACKAGING"
+            });
+            weightBreakdowns.set(Number(rawProdId), weightBreakdown);
             const cbmH = Number((product as Record<string, unknown> | undefined)?.cbm_height || 0);
             const cbmW = Number((product as Record<string, unknown> | undefined)?.cbm_width || 0);
             const cbmL = Number((product as Record<string, unknown> | undefined)?.cbm_length || 0);
@@ -637,10 +677,11 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 key: lineId,
                 quantity: qty,
                 baseUnitCost: Number(line.unit_price || 0),
-                weight: normW,
+                weight: weightBreakdown.grossWeightKg,
+                lineGrossWeightKg: weightBreakdown.grossWeightKg * qty,
                 volume: cbmH * cbmW * cbmL,
-                category: (productTypeObj?.name as string) || (productTypeObj?.type_name as string) || "RM",
-                weightUnit: wUnitCode
+                category_type: categoryType,
+                weightUnit: weightBreakdown.weightUnitCode
             };
         });
 
@@ -654,6 +695,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 product_name: `Product ID: ${rawProdId}`,
                 product_code: `ID-${rawProdId}`
             };
+            const weightBreakdown = weightBreakdowns.get(Number(rawProdId));
             const receivingIdsForProduct = originalReceivingData
                 .filter(row => relationId(row.product_id, "product_id") === Number(rawProdId))
                 .map(row => receivingRecordId(row.purchase_order_product_id));
@@ -734,6 +776,11 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 line_id: pop.purchase_order_product_id, // map line_id to pop.purchase_order_product_id so QA receiving can update it
                 shipment_id: shipmentId,
                 product_id: productObj,
+                unit_gross_weight_kg: weightBreakdown?.grossWeightKg || 0,
+                unit_net_weight_kg: weightBreakdown?.netWeightKg ?? null,
+                unit_outer_carton_weight_kg: weightBreakdown?.outerCartonWeightKg ?? null,
+                unit_pallet_weight_kg: weightBreakdown?.palletWeightKg ?? null,
+                category_type: categoryTypes.get(Number(rawProdId)),
                 quantity_ordered: Number(pop.ordered_quantity || 0),
                 quantity_received: previouslyReceivedQuantity,
                 quantity_rejected: previouslyRejectedQuantity,
@@ -785,6 +832,7 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         });
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch shipment line items:", e);
+        if (e instanceof ProductCategoryTypeValidationError || e instanceof ProductWeightValidationError) throw e;
         return [];
     }
 }
@@ -804,6 +852,28 @@ export async function createIncomingShipment(
             throw new PurchaseOrderPaymentModeError("The selected Payment Type could not be validated.", 503);
         }
         await assertMrpProductJobOrderPairs(lineItems);
+        await validatePurchaseOrderCategoryTypes(lineItems.map(item => ({
+            productId: typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id),
+            categoryType: item.category_type
+        })));
+        const productIds = [...new Set(lineItems.map(item =>
+            typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id)
+        ))].filter(id => Number.isSafeInteger(id) && id > 0);
+        const categoryTypes = await resolveProductCategoryTypes(productIds);
+        const productsResponse = await fetch(
+            `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!productsResponse.ok) throw new Error("Unable to validate product weight data.");
+        const products = ((await productsResponse.json()).data || []) as ProductMin[];
+        const productsById = new Map(products.map(product => [Number(product.product_id), product]));
+        for (const item of lineItems) {
+            const productId = typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id);
+            const categoryType = categoryTypes.get(productId);
+            const product = productsById.get(productId);
+            if (!product || !categoryType) continue;
+            resolveProductWeightBreakdown(product, { requireComplete: categoryType === "PACKAGING" });
+        }
         const extendedData = shipmentData as ExtendedShipment;
         const exchangeRate = DecimalValue.from(extendedData.exchange_rate ?? 58).toFixed(6);
         const calculatedTotals = calculatePurchaseOrderTotals(lineItems.map(item => ({

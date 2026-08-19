@@ -3,7 +3,8 @@ import { toast } from "sonner";
 import {
     ManifestLineFormItem,
     ShipmentFormState,
-    purchaseOrderMaterialTypeFromProductType,
+    purchaseOrderMaterialTypeFromProduct,
+    purchaseOrderMaterialTypeFromCategoryType,
     FxRateStatus
 } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPriceTypeRule } from "../types";
@@ -239,7 +240,7 @@ export function useIncomingShipmentsForm({
 
             return {
                 product_id: productId,
-                material_type: purchaseOrderMaterialTypeFromProductType(selectedRawMaterial?.product_type),
+                material_type: purchaseOrderMaterialTypeFromCategoryType(l.category_type),
                 product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
                 product_code: typeof l.product_id === "object" ? l.product_id.product_code || "" : "",
                 quantity_ordered: String(l.quantity_ordered || 0),
@@ -299,8 +300,10 @@ export function useIncomingShipmentsForm({
         const discountAmount = Number(line.discount_amount || 0);
         const selectedMaterial = rawMaterials.find(material =>
             String(material.product_id) === String(line.product_id)
+        ) || rawMaterials.find(material =>
+            String(material.product_id) === String(line.parent_product_id)
         );
-        const selectedMaterialType = purchaseOrderMaterialTypeFromProductType(selectedMaterial?.product_type);
+        const selectedMaterialType = purchaseOrderMaterialTypeFromProduct(selectedMaterial, rawMaterials);
 
         if (!line.material_type) errors.push("Type is required");
         if (!line.product_id) errors.push("Raw Product Name is required");
@@ -360,7 +363,11 @@ export function useIncomingShipmentsForm({
         }
 
         if (editingShipmentId) {
-            const editSucceeded = await onEditShipment(editingShipmentId, shipmentForm, linesForm);
+            const linesForEdit = linesForm.map(line => ({
+                ...line,
+                category_type: line.material_type === "raw_material" ? "RAW_MATERIAL" as const : "PACKAGING" as const
+            }));
+            const editSucceeded = await onEditShipment(editingShipmentId, shipmentForm, linesForEdit);
             if (editSucceeded !== false) {
                 setEditingShipmentId(null);
                 setIsModalOpen(false);
