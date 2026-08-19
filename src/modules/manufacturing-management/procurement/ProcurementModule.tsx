@@ -169,9 +169,10 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                                     <CreatableSelect
                                         options={shipments.map(s => {
                                             const poNo = (s as { purchase_order_no?: string }).purchase_order_no ? ` / ${(s as { purchase_order_no?: string }).purchase_order_no}` : "";
+                                            const forceClosed = Boolean(s.isForceReceived || s.forceReceivedAt);
                                             return {
                                                 value: String(s.shipment_id),
-                                                label: `BL/PO: ${s.reference_number}${poNo} (${s.status})`
+                                                label: `BL/PO: ${s.reference_number}${poNo} (${s.status}${forceClosed ? " | Force Received" : ""})`
                                             };
                                         })}
                                         value={selectedShipment ? String(selectedShipment.shipment_id) : ""}

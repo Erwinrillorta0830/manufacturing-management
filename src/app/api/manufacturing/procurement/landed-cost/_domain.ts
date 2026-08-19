@@ -50,6 +50,7 @@ interface DirectusRecord {
 
 interface ReceivingRecord extends DirectusRecord {
     id?: number;
+    purchase_order_receiving_id?: unknown;
     purchase_order_product_id?: unknown;
     purchase_order_line_id?: unknown;
     product_id?: unknown;
@@ -133,6 +134,10 @@ function asPositiveId(value: unknown): number | null {
             ?? value
         : value);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function receivingRecordId(receiving: ReceivingRecord): number | null {
+    return asPositiveId(receiving.id ?? receiving.purchase_order_receiving_id ?? receiving.purchase_order_product_id);
 }
 
 function relationId(value: unknown, preferredKey: string): number | null {
@@ -704,7 +709,7 @@ export async function finalizeLandedCost(input: {
             const source = snapshot.lines.find(candidate => candidate.key === line.key);
             if (!source) continue;
             for (const receiving of source.receivingRows) {
-                const receivingId = asPositiveId(receiving.id);
+                const receivingId = receivingRecordId(receiving);
                 if (!receivingId) continue;
                 receivingBefore.set(receivingId, {
                     allocated_expense_php: receiving.allocated_expense_php,
