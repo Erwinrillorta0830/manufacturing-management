@@ -29,7 +29,7 @@ interface DirectusWorkCenter {
 export async function GET() {
     try {
         const [res, usersRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=-work_center_id&fields=*,asset_id.id,asset_id.item_image,asset_id.serial,asset_id.rfid_code,asset_id.barcode,asset_id.condition,asset_id.item_id.id,asset_id.item_id.item_name,department_id.department_id,department_id.department_name`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=-work_center_id&fields=*,asset_id.id,asset_id.item_image,asset_id.serial,asset_id.rfid_code,asset_id.barcode,asset_id.condition,asset_id.item_id.id,asset_id.item_id.item_name,asset_id.department.department_id,asset_id.department.department_name,department_id.department_id,department_id.department_name`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null)
         ]);
 
@@ -49,17 +49,38 @@ export async function GET() {
 
         const mappedWorkCenters = workCenters.map((wc) => {
             const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
-            const department = wc.department_id && typeof wc.department_id === "object" ? wc.department_id : null;
+            let department: Record<string, unknown> | null = null;
+            let departmentId: number | null = null;
+
+            if (asset) {
+                // If an asset is linked, the department is derived directly from the asset
+                if (asset.department && typeof asset.department === "object") {
+                    department = asset.department as Record<string, unknown>;
+                    departmentId = Number((department as Record<string, unknown>).department_id ?? (department as Record<string, unknown>).id) || null;
+                } else if (typeof asset.department === "number" && !isNaN(asset.department)) {
+                    departmentId = asset.department;
+                }
+            } else if (wc.department_id) {
+                if (typeof wc.department_id === "object") {
+                    department = wc.department_id as Record<string, unknown>;
+                    departmentId = Number(department.department_id ?? department.id) || null;
+                } else if (typeof wc.department_id === "number" && !isNaN(wc.department_id)) {
+                    departmentId = wc.department_id;
+                }
+            }
 
             const matchedUser = usersList.find((u) => Number(u.user_id) === Number(wc.created_by));
             const creatorName = matchedUser
                 ? [matchedUser.user_fname, matchedUser.user_lname].filter(Boolean).join(" ") || "N/A"
                 : "N/A";
 
+            const rawCreatedAt = (wc.created_at || wc.date_created) as string | undefined;
+
             return {
                 ...wc,
+                created_at: rawCreatedAt,
                 asset_id: asset ? Number((asset as Record<string, unknown>).id) : wc.asset_id,
-                department_id: department ? Number((department as Record<string, unknown>).department_id) : wc.department_id,
+                department_id: departmentId,
                 is_active: wc.is_active === undefined || wc.is_active === null ? true : Boolean(Number(wc.is_active)),
                 asset,
                 department,
