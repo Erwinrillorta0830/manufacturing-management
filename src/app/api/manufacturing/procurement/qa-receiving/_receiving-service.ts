@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, todayInManila } from "../_domain";
+import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
     deriveRejectedQuantity,
@@ -352,7 +353,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,date_received`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,date_received,force_received_at`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,max_batch_capacity&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -363,6 +364,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!linesRes.ok || !lotsRes.ok || !lotInventoryRes.ok || !branchesRes.ok || !movementTypesRes.ok) throw new Error("Failed to validate receiving reference data.");
 
         const shipment = (await headerRes.json()).data as Record<string, unknown>;
+        const forceClosedMessage = forceReceivedIntakeMessage(shipment.force_received_at);
+        if (forceClosedMessage) throw new ReceivingError(forceClosedMessage, 409);
         const poLines = ((await linesRes.json()).data || []) as Record<string, unknown>[];
         const lotRows = ((await lotsRes.json()).data || []) as Array<Record<string, unknown>>;
         const validLotIds = new Set(lotRows.map(lot => Number(lot.lot_id)));

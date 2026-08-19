@@ -19,7 +19,11 @@ import { fetchPurchaseAmountDetails } from "../../services/purchase-amount-api";
 import { ChartOfAccount, POLineItem, LandedExpenseRow, PurchaseOrderHeader } from "./types";
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
 import LandedCostAuditSummary from "../LandedCostAuditSummary";
-import { downloadPurchaseOrderPrintable } from "../../../purchase-order/services/purchase-order-print-api";
+import {
+    downloadPurchaseOrderPrintable,
+    fetchPurchaseOrderArchiveStatus,
+    type PurchaseOrderArchiveStatus
+} from "../../../purchase-order/services/purchase-order-print-api";
 
 export type PostedOrder = IncomingShipment & Partial<PurchaseOrderHeader> & {
     id?: number;
@@ -46,6 +50,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
     const [selectedDetailPo, setSelectedDetailPo] = useState<PostedOrder | null>(null);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [poDetails, setPoDetails] = useState<PODetails | null>(null);
+    const [archiveStatus, setArchiveStatus] = useState<PurchaseOrderArchiveStatus | null>(null);
     const [printLoading, setPrintLoading] = useState(false);
 
     const filteredOrders = postedOrders.filter(po => {
@@ -61,11 +66,16 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
     const handleViewDetails = async (po: PostedOrder) => {
         setSelectedDetailPo(po);
         setLoadingDetails(true);
+        setArchiveStatus(null);
         try {
             const poId = Number(po.purchase_order_id || po.shipment_id || po.id || 0);
             if (!poId) return;
-            const data = await fetchPurchaseAmountDetails(poId);
+            const [data, archive] = await Promise.all([
+                fetchPurchaseAmountDetails(poId),
+                fetchPurchaseOrderArchiveStatus(poId).catch(() => null)
+            ]);
             setPoDetails(data);
+            setArchiveStatus(archive);
         } catch {
             setPoDetails(null);
         } finally {
@@ -163,15 +173,16 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                 </td>
                             </tr>
                         ) : (
-                            filteredOrders.map((po) => {
+                            filteredOrders.map((po, index) => {
                                 const isForeign = po.currency_code === "USD" || po.is_import === 1;
                                 const poNo = po.purchase_order_no || po.reference_number || `PO #${po.purchase_order_id}`;
                                 const suppName = typeof po.supplier_name === "object" ? (po.supplier_name?.supplier_name || `Supplier #${po.supplier_name?.id}`) : (po.supplier_name ? `Supplier #${po.supplier_name}` : "N/A");
                                 const totalPhp = Number(po.total_amount) || 0;
                                 const rate = Number(po.exchange_rate) || 58.50;
+                                const rowKey = po.purchase_order_id || po.shipment_id || po.id || po.reference_number || `${poNo}-${index}`;
 
                                 return (
-                                    <tr key={po.purchase_order_id || po.id} className="hover:bg-muted/30 transition-colors">
+                                    <tr key={rowKey} className="hover:bg-muted/30 transition-colors">
                                         <td className="p-3 font-bold text-foreground flex items-center gap-1.5">
                                             <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
                                             {poNo}
@@ -276,6 +287,31 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                             <div className="text-muted-foreground text-[10px] font-bold">Posting Status</div>
                                             <div className="font-bold text-emerald-600">Posted & Capitalized</div>
                                         </div>
+                                    </div>
+
+                                    <div className="rounded-xl border bg-muted/20 p-3 text-xs">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Printable archive</div>
+                                                <div className={`mt-1 font-bold ${archiveStatus?.complete ? "text-emerald-600" : "text-amber-600"}`}>
+                                                    {archiveStatus?.status === "ARCHIVED"
+                                                        ? "Archived and ready for audit"
+                                                        : archiveStatus?.status === "PARTIALLY_ARCHIVED"
+                                                            ? "Partially archived"
+                                                            : "Archive pending"}
+                                                </div>
+                                            </div>
+                                            <div className="text-right text-[10px] text-muted-foreground">
+                                                {archiveStatus
+                                                    ? `${archiveStatus.archivedDocumentTypes.length}/${archiveStatus.requiredDocumentTypes.length} core documents`
+                                                    : "Status unavailable"}
+                                            </div>
+                                        </div>
+                                        {archiveStatus && archiveStatus.missingDocumentTypes.length > 0 && (
+                                            <div className="mt-2 text-[10px] text-muted-foreground">
+                                                Missing: {archiveStatus.missingDocumentTypes.join(", ")}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Import Expenses Table if any */}

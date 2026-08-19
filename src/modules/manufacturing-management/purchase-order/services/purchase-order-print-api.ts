@@ -5,6 +5,27 @@ export type PurchaseOrderPrintDocumentType =
     | "STORAGE_LOT_ALLOCATION"
     | "LANDED_COST";
 
+export interface PurchaseOrderArchiveDocument {
+    archiveId: string;
+    documentType: string;
+    fileId: string;
+    fileName: string;
+    workflowRevision: number;
+    generatedBy: string;
+    generatedAt: string;
+    pageCount: number;
+}
+
+export interface PurchaseOrderArchiveStatus {
+    purchaseOrderId: number;
+    status: "NOT_ARCHIVED" | "PARTIALLY_ARCHIVED" | "ARCHIVED";
+    complete: boolean;
+    requiredDocumentTypes: string[];
+    archivedDocumentTypes: string[];
+    missingDocumentTypes: string[];
+    documents: PurchaseOrderArchiveDocument[];
+}
+
 function fileNameFromHeader(value: string | null, fallback: string): string {
     const match = value?.match(/filename="?([^";]+)"?/i);
     return match?.[1] || fallback;
@@ -41,4 +62,13 @@ export async function downloadPurchaseOrderPrintable(input: {
         fileId: response.headers.get("x-printable-archive-file-id") || "",
         reused: response.headers.get("x-printable-archive-reused") === "true"
     };
+}
+
+export async function fetchPurchaseOrderArchiveStatus(purchaseOrderId: number): Promise<PurchaseOrderArchiveStatus> {
+    const response = await fetch(`/api/manufacturing/purchase-orders/${purchaseOrderId}/archive`, {
+        cache: "no-store"
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "The purchase-order archive status could not be loaded.");
+    return body.data as PurchaseOrderArchiveStatus;
 }
