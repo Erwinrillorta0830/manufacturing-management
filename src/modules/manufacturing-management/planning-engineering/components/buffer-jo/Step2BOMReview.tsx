@@ -8,6 +8,8 @@ import { formatHoursToHMS } from "../../utils/containerization-helper";
 
 export interface Step2BOMReviewProps {
     loadingDetails: boolean;
+    detailsError: string | null;
+    retryDetails: () => void;
     parentUomLabel: string;
     boxEstimatedHours: number;
     shiftOption: string;
@@ -35,6 +37,8 @@ export interface Step2BOMReviewProps {
 
 export function Step2BOMReview({
     loadingDetails,
+    detailsError,
+    retryDetails,
     parentUomLabel,
     boxEstimatedHours,
     shiftOption,
@@ -63,6 +67,21 @@ export function Step2BOMReview({
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-xs text-muted-foreground font-medium">Analyzing BOM and routes...</p>
+            </div>
+        );
+    }
+
+    if (detailsError) {
+        return (
+            <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                <ShieldAlert className="h-8 w-8 text-destructive" />
+                <div>
+                    <p className="text-sm font-semibold text-foreground">Unable to load BOM details</p>
+                    <p className="mt-1 max-w-md text-xs text-muted-foreground">{detailsError}</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={retryDetails}>
+                    Retry
+                </Button>
             </div>
         );
     }

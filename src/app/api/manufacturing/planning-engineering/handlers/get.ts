@@ -13,6 +13,24 @@ import {
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 
+const WIZARD_STEP_TIMEOUT_MS = 20000;
+
+async function withTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            operation,
+            new Promise<T>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new Error(`${label} timed out after ${WIZARD_STEP_TIMEOUT_MS / 1000} seconds`));
+                }, WIZARD_STEP_TIMEOUT_MS);
+            })
+        ]);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
 export async function handleGET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -810,13 +828,18 @@ export async function handleGET(request: Request) {
                 return NextResponse.json({ error: "Missing or invalid productId query parameter" }, { status: 400 });
             }
 
-            // 2a & 2d: Fetch parent BOM details & routes, and manufacturing operations catalog in parallel
-            const [bomDetails, opRes] = await Promise.all([
+            // Load the selected recipe first. The operations catalog is supplemental display data and
+            // must not prevent the BOM calculation from returning when it is slow or unavailable.
+            const bomDetails = await withTimeout(
                 vId
                     ? getBOMDetailsForVersion(prodId, vId)
                     : getActiveVersionForProduct(prodId),
-                fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers })
-            ]);
+                "BOM and routing details"
+            );
+
+            // Keep the preview bounded. Routings still render with the operation fallback below;
+            // loading the entire operations catalog is not required to calculate requirements.
+            const operations: any[] = [];
 
             const { version, routes } = bomDetails;
             if (!version) {
@@ -829,7 +852,6 @@ export async function handleGET(request: Request) {
                 });
             }
 
-            const operations = opRes.ok ? (await opRes.json()).data || [] : [];
             const operationsMap = new Map<number, string>(
                 operations.map((o: any) => [Number(o.id), o.operation_name])
             );
