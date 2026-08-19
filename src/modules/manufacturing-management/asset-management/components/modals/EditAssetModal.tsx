@@ -8,7 +8,6 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Dialog,
   DialogContent,
@@ -26,11 +25,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -47,8 +41,7 @@ import {
   ItemType,
   User,
 } from "@/modules/manufacturing-management/asset-management/types";
-import { format } from "date-fns";
-import { CalendarIcon, Loader2, UploadCloud, X } from "lucide-react";
+import { Loader2, UploadCloud, X } from "lucide-react";
 import { assetService } from "../../services/assetService";
 import { cn, getAssetImageUrl } from "../../utils/lib";
 import {
@@ -82,8 +75,6 @@ export default function EditAssetModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Popover states to auto-close upon selection
-  const [dateOpen, setDateOpen] = useState(false);
 
   const form = useForm<AssetFormValues>({
     resolver: zodResolver(assetFormSchema),

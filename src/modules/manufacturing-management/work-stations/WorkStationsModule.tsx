@@ -53,7 +53,6 @@ export default function WorkStationsModule() {
     const [overheadCost, setOverheadCost] = useState("0");
     const [capacity, setCapacity] = useState("0");
     const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
-    const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
     const [isActive, setIsActive] = useState(true);
     const [validationAttempted, setValidationAttempted] = useState(false);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -200,7 +199,6 @@ export default function WorkStationsModule() {
         setOverheadCost("0");
         setCapacity("0");
         setSelectedAssetId(null);
-        setSelectedDeptId(null);
         setIsActive(true);
         setAssetSearch("");
         setValidationAttempted(false);
@@ -219,7 +217,6 @@ export default function WorkStationsModule() {
         setOverheadCost(wc.overhead_cost_per_hour != null ? String(Number(wc.overhead_cost_per_hour)) : "0");
         setCapacity(wc.capacity_per_hour != null ? String(Math.round(Number(wc.capacity_per_hour))) : "0");
         setSelectedAssetId(wc.asset_id || null);
-        setSelectedDeptId(wc.department_id || null);
         setIsActive(Boolean(wc.is_active));
 
         // Prepopulate searches (without prepending raw ID)

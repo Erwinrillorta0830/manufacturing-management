@@ -7,16 +7,9 @@ import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { format } from "date-fns";
 import {
-  CalendarIcon,
   Loader2,
   Plus,
   UploadCloud,
@@ -104,8 +97,6 @@ export default function AddAssetModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Popover states to auto-close upon selection
-  const [dateOpen, setDateOpen] = useState(false);
 
   const form = useForm<AssetFormValues>({
     resolver: zodResolver(assetFormSchema),
