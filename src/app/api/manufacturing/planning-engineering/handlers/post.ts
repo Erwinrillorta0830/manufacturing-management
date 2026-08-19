@@ -603,6 +603,7 @@ export async function handlePOST(request: Request) {
             branch_id: jo.branch_id || null,
             shift_option: jo.shiftOption || "8",
             daily_breakdown: jo.dailyBreakdown || null,
+            remarks: jo.remarks || null,
             created_at: await getISOStringInConfiguredTimezone(),
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,

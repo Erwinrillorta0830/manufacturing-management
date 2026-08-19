@@ -1305,6 +1305,7 @@ export async function handleGET(request: Request) {
                 routingTasks: item.routing_tasks || [],
                 shiftOption: item.shift_option || "8",
                 dailyBreakdown: item.daily_breakdown || null,
+                remarks: item.remarks || null,
                 createdAt: item.created_at || null,
                 createdBy: item.created_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
