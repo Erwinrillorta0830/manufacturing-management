@@ -80,6 +80,8 @@ export interface IncomingShipment {
     status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
+    is_posted?: number | boolean | null;
+    is_posted_amounts?: number | boolean | null;
     rejection_stage?: "Plant" | "Finance" | null;
     remark?: string;
     created_at?: string;
@@ -107,12 +109,18 @@ export interface ShipmentLineItem {
         product_id: number;
         product_name: string;
         product_code?: string;
+        weight?: number | string | null;
+        net_weight?: number | string | null;
+        outer_carton_weight?: number | string | null;
+        pallet_weight?: number | string | null;
+        weight_unit_id?: unknown;
         unit_of_measurement?: {
             unit_id: number;
             unit_shortcut: string;
             unit_name: string;
         };
     };
+    category_type?: "RAW_MATERIAL" | "PACKAGING";
     quantity_ordered?: number;
     quantity_received?: number | null;
     base_unit_cost_php: number | string;
@@ -138,6 +146,43 @@ export interface ShipmentExpense {
     allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
+export type LandedCostAllocationRule = "Value" | "Weight" | "Volume" | "Hybrid";
+
+export interface LandedCostExpenseDraft {
+    expense_id?: number;
+    overhead_id?: number | null;
+    chart_of_account_id?: number | null;
+    expense_type?: string | null;
+    amount_php: number | string;
+}
+
+export interface LandedCostAttachmentRecord {
+    id: number;
+    computation_id: number;
+    directus_file_id: string;
+    document_type: "CARRIER_INVOICE" | "FREIGHT_BILL" | "BROKER_ASSESSMENT_SHEET" | "OTHER";
+    file_name: string;
+    mime_type?: string | null;
+    file_size?: number | null;
+    uploaded_at?: string | null;
+}
+
+export interface LandedCostComputationRecord {
+    id: number;
+    purchase_order_id: number;
+    allocation_rule: LandedCostAllocationRule;
+    status: "DRAFT" | "FINALIZING" | "FINALIZED" | "FAILED";
+    total_landed_fee?: number | null;
+    rounding_variance?: number | null;
+}
+
+export interface LandedCostDraftResponse {
+    computation: LandedCostComputationRecord | null;
+    attachments: LandedCostAttachmentRecord[];
+    expenses: LandedCostExpenseDraft[];
+    preview?: unknown;
+}
+
 export interface RawMaterial {
     product_id: number;
     parent_id?: number | null;
@@ -158,6 +203,9 @@ export interface RawMaterial {
     estimated_unit_cost: number;
     density_factor: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | null;
     product_brand?: number | null;
@@ -195,6 +243,9 @@ export interface RegisterRawMaterialPayload {
     cost_per_unit?: number;
     density_factor?: number;
     weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | null;
     unit_of_measurement?: number;
     price_per_unit?: number;
@@ -292,7 +343,10 @@ export interface PackagingVariant {
     unit_of_measurement?: number;
     unit_of_measurement_count?: number;
     density_factor?: number;
-    weight?: number;
+    weight?: number | null;
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
     weight_unit_id?: number | null;
     product_brand?: number | null;
     product_category?: number | null;
@@ -360,6 +414,9 @@ export interface BFFCatalogProduct {
     estimated_unit_cost?: number | string;
     density_factor?: number | string;
     weight?: number | string | null;
+    net_weight?: number | string | null;
+    outer_carton_weight?: number | string | null;
+    pallet_weight?: number | string | null;
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;

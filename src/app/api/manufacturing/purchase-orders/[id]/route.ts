@@ -5,6 +5,7 @@ import {
     PurchaseOrderAuthorizationError,
     requirePurchaseOrderModuleAccess
 } from "../_auth";
+import { ProductCategoryTypeValidationError } from "../../procurement/_category-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         return NextResponse.json({ data: await fetchShipmentLineItems(id) });
     } catch (error) {
         return NextResponse.json({ error: (error as Error).message || "Failed to load purchase-order details." }, {
-            status: error instanceof PurchaseOrderAuthorizationError ? error.status : 500
+            status: error instanceof PurchaseOrderAuthorizationError || error instanceof ProductCategoryTypeValidationError ? error.status : 500
         });
     }
 }

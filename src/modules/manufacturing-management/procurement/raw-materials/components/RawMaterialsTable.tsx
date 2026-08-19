@@ -197,6 +197,11 @@ export function RawMaterialsTable({
                                                     {typeof m.weight_unit_id === "object" && m.weight_unit_id
                                                         ? ((m.weight_unit_id as { code?: string; unit_shortcut?: string })?.code || (m.weight_unit_id as { code?: string; unit_shortcut?: string })?.unit_shortcut || "kg")
                                                         : (weightUnits.find(u => u.id === Number(m.weight_unit_id))?.code || "kg")}
+                                                    {m.net_weight != null && m.outer_carton_weight != null && m.pallet_weight != null && (
+                                                        <span className="block text-[9px] font-medium text-muted-foreground">
+                                                            N {Number(m.net_weight).toFixed(2)} + C {Number(m.outer_carton_weight).toFixed(2)} + P {Number(m.pallet_weight).toFixed(2)}
+                                                        </span>
+                                                    )}
                                                 </span>
                                             ) : (
                                                 <span className="text-red-500 font-bold text-[10px] bg-red-500/10 px-1.5 py-0.5 rounded">

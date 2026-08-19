@@ -1,15 +1,33 @@
 import { DIRECTUS_URL, headers } from "../_directus";
 import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
+import {
+    calculatePackagingWeightShares,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
+import {
+    ProductCategoryTypeValidationError,
+    resolveProductCategoryTypes,
+    type PurchaseOrderCategoryType
+} from "../_category-type";
 
 export interface POLineItemForPosting {
     purchase_order_product_id: number;
     product_id: number;
     product_name?: string;
-    product_category?: string; // "RM" | "Packaging" | "PKG" | etc.
+    product_category?: string;
+    category_type?: PurchaseOrderCategoryType;
     received_quantity: number;
     unit_price: number; // in foreign currency or local PHP
     gross_weight?: number | null; // in kg
+    net_weight?: number | null;
+    outer_carton_weight?: number | null;
+    pallet_weight?: number | null;
+    unit_gross_weight_kg?: number;
+    unit_net_weight_kg?: number | null;
+    unit_outer_carton_weight_kg?: number | null;
+    unit_pallet_weight_kg?: number | null;
     weight_unit?: string;
+    line_gross_weight_kg?: number;
     discount_type?: number;
     discounted_amount?: number;
     vat_amount?: number;
@@ -42,8 +60,251 @@ export interface HybridAllocationEngineOutput {
     roundingVariance: number;
 }
 
+export interface ProductCostUpdate {
+    product_id: number;
+    cost_per_unit: number;
+    estimated_unit_cost: number;
+}
+
+export interface ProductCostCommit {
+    rollback: () => Promise<void>;
+}
+
 function roundMoney(val: number): number {
     return Math.round((val + Number.EPSILON) * 100) / 100;
+}
+
+function relationId(value: unknown, key: string): number {
+    const raw = value && typeof value === "object"
+        ? (value as Record<string, unknown>)[key]
+        : value;
+    const id = Number(raw);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
+}
+
+export function buildProductCostUpdates(
+    lineItems: POLineItemForPosting[],
+    allocationOutput: HybridAllocationEngineOutput | null,
+    exchangeRate: number
+): ProductCostUpdate[] {
+    const totals = new Map<number, { quantity: number; cost: number }>();
+
+    for (const item of lineItems) {
+        const productId = relationId(item.product_id, "product_id");
+        if (!productId) {
+            throw new Error(`Missing product ID for receiving line ${item.purchase_order_product_id}.`);
+        }
+
+        const quantity = Number(item.received_quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`Receiving line ${item.purchase_order_product_id} must have a positive received quantity.`);
+        }
+
+        const allocation = allocationOutput?.allocations.find(
+            candidate => candidate.purchase_order_product_id === item.purchase_order_product_id
+        );
+        const finalLandedUnitCost = allocation
+            ? allocation.final_landed_unit_cost
+            : roundMoney((Number(item.unit_price) || 0) * exchangeRate);
+
+        if (!Number.isFinite(finalLandedUnitCost) || finalLandedUnitCost < 0) {
+            throw new Error(`Invalid final landed unit cost for receiving line ${item.purchase_order_product_id}.`);
+        }
+
+        const previous = totals.get(productId) || { quantity: 0, cost: 0 };
+        totals.set(productId, {
+            quantity: previous.quantity + quantity,
+            cost: previous.cost + (finalLandedUnitCost * quantity)
+        });
+    }
+
+    return [...totals.entries()].map(([productId, total]) => {
+        const landedCost = roundMoney(total.cost / total.quantity);
+        return {
+            product_id: productId,
+            cost_per_unit: landedCost,
+            estimated_unit_cost: landedCost
+        };
+    });
+}
+
+interface PersistedReceivingLine {
+    purchase_order_product_id?: unknown;
+    product_id?: unknown;
+    received_quantity?: unknown;
+}
+
+export async function resolvePostingLineItems(
+    purchaseOrderId: number,
+    lineItems: POLineItemForPosting[],
+    fetchImpl: typeof fetch = fetch
+): Promise<POLineItemForPosting[]> {
+    if (lineItems.length === 0) return lineItems;
+
+    const lineIds = [...new Set(lineItems.map(item => relationId(item.purchase_order_product_id, "purchase_order_product_id")))];
+    if (lineIds.some(id => !id)) {
+        throw new Error("Every amount-posting line must reference a valid receiving record.");
+    }
+
+    const response = await fetchImpl(
+        `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${purchaseOrderId}&filter[purchase_order_product_id][_in]=${lineIds.join(",")}&fields=purchase_order_product_id,product_id,received_quantity&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) {
+        throw new Error(`Failed to load persisted receiving lines (${response.status}).`);
+    }
+
+    const rows = ((await response.json()).data || []) as PersistedReceivingLine[];
+    const byLineId = new Map(
+        rows.map(row => [relationId(row.purchase_order_product_id, "purchase_order_product_id"), row])
+    );
+
+    const productIds = [...new Set(rows.map(row => relationId(row.product_id, "product_id")))].filter(Boolean);
+    const productResponse = await fetchImpl(
+        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!productResponse.ok) {
+        throw new Error(`Failed to load packaging weight data (${productResponse.status}).`);
+    }
+    const products = ((await productResponse.json()).data || []) as Record<string, unknown>[];
+    const productById = new Map(products.map(product => [Number(product.product_id), product]));
+    const categoryTypes = await resolveProductCategoryTypes(productIds.map(Number), fetchImpl);
+
+    return lineItems.map(item => {
+        const lineId = relationId(item.purchase_order_product_id, "purchase_order_product_id");
+        const persisted = byLineId.get(lineId);
+        if (!persisted) {
+            throw new Error(`Receiving record ${lineId} does not belong to purchase order ${purchaseOrderId}.`);
+        }
+
+        const productId = relationId(persisted.product_id, "product_id");
+        const receivedQuantity = Number(persisted.received_quantity);
+        if (!productId || !Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
+            throw new Error(`Receiving record ${lineId} has incomplete product or quantity data.`);
+        }
+
+        const product = productById.get(productId);
+        if (!product) {
+            throw new Error(`Product ${productId} could not be loaded for receiving record ${lineId}.`);
+        }
+        const categoryType = categoryTypes.get(productId);
+        if (!categoryType) {
+            throw new ProductCategoryTypeValidationError(
+                400,
+                "PRODUCT_CATEGORY_TYPE_REQUIRED",
+                `Product ${productId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                { productId, lineId }
+            );
+        }
+        if (item.category_type !== categoryType) {
+            throw new ProductCategoryTypeValidationError(
+                409,
+                "CATEGORY_TYPE_MISMATCH",
+                `Amount-posting Category_Type for receiving record ${lineId} does not match the product master classification.`,
+                { productId, lineId, submittedCategoryType: item.category_type ?? null, masterCategoryType: categoryType }
+            );
+        }
+
+        const weightBreakdown = resolveProductWeightBreakdown(product, {
+            requireComplete: categoryType === "PACKAGING"
+        });
+
+        return {
+            ...item,
+            product_id: productId,
+            category_type: categoryType,
+            received_quantity: receivedQuantity,
+            gross_weight: weightBreakdown.grossWeightKg,
+            net_weight: weightBreakdown.netWeight,
+            outer_carton_weight: weightBreakdown.outerCartonWeight,
+            pallet_weight: weightBreakdown.palletWeight,
+            unit_gross_weight_kg: weightBreakdown.grossWeightKg,
+            unit_net_weight_kg: weightBreakdown.netWeightKg,
+            unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
+            unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
+            weight_unit: weightBreakdown.weightUnitCode,
+            line_gross_weight_kg: weightBreakdown.grossWeightKg * receivedQuantity
+        };
+    });
+}
+
+interface ProductCostSnapshot {
+    cost_per_unit: unknown;
+    estimated_unit_cost: unknown;
+}
+
+export async function persistProductCostUpdates(
+    updates: ProductCostUpdate[],
+    fetchImpl: typeof fetch = fetch
+): Promise<ProductCostCommit> {
+    const snapshots = new Map<number, ProductCostSnapshot>();
+    const patchedProductIds: number[] = [];
+    let rolledBack = false;
+
+    const rollback = async () => {
+        if (rolledBack) return;
+        rolledBack = true;
+
+        const failures: number[] = [];
+        for (const productId of [...patchedProductIds].reverse()) {
+            const snapshot = snapshots.get(productId);
+            if (!snapshot) continue;
+
+            const response = await fetchImpl(`${DIRECTUS_URL}/items/products/${productId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify(snapshot)
+            }).catch(() => null);
+            if (!response?.ok) failures.push(productId);
+        }
+
+        if (failures.length > 0) {
+            throw new Error(`Product cost rollback failed for product(s): ${failures.join(", ")}.`);
+        }
+    };
+
+    try {
+        for (const update of updates) {
+            const response = await fetchImpl(
+                `${DIRECTUS_URL}/items/products/${update.product_id}?fields=cost_per_unit,estimated_unit_cost`,
+                { headers, cache: "no-store" }
+            );
+            if (!response.ok) {
+                throw new Error(`Failed to load current cost for product ${update.product_id}.`);
+            }
+
+            const body = await response.json();
+            snapshots.set(update.product_id, {
+                cost_per_unit: body?.data?.cost_per_unit,
+                estimated_unit_cost: body?.data?.estimated_unit_cost
+            });
+        }
+
+        for (const update of updates) {
+            const response = await fetchImpl(`${DIRECTUS_URL}/items/products/${update.product_id}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({
+                    cost_per_unit: update.cost_per_unit,
+                    estimated_unit_cost: update.estimated_unit_cost
+                })
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to update landed cost for product ${update.product_id}.`);
+            }
+            patchedProductIds.push(update.product_id);
+        }
+
+        return { rollback };
+    } catch (error) {
+        try {
+            await rollback();
+        } catch (rollbackError) {
+            throw new Error(`${(error as Error).message} ${ (rollbackError as Error).message }`);
+        }
+        throw error;
+    }
 }
 
 export function calculateHybridAllocationEngine(
@@ -52,6 +313,12 @@ export function calculateHybridAllocationEngine(
     exchangeRate: number = 1.0
 ): HybridAllocationEngineOutput {
     const totalLandedFee = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    for (const item of lineItems) {
+        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING") {
+            throw new Error(`Receiving line ${item.purchase_order_product_id} must have Category_Type RAW_MATERIAL or PACKAGING.`);
+        }
+    }
 
     if (lineItems.length === 0 || totalLandedFee === 0) {
         return {
@@ -69,49 +336,36 @@ export function calculateHybridAllocationEngine(
         };
     }
 
-    // Phase 1: Partition into Raw Materials (RM), Packaging (PKG), and Finished Goods (FG) based on commercial value
+    // Phase 1: Partition into Raw Materials (RM) and Packaging (PKG) based on commercial value.
     let totalRMCommercialValue = 0;
     let totalPKGCommercialValue = 0;
-    let totalFGCommercialValue = 0;
 
     const rmItems: POLineItemForPosting[] = [];
     const pkgItems: POLineItemForPosting[] = [];
-    const fgItems: POLineItemForPosting[] = [];
-
-    const isPkgCat = (cat: string) => cat === "390" || cat === "PKG" || cat === "PACKAGING" || cat === "PACKAGING ITEMS";
-    const isRmCat = (cat: string) => cat === "389" || cat === "RM" || cat === "RAW MATERIAL" || cat === "RAW MATERIALS";
 
     for (const item of lineItems) {
         const itemCommercialValue = (item.received_quantity || 0) * (item.unit_price || 0) * exchangeRate;
-        const cat = String(item.product_category || "").toUpperCase();
-        
-        if (isPkgCat(cat)) {
+        if (item.category_type === "PACKAGING") {
             totalPKGCommercialValue += itemCommercialValue;
             pkgItems.push(item);
-        } else if (isRmCat(cat)) {
+        } else {
             totalRMCommercialValue += itemCommercialValue;
             rmItems.push(item);
-        } else {
-            totalFGCommercialValue += itemCommercialValue;
-            fgItems.push(item);
         }
     }
 
-    const totalCommercialValue = totalRMCommercialValue + totalPKGCommercialValue + totalFGCommercialValue;
+    const totalCommercialValue = totalRMCommercialValue + totalPKGCommercialValue;
 
     let rmSubPool = 0;
     let pkgSubPool = 0;
-    let fgSubPool = 0;
 
     if (totalCommercialValue > 0) {
         rmSubPool = totalLandedFee * (totalRMCommercialValue / totalCommercialValue);
         pkgSubPool = totalLandedFee * (totalPKGCommercialValue / totalCommercialValue);
-        fgSubPool = totalLandedFee * (totalFGCommercialValue / totalCommercialValue);
     } else {
         const count = lineItems.length;
         rmSubPool = totalLandedFee * (rmItems.length / count);
         pkgSubPool = totalLandedFee * (pkgItems.length / count);
-        fgSubPool = totalLandedFee * (fgItems.length / count);
     }
 
     const rawAllocations = new Map<number, number>();
@@ -129,35 +383,26 @@ export function calculateHybridAllocationEngine(
         rawAllocations.set(item.purchase_order_product_id, fee);
     }
 
-    // Phase 2B: PKG fee pool allocated by physical Gross Weight
-    let totalPKGWeight = 0;
+    // Phase 2B: PKG fee pool allocated by the persisted line gross weight.
+    // Product unit weight and receiving quantity are combined once in
+    // resolvePostingLineItems; do not multiply by quantity here.
+    const packageWeightShares = calculatePackagingWeightShares(pkgItems.map(item => ({
+        key: item.purchase_order_product_id,
+        lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0
+    })));
     for (const item of pkgItems) {
-        const weight = Number(item.gross_weight) || 0;
-        if (weight <= 0) {
-            throw new Error(`Gross Weight is required for Packaging items (${item.product_name || `ID: ${item.purchase_order_product_id}`}).`);
+        if ((Number(item.line_gross_weight_kg) || 0) <= 0) {
+            throw new Error(`Complete net, outer carton, and pallet weights are required for Packaging items (${item.product_name || `ID: ${item.purchase_order_product_id}`}).`);
         }
-        totalPKGWeight += weight * (item.received_quantity || 1);
     }
 
     for (const item of pkgItems) {
         let fee = 0;
-        const weight = Number(item.gross_weight) || 0;
-        if (totalPKGWeight > 0) {
-            fee = pkgSubPool * ((weight * (item.received_quantity || 1)) / totalPKGWeight);
+        const weightShare = packageWeightShares.get(item.purchase_order_product_id) || 0;
+        if (weightShare > 0) {
+            fee = pkgSubPool * weightShare;
         } else {
             fee = pkgSubPool / (pkgItems.length || 1);
-        }
-        rawAllocations.set(item.purchase_order_product_id, fee);
-    }
-
-    // Phase 2C: FG / Other fee pool allocated by Commercial Value
-    for (const item of fgItems) {
-        let fee = 0;
-        const itemCommVal = (item.received_quantity || 0) * (item.unit_price || 0) * exchangeRate;
-        if (totalFGCommercialValue > 0) {
-            fee = fgSubPool * (itemCommVal / totalFGCommercialValue);
-        } else {
-            fee = fgSubPool / (fgItems.length || 1);
         }
         rawAllocations.set(item.purchase_order_product_id, fee);
     }
@@ -229,7 +474,7 @@ export async function processPurchaseAmountPosting(payload: {
 
     const exchangeRate = payload.is_foreign ? (payload.exchange_rate || 1.0) : 1.0;
     const expenses = payload.expenses || [];
-    const lineItems = payload.line_items || [];
+    const lineItems = await resolvePostingLineItems(payload.purchase_order_id, payload.line_items || []);
 
     let allocationOutput: HybridAllocationEngineOutput | null = null;
 
@@ -322,7 +567,7 @@ export async function processPurchaseAmountPosting(payload: {
         calculatedHeaderTotalPHP += itemTotalPHP;
         calculatedHeaderForeignTotal += roundMoney((item.unit_price || 0) * qty);
 
-        await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${item.purchase_order_product_id}`, {
+        const lineResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${item.purchase_order_product_id}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({
@@ -331,22 +576,40 @@ export async function processPurchaseAmountPosting(payload: {
                 total_amount: itemTotalPHP,
                 is_posted_amounts: 1
             })
-        }).catch(() => {});
+        });
+        if (!lineResponse.ok) {
+            throw new Error(`Failed to update receiving line ${item.purchase_order_product_id}.`);
+        }
     }
 
-    // 5. Update purchase_order header
-    await fetch(`${DIRECTUS_URL}/items/purchase_order/${payload.purchase_order_id}`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({
-            exchange_rate: exchangeRate,
-            total_foreign_currency: calculatedHeaderForeignTotal,
-            total_amount: calculatedHeaderTotalPHP,
-            is_posted_amounts: 1,
-            is_posted: 1,
-            is_import: payload.is_foreign ? 1 : 0
-        })
-    }).catch(() => {});
+    const productCostUpdates = buildProductCostUpdates(lineItems, allocationOutput, exchangeRate);
+    const productCostCommit = await persistProductCostUpdates(productCostUpdates);
+
+    try {
+        // 5. Update purchase_order header only after receiving lines and products succeed.
+        const headerResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order/${payload.purchase_order_id}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+                exchange_rate: exchangeRate,
+                total_foreign_currency: calculatedHeaderForeignTotal,
+                total_amount: calculatedHeaderTotalPHP,
+                is_posted_amounts: 1,
+                is_posted: 1,
+                is_import: payload.is_foreign ? 1 : 0
+            })
+        });
+        if (!headerResponse.ok) {
+            throw new Error(`Failed to update purchase-order ${payload.purchase_order_id}.`);
+        }
+    } catch (error) {
+        try {
+            await productCostCommit.rollback();
+        } catch (rollbackError) {
+            throw new Error(`${(error as Error).message} ${(rollbackError as Error).message}`);
+        }
+        throw error;
+    }
 
     return {
         success: true,

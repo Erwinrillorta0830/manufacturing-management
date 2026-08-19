@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { IncomingShipment, ShipmentLineItem, ShipmentExpense } from "../types";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import { toast } from "sonner";
+import { resolveProductWeightBreakdown } from "../packaging-weight";
+import LandedCostAttachments from "./LandedCostAttachments";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Landmark, Plus, Scale, DollarSign, Layers, Anchor, AlertCircle, Info, Calculator, Check, ArrowRight, Loader2 } from "lucide-react";
 
@@ -90,22 +92,21 @@ export default function ShipmentExpenses({
     }, 0);
 
     const rmQuantity = lines.reduce((sum, line) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const prod = line.product_id as any;
-        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
-        if (!isPackaging) {
+        if (line.category_type === "RAW_MATERIAL") {
             return sum + (isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0));
         }
         return sum;
     }, 0);
 
     const pkgWeight = lines.reduce((sum, line) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const prod = line.product_id as any;
-        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
-        if (isPackaging) {
+        if (line.category_type === "PACKAGING") {
             const qty = isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0);
-            return sum + (qty * Number(prod?.weight || 0));
+            try {
+                const product = typeof line.product_id === "object" ? line.product_id : null;
+                return sum + (qty * resolveProductWeightBreakdown(product, { requireComplete: true }).grossWeightKg);
+            } catch {
+                return sum;
+            }
         }
         return sum;
     }, 0);
@@ -264,7 +265,15 @@ export default function ShipmentExpenses({
                         <form
                             onSubmit={(e) => {
                                 e.preventDefault();
+                                if (!allocationForm.allocation_method) {
+                                    toast.error("Select an allocation rule before committing landed costs.");
+                                    return;
+                                }
                                 // Validate all rows have expense type and amount
+                                if (lines.some(line => line.category_type !== "RAW_MATERIAL" && line.category_type !== "PACKAGING")) {
+                                    toast.error("One or more purchase-order lines has no valid Category_Type from the product master.");
+                                    return;
+                                }
                                 for (let i = 0; i < allocationForm.expenses.length; i++) {
                                     const exp = allocationForm.expenses[i];
                                     if (!exp.overhead_id) {
@@ -279,13 +288,17 @@ export default function ShipmentExpenses({
                                 
                                 if (allocationForm.allocation_method === "Hybrid") {
                                     const missingWeight = lines.some((line) => {
-                                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                        const prod = line.product_id as any;
-                                        const isPackaging = Number(prod?.product_type) === 390 || prod?.product_category === "Packaging";
-                                        return isPackaging && (!prod?.weight || Number(prod?.weight) <= 0);
+                                        const isPackaging = line.category_type === "PACKAGING";
+                                        if (!isPackaging) return false;
+                                        try {
+                                            const product = typeof line.product_id === "object" ? line.product_id : null;
+                                            return resolveProductWeightBreakdown(product, { requireComplete: true }).grossWeightKg <= 0;
+                                        } catch {
+                                            return true;
+                                        }
                                     });
                                     if (missingWeight) {
-                                        toast.error("One or more packaging items are missing a gross weight needed for Hybrid allocation.");
+                                        toast.error("One or more packaging items are missing complete net, outer carton, and pallet weights needed for Hybrid allocation.");
                                         return;
                                     }
                                 }
@@ -326,7 +339,7 @@ export default function ShipmentExpenses({
                                     </button>
                                 </div>
 
-                                <div className="space-y-2">
+                                 <div className="space-y-2">
                                     <div className="flex gap-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
                                         <div className="flex-1">Expense Type <span className="text-red-500">*</span></div>
                                         <div className="w-1/3">Amount (PHP) <span className="text-red-500">*</span></div>
@@ -374,13 +387,21 @@ export default function ShipmentExpenses({
                                                 </button>
                                             )}
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
+                                     ))}
+                                 </div>
+                             </div>
+
+                             <LandedCostAttachments
+                                 purchaseOrderId={shipment.shipment_id}
+                                 allocationRule={allocationForm.allocation_method}
+                                 expenses={allocationForm.expenses}
+                                 sourceFlow="SHIPMENT_EXPENSES"
+                                 disabled={submitting}
+                             />
 
                              <button
                                  type="submit"
-                                 disabled={submitting}
+                                 disabled={submitting || !allocationForm.allocation_method}
                                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-wait py-3 text-xs font-bold text-white transition-all shadow-md shrink-0 mt-4"
                              >
                                  {submitting ? (
