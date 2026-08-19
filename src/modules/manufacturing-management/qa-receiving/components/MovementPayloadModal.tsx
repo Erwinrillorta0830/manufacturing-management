@@ -1,10 +1,12 @@
 "use client";
 
 import React from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, PackageCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, PackageCheck, Printer, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ReceivingCommitResult, ReceivingMovementRoute, ReceivingPreview, ShipmentLineItem } from "../types";
+import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 
 interface MovementPayloadModalProps {
     open: boolean;
@@ -39,10 +41,30 @@ export default function MovementPayloadModal({
     onFinish
 }: MovementPayloadModalProps) {
     const [verified, setVerified] = React.useState(false);
+    const [printLoading, setPrintLoading] = React.useState<"qa" | "storage" | null>(null);
 
     React.useEffect(() => {
-        if (open) setVerified(false);
+        if (open) {
+            setVerified(false);
+            setPrintLoading(null);
+        }
     }, [open, preview]);
+
+    const printCommittedDocument = async (documentType: "QA_GOODS_RECEIPT" | "STORAGE_LOT_ALLOCATION", key: "qa" | "storage") => {
+        if (!committedResult) return;
+        try {
+            setPrintLoading(key);
+            await downloadPurchaseOrderPrintable({
+                purchaseOrderId: committedResult.shipmentId,
+                documentType
+            });
+            toast.success(`${key === "qa" ? "QA goods receipt" : "Storage-lot allocation"} printable downloaded.`);
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the receiving printable.");
+        } finally {
+            setPrintLoading(null);
+        }
+    };
 
     const routeRows = React.useMemo<RouteRow[]>(() => {
         if (!preview) return [];
@@ -344,7 +366,25 @@ export default function MovementPayloadModal({
 
                 <DialogFooter className="px-5 py-4 border-t gap-3 sm:items-center sm:justify-between">
                     {committedResult ? (
-                        <div className="flex w-full justify-end">
+                        <div className="flex w-full flex-wrap justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={printLoading !== null}
+                                onClick={() => void printCommittedDocument("QA_GOODS_RECEIPT", "qa")}
+                            >
+                                {printLoading === "qa" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                                Print QA receipt
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={printLoading !== null}
+                                onClick={() => void printCommittedDocument("STORAGE_LOT_ALLOCATION", "storage")}
+                            >
+                                {printLoading === "storage" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                                Print storage lots
+                            </Button>
                             <Button type="button" onClick={onFinish}>Finish</Button>
                         </div>
                     ) : (

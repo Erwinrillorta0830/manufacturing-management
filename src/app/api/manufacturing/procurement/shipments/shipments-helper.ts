@@ -591,7 +591,10 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
     }
 }
 
-export async function fetchShipmentLineItems(shipmentId: number): Promise<ExtendedShipmentLineItem[]> {
+export async function fetchShipmentLineItems(
+    shipmentId: number,
+    options: { requireCompletePackagingWeight?: boolean } = {}
+): Promise<ExtendedShipmentLineItem[]> {
     try {
         // Fetch purchase_order_products
         const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*,discount_type.*&limit=-1`;
@@ -683,7 +686,8 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                 );
             }
             const weightBreakdown = resolveProductWeightBreakdown(product, {
-                requireComplete: categoryType === "PACKAGING"
+                requireComplete: categoryType === "PACKAGING" && options.requireCompletePackagingWeight !== false,
+                allowIncomplete: categoryType === "PACKAGING" && options.requireCompletePackagingWeight === false
             });
             weightBreakdowns.set(Number(rawProdId), weightBreakdown);
             const cbmH = Number((product as Record<string, unknown> | undefined)?.cbm_height || 0);
