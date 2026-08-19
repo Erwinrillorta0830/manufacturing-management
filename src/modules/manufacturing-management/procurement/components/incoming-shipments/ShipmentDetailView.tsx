@@ -3,6 +3,7 @@ import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
+import { isLandedCostPostingEligible } from "../../landed-cost-eligibility";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export interface ShipmentDetailViewProps {
@@ -43,6 +44,9 @@ export function ShipmentDetailView({
 }: ShipmentDetailViewProps) {
     const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
     const initialWorkflowStatus = canonicalDrafting ? "For Approval" : "Requested";
+    const queuedForPurchaseAmountPosting = activeShipment
+        ? isLandedCostPostingEligible(activeShipment)
+        : false;
     const isFinanceRejected = canonicalDrafting
         && effectiveStatus === "Rejected"
         && activeShipment?.rejection_stage === "Finance";
@@ -139,6 +143,15 @@ export function ShipmentDetailView({
                                     Payment Status:{" "}
                                     <strong className="text-foreground font-bold">{paymentStatusLabel(activeShipment.payment_status)}</strong>
                                 </span>
+                                {queuedForPurchaseAmountPosting && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span className="text-blue-700">
+                                            Finance Queue:{" "}
+                                            <strong className="font-bold">Purchase Amount Posting</strong>
+                                        </span>
+                                    </>
+                                )}
                                 <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
                                 <span>
                                     Payment Arrangement:{" "}

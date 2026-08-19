@@ -42,8 +42,202 @@ export interface HybridAllocationEngineOutput {
     roundingVariance: number;
 }
 
+export interface ProductCostUpdate {
+    product_id: number;
+    cost_per_unit: number;
+    estimated_unit_cost: number;
+}
+
+export interface ProductCostCommit {
+    rollback: () => Promise<void>;
+}
+
 function roundMoney(val: number): number {
     return Math.round((val + Number.EPSILON) * 100) / 100;
+}
+
+function relationId(value: unknown, key: string): number {
+    const raw = value && typeof value === "object"
+        ? (value as Record<string, unknown>)[key]
+        : value;
+    const id = Number(raw);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
+}
+
+export function buildProductCostUpdates(
+    lineItems: POLineItemForPosting[],
+    allocationOutput: HybridAllocationEngineOutput | null,
+    exchangeRate: number
+): ProductCostUpdate[] {
+    const totals = new Map<number, { quantity: number; cost: number }>();
+
+    for (const item of lineItems) {
+        const productId = relationId(item.product_id, "product_id");
+        if (!productId) {
+            throw new Error(`Missing product ID for receiving line ${item.purchase_order_product_id}.`);
+        }
+
+        const quantity = Number(item.received_quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`Receiving line ${item.purchase_order_product_id} must have a positive received quantity.`);
+        }
+
+        const allocation = allocationOutput?.allocations.find(
+            candidate => candidate.purchase_order_product_id === item.purchase_order_product_id
+        );
+        const finalLandedUnitCost = allocation
+            ? allocation.final_landed_unit_cost
+            : roundMoney((Number(item.unit_price) || 0) * exchangeRate);
+
+        if (!Number.isFinite(finalLandedUnitCost) || finalLandedUnitCost < 0) {
+            throw new Error(`Invalid final landed unit cost for receiving line ${item.purchase_order_product_id}.`);
+        }
+
+        const previous = totals.get(productId) || { quantity: 0, cost: 0 };
+        totals.set(productId, {
+            quantity: previous.quantity + quantity,
+            cost: previous.cost + (finalLandedUnitCost * quantity)
+        });
+    }
+
+    return [...totals.entries()].map(([productId, total]) => {
+        const landedCost = roundMoney(total.cost / total.quantity);
+        return {
+            product_id: productId,
+            cost_per_unit: landedCost,
+            estimated_unit_cost: landedCost
+        };
+    });
+}
+
+interface PersistedReceivingLine {
+    purchase_order_product_id?: unknown;
+    product_id?: unknown;
+    received_quantity?: unknown;
+}
+
+export async function resolvePostingLineItems(
+    purchaseOrderId: number,
+    lineItems: POLineItemForPosting[],
+    fetchImpl: typeof fetch = fetch
+): Promise<POLineItemForPosting[]> {
+    if (lineItems.length === 0) return lineItems;
+
+    const lineIds = [...new Set(lineItems.map(item => relationId(item.purchase_order_product_id, "purchase_order_product_id")))];
+    if (lineIds.some(id => !id)) {
+        throw new Error("Every amount-posting line must reference a valid receiving record.");
+    }
+
+    const response = await fetchImpl(
+        `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${purchaseOrderId}&filter[purchase_order_product_id][_in]=${lineIds.join(",")}&fields=purchase_order_product_id,product_id,received_quantity&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) {
+        throw new Error(`Failed to load persisted receiving lines (${response.status}).`);
+    }
+
+    const rows = ((await response.json()).data || []) as PersistedReceivingLine[];
+    const byLineId = new Map(
+        rows.map(row => [relationId(row.purchase_order_product_id, "purchase_order_product_id"), row])
+    );
+
+    return lineItems.map(item => {
+        const lineId = relationId(item.purchase_order_product_id, "purchase_order_product_id");
+        const persisted = byLineId.get(lineId);
+        if (!persisted) {
+            throw new Error(`Receiving record ${lineId} does not belong to purchase order ${purchaseOrderId}.`);
+        }
+
+        const productId = relationId(persisted.product_id, "product_id");
+        const receivedQuantity = Number(persisted.received_quantity);
+        if (!productId || !Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
+            throw new Error(`Receiving record ${lineId} has incomplete product or quantity data.`);
+        }
+
+        return {
+            ...item,
+            product_id: productId,
+            received_quantity: receivedQuantity
+        };
+    });
+}
+
+interface ProductCostSnapshot {
+    cost_per_unit: unknown;
+    estimated_unit_cost: unknown;
+}
+
+export async function persistProductCostUpdates(
+    updates: ProductCostUpdate[],
+    fetchImpl: typeof fetch = fetch
+): Promise<ProductCostCommit> {
+    const snapshots = new Map<number, ProductCostSnapshot>();
+    const patchedProductIds: number[] = [];
+    let rolledBack = false;
+
+    const rollback = async () => {
+        if (rolledBack) return;
+        rolledBack = true;
+
+        const failures: number[] = [];
+        for (const productId of [...patchedProductIds].reverse()) {
+            const snapshot = snapshots.get(productId);
+            if (!snapshot) continue;
+
+            const response = await fetchImpl(`${DIRECTUS_URL}/items/products/${productId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify(snapshot)
+            }).catch(() => null);
+            if (!response?.ok) failures.push(productId);
+        }
+
+        if (failures.length > 0) {
+            throw new Error(`Product cost rollback failed for product(s): ${failures.join(", ")}.`);
+        }
+    };
+
+    try {
+        for (const update of updates) {
+            const response = await fetchImpl(
+                `${DIRECTUS_URL}/items/products/${update.product_id}?fields=cost_per_unit,estimated_unit_cost`,
+                { headers, cache: "no-store" }
+            );
+            if (!response.ok) {
+                throw new Error(`Failed to load current cost for product ${update.product_id}.`);
+            }
+
+            const body = await response.json();
+            snapshots.set(update.product_id, {
+                cost_per_unit: body?.data?.cost_per_unit,
+                estimated_unit_cost: body?.data?.estimated_unit_cost
+            });
+        }
+
+        for (const update of updates) {
+            const response = await fetchImpl(`${DIRECTUS_URL}/items/products/${update.product_id}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({
+                    cost_per_unit: update.cost_per_unit,
+                    estimated_unit_cost: update.estimated_unit_cost
+                })
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to update landed cost for product ${update.product_id}.`);
+            }
+            patchedProductIds.push(update.product_id);
+        }
+
+        return { rollback };
+    } catch (error) {
+        try {
+            await rollback();
+        } catch (rollbackError) {
+            throw new Error(`${(error as Error).message} ${ (rollbackError as Error).message }`);
+        }
+        throw error;
+    }
 }
 
 export function calculateHybridAllocationEngine(
@@ -229,7 +423,7 @@ export async function processPurchaseAmountPosting(payload: {
 
     const exchangeRate = payload.is_foreign ? (payload.exchange_rate || 1.0) : 1.0;
     const expenses = payload.expenses || [];
-    const lineItems = payload.line_items || [];
+    const lineItems = await resolvePostingLineItems(payload.purchase_order_id, payload.line_items || []);
 
     let allocationOutput: HybridAllocationEngineOutput | null = null;
 
@@ -322,7 +516,7 @@ export async function processPurchaseAmountPosting(payload: {
         calculatedHeaderTotalPHP += itemTotalPHP;
         calculatedHeaderForeignTotal += roundMoney((item.unit_price || 0) * qty);
 
-        await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${item.purchase_order_product_id}`, {
+        const lineResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${item.purchase_order_product_id}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({
@@ -331,22 +525,40 @@ export async function processPurchaseAmountPosting(payload: {
                 total_amount: itemTotalPHP,
                 is_posted_amounts: 1
             })
-        }).catch(() => {});
+        });
+        if (!lineResponse.ok) {
+            throw new Error(`Failed to update receiving line ${item.purchase_order_product_id}.`);
+        }
     }
 
-    // 5. Update purchase_order header
-    await fetch(`${DIRECTUS_URL}/items/purchase_order/${payload.purchase_order_id}`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({
-            exchange_rate: exchangeRate,
-            total_foreign_currency: calculatedHeaderForeignTotal,
-            total_amount: calculatedHeaderTotalPHP,
-            is_posted_amounts: 1,
-            is_posted: 1,
-            is_import: payload.is_foreign ? 1 : 0
-        })
-    }).catch(() => {});
+    const productCostUpdates = buildProductCostUpdates(lineItems, allocationOutput, exchangeRate);
+    const productCostCommit = await persistProductCostUpdates(productCostUpdates);
+
+    try {
+        // 5. Update purchase_order header only after receiving lines and products succeed.
+        const headerResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order/${payload.purchase_order_id}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+                exchange_rate: exchangeRate,
+                total_foreign_currency: calculatedHeaderForeignTotal,
+                total_amount: calculatedHeaderTotalPHP,
+                is_posted_amounts: 1,
+                is_posted: 1,
+                is_import: payload.is_foreign ? 1 : 0
+            })
+        });
+        if (!headerResponse.ok) {
+            throw new Error(`Failed to update purchase-order ${payload.purchase_order_id}.`);
+        }
+    } catch (error) {
+        try {
+            await productCostCommit.rollback();
+        } catch (rollbackError) {
+            throw new Error(`${(error as Error).message} ${(rollbackError as Error).message}`);
+        }
+        throw error;
+    }
 
     return {
         success: true,

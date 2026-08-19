@@ -80,6 +80,8 @@ export interface IncomingShipment {
     status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
+    is_posted?: number | boolean | null;
+    is_posted_amounts?: number | boolean | null;
     rejection_stage?: "Plant" | "Finance" | null;
     remark?: string;
     created_at?: string;
