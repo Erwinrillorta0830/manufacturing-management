@@ -193,7 +193,7 @@ export function BOMMaterialSelect({
             return productCode ? `${productName} (${productCode})` : productName;
         }
         if (value) {
-            return `Component #${value}`;
+            return `Unresolved Material (ID #${value} - Missing or Inactive)`;
         }
         return placeholder;
     }, [selectedProduct, productName, productCode, value, placeholder]);

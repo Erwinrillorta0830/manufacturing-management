@@ -10,7 +10,10 @@ import {
     Package,
     Layers,
     AlertCircle,
-    Lock
+    Lock,
+    Star,
+    Clock,
+    Send
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
@@ -114,6 +117,17 @@ export default function FinishedGoodsModule() {
         allCatalogProducts
     } = useFinishedGoods(initialTab);
 
+    const requestedProductId = searchParams.get("productId");
+
+    useEffect(() => {
+        if (requestedProductId && products.length > 0) {
+            const found = products.find(p => p.id === requestedProductId || p.sku === requestedProductId);
+            if (found && found.id !== selectedProductId) {
+                setSelectedProductId(found.id);
+            }
+        }
+    }, [requestedProductId, products, selectedProductId, setSelectedProductId]);
+
     const handleSyncHistoricalYield = async () => {
         if (!selectedProductId || !selectedVersionId) {
             toast.error("Please select a product and version first.");
@@ -167,7 +181,7 @@ export default function FinishedGoodsModule() {
             if (r.bom_items) {
                 r.bom_items.forEach(b => {
                     const matchedProd = allCatalogProducts.find(p => p.product_id === b.product_id);
-                    const prodName = matchedProd ? matchedProd.product_name : (b.product_name || `Component #${b.product_id}`);
+                    const prodName = matchedProd ? matchedProd.product_name : (b.product_name || `Unresolved Material (ID #${b.product_id} - Archived or Missing)`);
 
                     ingredients.push({
                         id: String(b.id),
@@ -208,13 +222,17 @@ export default function FinishedGoodsModule() {
     const [importDensityFactor, setImportDensityFactor] = useState<number>(0.880);
     const [automateCustoms, setAutomateCustoms] = useState<boolean>(true);
 
-    // Sidebar Pagination State
-    const [sidebarPage, setSidebarPage] = useState(1);
-    const [sidebarPageSize] = useState(10);
+    // Version Search Filter State
+    const [versionSearchQuery, setVersionSearchQuery] = useState("");
 
-    useEffect(() => {
-        setSidebarPage(1);
-    }, [searchQuery]);
+    const displayedVersions = useMemo(() => {
+        if (!versionSearchQuery.trim()) return versions;
+        const q = versionSearchQuery.trim().toLowerCase();
+        return versions.filter(v =>
+            (v.version_name && v.version_name.toLowerCase().includes(q)) ||
+            (v.status && v.status.toLowerCase().includes(q))
+        );
+    }, [versions, versionSearchQuery]);
 
     // Sync tab param on load
     useEffect(() => {
@@ -239,7 +257,9 @@ export default function FinishedGoodsModule() {
             matchedUomId = matchedUnit ? matchedUnit.unit_id : units[0].unit_id;
         }
 
-        const defaultVersionName = `v${versions.length + 1}.0`;
+        const nextVerNum = `v${versions.length + 1}.0`;
+        const skuCode = selectedProduct?.sku?.trim();
+        const defaultVersionName = skuCode ? `${skuCode} - ${nextVerNum}` : nextVerNum;
         const activeVerId = selectedVersionId ? String(selectedVersionId) : "";
 
         setVersionForm({
@@ -608,28 +628,118 @@ export default function FinishedGoodsModule() {
     const handleOpenRegisterChild = () => {
         setRegistrationType("child");
 
-        setRegisterForm({
-            title: "",
-            sku: "",
-            baseUom: "",
-            targetSellingPrice: "",
-            barcode: "",
-            densityFactor: "1.0",
-            expectedYield: "100",
-            versionName: "v1.0",
-            brandId: "",
-            categoryId: "",
-            description: "",
-            costPerUnit: "",
-            uomCount: "",
-            classId: "",
-            segmentId: "",
-            sectionId: "",
-            shelfLife: "",
-            productImage: "",
-            parentId: "",
-            supplierIds: [] as string[]
-        });
+        let targetParent: Product | null = null;
+        if (selectedProduct) {
+            const pParentId = typeof selectedProduct.parent_id === "object" && selectedProduct.parent_id !== null
+                ? Number((selectedProduct.parent_id as any).product_id)
+                : selectedProduct.parent_id ? Number(selectedProduct.parent_id) : undefined;
+            if (pParentId) {
+                targetParent = products.find(p => String(p.id) === String(pParentId)) || selectedProduct;
+            } else {
+                targetParent = selectedProduct;
+            }
+        }
+
+        if (targetParent) {
+            const targetParentIdStr = String(targetParent.id);
+            const childVariants = products.filter(p => {
+                const pParentId = typeof p.parent_id === "object" && p.parent_id !== null
+                    ? Number((p.parent_id as any).product_id)
+                    : p.parent_id ? Number(p.parent_id) : undefined;
+                return String(pParentId) === targetParentIdStr && p.isActive !== false;
+            });
+            const used = new Set<string>();
+            if (targetParent.baseUom) used.add(targetParent.baseUom.trim().toUpperCase());
+            childVariants.forEach(c => {
+                if (c.baseUom) used.add(c.baseUom.trim().toUpperCase());
+            });
+
+            // Find first available packaging UOM (order > 1 or non-base)
+            const availableUom = uomOptions.find(u => {
+                const shortcut = (u.value || "").trim().toUpperCase();
+                const isPackaging = ["BOX", "CASE", "CS", "BX", "TIE", "BNDL", "BUNDLE", "PACK", "PK", "CRATE", "PALLET", "DRUM", "BAG", "MBAG"].includes(shortcut) || !["PCS", "PC", "PIECE", "POUCH", "BOT", "BOTTLE", "CAN", "KG", "L", "G", "ML", "UNIT"].includes(shortcut);
+                return isPackaging && !used.has(shortcut);
+            });
+            const chosenUom = availableUom?.value || "Box";
+            const count = 20;
+
+            const extractRelId = (val: unknown): number | undefined => {
+                if (val === null || val === undefined || val === "") return undefined;
+                if (typeof val === "number") return Number.isFinite(val) ? val : undefined;
+                if (typeof val === "string") {
+                    const parsed = parseInt(val, 10);
+                    return Number.isFinite(parsed) ? parsed : undefined;
+                }
+                if (typeof val === "object" && val !== null) {
+                    for (const k of ["id", "brand_id", "category_id", "class_id", "segment_id", "section_id", "product_id", "unit_id"]) {
+                        if (k in val && typeof (val as Record<string, unknown>)[k] === "number") {
+                            return (val as Record<string, unknown>)[k] as number;
+                        }
+                    }
+                }
+                return undefined;
+            };
+
+            const parentCatId = extractRelId(targetParent.product_category);
+            const parentBrandId = extractRelId(targetParent.product_brand);
+            const parentClassId = extractRelId(targetParent.product_class);
+            const parentSegmentId = extractRelId(targetParent.product_segment);
+            const parentSectionId = extractRelId(targetParent.product_section);
+
+            const uomObj = uomOptions.find(o => o.value === chosenUom);
+            const uomName = uomObj ? uomObj.label.split("(")[0].trim() : chosenUom;
+            const dynamicTitle = `${targetParent.title} (${uomName} of ${count})`;
+            const cleanParentSku = (targetParent.sku || "").trim();
+            const cleanUomUpper = chosenUom.trim().toUpperCase();
+            const dynamicSku = cleanParentSku ? (cleanParentSku.toUpperCase().endsWith(`-${cleanUomUpper}`) ? cleanParentSku : `${cleanParentSku}-${cleanUomUpper}`) : "";
+            const dynamicVersion = dynamicSku ? `${dynamicSku} - v1.0` : "v1.0";
+
+            setRegisterForm({
+                parentId: targetParentIdStr,
+                title: dynamicTitle,
+                sku: dynamicSku,
+                baseUom: chosenUom,
+                targetSellingPrice: targetParent.targetSellingPrice ? String(targetParent.targetSellingPrice * count) : "",
+                barcode: "",
+                densityFactor: targetParent.densityFactor !== undefined ? String(targetParent.densityFactor) : "1.0",
+                expectedYield: "100",
+                versionName: dynamicVersion,
+                brandId: parentBrandId ? String(parentBrandId) : "",
+                categoryId: parentCatId ? String(parentCatId) : "",
+                description: targetParent.description || "",
+                costPerUnit: targetParent.cost_per_unit ? String(targetParent.cost_per_unit * count) : "",
+                uomCount: String(count),
+                classId: parentClassId ? String(parentClassId) : "",
+                segmentId: parentSegmentId ? String(parentSegmentId) : "",
+                sectionId: parentSectionId ? String(parentSectionId) : "",
+                shelfLife: targetParent.product_shelf_life ? String(targetParent.product_shelf_life) : "",
+                productImage: "",
+                supplierIds: [] as string[]
+            });
+        } else {
+            setRegisterForm({
+                title: "",
+                sku: "",
+                baseUom: "",
+                targetSellingPrice: "",
+                barcode: "",
+                densityFactor: "1.0",
+                expectedYield: "100",
+                versionName: "v1.0",
+                brandId: "",
+                categoryId: "",
+                description: "",
+                costPerUnit: "",
+                uomCount: "",
+                classId: "",
+                segmentId: "",
+                sectionId: "",
+                shelfLife: "",
+                productImage: "",
+                parentId: "",
+                supplierIds: [] as string[]
+            });
+        }
         resetRegisterFormErrors();
         setIsRegisterModalOpen(true);
     };
@@ -645,16 +755,14 @@ export default function FinishedGoodsModule() {
                 onOpenRegisterParent={handleOpenRegisterParent}
                 onOpenRegisterChild={handleOpenRegisterChild}
                 handleSave={handleSave}
+                products={products}
+                selectedProductId={selectedProductId}
+                setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
                 versions={versions}
-                versionCosts={versionCosts}
                 selectedVersionId={selectedVersionId}
-                setSelectedVersionId={setSelectedVersionId}
                 hasUnsavedChanges={hasUnsavedChanges}
                 setHasUnsavedChanges={setHasUnsavedChanges}
-                handleActivateVersion={handleActivateVersion}
-                handleSubmitVersionForApproval={handleSubmitVersionForApproval}
-                handleOpenVersionModal={handleOpenVersionModal}
                 setIsCompareModalOpen={setIsCompareModalOpen}
                 isSyncingYield={isSyncingYield}
                 handleSyncHistoricalYield={handleSyncHistoricalYield}
@@ -665,159 +773,211 @@ export default function FinishedGoodsModule() {
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
                 {!isSidebarCollapsed && (
                     <div className="w-80 shrink-0 border-r flex flex-col bg-muted/20 animate-in slide-in-from-left duration-200">
-                        {/* Product Search Box */}
-                        <div className="p-3 border-b">
-                            <div className="relative">
-                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                <input
-                                    type="text"
-                                    placeholder="Search products or SKUs..."
-                                    value={searchQuery}
-                                    onChange={e => setSearchQuery(e.target.value)}
-                                    className="w-full rounded-lg border bg-background pl-8 pr-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
-                                />
+                        {/* Version Sidebar Header */}
+                        <div className="p-3 border-b bg-card/60 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                                <Layers className="h-4 w-4 text-primary shrink-0" />
+                                <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                                    Product Versions
+                                </span>
+                                <span className="text-[10px] font-bold bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                                    {versions.length}
+                                </span>
                             </div>
+                            <button
+                                type="button"
+                                onClick={handleOpenVersionModal}
+                                disabled={!selectedProduct}
+                                className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Register a new version recipe"
+                            >
+                                <Plus className="h-3 w-3" />
+                                New
+                            </button>
                         </div>
 
-                        {/* Products list items */}
-                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                            {loadingProducts ? (
+                        {/* Version Search / Filter Box */}
+                        {versions.length > 3 && (
+                            <div className="p-2.5 border-b bg-background/50">
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                                    <input
+                                        type="text"
+                                        placeholder="Filter versions..."
+                                        value={versionSearchQuery}
+                                        onChange={e => setVersionSearchQuery(e.target.value)}
+                                        className="w-full rounded-lg border bg-background pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Versions List */}
+                        <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+                            {loadingBOM && versions.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center p-8 gap-1.5 text-muted-foreground">
                                     <Loader2 className="h-5 w-5 animate-spin" />
-                                    <span className="text-xs">Loading products...</span>
+                                    <span className="text-xs">Loading versions...</span>
                                 </div>
-                            ) : (
-                                (() => {
-                                    const totalSidebarPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
-                                    const paginatedRoots = treeProducts.roots.slice((sidebarPage - 1) * sidebarPageSize, sidebarPage * sidebarPageSize);
-                                    return paginatedRoots.map((root) => {
-                                        const children = treeProducts.childrenMap.get(root.id) || [];
-                                        const displayedChildren = searchQuery.trim()
-                                            ? children.filter(c => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.sku.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.barcode.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-                                            : children;
+                            ) : !selectedProduct ? (
+                                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground gap-2 h-40">
+                                    <Layers className="h-8 w-8 opacity-30" />
+                                    <span className="text-xs text-muted-foreground">Select a product to view versions</span>
+                                </div>
+                            ) : displayedVersions.length > 0 ? (
+                                displayedVersions.map((v) => {
+                                    const isSelected = v.version_id === selectedVersionId;
+                                    const isPrimary = !!v.is_primary;
+                                    const isActive = v.is_active || v.status === "Active";
+                                    const isApproved = v.status === "Approved" || v.status === "Active" || !!v.is_active;
+                                    const isSubmitted = v.status === "For Approval" || v.status === "Pending Approval";
+                                    const isRejected = v.status === "Rejected";
+                                    const isRevision = v.status === "Revision Required";
+                                    const cost = versionCosts[v.version_id];
 
-                                        return (
-                                            <div key={root.id} className="space-y-1 mb-1">
-                                                {/* Render Parent */}
-                                                <button
-                                                    onClick={() => {
-                                                        if (hasUnsavedChanges) {
-                                                            if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
-                                                            setHasUnsavedChanges(false);
-                                                        }
-                                                        setSelectedProductId(root.id);
-                                                    }}
-                                                    className={`w-full flex flex-col text-left p-3 rounded-lg border transition-all cursor-pointer ${selectedProductId === root.id
-                                                            ? "bg-card border-primary shadow-sm ring-1 ring-primary/20"
-                                                            : "bg-transparent border-transparent hover:bg-muted"
-                                                        }`}
-                                                >
-                                                    <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                        <span className="text-sm font-semibold truncate flex-1 min-w-0 flex items-center gap-1.5">
-                                                            <Package className="h-3.5 w-3.5 text-primary/70 shrink-0" />
-                                                            {root.title}
+                                    return (
+                                        <div
+                                            key={v.version_id}
+                                            onClick={() => {
+                                                if (hasUnsavedChanges) {
+                                                    if (!confirm("You have unsaved changes. Are you sure you want to switch versions?")) return;
+                                                    setHasUnsavedChanges(false);
+                                                }
+                                                setSelectedVersionId(v.version_id);
+                                            }}
+                                            className={`p-3 rounded-xl border transition-all cursor-pointer relative flex flex-col gap-2 ${
+                                                isSelected
+                                                    ? "bg-card border-primary shadow-sm ring-1 ring-primary/20"
+                                                    : "bg-background/80 border-border hover:bg-muted/70 hover:border-muted-foreground/30"
+                                            }`}
+                                        >
+                                            {/* Top Row: Version Name + Status Badge */}
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                                    <span className={`text-xs font-bold truncate ${isSelected ? "text-primary font-extrabold" : "text-foreground"}`}>
+                                                        {v.version_name}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                                                    {isPrimary && (
+                                                        <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                                                            <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" /> Primary
                                                         </span>
-                                                        <span className="shrink-0 bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-[4px] text-[9px] font-bold tracking-wider uppercase border border-blue-500/20">
-                                                            Parent
+                                                    )}
+                                                    {isActive ? (
+                                                        <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                            Active
                                                         </span>
-                                                    </div>
-                                                    <div className="mt-1.5 flex items-center justify-between w-full text-xs text-muted-foreground pl-5 gap-2">
-                                                        <div className="flex items-center gap-1.5 min-w-0 truncate">
-                                                            <span className="truncate font-mono">SKU: {root.sku || "N/A"}</span>
-                                                            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-muted text-muted-foreground px-1.5 py-0.5 rounded border border-border">
-                                                                {root.baseUom}
-                                                            </span>
-                                                        </div>
-                                                        <span className="font-semibold bg-muted px-1.5 py-0.5 rounded text-foreground shrink-0">
-                                                            ₱{root.targetSellingPrice.toFixed(2)}
+                                                    ) : isApproved ? (
+                                                        <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase shrink-0">
+                                                            Approved
                                                         </span>
-                                                    </div>
-                                                </button>
-
-                                                {/* Render Children */}
-                                                {displayedChildren.length > 0 && (
-                                                    <div className="pl-4 ml-3 border-l border-border/60 space-y-1 mt-1">
-                                                        {displayedChildren.map(child => (
-                                                            <button
-                                                                key={child.id}
-                                                                onClick={() => {
-                                                                    if (hasUnsavedChanges) {
-                                                                        if (!confirm("You have unsaved changes. Are you sure you want to navigate away?")) return;
-                                                                        setHasUnsavedChanges(false);
-                                                                    }
-                                                                    setSelectedProductId(child.id);
-                                                                }}
-                                                                className={`w-full flex flex-col text-left p-2.5 rounded-lg border transition-all relative cursor-pointer ${selectedProductId === child.id
-                                                                        ? "bg-card border-primary/70 shadow-sm ring-1 ring-primary/10"
-                                                                        : "bg-transparent border-transparent hover:bg-muted/70"
-                                                                    }`}
-                                                            >
-                                                                {/* Connection line indicator */}
-                                                                <div className="absolute left-[-16px] top-1/2 -translate-y-1/2 w-3 border-t border-border/60" />
-
-                                                                <div className="flex items-start justify-between w-full gap-2 min-w-0">
-                                                                    <span className="text-xs font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
-                                                                        <Layers className="h-3 w-3 text-muted-foreground shrink-0" />
-                                                                        {child.title}
-                                                                    </span>
-                                                                    <span className="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 rounded-[4px] text-[8px] font-bold tracking-wider uppercase border border-border">
-                                                                        Child
-                                                                    </span>
-                                                                </div>
-                                                                <div className="mt-1 flex items-center justify-between w-full text-[11px] text-muted-foreground/80 pl-4.5 gap-2">
-                                                                    <div className="flex items-center gap-1.5 min-w-0 truncate">
-                                                                        <span className="truncate font-mono">SKU: {child.sku || "N/A"}</span>
-                                                                        <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-muted/80 text-muted-foreground px-1 py-0.5 rounded border border-border/60">
-                                                                            {child.baseUom}
-                                                                        </span>
-                                                                    </div>
-                                                                    <span className="font-semibold text-foreground shrink-0">
-                                                                        ₱{child.targetSellingPrice.toFixed(2)}
-                                                                    </span>
-                                                                </div>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
+                                                    ) : isSubmitted ? (
+                                                        <span className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0">
+                                                            <Clock className="h-2.5 w-2.5" /> Pending
+                                                        </span>
+                                                    ) : isRejected ? (
+                                                        <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                            Rejected
+                                                        </span>
+                                                    ) : isRevision ? (
+                                                        <span className="bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                            Revision
+                                                        </span>
+                                                    ) : (
+                                                        <span className="bg-muted text-muted-foreground border text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                            {v.status || "Draft"}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
-                                        );
-                                    });
-                                })()
-                            )}
-                            {!loadingProducts && treeProducts.roots.length === 0 && (
-                                <div className="p-8 text-center text-xs text-muted-foreground">
-                                    No products found
+
+                                            {/* Middle Row: Yield, Base Qty */}
+                                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                                <div className="flex items-center gap-2">
+                                                    <span>Yield: <strong className="text-foreground">{v.expected_yield_percentage || 100}%</strong></span>
+                                                    <span>Base: <strong className="text-foreground">{v.base_quantity || 1} {selectedProduct?.baseUom || ""}</strong></span>
+                                                </div>
+                                            </div>
+
+                                            {/* Bottom Row: Quick Actions for active selected version */}
+                                            {isSelected && (
+                                                <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/50 mt-0.5 flex-wrap">
+                                                    {!isPrimary && isApproved && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (confirm(`Set version "${v.version_name}" as Primary Default for master cost rollups and default Job Orders?`)) {
+                                                                    handleActivateVersion(v.version_id, "set_primary");
+                                                                }
+                                                            }}
+                                                            className="inline-flex items-center gap-1 rounded bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                                            title="Designate as Primary Default"
+                                                        >
+                                                            <Star className="h-2.5 w-2.5 fill-white" /> Make Primary
+                                                        </button>
+                                                    )}
+
+                                                    {isApproved && !isActive && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleActivateVersion(v.version_id, "set_active");
+                                                            }}
+                                                            className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                                            title="Activate as alternate BOM"
+                                                        >
+                                                            Activate
+                                                        </button>
+                                                    )}
+
+                                                    {(v.status === "Draft" || !v.status || v.status === "Revision Required") && handleSubmitVersionForApproval && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleSubmitVersionForApproval(v.version_id);
+                                                            }}
+                                                            className="inline-flex items-center gap-1 rounded bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                                            title="Submit for Approval"
+                                                        >
+                                                            <Send className="h-2.5 w-2.5" /> Submit
+                                                        </button>
+                                                    )}
+
+                                                    {isActive && !isPrimary && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleActivateVersion(v.version_id, "deactivate");
+                                                            }}
+                                                            className="inline-flex items-center gap-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer"
+                                                            title="Deactivate this alternate version"
+                                                        >
+                                                            Deactivate
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <div className="p-6 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
+                                    <span>No versions found for this product.</span>
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenVersionModal}
+                                        className="inline-flex items-center gap-1 text-primary font-bold hover:underline cursor-pointer"
+                                    >
+                                        <Plus className="h-3 w-3" /> Create First Version
+                                    </button>
                                 </div>
                             )}
                         </div>
-
-                        {/* Sidebar Pagination Footer */}
-                        {treeProducts.roots.length > 0 && (() => {
-                            const totalPages = Math.max(1, Math.ceil(treeProducts.roots.length / sidebarPageSize));
-                            return (
-                                <div className="p-2.5 border-t bg-muted/20 flex items-center justify-between text-xs text-muted-foreground font-medium shrink-0">
-                                    <span>
-                                        Page {sidebarPage} of {totalPages}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <button
-                                            disabled={sidebarPage <= 1}
-                                            onClick={() => setSidebarPage(prev => Math.max(1, prev - 1))}
-                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
-                                        >
-                                            Prev
-                                        </button>
-                                        <button
-                                            disabled={sidebarPage >= totalPages}
-                                            onClick={() => setSidebarPage(prev => Math.min(totalPages, prev + 1))}
-                                            className="px-2 py-1 text-[11px] font-bold rounded border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
-                                        >
-                                            Next
-                                        </button>
-                                    </div>
-                                </div>
-                            );
-                        })()}
                     </div>
                 )}
 
@@ -842,7 +1002,37 @@ export default function FinishedGoodsModule() {
                                 <span className="text-sm font-semibold">Loading product database...</span>
                                 <span className="text-xs text-muted-foreground mt-1">Please wait while we retrieve finished goods and configuration options.</span>
                             </div>
-                        ) : selectedProduct ? (
+                        ) : !selectedProduct ? (
+                            <div className="flex flex-col items-center justify-center p-16 text-center max-w-lg mx-auto my-auto h-full space-y-4">
+                                <div className="h-16 w-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                                    <Package className="h-8 w-8" />
+                                </div>
+                                <div className="space-y-1">
+                                    <h3 className="text-base font-bold text-foreground">Select a Finished Good Product</h3>
+                                    <p className="text-xs text-muted-foreground max-w-sm">
+                                        Choose a manufactured good from the top dropdown to view its product details, version recipes, BOM costs, and workstation routings.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3 pt-2 flex-wrap justify-center">
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenRegisterParent}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-2xs cursor-pointer"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                        Register Parent Product
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenRegisterChild}
+                                        className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-background px-3.5 py-2 text-xs font-semibold text-primary hover:bg-primary/10 transition-all shadow-2xs cursor-pointer"
+                                    >
+                                        <Layers className="h-3.5 w-3.5" />
+                                        Register Child Variant
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
                             <>
                                 {activeTab === "details" && (
                                     <ProductDetailsTab
@@ -985,11 +1175,6 @@ export default function FinishedGoodsModule() {
                                     </>
                                 )}
                             </>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center p-20 text-muted-foreground">
-                                <AlertCircle className="h-10 w-10 mb-2 text-muted" />
-                                <span>No product selected</span>
-                            </div>
                         )}
                     </div>
                 </div>
@@ -1034,7 +1219,7 @@ export default function FinishedGoodsModule() {
             {/* Version Registration Modal */}
             {isVersionModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
-                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl   overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                         {/* Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
                             <div className="flex items-center gap-2">
@@ -1067,7 +1252,7 @@ export default function FinishedGoodsModule() {
                                 <input
                                     type="text"
                                     required
-                                    placeholder="e.g. OIL 2ND VERSION EASY MIX"
+                                    placeholder="e.g. FG-OIL-500ML - v2.0"
                                     value={versionForm.versionName}
                                     onChange={e => setVersionForm(prev => ({ ...prev, versionName: e.target.value }))}
                                     className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"

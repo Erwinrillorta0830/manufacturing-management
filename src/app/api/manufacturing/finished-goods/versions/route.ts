@@ -134,28 +134,69 @@ export async function POST(request: Request) {
                 }
             }
 
-            // 1. Create product manufacturing version
+            // Resolve UOM ID if not provided
+            let resolvedUomId = uId;
+            if (!resolvedUomId) {
+                try {
+                    if (baseVersionId) {
+                        const oldVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${parseInt(baseVersionId)}?fields=uom_id`, { headers, cache: "no-store" });
+                        if (oldVerRes.ok) {
+                            const oldVerData = (await oldVerRes.json()).data;
+                            if (oldVerData?.uom_id) resolvedUomId = Number(oldVerData.uom_id);
+                        }
+                    }
+                    if (!resolvedUomId) {
+                        const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${numericProductId}?fields=unit_of_measurement`, { headers, cache: "no-store" });
+                        if (prodRes.ok) {
+                            const prodData = (await prodRes.json()).data;
+                            const rawUom = prodData?.unit_of_measurement;
+                            resolvedUomId = typeof rawUom === "object" && rawUom !== null ? Number(rawUom.unit_id || rawUom.id) : (rawUom ? Number(rawUom) : null);
+                        }
+                    }
+                    if (!resolvedUomId) {
+                        const unitsRes = await fetch(`${DIRECTUS_URL}/items/units?limit=1`, { headers, cache: "no-store" });
+                        if (unitsRes.ok) {
+                            const unitsData = (await unitsRes.json()).data;
+                            if (unitsData && unitsData.length > 0) {
+                                resolvedUomId = Number(unitsData[0].unit_id);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error resolving product default UOM for version:", err);
+                }
+            }
+
+            const formattedBaseQty = Math.max(0.0001, Number(bQty || 1));
+            const formattedYield = Math.min(100, Math.max(0.01, Number(yieldPercent || 100)));
+
+            // 1. Create product manufacturing version matching MySQL table schema
+            const versionPayload: Record<string, unknown> = {
+                product_id: numericProductId,
+                version_name: versionName.trim(),
+                base_quantity: formattedBaseQty,
+                uom_id: resolvedUomId || 1,
+                expected_yield_percentage: formattedYield,
+                status: "For Approval",
+                valid_from: today,
+                created_by: userId || null
+            };
+
             const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version`, {
                 method: "POST",
                 headers,
-                body: JSON.stringify({
-                    product_id: numericProductId,
-                    version_name: versionName,
-                    base_quantity: bQty,
-                    uom_id: uId,
-                    expected_yield_percentage: yieldPercent,
-                    status: "Draft", // New version starts as Draft
-                    is_primary: false,
-                    valid_from: today,
-                    created_by: userId
-                })
+                body: JSON.stringify(versionPayload)
             });
-            if (!verRes.ok) throw new Error(`Directus failed to create product version: ${verRes.status}`);
+            if (!verRes.ok) {
+                const errText = await verRes.text();
+                console.error("Directus failed to create product version:", verRes.status, errText);
+                throw new Error(`Directus failed to create product version: ${verRes.status} - ${errText}`);
+            }
             const verJson = await verRes.json();
             createdVersionId = verJson.data?.version_id;
 
             // 2. Clone from base version if baseVersionId is provided
-            if (baseVersionId) {
+            if (baseVersionId && createdVersionId) {
                 const oldVersionId = parseInt(baseVersionId);
 
                 // Fetch routes of old version
@@ -204,6 +245,7 @@ export async function POST(request: Request) {
                                         quantity_required: item.quantity_required,
                                         unit_of_measurement: item.unit_of_measurement || null,
                                         wastage_factor_percentage: item.wastage_factor_percentage || 0,
+                                        cost_per_unit: item.cost_per_unit || 0,
                                         created_by: userId
                                     };
 
@@ -221,6 +263,70 @@ export async function POST(request: Request) {
                             }
                         }
                     }
+                }
+
+                // Clone version labor positions
+                try {
+                    const posFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: oldVersionId } }));
+                    let oldPosRes = await fetch(`${DIRECTUS_URL}/items/product_version_positions?filter=${posFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+                    let targetCollection = "product_version_positions";
+                    if (!oldPosRes || !oldPosRes.ok) {
+                        targetCollection = "manufacturing_version_positions";
+                        oldPosRes = await fetch(`${DIRECTUS_URL}/items/${targetCollection}?filter=${posFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+                    }
+                    if (oldPosRes && oldPosRes.ok) {
+                        const oldPositions = (await oldPosRes.json()).data || [];
+                        for (const pos of oldPositions) {
+                            const newPosPayload = {
+                                version_id: createdVersionId,
+                                position_id: pos.position_id || null,
+                                position_name: pos.position_name || "Operator",
+                                category: pos.category || "direct_labor",
+                                manpower_count: pos.manpower_count || 1,
+                                hourly_rate: pos.hourly_rate || 0,
+                                hours_required: pos.hours_required || 0,
+                                daily_rate: pos.daily_rate || 0,
+                                ot_hours: pos.ot_hours || 0,
+                                include_mandates: pos.include_mandates !== undefined ? Boolean(pos.include_mandates) : true,
+                                sss_amount: pos.sss_amount || 0,
+                                phic_amount: pos.phic_amount || 0,
+                                hdmf_amount: pos.hdmf_amount || 0,
+                                created_by: userId
+                            };
+                            await fetch(`${DIRECTUS_URL}/items/${targetCollection}`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify(newPosPayload)
+                            }).catch(() => { });
+                        }
+                    }
+                } catch (posErr) {
+                    console.error("Error cloning labor positions:", posErr);
+                }
+
+                // Clone version overheads
+                try {
+                    const ovFilter = encodeURIComponent(JSON.stringify({ version_id: { _eq: oldVersionId } }));
+                    const oldOvRes = await fetch(`${DIRECTUS_URL}/items/product_version_overheads?filter=${ovFilter}&limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+                    if (oldOvRes && oldOvRes.ok) {
+                        const oldOverheads = (await oldOvRes.json()).data || [];
+                        for (const ov of oldOverheads) {
+                            await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify({
+                                    version_id: createdVersionId,
+                                    overhead_type_id: ov.overhead_type_id,
+                                    cost: ov.cost || 0,
+                                    allocation_basis: ov.allocation_basis || "per_unit",
+                                    is_active: ov.is_active !== undefined ? Boolean(ov.is_active) : true,
+                                    remarks: ov.remarks || ""
+                                })
+                            }).catch(() => { });
+                        }
+                    }
+                } catch (ovErr) {
+                    console.error("Error cloning version overheads:", ovErr);
                 }
             }
 

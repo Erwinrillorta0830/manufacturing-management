@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
 import { uploadProductImage } from "../services/product-image";
-import { extractId } from "../services/finished-goods-api";
+import { extractId, resolveProductMasterStatus } from "../services/finished-goods-api";
 import { 
     Tag, 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -17,7 +17,8 @@ import {
     FileText, 
     Activity,
     GitBranch,
-    Sliders
+    Sliders,
+    AlertTriangle
 } from "lucide-react";
 
 interface ProductDetailsTabProps {
@@ -64,7 +65,13 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     const [uploadingImage, setUploadingImage] = React.useState(false);
     const [imagePreview, setImagePreview] = React.useState<string | null>(null);
     const [imageUploadError, setImageUploadError] = React.useState<string | null>(null);
+    const [isDeactivateModalOpen, setIsDeactivateModalOpen] = React.useState(false);
     const fieldError = (field: string) => editFieldErrors[field];
+
+    const currentMasterStatus = resolveProductMasterStatus(
+        editedDetails.status !== undefined ? editedDetails.status : selectedProduct.status,
+        editedDetails.isActive !== undefined ? editedDetails.isActive : selectedProduct.isActive
+    );
 
     React.useEffect(() => {
         setImagePreview(null);
@@ -123,24 +130,12 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
         });
     }, [units]);
 
-    const filteredUomOptions = React.useMemo(() => {
-        const isParentProduct = selectedProduct.parent_id === null || selectedProduct.parent_id === undefined || selectedProduct.parentProduct === true;
-        return uomOptions.filter(u => {
-            const order = getUnitOrderValue(u);
-            if (isParentProduct) {
-                return order <= 1;
-            } else {
-                return order > 1;
-            }
-        });
-    }, [uomOptions, selectedProduct.parent_id, selectedProduct.parentProduct]);
-
     const isParent = !selectedProduct.parent_id;
     
     const familyChildren = React.useMemo(() => {
         return products.filter(p => {
             const pParentId = extractId(p.parent_id);
-            return pParentId !== undefined && String(pParentId) === String(selectedProduct.id) && p.isActive !== false;
+            return pParentId !== undefined && String(pParentId) === String(selectedProduct.id);
         });
     }, [products, selectedProduct.id]);
     
@@ -155,6 +150,49 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
         if (!pId) return [];
         return products.filter(p => extractId(p.parent_id) === pId);
     }, [products, selectedProduct.parent_id]);
+
+    const filteredUomOptions = React.useMemo(() => {
+        const isParentProduct = selectedProduct.parent_id === null || selectedProduct.parent_id === undefined || selectedProduct.parentProduct === true;
+        const currentSelectedUom = (editedDetails.baseUom || selectedProduct.baseUom || "").trim().toUpperCase();
+
+        const usedBySiblings = new Set<string>();
+        if (!isParentProduct) {
+            siblingProducts.forEach(s => {
+                if (String(s.id) !== String(selectedProduct.id) && s.isActive !== false && s.baseUom) {
+                    usedBySiblings.add(s.baseUom.trim().toUpperCase());
+                }
+            });
+            if (parentProductObj?.baseUom) {
+                usedBySiblings.add(parentProductObj.baseUom.trim().toUpperCase());
+            }
+        }
+
+        return uomOptions
+            .filter(u => {
+                const order = getUnitOrderValue(u);
+                if (isParentProduct) {
+                    return order <= 1;
+                } else {
+                    return order > 1;
+                }
+            })
+            .map(u => {
+                const uomUpper = (u.value || "").trim().toUpperCase();
+                const isUsed = !isParentProduct && usedBySiblings.has(uomUpper) && uomUpper !== currentSelectedUom;
+                return {
+                    ...u,
+                    disabled: isUsed,
+                    labelNode: isUsed ? (
+                        <div className="flex items-center justify-between w-full text-muted-foreground opacity-50 select-none">
+                            <span className="line-through">{u.label}</span>
+                            <span className="text-[10px] font-bold no-underline bg-muted/90 border px-1.5 py-0.5 rounded ml-2 text-muted-foreground">
+                                Already Registered
+                            </span>
+                        </div>
+                    ) : undefined
+                };
+            });
+    }, [uomOptions, selectedProduct, editedDetails.baseUom, siblingProducts, parentProductObj]);
 
     const brandOptions = React.useMemo(() => {
         return brands.map((b) => ({
@@ -302,19 +340,35 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-muted-foreground uppercase">
-                                Parent Product {familyChildren.length === 0 && "(Optional)"}
+                            <label className="text-[11px] font-bold text-muted-foreground uppercase flex items-center justify-between">
+                                <span>Parent Product</span>
+                                {familyChildren.length > 0 && isParent && (
+                                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                        Read-Only (Has {familyChildren.length} Child Variant{familyChildren.length > 1 ? "s" : ""})
+                                    </span>
+                                )}
                             </label>
-                            <CreatableSelect
-                                options={parentOptions}
-                                value={editedDetails.parent_id ? String(editedDetails.parent_id) : ""}
-                                onValueChange={(val) => handleDetailChange("parent_id", val ? Number(val) : null)}
-                                placeholder="Select parent product..."
-                                disabled={familyChildren.length > 0}
-                            />
-                            {familyChildren.length > 0 && (
-                                <p className="text-[10px] text-amber-600 dark:text-amber-400 italic">
-                                    Parent assignment is locked because this product has {familyChildren.length} active child variant(s).
+                            {familyChildren.length > 0 && isParent ? (
+                                <div className="flex items-center justify-between rounded-lg border border-border/80 bg-muted/50 px-3 py-2 text-xs font-semibold text-muted-foreground shadow-2xs cursor-not-allowed select-none">
+                                    <span className="flex items-center gap-2">
+                                        <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                                        None (Primary Parent Manufactured Good)
+                                    </span>
+                                    <span className="text-[10px] uppercase font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded border">
+                                        Locked
+                                    </span>
+                                </div>
+                            ) : (
+                                <CreatableSelect
+                                    options={parentOptions}
+                                    value={editedDetails.parent_id ? String(editedDetails.parent_id) : ""}
+                                    onValueChange={(val) => handleDetailChange("parent_id", val ? Number(val) : null)}
+                                    placeholder="Select parent product (Optional)..."
+                                />
+                            )}
+                            {familyChildren.length > 0 && isParent && (
+                                <p className="text-[10px] text-muted-foreground">
+                                    This manufactured good serves as the base parent for {familyChildren.length} registered child packaging configuration{familyChildren.length > 1 ? "s" : ""} and cannot be assigned as a child of another product.
                                 </p>
                             )}
                         </div>
@@ -575,11 +629,11 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                 <DollarSign className="h-4 w-4 text-primary/80" /> Financials & Status
                             </span>
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                                ((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) === "Inactive"
+                                currentMasterStatus === "Inactive"
                                     ? "bg-rose-500/10 text-rose-600 border-rose-500/20"
                                     : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                             }`}>
-                                {((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) || "Active"}
+                                {currentMasterStatus}
                             </span>
                         </h3>
                         
@@ -587,15 +641,14 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                             <div className="space-y-1 col-span-3">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase">Product Master Status</label>
                                 <select
-                                    value={((editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string }).status) || "Active"}
+                                    value={currentMasterStatus}
                                     onChange={e => {
                                         const newStatus = e.target.value;
                                         if (newStatus === "Inactive") {
-                                            if (!confirm("Are you sure you want to deactivate this master SKU? Deactivating will hide it from active inventory and manufacturing workflows.")) {
-                                                return;
-                                            }
+                                            setIsDeactivateModalOpen(true);
+                                        } else {
+                                            handleDetailChange("status" as unknown as keyof Product, "Active");
                                         }
-                                        handleDetailChange("status" as unknown as keyof Product, newStatus);
                                     }}
                                     className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all font-semibold"
                                 >
@@ -725,6 +778,74 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                     </div>
                 </div>
             </div>
+
+            {/* Deactivate Master SKU Confirmation Modal */}
+            {isDeactivateModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                        {/* Header */}
+                        <div className="p-6 border-b bg-rose-500/5 flex items-start gap-4">
+                            <div className="h-10 w-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 shrink-0">
+                                <AlertTriangle className="h-5 w-5" />
+                            </div>
+                            <div className="space-y-1">
+                                <h3 className="text-base font-bold text-foreground">Deactivate Master SKU</h3>
+                                <p className="text-xs text-muted-foreground">
+                                    Are you sure you want to deactivate this master SKU? Deactivating will hide it from active inventory and manufacturing workflows.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Product Summary Preview */}
+                        <div className="p-5 bg-muted/20 border-b space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground font-medium">Target SKU:</span>
+                                <span className="font-bold text-foreground font-mono bg-background px-2 py-0.5 rounded border">
+                                    {editedDetails.sku || selectedProduct.sku}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground font-medium">Product Name:</span>
+                                <span className="font-semibold text-foreground truncate max-w-[220px]">
+                                    {editedDetails.title || selectedProduct.title}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground font-medium">Current Status:</span>
+                                <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] uppercase ${
+                                    resolveProductMasterStatus(selectedProduct.status, selectedProduct.isActive) === "Inactive"
+                                        ? "text-rose-600 bg-rose-500/10"
+                                        : "text-emerald-600 bg-emerald-500/10"
+                                }`}>
+                                    {resolveProductMasterStatus(selectedProduct.status, selectedProduct.isActive)}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="p-4 bg-card flex items-center justify-end gap-2.5">
+                            <button
+                                type="button"
+                                onClick={() => setIsDeactivateModalOpen(false)}
+                                className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors cursor-pointer"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    handleDetailChange("status" as unknown as keyof Product, "Inactive");
+                                    setIsDeactivateModalOpen(false);
+                                }}
+                                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                            >
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                Deactivate SKU
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

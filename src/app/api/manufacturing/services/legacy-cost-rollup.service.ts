@@ -130,7 +130,7 @@ export async function calculateLegacyRollupCost(
         }
 
         const compProduct = productsMap.get(comp.component_product_id);
-        const ingName = compProduct ? compProduct.product_name : `Component #${comp.component_product_id}`;
+        const ingName = compProduct ? compProduct.product_name : `Unresolved Material (ID #${comp.component_product_id} - Archived or Missing)`;
 
         costTreeNodes.push({
             id: `comp-${comp.component_id}`,
