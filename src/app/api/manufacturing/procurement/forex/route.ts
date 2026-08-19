@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { decodeJwtPayload } from "@/lib/auth-utils";
 import { procurementDirectusFetch } from "../_directus";
 import {
     fallbackActiveRates,
@@ -55,64 +57,58 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Change reason is mandatory for audit logging" }, { status: 400 });
         }
 
-        // Find existing rate for currency_code to establish previous_rate
-        const existingConfigIndex = fallbackActiveRates.findIndex(
+        // Fetch current active rates from the database to check if configuration exists
+        const currentActiveRates = await getActiveForexRates();
+        const existingConfigIndex = currentActiveRates.findIndex(
             r => r.currency_code.toUpperCase() === currency_code.toUpperCase()
         );
+        const existingConfig = existingConfigIndex >= 0 ? currentActiveRates[existingConfigIndex] : null;
 
-        const previous_rate = existingConfigIndex >= 0 ? fallbackActiveRates[existingConfigIndex].exchange_rate : numNewRate;
-        const targetForexId = forex_id || (existingConfigIndex >= 0 ? fallbackActiveRates[existingConfigIndex].forex_id : fallbackActiveRates.length + 1);
+        // Resolve actual user ID securely from httpOnly cookie to override frontend's hardcoded ID
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value;
+        let resolvedUserId = changed_by_user_id || null;
 
-        // Update in-memory fallback cache
-        if (existingConfigIndex >= 0) {
-            fallbackActiveRates[existingConfigIndex] = {
-                ...fallbackActiveRates[existingConfigIndex],
-                exchange_rate: numNewRate,
-                effective_date,
-                updated_at: new Date().toISOString()
-            };
-        } else {
-            fallbackActiveRates.push({
-                forex_id: targetForexId,
-                currency_code: currency_code.toUpperCase(),
-                currency_name: `${currency_code.toUpperCase()} Currency`,
-                symbol: currency_code.toUpperCase() === "EUR" ? "€" : currency_code.toUpperCase() === "JPY" ? "¥" : "$",
-                exchange_rate: numNewRate,
-                effective_date,
-                is_active: 1,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            });
+        if (token && changed_by_user_id !== null) {
+            const payload = decodeJwtPayload(token);
+            if (payload && payload.sub) {
+                resolvedUserId = Number(payload.sub);
+            }
         }
+        
+        // Generate accurate PH Local Time string (YYYY-MM-DD HH:mm:ss)
+        const phDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        const phTimeStr = `${phDate.getFullYear()}-${pad(phDate.getMonth() + 1)}-${pad(phDate.getDate())} ${pad(phDate.getHours())}:${pad(phDate.getMinutes())}:${pad(phDate.getSeconds())}`;
 
-        const newHistoryLog: ForexRateHistory = {
-            history_id: fallbackRateHistory.length + 1,
-            forex_id: targetForexId,
-            currency_code: currency_code.toUpperCase(),
-            previous_rate,
-            new_rate: numNewRate,
-            effective_date,
-            changed_by_user_id: changed_by_user_id || 1,
-            change_reason: change_reason.trim(),
-            created_at: new Date().toISOString()
-        };
+        const previous_rate = existingConfig ? existingConfig.exchange_rate : numNewRate;
+        const targetForexId = forex_id || (existingConfig ? existingConfig.forex_id : undefined);
 
-        fallbackRateHistory.unshift(newHistoryLog);
-
-        // Attempt to persist to Directus collections if accessible
+        // Attempt to persist to Directus collections
+        let finalForexId = targetForexId;
         try {
+            let configPatchSuccess = false;
+
             // Update or Create forex_configurations
-            if (existingConfigIndex >= 0 && fallbackActiveRates[existingConfigIndex].forex_id) {
-                await procurementDirectusFetch(`/items/forex_configurations/${fallbackActiveRates[existingConfigIndex].forex_id}`, {
+            if (existingConfig) {
+                const patchRes = await procurementDirectusFetch(`/items/forex_configurations/${existingConfig.forex_id}`, {
                     method: "PATCH",
                     body: JSON.stringify({
                         exchange_rate: numNewRate,
                         effective_date,
-                        updated_at: new Date().toISOString()
+                        updated_at: phTimeStr
                     })
                 });
-            } else {
-                await procurementDirectusFetch("/items/forex_configurations", {
+
+                if (patchRes.ok) {
+                    configPatchSuccess = true;
+                } else {
+                    console.warn(`[Procurement Forex API] PATCH config ${existingConfig.forex_id} failed with status ${patchRes.status}. Falling back to POST.`);
+                }
+            }
+
+            if (!configPatchSuccess) {
+                const postConfigRes = await procurementDirectusFetch("/items/forex_configurations", {
                     method: "POST",
                     body: JSON.stringify({
                         currency_code: currency_code.toUpperCase(),
@@ -123,31 +119,52 @@ export async function POST(request: Request) {
                         is_active: 1
                     })
                 });
+                
+                if (!postConfigRes.ok) {
+                    const errText = await postConfigRes.text();
+                    throw new Error(`Failed to POST forex_configurations: ${postConfigRes.status} ${errText}`);
+                }
+                
+                const postConfigJson = await postConfigRes.json();
+                const newId = postConfigJson?.data?.forex_id || postConfigJson?.data?.id;
+                if (newId) {
+                    finalForexId = newId;
+                }
             }
 
             // Insert into forex_rate_history
-            await procurementDirectusFetch("/items/forex_rate_history", {
+            const historyPostRes = await procurementDirectusFetch("/items/forex_rate_history", {
                 method: "POST",
                 body: JSON.stringify({
-                    forex_id: targetForexId,
+                    forex_id: finalForexId,
                     currency_code: currency_code.toUpperCase(),
                     previous_rate,
                     new_rate: numNewRate,
                     effective_date,
-                    changed_by_user_id: changed_by_user_id || 1,
-                    change_reason: change_reason.trim()
+                    changed_by_user_id: resolvedUserId,
+                    change_reason: change_reason.trim(),
+                    created_at: phTimeStr
                 })
             });
+
+            if (!historyPostRes.ok) {
+                const errText = await historyPostRes.text();
+                throw new Error(`Failed to POST forex_rate_history: ${historyPostRes.status} ${errText}`);
+            }
         } catch (e) {
-            console.warn("[Procurement Forex API] Directus persistence warning:", e);
+            console.error("[Procurement Forex API] Directus persistence error:", e);
+            return NextResponse.json({ error: (e as Error).message || "Failed to persist to database" }, { status: 500 });
         }
+
+        // Fetch fresh data to return to client
+        const activeRates = await getActiveForexRates();
+        const rateHistory = await getForexRateHistory();
 
         return NextResponse.json({
             success: true,
             message: "FOREX rate updated and audit log recorded successfully.",
-            activeRates: fallbackActiveRates,
-            rateHistory: fallbackRateHistory,
-            newHistoryLog
+            activeRates,
+            rateHistory
         });
     } catch (e) {
         console.error("API Error updating procurement forex rate:", e);
