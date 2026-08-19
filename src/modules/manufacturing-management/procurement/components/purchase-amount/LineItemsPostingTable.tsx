@@ -11,6 +11,7 @@ interface LineItemsPostingTableProps {
     setLineItems?: React.Dispatch<React.SetStateAction<POLineItem[]>>;
     onExecutePosting: () => void;
     posting: boolean;
+    allocationRuleSelected: boolean;
 }
 
 export default function LineItemsPostingTable({
@@ -18,7 +19,8 @@ export default function LineItemsPostingTable({
     exchangeRate,
     calculationResult,
     onExecutePosting,
-    posting
+    posting,
+    allocationRuleSelected
 }: LineItemsPostingTableProps) {
     return (
         <div className="space-y-3">
@@ -36,6 +38,7 @@ export default function LineItemsPostingTable({
                             <th className="p-3">Product Item</th>
                             <th className="p-3">Category</th>
                             <th className="p-3 text-right">Received Qty</th>
+                            <th className="p-3 text-right">Line Gross Weight (kg)</th>
                             <th className="p-3 text-right">Unit Price ({isForeignPO ? "USD" : "PHP"})</th>
                             {isForeignPO ? (
                                 <>
@@ -53,9 +56,7 @@ export default function LineItemsPostingTable({
                     <tbody className="divide-y">
                         {calculationResult.lineCalculations.map((line) => {
                             const name = line.product_name || `Product #${line.product_id}`;
-                            const catStr = String(line.product_category || "").toUpperCase();
-                            const isPkg = catStr === "390" || catStr === "PKG" || catStr === "PACKAGING" || catStr === "PACKAGING ITEMS";
-                            const isFg = catStr === "388" || catStr === "FG" || catStr === "FINISHED GOODS";
+                            const isPkg = line.category_type === "PACKAGING";
                             const price = Number(line.unit_price) || 0;
                             const basePhp = price * (isForeignPO ? exchangeRate : 1.0);
                             const lineTotal = basePhp * (line.received_quantity || 0);
@@ -67,14 +68,20 @@ export default function LineItemsPostingTable({
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                             isPkg 
                                                 ? "bg-purple-500/10 text-purple-600 border border-purple-500/20" 
-                                                : isFg 
-                                                    ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" 
-                                                    : "bg-blue-500/10 text-blue-600 border border-blue-500/20"
+                                                : "bg-blue-500/10 text-blue-600 border border-blue-500/20"
                                         }`}>
-                                            {isPkg ? "PACKAGING (PKG)" : isFg ? "FINISHED GOODS (FG)" : "RAW MATERIAL (RM)"}
+                                            {isPkg ? "PACKAGING" : "RAW MATERIAL"}
                                         </span>
                                     </td>
                                     <td className="p-3 text-right font-mono font-bold">{line.received_quantity.toLocaleString()}</td>
+                                    <td className="p-3 text-right font-mono text-muted-foreground">
+                                        <div>{Number(line.line_gross_weight_kg || 0).toFixed(3)}</div>
+                                        {line.category_type === "PACKAGING" && (
+                                            <div className="text-[9px] text-muted-foreground/80">
+                                                N {Number(line.unit_net_weight_kg || 0).toFixed(3)} + C {Number(line.unit_outer_carton_weight_kg || 0).toFixed(3)} + P {Number(line.unit_pallet_weight_kg || 0).toFixed(3)}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="p-3 text-right font-mono font-bold">
                                         {isForeignPO ? "$" : "₱"}{price.toFixed(2)}
                                     </td>
@@ -105,7 +112,7 @@ export default function LineItemsPostingTable({
             <div className="flex justify-end pt-2">
                 <button
                     type="button"
-                    disabled={posting}
+                    disabled={posting || !allocationRuleSelected}
                     onClick={onExecutePosting}
                     className="h-10 px-5 rounded-lg bg-primary text-primary-foreground font-bold text-xs flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
                 >
@@ -113,6 +120,11 @@ export default function LineItemsPostingTable({
                     {posting ? "Posting Amounts..." : "Post Purchase Amounts & Lock Costs"}
                 </button>
             </div>
+            {!allocationRuleSelected && (
+                <p className="text-right text-[11px] text-muted-foreground">
+                    Select an allocation rule before posting purchase amounts.
+                </p>
+            )}
         </div>
     );
 }

@@ -10,6 +10,7 @@ import {
     reviseRejectedPurchaseOrder
 } from "../../_lifecycle-service";
 import { MrpPairValidationError } from "../../_mrp-validation";
+import { ProductCategoryTypeValidationError } from "../../../procurement/_category-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,10 +22,12 @@ function routeError(error: unknown) {
             ? error.status
             : error instanceof MrpPairValidationError
                 ? error.status
+            : error instanceof ProductCategoryTypeValidationError
+                ? error.status
             : 500;
     return NextResponse.json({
         error: (error as Error).message || "Failed to revise purchase order.",
-        details: error instanceof PurchaseOrderLifecycleError || error instanceof MrpPairValidationError ? error.details : undefined
+        details: error instanceof PurchaseOrderLifecycleError || error instanceof MrpPairValidationError || error instanceof ProductCategoryTypeValidationError ? error.details : undefined
     }, { status });
 }
 

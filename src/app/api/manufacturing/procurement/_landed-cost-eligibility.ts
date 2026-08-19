@@ -8,6 +8,7 @@ import {
 export class LandedCostEligibilityError extends Error {
     readonly code = "LANDED_COST_INELIGIBLE";
     readonly status = 409;
+    readonly details: Record<string, unknown> = {};
 
     constructor(message: string) {
         super(message);

@@ -13,13 +13,18 @@ import {
     receivingLotAllocationError,
     rejectedLotAllocationError
 } from "../../qa-receiving/_lot-allocation";
-import { calculateLandedCostAllocations, fetchShipmentExpenses, normalizeAllocationMethod, toStandardKg } from "../expenses/expenses-helper";
+import { calculateLandedCostAllocations, fetchShipmentExpenses, normalizeAllocationMethod } from "../expenses/expenses-helper";
+import {
+    ProductWeightValidationError,
+    resolveProductWeightBreakdown
+} from "@/modules/manufacturing-management/procurement/packaging-weight";
 import { receiptNumberForLine, type FinalReceivingAllocation } from "../../qa-receiving/_commit-contract";
 import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-receiving/_receiving-status";
 import { sumMovementQuantitiesByLot } from "../../qa-receiving/_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
+import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 
 class ReceivingError extends Error {
     constructor(message: string, readonly status: number) {
@@ -479,11 +484,14 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const previouslyReceivedByLine = receivingHistory.byLine;
 
         const poLineMap = new Map(poLines.map(line => [Number(line.purchase_order_product_id), line]));
-        const productIds = [...new Set(poLines.map(line => relationId(line.product_id, "product_id")))];
-        const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type.name,product_type.type_name,product_shelf_life,weight,product_weight,weight_unit_id.*,cbm_height,cbm_width,cbm_length,cost_per_unit,estimated_unit_cost&limit=-1`, { headers, cache: "no-store" });
+        const productIds = [...new Set(poLines
+            .map(line => relationId(line.product_id, "product_id"))
+            .filter((id): id is number => id !== null))];
+        const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type,product_shelf_life,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*,cbm_height,cbm_width,cbm_length,cost_per_unit,estimated_unit_cost&limit=-1`, { headers, cache: "no-store" });
         if (!productsRes.ok) throw new Error("Failed to validate received products.");
         const products = ((await productsRes.json()).data || []) as Record<string, unknown>[];
         const productMap = new Map(products.map(product => [Number(product.product_id), product]));
+        const categoryTypes = await resolveProductCategoryTypes(productIds);
 
         const prepared = lineItemUpdates.map(item => {
             const poLine = poLineMap.get(item.line_id);
@@ -494,6 +502,19 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (productId !== item.product_id) throw new ReceivingError(`Product mismatch for line ${item.line_id}.`, 400);
             const product = productMap.get(productId);
             if (!product) throw new ReceivingError(`Product ${productId} does not exist.`, 400);
+            const categoryType = categoryTypes.get(productId);
+            if (!categoryType) throw new ReceivingError(`Product ${productId} has no valid RAW_MATERIAL or PACKAGING Category_Type.`, 400);
+            let weightBreakdown;
+            try {
+                weightBreakdown = resolveProductWeightBreakdown(product, {
+                    requireComplete: categoryType === "PACKAGING"
+                });
+            } catch (error) {
+                if (error instanceof ProductWeightValidationError) {
+                    throw new ReceivingError(`Product ${productId}: ${error.message}`, 400);
+                }
+                throw error;
+            }
 
             const received = Number(item.quantity_received);
             const declaredAccepted = Number(item.quantity_accepted);
@@ -519,7 +540,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
                 throw new ReceivingError(`Remarks are required for the quantity discrepancy on product ${productId}.`, 400);
             }
-            if (declaredAccepted > 0 && relationId(product.product_type, "id") !== 390 && !item.expiration_date) {
+            if (declaredAccepted > 0 && categoryType !== "PACKAGING" && !item.expiration_date) {
                 const shelfLifeDays = Number(product.product_shelf_life || 365);
                 const mfgDateStr = item.manufacturing_date || todayInManila();
                 const mfgTime = new Date(mfgDateStr).getTime();
@@ -573,6 +594,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 acceptedLotAllocations,
                 rejectedLotAllocations,
                 primaryLotId,
+                categoryType,
+                weightBreakdown,
                 remainingQuantity: overDelivery.remainingQuantity,
                 overDeliveryQuantity: overDelivery.overDeliveryQuantity,
                 isOverReceived: overDelivery.isOverReceived
@@ -604,17 +627,15 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const expenses = await fetchShipmentExpenses(shipmentId);
         const allocationMethod = normalizeAllocationMethod(String(expenses[0]?.allocation_method || "Value"));
         const allocations = calculateLandedCostAllocations(prepared.map(line => {
-            const rawW = Number(line.product.weight || line.product.product_weight || 0);
-            const wUnitShortcut = (line.product.weight_unit_id as { unit_shortcut?: string } | undefined)?.unit_shortcut;
-            const normW = toStandardKg(rawW, wUnitShortcut);
             return {
                 key: line.item.line_id,
                 quantity: line.accepted,
                 baseUnitCost: line.baseUnitCost,
-                weight: normW,
+                weight: line.weightBreakdown.grossWeightKg,
+                lineGrossWeightKg: line.weightBreakdown.grossWeightKg * line.accepted,
                 volume: Number(line.product.cbm_height || 0) * Number(line.product.cbm_width || 0) * Number(line.product.cbm_length || 0),
-                category: ((line.product.product_type as Record<string, unknown> | null)?.name as string) || ((line.product.product_type as Record<string, unknown> | null)?.type_name as string) || "RM",
-                weightUnit: wUnitShortcut
+                category_type: line.categoryType as PurchaseOrderCategoryType,
+                weightUnit: line.weightBreakdown.weightUnitCode
             };
         }), expenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0), allocationMethod);
 

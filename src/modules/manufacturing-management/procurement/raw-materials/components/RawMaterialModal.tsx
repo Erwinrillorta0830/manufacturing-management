@@ -32,7 +32,12 @@ interface RawMaterialModalProps {
     formDensity: string;
     setFormDensity: (v: string) => void;
     formWeight: string;
-    setFormWeight: (v: string) => void;
+    formNetWeight: string;
+    setFormNetWeight: (v: string) => void;
+    formOuterCartonWeight: string;
+    setFormOuterCartonWeight: (v: string) => void;
+    formPalletWeight: string;
+    setFormPalletWeight: (v: string) => void;
     formWeightUnitId: number | "";
     setFormWeightUnitId: (v: number | "") => void;
     formBrand: string;
@@ -102,7 +107,12 @@ export function RawMaterialModal({
     formDensity,
     setFormDensity,
     formWeight,
-    setFormWeight,
+    formNetWeight,
+    setFormNetWeight,
+    formOuterCartonWeight,
+    setFormOuterCartonWeight,
+    formPalletWeight,
+    setFormPalletWeight,
     formWeightUnitId,
     setFormWeightUnitId,
     formBrand,
@@ -160,20 +170,28 @@ export function RawMaterialModal({
     );
     const isPackagingMaterial = Number(formProductType) === 390;
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
-    const hasWeightValue = formWeight.trim() !== "";
+    const hasNetWeightValue = formNetWeight.trim() !== "";
+    const hasOuterCartonWeightValue = formOuterCartonWeight.trim() !== "";
+    const hasPalletWeightValue = formPalletWeight.trim() !== "";
+    const hasWeightComponents = hasNetWeightValue || hasOuterCartonWeightValue || hasPalletWeightValue;
     const hasWeightUnitValue = formWeightUnitId !== "";
-    const isWeightValueInvalid = hasWeightValue && (!Number.isFinite(Number(formWeight)) || Number(formWeight) <= 0);
+    const isNetWeightInvalid = hasNetWeightValue && (!Number.isFinite(Number(formNetWeight)) || Number(formNetWeight) < 0);
+    const isOuterCartonWeightInvalid = hasOuterCartonWeightValue && (!Number.isFinite(Number(formOuterCartonWeight)) || Number(formOuterCartonWeight) < 0);
+    const isPalletWeightInvalid = hasPalletWeightValue && (!Number.isFinite(Number(formPalletWeight)) || Number(formPalletWeight) < 0);
     const isWeightUnitInvalid = hasWeightUnitValue && (!Number.isFinite(Number(formWeightUnitId)) || Number(formWeightUnitId) <= 0);
-    const weightPairIncomplete = hasWeightValue !== hasWeightUnitValue;
-    const weightValueHasError = showValidationErrors && (
+    const componentValuesComplete = hasNetWeightValue && hasOuterCartonWeightValue && hasPalletWeightValue;
+    const calculatedGrossWeight = componentValuesComplete && !isNetWeightInvalid && !isOuterCartonWeightInvalid && !isPalletWeightInvalid
+        ? Number(formNetWeight) + Number(formOuterCartonWeight) + Number(formPalletWeight)
+        : Number(formWeight) || 0;
+    const weightComponentsHaveError = showValidationErrors && (
         isPackagingMaterial
-            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
-            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+            ? !componentValuesComplete || !hasWeightUnitValue || isNetWeightInvalid || isOuterCartonWeightInvalid || isPalletWeightInvalid || calculatedGrossWeight <= 0
+            : hasWeightComponents && (!componentValuesComplete || !hasWeightUnitValue || isNetWeightInvalid || isOuterCartonWeightInvalid || isPalletWeightInvalid)
     );
     const weightUnitHasError = showValidationErrors && (
         isPackagingMaterial
-            ? !hasWeightValue || !hasWeightUnitValue || isWeightValueInvalid || isWeightUnitInvalid
-            : weightPairIncomplete || isWeightValueInvalid || isWeightUnitInvalid
+            ? !hasWeightUnitValue || isWeightUnitInvalid
+            : (hasWeightComponents && !hasWeightUnitValue) || isWeightUnitInvalid
     );
 
     return (
@@ -385,32 +403,79 @@ export function RawMaterialModal({
                             />
                         </div>
 
-                        <div className="space-y-1">
-                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Gross Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
-                            </label>
-                            <input
-                                type="number"
-                                step="any"
-                                placeholder="25.00"
-                                value={formWeight}
-                                onChange={e => setFormWeight(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightValueHasError ? "border-red-500" : ""}`}
-                                required={isPackagingMaterial}
-                            />
-                        </div>
+                        <div className="col-span-2 sm:col-span-6 grid grid-cols-2 sm:grid-cols-5 gap-2.5 border-t pt-2">
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Net Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="25.00"
+                                    value={formNetWeight}
+                                    onChange={e => setFormNetWeight(e.target.value)}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isNetWeightInvalid) ? "border-red-500" : ""}`}
+                                    required={isPackagingMaterial}
+                                />
+                            </div>
 
-                        <div className="space-y-1">
-                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Weight Unit {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
-                            </label>
-                            <CreatableSelect
-                                options={weightUnitOptions}
-                                value={String(formWeightUnitId)}
-                                onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
-                                placeholder="Unit..."
-                                className={`h-8 text-xs ${weightUnitHasError ? "border-red-500" : ""}`}
-                            />
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Outer Carton Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="0.00"
+                                    value={formOuterCartonWeight}
+                                    onChange={e => setFormOuterCartonWeight(e.target.value)}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isOuterCartonWeightInvalid) ? "border-red-500" : ""}`}
+                                    required={isPackagingMaterial}
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Pallet Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="0.00"
+                                    value={formPalletWeight}
+                                    onChange={e => setFormPalletWeight(e.target.value)}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isPalletWeightInvalid) ? "border-red-500" : ""}`}
+                                    required={isPackagingMaterial}
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Gross Weight <span className="text-muted-foreground normal-case font-medium">(Calculated)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    readOnly
+                                    value={calculatedGrossWeight > 0 ? calculatedGrossWeight.toFixed(3) : ""}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none ${weightComponentsHaveError && calculatedGrossWeight <= 0 ? "border-red-500" : ""}`}
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Weight Unit {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                </label>
+                                <CreatableSelect
+                                    options={weightUnitOptions}
+                                    value={String(formWeightUnitId)}
+                                    onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
+                                    placeholder="Unit..."
+                                    className={`h-8 text-xs ${weightUnitHasError ? "border-red-500" : ""}`}
+                                />
+                            </div>
                         </div>
 
                         <div className="space-y-1">
@@ -591,7 +656,10 @@ export function RawMaterialModal({
                                         const variantNamePreview = formName.trim() || "Material";
                                         const variantIdentityPreview = `${variantNamePreview} - ${uomShortcut.toUpperCase()}`;
                                         const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
-                                        const calculatedWeight = formWeight && parseFloat(formWeight) > 0 ? (parseFloat(formWeight) * (parseFloat(v.count) || 1)).toFixed(2) : null;
+                                        const variantComponentsComplete = v.netWeight.trim() !== "" && v.outerCartonWeight.trim() !== "" && v.palletWeight.trim() !== "";
+                                        const calculatedWeight = variantComponentsComplete
+                                            ? (Number(v.netWeight) + Number(v.outerCartonWeight) + Number(v.palletWeight)).toFixed(3)
+                                            : null;
                                         const weightUnitName = weightUnitOptions.find(w => w.value === String(formWeightUnitId))?.label.split("(")[0]?.trim() || "";
 
                                         return (
@@ -667,6 +735,57 @@ export function RawMaterialModal({
                                                         {calculatedWeight && (
                                                             <span className="text-muted-foreground text-[9px] mt-0.5">Est. Weight: {calculatedWeight} {weightUnitName}</span>
                                                         )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 border-t pt-2">
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                            Net Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="any"
+                                                            placeholder="0.00"
+                                                            value={v.netWeight}
+                                                            onChange={e => handleUpdateVariant(vIdx, "netWeight", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                            Outer Carton Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="any"
+                                                            placeholder="0.00"
+                                                            value={v.outerCartonWeight}
+                                                            onChange={e => handleUpdateVariant(vIdx, "outerCartonWeight", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                            Pallet Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="any"
+                                                            placeholder="0.00"
+                                                            value={v.palletWeight}
+                                                            onChange={e => handleUpdateVariant(vIdx, "palletWeight", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+                                                    <div className="bg-muted/30 p-1.5 rounded-lg border text-[10px] flex flex-col justify-center">
+                                                        <span className="text-muted-foreground font-bold uppercase block text-[9px]">Calculated Gross Weight:</span>
+                                                        <span className="font-mono font-extrabold text-foreground">
+                                                            {calculatedWeight ? `${calculatedWeight} ${weightUnitName}` : "Complete components"}
+                                                        </span>
                                                     </div>
                                                 </div>
 

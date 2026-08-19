@@ -1,12 +1,12 @@
-import { toStandardKg } from "./expenses-helper";
+import { calculatePackagingWeightShares } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import type { PurchaseOrderCategoryType } from "../_category-type";
 
 export interface HybridAllocationLineItem {
     key: number;
-    category: string;
+    category_type: PurchaseOrderCategoryType;
     quantity: number;
     baseUnitCost: number;
-    weight: number;
-    weightUnit?: string;
+    lineGrossWeightKg: number;
 }
 
 export interface HybridAllocationItemResult {
@@ -26,6 +26,11 @@ export function calculateHybridLandedCostAllocation(
 ): HybridAllocationResult {
     const result: HybridAllocationResult = new Map();
     if (lineItems.length === 0) return result;
+    for (const item of lineItems) {
+        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING") {
+            throw new Error(`Line ${item.key} must have Category_Type RAW_MATERIAL or PACKAGING for Hybrid allocation.`);
+        }
+    }
     if (totalLandedFee === 0) {
         for (const item of lineItems) {
             result.set(item.key, { allocatedExpense: 0, finalLandedUnitCost: item.baseUnitCost });
@@ -42,11 +47,10 @@ export function calculateHybridLandedCostAllocation(
 
     for (const item of lineItems) {
         const value = item.quantity * item.baseUnitCost;
-        if (item.category === "PKG" || item.category === "Packaging") {
+        if (item.category_type === "PACKAGING") {
             totalPKGValue += value;
             pkgItems.push(item);
         } else {
-            // Default everything else to RM
             totalRMValue += value;
             rmItems.push(item);
         }
@@ -80,20 +84,22 @@ export function calculateHybridLandedCostAllocation(
         unroundedAllocations.set(item.key, fee);
     }
 
-    // Phase 2B: Allocate PKG Fee Pool to PKG line items proportionally by Gross Weight in KG.
-    let totalPKGWeight = 0;
+    // Phase 2B: Allocate PKG Fee Pool by the already-derived line gross weight.
+    // The product unit weight and line quantity are combined once by the caller.
+    const packageWeightShares = calculatePackagingWeightShares(pkgItems.map(item => ({
+        key: item.key,
+        lineGrossWeightKg: item.lineGrossWeightKg
+    })));
     for (const item of pkgItems) {
-        const kg = toStandardKg(item.weight, item.weightUnit);
-        if (kg <= 0 && item.quantity > 0) {
+        if (item.lineGrossWeightKg <= 0 && item.quantity > 0) {
             throw new Error(`Packaging item (Line ID: ${item.key}) must have a non-zero weight for Hybrid allocation.`);
         }
-        totalPKGWeight += kg * item.quantity;
     }
     for (const item of pkgItems) {
         let fee = 0;
-        if (totalPKGWeight > 0) {
-            const kg = toStandardKg(item.weight, item.weightUnit);
-            fee = pkgFeePool * ((kg * item.quantity) / totalPKGWeight);
+        const weightShare = packageWeightShares.get(item.key) || 0;
+        if (weightShare > 0) {
+            fee = pkgFeePool * weightShare;
         } else {
             fee = pkgFeePool / pkgItems.length;
         }
