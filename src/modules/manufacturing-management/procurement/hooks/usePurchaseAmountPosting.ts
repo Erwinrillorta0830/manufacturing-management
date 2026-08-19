@@ -22,6 +22,8 @@ import {
     calculatePackagingWeightShares,
     resolveProductWeightBreakdown
 } from "../packaging-weight";
+import { calculateLandedCost } from "../landed-cost-calculation";
+import type { LandedCostAllocationRule } from "../types";
 
 export interface PurchaseOrderOption {
     purchase_order_id?: number;
@@ -65,8 +67,9 @@ export function usePurchaseAmountPosting(
     
     // Landed cost entries
     const [landedExpenses, setLandedExpenses] = useState<LandedExpenseRow[]>([
-        { id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "hybrid" }
+        { id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "" }
     ]);
+    const [allocationRule, setAllocationRule] = useState<LandedCostAllocationRule | "">("");
 
     const [fetchedOrders, setFetchedOrders] = useState<PurchaseOrderOption[]>([]);
     const [internalSelected, setInternalSelected] = useState<PurchaseOrderOption | null>(null);
@@ -122,6 +125,8 @@ export function usePurchaseAmountPosting(
         setLoading(true);
         setErrorMessage(null);
         setSuccessMessage(null);
+        setAllocationRule("");
+        setLandedExpenses([{ id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "" }]);
 
         fetchPurchaseAmountDetails(poId)
             .then(data => {
@@ -163,13 +168,24 @@ export function usePurchaseAmountPosting(
                         } as POLineItem;
                     }));
                 }
-                if (data.importExpenses && data.importExpenses.length > 0) {
-                    setLandedExpenses(data.importExpenses.map((exp: Record<string, unknown>, index: number) => ({
+                const canonicalExpenses = Array.isArray(data.landedCost?.expenses) && data.landedCost.expenses.length > 0
+                    ? data.landedCost.expenses
+                    : (Array.isArray(data.importExpenses) ? data.importExpenses : []);
+                const storedRule = data.landedCost?.computation?.allocation_rule;
+                if (canonicalExpenses.length > 0) {
+                    if (storedRule === "Value" || storedRule === "Weight" || storedRule === "Volume" || storedRule === "Hybrid") {
+                        setAllocationRule(storedRule);
+                    }
+                    setLandedExpenses(canonicalExpenses.map((exp: Record<string, unknown>, index: number) => ({
                         id: String(exp.po_import_id || index + 1),
                         chart_of_account_id: Number(exp.chart_of_account_id) || 0,
-                        amount: Number(exp.amount) || 0,
-                        allocation_method: (exp.allocation_method as string) || "hybrid"
+                        amount: Number(exp.amount ?? exp.amount_php) || 0,
+                        allocation_method: storedRule || ""
                     })));
+                } else if (storedRule) {
+                    if (storedRule === "Value" || storedRule === "Weight" || storedRule === "Volume" || storedRule === "Hybrid") {
+                        setAllocationRule(storedRule);
+                    }
                 }
             })
             .catch(err => {
@@ -181,7 +197,7 @@ export function usePurchaseAmountPosting(
     // Hybrid Allocation Calculation Engine Preview
     const calculationResult = useMemo<HybridCalculationResult>(() => {
         const totalLandedFee = landedExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-        if (lineItems.length === 0 || totalLandedFee === 0) {
+        if (lineItems.length === 0 || totalLandedFee === 0 || !allocationRule) {
             return {
                 lineCalculations: lineItems.map(item => {
                     const price = Number(item.unit_price) || 0;
@@ -198,6 +214,48 @@ export function usePurchaseAmountPosting(
                 pkgSubPool: 0,
                 totalLandedFee: 0,
                 roundingVariance: 0,
+                hasMissingWeight: false,
+                missingWeightItems: []
+            };
+        }
+
+        if (allocationRule !== "Hybrid") {
+            const calculated = calculateLandedCost(
+                lineItems.map(item => {
+                    const product = typeof item.product_id === "object" && item.product_id !== null
+                        ? item.product_id
+                        : null;
+                    const volume = Number(product?.cbm_height || 0)
+                        * Number(product?.cbm_width || 0)
+                        * Number(product?.cbm_length || 0);
+
+                    return {
+                        key: item.purchase_order_product_id,
+                        category_type: item.category_type || "RAW_MATERIAL",
+                        quantity: Number(item.received_quantity) || 0,
+                        baseUnitCostPhp: (Number(item.unit_price) || 0) * (isForeignPO ? exchangeRate : 1),
+                        lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
+                        volume
+                    };
+                }),
+                totalLandedFee,
+                allocationRule
+            );
+            return {
+                lineCalculations: lineItems.map(item => {
+                    const result = calculated.lines.find(line => line.key === item.purchase_order_product_id);
+                    return {
+                        ...item,
+                        allocated_amount: result?.allocatedExpense || 0,
+                        variance_adjustment: result?.roundingVariance || 0,
+                        allocated_expense_php: result?.addedUnitCost || 0,
+                        final_landed_unit_cost: result?.finalLandedUnitCost || 0
+                    };
+                }),
+                rmSubPool: 0,
+                pkgSubPool: 0,
+                totalLandedFee: calculated.totalLandedFee,
+                roundingVariance: calculated.roundingVariance,
                 hasMissingWeight: false,
                 missingWeightItems: []
             };
@@ -288,13 +346,13 @@ export function usePurchaseAmountPosting(
             hasMissingWeight: missingWeightItems.length > 0,
             missingWeightItems
         };
-    }, [lineItems, landedExpenses, exchangeRate, isForeignPO]);
+    }, [lineItems, landedExpenses, exchangeRate, isForeignPO, allocationRule]);
 
     const handleAddExpenseRow = () => {
         const defaultCoa = chartOfAccounts[0]?.coa_id || chartOfAccounts[0]?.id || 0;
         setLandedExpenses(prev => [
             ...prev,
-            { id: String(Date.now()), chart_of_account_id: defaultCoa, amount: 0, allocation_method: "hybrid" }
+            { id: String(Date.now()), chart_of_account_id: defaultCoa, amount: 0, allocation_method: allocationRule }
         ]);
     };
 
@@ -308,6 +366,11 @@ export function usePurchaseAmountPosting(
 
     const handleExecutePosting = async () => {
         if (!selectedShipment) return;
+
+        if (!allocationRule) {
+            setErrorMessage("Select an allocation rule before posting purchase amounts.");
+            return;
+        }
 
         if (isForeignPO && calculationResult.hasMissingWeight) {
             setErrorMessage(`Complete net, outer carton, and pallet weights are required for Packaging items (${calculationResult.missingWeightItems.join(", ")}).`);
@@ -324,6 +387,7 @@ export function usePurchaseAmountPosting(
                 purchase_order_id: poId,
                 is_foreign: isForeignPO,
                 exchange_rate: isForeignPO ? exchangeRate : 1.0,
+                allocation_rule: allocationRule,
                 expenses: isForeignPO ? landedExpenses.filter(e => e.chart_of_account_id > 0 && e.amount > 0) : [],
                 line_items: calculationResult.lineCalculations.map(calc => ({
                     purchase_order_product_id: calc.purchase_order_product_id,
@@ -378,6 +442,8 @@ export function usePurchaseAmountPosting(
         lineItems,
         setLineItems,
         landedExpenses,
+        allocationRule,
+        setAllocationRule,
         chartOfAccounts,
         calculationResult,
         handleAddExpenseRow,

@@ -10,7 +10,15 @@ export interface ChartOfAccount {
 
 export interface POLineItem {
     purchase_order_product_id: number;
-    product_id: number | { product_id: number; product_name?: string; category?: string; weight?: number };
+    product_id: number | {
+        product_id: number;
+        product_name?: string;
+        category?: string;
+        weight?: number;
+        cbm_height?: number | string | null;
+        cbm_width?: number | string | null;
+        cbm_length?: number | string | null;
+    };
     product_name?: string;
     product_category?: string;
     category_type?: "RAW_MATERIAL" | "PACKAGING";

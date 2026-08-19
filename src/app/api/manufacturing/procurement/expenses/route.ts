@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { 
-    fetchShipmentExpenses, 
-    processShipmentLandedCosts 
-} from "./expenses-helper";
+import { fetchShipmentExpenses } from "./expenses-helper";
 import { expenseAllocationSchema } from "../_schemas";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
@@ -10,6 +7,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
+import { finalizeLandedCost, isLandedCostError } from "../landed-cost/_domain";
 
 export async function GET(request: Request) {
     try {
@@ -28,33 +26,33 @@ export async function GET(request: Request) {
         console.error("API Error fetching shipment expenses:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to fetch shipment expenses" }, {
             status: e instanceof PurchaseOrderAuthorizationError || e instanceof LandedCostEligibilityError ? e.status : 500,
-            ...(e instanceof LandedCostEligibilityError ? { code: e.code } : {})
+            ...(isLandedCostError(e) ? { code: e.code, details: e.details } : e instanceof LandedCostEligibilityError ? { code: e.code } : {})
         });
     }
 }
 
 export async function POST(request: Request) {
     try {
-        await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
+        const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
         const parsed = expenseAllocationSchema.safeParse(await request.json());
         if (!parsed.success) {
             return NextResponse.json({ error: "Invalid expense allocation.", details: parsed.error.flatten() }, { status: 400 });
         }
-        const { shipmentId, status, expenses, allocationMethod, lineItemUpdates } = parsed.data;
-
-        const result = await processShipmentLandedCosts(
-            shipmentId,
-            status,
+        const { shipmentId, expenses, allocationMethod } = parsed.data;
+        const normalizedRule = allocationMethod.replace(/^By\s+/i, "");
+        const result = await finalizeLandedCost({
+            purchaseOrderId: shipmentId,
+            allocationRule: normalizedRule,
             expenses,
-            allocationMethod,
-            lineItemUpdates
-        );
+            actorId: actor.userId,
+            sourceFlow: "SHIPMENT_EXPENSES"
+        });
         return NextResponse.json(result);
     } catch (e) {
         console.error("API Error allocating shipment expenses:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to allocate shipment expenses" }, {
-            status: e instanceof PurchaseOrderAuthorizationError || e instanceof LandedCostEligibilityError ? e.status : 500,
-            ...(e instanceof LandedCostEligibilityError ? { code: e.code } : {})
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof LandedCostEligibilityError || isLandedCostError(e) ? e.status : 500,
+            ...(isLandedCostError(e) ? { code: e.code, details: e.details } : e instanceof LandedCostEligibilityError ? { code: e.code } : {})
         });
     }
 }

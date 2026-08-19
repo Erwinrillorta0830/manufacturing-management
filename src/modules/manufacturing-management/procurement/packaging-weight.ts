@@ -26,6 +26,8 @@ export interface ProductWeightBreakdown {
 
 export class ProductWeightValidationError extends Error {
     readonly status = 400;
+    readonly code = "PRODUCT_WEIGHT_INVALID";
+    readonly details: Record<string, unknown> = {};
 
     constructor(message: string) {
         super(message);

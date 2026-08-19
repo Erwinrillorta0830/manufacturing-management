@@ -26,6 +26,7 @@ import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from 
 import {
     isLandedCostPostingEligible
 } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import { getLandedCostComputation } from "../landed-cost/_domain";
 import {
     ProductCategoryTypeValidationError,
     resolveProductCategoryTypes,
@@ -598,12 +599,25 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
         if (!popRes.ok) return [];
         const popData = (await popRes.json()).data as DirectusPOProduct[] || [];
 
-        // Fetch purchase_order_expenses for this procurement PO to calculate landed costs dynamically
+        // Read the canonical landed-cost computation first. Compatibility rows are
+        // retained only as a read fallback for older purchase orders.
+        let canonicalRule: string | null = null;
+        let canonicalExpenses: Array<{ amount_php?: number | string }> = [];
+        try {
+            const canonical = await getLandedCostComputation(shipmentId);
+            canonicalRule = canonical.computation?.allocation_rule || null;
+            canonicalExpenses = canonical.expenses;
+        } catch (error) {
+            console.warn("[Manufacturing] Canonical landed-cost computation unavailable; using compatibility rows.", error);
+        }
+
+        // Fetch purchase_order_expenses for older procurement POs to calculate landed costs dynamically
         const expensesUrl = `${DIRECTUS_URL}/items/purchase_order_expenses?filter[purchase_order_id][_eq]=${shipmentId}&limit=-1`;
         const expensesRes = await fetch(expensesUrl, { headers, cache: "no-store" });
-        const expenses = expensesRes.ok ? (await expensesRes.json()).data || [] : [];
+        const legacyExpenses = expensesRes.ok ? (await expensesRes.json()).data || [] : [];
+        const expenses = canonicalRule ? canonicalExpenses : legacyExpenses;
         const totalExpensesPhp = expenses.reduce((sum: number, exp: { amount_php?: number | string }) => sum + Number(exp.amount_php || 0), 0);
-        const allocationMethod = expenses[0]?.allocation_method?.replace("By ", "") || "Value";
+        const allocationMethod = normalizeAllocationMethod(canonicalRule || legacyExpenses[0]?.allocation_method || "Value");
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
@@ -656,7 +670,9 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
             const product = products.find(p => Number(p.product_id) === Number(rawProdId));
             const lineId = Number(line.purchase_order_product_id);
             const history = receivingHistory.byLine.get(lineId) || { received: 0, rejected: 0, accepted: 0 };
-            const qty = Math.max(0, history.received || Number(line.ordered_quantity || 0));
+            const qty = originalReceivingData.length > 0
+                ? Math.max(0, history.accepted)
+                : Math.max(0, Number(line.ordered_quantity || 0));
             const categoryType = categoryTypes.get(Number(rawProdId));
             if (!categoryType) {
                 throw new ProductCategoryTypeValidationError(
@@ -808,7 +824,12 @@ export async function fetchShipmentLineItems(shipmentId: number): Promise<Extend
                     UNIT_PRICE_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.unit_price_foreign`
                 ),
-                allocated_expense_php: "0.00",
+                 allocated_expense_php: normalizeLegacyDecimal(
+                     allocation?.allocatedExpense || 0,
+                     "0.0000",
+                     UNIT_PRICE_DECIMAL_SCALE,
+                     `purchase_order_products/${pop.purchase_order_product_id}.allocated_expense_php`
+                 ),
                 final_landed_unit_cost: normalizeLegacyDecimal(
                     finalLandedUnitCost,
                     "0.0000",

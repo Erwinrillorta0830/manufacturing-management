@@ -1,4 +1,4 @@
-import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct } from "../types";
+import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
@@ -118,9 +118,53 @@ export async function saveAndAllocateExpenses(
     const res = await fetchWithSessionRetry("/api/manufacturing/procurement/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shipmentId, status, expenses, allocationMethod, lineItemUpdates })
+        body: JSON.stringify({ shipmentId, status, expenses, allocationMethod, allocationRule: allocationMethod.replace(/^By\s+/i, ""), lineItemUpdates })
     });
     return handleResponse(res, "Failed to save and allocate expenses");
+}
+
+export async function fetchLandedCostDraft(purchaseOrderId: number): Promise<LandedCostDraftResponse> {
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/landed-cost?purchaseOrderId=${encodeURIComponent(purchaseOrderId)}`);
+    return handleResponse(res, "Failed to load landed-cost computation");
+}
+
+export async function saveLandedCostDraft(
+    purchaseOrderId: number,
+    allocationRule: LandedCostAllocationRule,
+    expenses: LandedCostExpenseDraft[],
+    sourceFlow?: string
+): Promise<LandedCostDraftResponse> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/landed-cost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purchaseOrderId, allocationRule, expenses, sourceFlow })
+    });
+    return handleResponse(res, "Failed to save landed-cost inputs");
+}
+
+export async function uploadLandedCostAttachment(
+    purchaseOrderId: number,
+    computationId: number,
+    documentType: LandedCostAttachmentRecord["document_type"],
+    file: File
+): Promise<LandedCostAttachmentRecord> {
+    const formData = new FormData();
+    formData.set("purchaseOrderId", String(purchaseOrderId));
+    formData.set("computationId", String(computationId));
+    formData.set("documentType", documentType);
+    formData.set("file", file, file.name);
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/landed-cost/attachments", {
+        method: "POST",
+        body: formData
+    });
+    return handleResponse(res, "Failed to upload landed-cost document");
+}
+
+export async function deleteLandedCostAttachment(purchaseOrderId: number, attachmentId: number): Promise<void> {
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/landed-cost/attachments/${attachmentId}?purchaseOrderId=${encodeURIComponent(purchaseOrderId)}`, {
+        method: "DELETE"
+    });
+    if (!res.ok) await handleResponse(res, "Failed to delete landed-cost document");
 }
 
 export async function fetchRawMaterials(): Promise<RawMaterial[]> {
