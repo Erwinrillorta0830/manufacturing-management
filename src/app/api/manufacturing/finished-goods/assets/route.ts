@@ -4,31 +4,6 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 export async function GET() {
-    // Elegant Auto-Registration side-effect
-    try {
-        const checkRes = await fetch(`${DIRECTUS_URL}/items/modules?filter[slug][_eq]=assets-equipment`, { headers });
-        if (checkRes.ok) {
-            const checkJson = await checkRes.json();
-            if (!checkJson.data || checkJson.data.length === 0) {
-                await fetch(`${DIRECTUS_URL}/items/modules`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify({
-                        title: "Asset & Equipment Management",
-                        slug: "assets-equipment",
-                        base_path: "/mm/assets",
-                        icon_name: "Wrench",
-                        status: "active",
-                        sort: 6,
-                        subsystem_id: 8
-                    })
-                });
-                console.log("[Auto-Registration] Registered Assets & Equipment module in Directus modules collection");
-            }
-        }
-    } catch (err) {
-        console.error("[Auto-Registration] Failed to check/register Assets & Equipment module:", err);
-    }
 
     try {
         const [res, usersRes] = await Promise.all([
