@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { Supplier, RawMaterial, SupplierFormState, LinkedProduct } from "../types";
+import { Supplier, RawMaterial, SupplierFormState, LinkedProduct, SupplierCatalogUpdatePayload } from "../types";
 import {
     MapPin, Phone, Mail, Award, FileText, CheckCircle2,
-    AlertCircle, Globe, Building2, UserSquare2, Trash2, Link as LinkIcon, Plus, Loader2
+    AlertCircle, Globe, Building2, UserSquare2, Link as LinkIcon, Plus, Loader2
 } from "lucide-react";
 import { toast } from "sonner";
 import SupplierTable, { SupplierStatusFilter, SupplierForeignFilter } from "./SupplierTable";
@@ -11,8 +11,7 @@ import SupplierEvaluationModal from "./SupplierEvaluationModal";
 import SupplierCatalogMatrixModal from "./SupplierCatalogMatrixModal";
 import {
     fetchLinkedProducts,
-    linkProductToSupplier,
-    unlinkProductFromSupplier,
+    saveSupplierCatalogUpdates,
     isSupplierActive,
     isSupplierNonBuy,
     isSupplierForeign,
@@ -57,7 +56,7 @@ export default function SuppliersDirectory({
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
     const [loadingLinkedProducts, setLoadingLinkedProducts] = useState(false);
-    const [unlinkingLinkId, setUnlinkingLinkId] = useState<number | null>(null);
+    const [savingCatalogUpdates, setSavingCatalogUpdates] = useState(false);
 
     const checkForeign = useCallback((s: Supplier | null | undefined): boolean => {
         return isSupplierForeign(s);
@@ -108,33 +107,23 @@ export default function SuppliersDirectory({
         }
     }, [activeSupplierId, loadLinkedProducts]);
 
-    const handleLinkMultipleProducts = async (productIds: string[]) => {
-        if (productIds.length === 0 || activeSupplierId === null) return;
-        try {
-            await Promise.all(
-                productIds.map(id => linkProductToSupplier(activeSupplierId, Number(id)))
-            );
-            toast.success(`Successfully linked ${productIds.length} products`);
-            await loadLinkedProducts(activeSupplierId);
-        } catch (e) {
-            console.error(e);
-            toast.error("Failed to link one or more products");
-            throw e;
+    const handleSaveCatalogUpdates = async (payload: SupplierCatalogUpdatePayload) => {
+        if (activeSupplierId === null || payload.supplierId !== activeSupplierId) {
+            throw new Error("Select a supplier before saving catalog updates.");
         }
-    };
-
-    const handleUnlinkProduct = async (linkId: number) => {
-        if (unlinkingLinkId !== null || activeSupplierId === null) return;
-        setUnlinkingLinkId(linkId);
+        setSavingCatalogUpdates(true);
         try {
-            await unlinkProductFromSupplier(linkId);
-            toast.success("Product unlinked successfully");
+            const result = await saveSupplierCatalogUpdates(payload);
             await loadLinkedProducts(activeSupplierId);
+            const addedCount = result.added?.length || 0;
+            const removedCount = result.removed?.length || 0;
+            toast.success(`Catalog updates saved (${addedCount} added, ${removedCount} removed)`);
         } catch (e) {
             console.error(e);
-            toast.error((e as Error).message || "Failed to unlink product. Please try again.");
+            toast.error((e as Error).message || "Failed to save catalog updates. Please try again.");
+            throw e;
         } finally {
-            setUnlinkingLinkId(null);
+            setSavingCatalogUpdates(false);
         }
     };
 
@@ -425,12 +414,10 @@ export default function SuppliersDirectory({
                                                     </p>
                                                 </div>
                                                 <button
-                                                    onClick={() => handleUnlinkProduct(lp.id)}
-                                                    disabled={unlinkingLinkId === lp.id}
-                                                    className="text-muted-foreground hover:text-red-600 p-2 rounded-xl hover:bg-red-500/10 transition-all cursor-pointer shrink-0 opacity-80 group-hover:opacity-100"
-                                                    title="Unlink Product"
+                                                    onClick={() => setIsCatalogMatrixOpen(true)}
+                                                    className="text-[10px] font-bold text-primary hover:text-primary/80 shrink-0"
                                                 >
-                                                    {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                                                    Manage
                                                 </button>
                                             </div>
                                         );
@@ -473,9 +460,8 @@ export default function SuppliersDirectory({
                 rawMaterials={rawMaterials}
                 linkedProducts={linkedProducts}
                 loadingLinkedProducts={loadingLinkedProducts}
-                onLinkProducts={handleLinkMultipleProducts}
-                onUnlinkProduct={handleUnlinkProduct}
-                unlinkingLinkId={unlinkingLinkId}
+                onSaveUpdates={handleSaveCatalogUpdates}
+                savingUpdates={savingCatalogUpdates}
             />
         </div>
     );
