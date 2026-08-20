@@ -173,13 +173,13 @@ export function useRawMaterialForm(
         return rawMaterials
             .filter(rm => {
                 if (editingItem && Number(rm.product_id) === Number(editingItem.product_id)) return false;
-                return !rm.parent_id;
+                return !rm.parent_id && Number(rm.product_type) === Number(formProductType);
             })
             .map(rm => ({
                 value: String(rm.product_id),
                 label: `${rm.product_name} (${rm.product_code || `ID-${rm.product_id}`})`
             }));
-    }, [rawMaterials, editingItem]);
+    }, [rawMaterials, editingItem, formProductType]);
 
     const selectedParent = useMemo(
         () => formParentId
@@ -199,6 +199,15 @@ export function useRawMaterialForm(
     );
     const isEditingChild = Boolean(editingItem?.parent_id);
     const parentSelectionLocked = Boolean(editingItem && activeFamilyChildren.length > 0);
+    const parentRelationshipError = useMemo(() => {
+        if (!formParentId) return null;
+        if (!selectedParent) return "The selected parent material is no longer available.";
+        if (selectedParent.parent_id) return "A child variant cannot be selected as a parent material.";
+        if (Number(selectedParent.product_type) !== Number(formProductType)) {
+            return "The parent material and Category Type must match.";
+        }
+        return null;
+    }, [formParentId, formProductType, selectedParent]);
     const classificationLocked = Boolean(formParentId || isEditingChild || existingFamilyChildren.length > 0);
     const inheritedProductType = selectedParent?.product_type
         ?? (isEditingChild
@@ -516,10 +525,13 @@ export function useRawMaterialForm(
     const handleParentChange = (val: string) => {
         if (parentSelectionLocked) return;
 
-        setFormParentId(val);
         const parentItem = val
             ? rawMaterials.find(rm => String(rm.product_id) === String(val))
             : undefined;
+
+        if (val && !parentItem) return;
+
+        setFormParentId(val);
         if (parentItem?.product_type) {
             setFormProductType(Number(parentItem.product_type));
         }
@@ -530,6 +542,12 @@ export function useRawMaterialForm(
                 setFormCode(`${parentCode}-${uomShortcut.toUpperCase()}${formUomCount}`);
             }
         }
+    };
+
+    const handleClearParentSelection = () => {
+        if (parentSelectionLocked) return;
+        setFormParentId("");
+        setSubmitError(null);
     };
 
     const handleCreateBrand = async (name: string) => {
@@ -567,6 +585,13 @@ export function useRawMaterialForm(
     const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setSubmitError(null);
+
+        if (parentRelationshipError) {
+            setShowValidationErrors(true);
+            setSubmitError(parentRelationshipError);
+            toast.error(parentRelationshipError);
+            return;
+        }
 
         // Validation Checks
         const isPackagingMaterial = Number(formProductType) === 390;
@@ -860,10 +885,12 @@ export function useRawMaterialForm(
         classificationLockMessage,
         parentSelectionLocked,
         parentSelectionLockMessage,
+        parentRelationshipError,
         formIsActive,
         setFormIsActive,
         formParentId,
         setFormParentId: handleParentChange,
+        clearParentSelection: handleClearParentSelection,
         formUomCount,
         setFormUomCount,
         selectedSupplierIds,

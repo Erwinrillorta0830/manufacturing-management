@@ -63,10 +63,12 @@ interface RawMaterialModalProps {
     classificationLockMessage: string;
     parentSelectionLocked: boolean;
     parentSelectionLockMessage: string;
+    parentRelationshipError: string | null;
     formIsActive: boolean;
     setFormIsActive: (v: boolean) => void;
     formParentId: string;
     setFormParentId: (v: string) => void;
+    clearParentSelection: () => void;
     formUomCount: string;
     setFormUomCount: (v: string) => void;
     selectedSupplierIds: number[];
@@ -140,10 +142,12 @@ export function RawMaterialModal({
     classificationLockMessage,
     parentSelectionLocked,
     parentSelectionLockMessage,
+    parentRelationshipError,
     formIsActive,
     setFormIsActive,
     formParentId,
     setFormParentId,
+    clearParentSelection,
     formUomCount,
     setFormUomCount,
     selectedSupplierIds,
@@ -505,18 +509,38 @@ export function RawMaterialModal({
                                 <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                                     Parent Material (For Multi-UOM Pack Variants)
                                 </label>
-                                <CreatableSelect
-                                    options={parentProductOptions}
-                                    value={formParentId}
-                                    onValueChange={(val: string) => setFormParentId(val)}
-                                    placeholder="None (Standalone Base Parent)"
-                                    className="h-8 text-xs"
-                                    disabled={parentSelectionLocked}
-                                    aria-describedby={parentSelectionLocked ? "raw-material-parent-lock-message" : undefined}
-                                />
+                                <div className="flex items-center gap-1">
+                                    <div className="min-w-0 flex-1">
+                                        <CreatableSelect
+                                            options={parentProductOptions}
+                                            value={formParentId}
+                                            onValueChange={(val: string) => setFormParentId(val)}
+                                            placeholder="None (Standalone Base Parent)"
+                                            className="h-8 text-xs"
+                                            disabled={parentSelectionLocked}
+                                            aria-describedby={parentSelectionLocked ? "raw-material-parent-lock-message" : undefined}
+                                        />
+                                    </div>
+                                    {formParentId && !parentSelectionLocked && (
+                                        <button
+                                            type="button"
+                                            onClick={clearParentSelection}
+                                            aria-label="Clear parent material"
+                                            title="Clear parent material"
+                                            className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
+                                </div>
                                 {parentSelectionLocked && (
                                     <p id="raw-material-parent-lock-message" className="text-[10px] font-semibold text-muted-foreground">
                                         {parentSelectionLockMessage}
+                                    </p>
+                                )}
+                                {parentRelationshipError && (
+                                    <p role="alert" className="text-[10px] font-semibold text-rose-700">
+                                        {parentRelationshipError} Clear the parent selection before saving.
                                     </p>
                                 )}
                             </div>
@@ -861,7 +885,7 @@ export function RawMaterialModal({
                             </button>
                             <button
                                 type="submit"
-                                disabled={saving || loadingPurchaseQa || !purchaseQaReady}
+                                disabled={saving || loadingPurchaseQa || !purchaseQaReady || Boolean(parentRelationshipError)}
                                 className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {saving ? (
