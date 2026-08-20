@@ -1,4 +1,8 @@
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const acquireDocumentNumberLock = async (transactionTypeId: number | string) => { return () => {}; };
-export const releaseDocumentNumberLock = async (lock?: any) => {};
-export const findNextAvailableDocumentNumber = async (transactionTypeId: number | string, fetcher?: any) => "DOC-0001";
-export const isDocumentNumberConflictError = (error: any) => false;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const releaseDocumentNumberLock = async (lock?: unknown) => {};
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const findNextAvailableDocumentNumber = async (transactionTypeId: number | string, fetcher?: unknown) => "DOC-0001";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const isDocumentNumberConflictError = (error: unknown) => false;

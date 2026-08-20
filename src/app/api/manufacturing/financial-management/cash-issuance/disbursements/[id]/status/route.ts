@@ -465,7 +465,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         addId(relationId(updatedDis.encoder_id, "user_id"));
         addId(relationId(updatedDis.approver_id, "user_id"));
         addId(relationId(updatedDis.posted_by, "user_id"));
-        payments.forEach(p => {
+        payments.forEach(() => {
             // Removed p.released_by
         });
 

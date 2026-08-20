@@ -144,7 +144,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
         }
         
         return parts.join("\n");
-    }, [filters, categories, brands, suppliers, units, priceTypes]);
+    }, [filters, categories, brands, suppliers, units, priceTypes, productTypes]);
 
     const exportPriceTypes = React.useMemo(() => {
         const configured = priceTypes.filter(priceType => priceType.price_type_id !== -1);

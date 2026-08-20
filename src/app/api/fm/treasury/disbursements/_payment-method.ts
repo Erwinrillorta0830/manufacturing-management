@@ -1,1 +1,1 @@
-export const isPettyCashBankAccount = (bankId: any) => false;
+export const isPettyCashBankAccount = () => false;

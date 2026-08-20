@@ -3,12 +3,9 @@ import { cookies } from "next/headers";
 import { decodeJwtPayload } from "@/lib/auth-utils";
 import { procurementDirectusFetch } from "../_directus";
 import {
-    fallbackActiveRates,
-    fallbackRateHistory,
     getActiveForexRates,
     getForexRateHistory
 } from "./_rates";
-import type { ForexRateHistory } from "./_rates";
 
 export type { ForexConfig, ForexRateHistory } from "./_rates";
 

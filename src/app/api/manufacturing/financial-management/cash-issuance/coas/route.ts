@@ -23,8 +23,9 @@ export async function GET(request: NextRequest) {
         
         const data = (await res.json()).data || [];
         
+        type DirectusCoaItem = { coa_id?: string | number; gl_code?: string; account_title?: string; account_type?: string | number; isPayment?: boolean; is_payment?: boolean; };
         // Map to COADto
-        const mapped = data.map((item: any) => ({
+        const mapped = data.map((item: DirectusCoaItem) => ({
             coaId: Number(item.coa_id),
             glCode: item.gl_code || "",
             accountTitle: item.account_title || "",

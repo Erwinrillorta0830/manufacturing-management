@@ -637,7 +637,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         addId(relationId(freshDis.approver_id, "user_id"));
         addId(relationId(freshDis.posted_by, "user_id"));
         const payments = lineItems.payments.get(Number(id)) || [];
-        payments.forEach(p => {
+        payments.forEach(() => {
             // Removed p.released_by
         });
 

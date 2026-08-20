@@ -281,7 +281,7 @@ export async function GET(req: NextRequest) {
             };
         }
 
-        const versionsByProduct = new Map<number, any[]>();
+        const versionsByProduct = new Map<number, Record<string, unknown>[]>();
         for (const v of versionRows) {
             const pid = pickId(v.product_id);
             const vid = pickId(v.version_id);

@@ -367,6 +367,7 @@ export function CashIssuanceCreateDialog({
         setPayables(nextPayables);
         setPayableValidationErrors((current) => {
             const next = new Set(current);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             nextPayables.forEach((line: any, lineIndex: number) => {
                 const key = `${lineIndex}:divisionId`;
                 if (isValidDivisionId(line.divisionId)) next.delete(key);
@@ -414,7 +415,7 @@ export function CashIssuanceCreateDialog({
         try {
             const refreshed = await disbursementProvider.getSuppliers(payeeSupplierType);
             const nextSuppliers = Array.isArray(refreshed) ? refreshed : [];
-            const createdPayeeId = createdPayee?.id;
+            const createdPayeeId = createdPayee?.id as number;
 
             setSuppliers(
                 createdPayeeId == null || nextSuppliers.some((supplier) => supplier.id === createdPayeeId)
@@ -423,7 +424,7 @@ export function CashIssuanceCreateDialog({
                         ...nextSuppliers,
                         {
                             id: createdPayeeId,
-                            supplier_name: createdPayee?.supplier_name || "New Payee",
+                            supplier_name: (createdPayee?.supplier_name as string) || "New Payee",
                             isActive: true,
                         },
                     ],

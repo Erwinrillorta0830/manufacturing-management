@@ -55,18 +55,18 @@ export async function GET(req: NextRequest) {
         // Example: Add fields you want to fetch
         params.set("fields", "id,doc_no,total_amount,status,remarks,date_created,payee.*,encoder_id.*");
 
-        const response = await directusFetch<any>(`/items/fm_cash_issuances?${params.toString()}`);
+        const response = await directusFetch<Record<string, unknown>>(`/items/fm_cash_issuances?${params.toString()}`);
 
         return NextResponse.json({
             data: response.data || [],
-            totalElements: response.meta?.filter_count || 0,
-            totalPages: Math.ceil((response.meta?.filter_count || 0) / size),
+            totalElements: (response.meta as Record<string, unknown>)?.filter_count || 0,
+            totalPages: Math.ceil((((response.meta as Record<string, unknown>)?.filter_count as number) || 0) / size),
             page,
             size,
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         return NextResponse.json(
-            { message: "Failed to fetch cash issuances", detail: error.message },
+            { message: "Failed to fetch cash issuances", detail: error instanceof Error ? error.message : "Unknown error" },
             { status: 500 }
         );
     }
@@ -98,15 +98,15 @@ export async function POST(req: NextRequest) {
 
         // 3. Save to Directus
         // TODO: Replace "fm_cash_issuances" with your actual Directus collection name
-        const response = await directusFetch<any>("/items/fm_cash_issuances", {
+        const response = await directusFetch<Record<string, unknown>>("/items/fm_cash_issuances", {
             method: "POST",
             body: JSON.stringify(directusPayload),
         });
 
         return NextResponse.json(response.data);
-    } catch (error: any) {
+    } catch (error: unknown) {
         return NextResponse.json(
-            { message: "Failed to create cash issuance", detail: error.message },
+            { message: "Failed to create cash issuance", detail: error instanceof Error ? error.message : "Unknown error" },
             { status: 500 }
         );
     }
