@@ -13,6 +13,7 @@ import {
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
 import { PurchaseQaEditor } from "./PurchaseQaEditor";
+import { isPackagingMaterialProductType } from "../../packaging-weight";
 
 interface RawMaterialModalProps {
     isOpen: boolean;
@@ -200,7 +201,7 @@ export function RawMaterialModal({
         s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
         s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
     );
-    const isPackagingMaterial = Number(formProductType) === 390;
+    const isPackagingMaterial = isPackagingMaterialProductType(formProductType);
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
     const hasNetWeightValue = formNetWeight.trim() !== "";
@@ -477,7 +478,7 @@ export function RawMaterialModal({
                     <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-muted/10 p-3 rounded-xl border">
                         {sharedAttributesLocked && (
                             <p className="col-span-2 sm:col-span-6 text-[10px] font-semibold text-muted-foreground">
-                                Parent metadata is inherited. Enter UOM, UOM Ratio, Density, Weight, and Weight Unit for this child SKU.
+                                Parent metadata is inherited. Enter UOM, UOM Ratio, Density, and any variant-specific physical measurements for this child SKU.
                             </p>
                         )}
                         <div className="space-y-1">
@@ -899,7 +900,7 @@ export function RawMaterialModal({
                                                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 border-t pt-2">
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
-                                                            Net Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                            Net Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                                                         </label>
                                                         <input
                                                             type="number"
@@ -909,11 +910,12 @@ export function RawMaterialModal({
                                                             value={v.netWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "netWeight", e.target.value)}
                                                             className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            required={isPackagingMaterial}
                                                         />
                                                     </div>
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
-                                                            Outer Carton Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                            Outer Carton Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                                                         </label>
                                                         <input
                                                             type="number"
@@ -923,11 +925,12 @@ export function RawMaterialModal({
                                                             value={v.outerCartonWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "outerCartonWeight", e.target.value)}
                                                             className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            required={isPackagingMaterial}
                                                         />
                                                     </div>
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
-                                                            Pallet Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
+                                                            Pallet Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
                                                         </label>
                                                         <input
                                                             type="number"
@@ -937,6 +940,7 @@ export function RawMaterialModal({
                                                             value={v.palletWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "palletWeight", e.target.value)}
                                                             className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            required={isPackagingMaterial}
                                                         />
                                                     </div>
                                                     <div>

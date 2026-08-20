@@ -21,7 +21,9 @@ import {
 } from "./_classification-integrity";
 import {
     ProductWeightValidationError,
-    resolveProductWeightBreakdown
+    isPackagingMaterialProductType,
+    resolveProductWeightBreakdown,
+    validateProductWeightForProductType
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
 
@@ -64,11 +66,6 @@ function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | un
 
 function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unknown> {
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa" && key !== "price_control"));
-}
-
-function hasWeightComponentValue(value: Record<string, unknown>): boolean {
-    return [value.net_weight, value.outer_carton_weight, value.pallet_weight]
-        .some(hasProvidedValue);
 }
 
 function buildWeightPayload(
@@ -159,40 +156,14 @@ function validateMeasurementFields(productDetails: Record<string, unknown>, requ
         }
     }
 
-    const isPackagingMaterial = Number(productDetails.product_type) === 390;
-    const hasWeight = hasProvidedValue(productDetails.weight);
-    const hasWeightUnit = hasProvidedValue(productDetails.weight_unit_id);
-    const hasWeightComponents = hasWeightComponentValue(productDetails);
-
-    if (isPackagingMaterial) {
-        try {
-            resolveProductWeightBreakdown(productDetails, { requireComplete: true });
-        } catch (error) {
-            return weightValidationMessage(error);
-        }
-    } else if (hasWeightComponents) {
-        try {
-            resolveProductWeightBreakdown(productDetails, { requireComplete: true });
-        } catch (error) {
-            return weightValidationMessage(error);
-        }
-    } else if (hasWeight || hasWeightUnit) {
-        if (!hasWeight || !hasWeightUnit) {
-            return "Gross weight and weight unit must be provided together when supplied.";
-        }
-        if (!isPositiveNumber(productDetails.weight)) {
-            return "Gross weight must be greater than 0 when supplied.";
-        }
-        if (!isPositiveNumber(productDetails.weight_unit_id)) {
-            return "Weight unit must be valid when supplied.";
-        }
-    }
-
-    return null;
+    return validateProductWeightForProductType(productDetails, productDetails.product_type);
 }
 
-function validatePackagingVariants(packagingVariants: unknown, requireWeightComponents: boolean): string | null {
+function validatePackagingVariants(packagingVariants: unknown, productType: unknown): string | null {
     if (!Array.isArray(packagingVariants) || packagingVariants.length === 0) return null;
+
+    const requireWeightComponents = isPackagingMaterialProductType(productType);
+    let weightValidationError: string | null = null;
 
     const hasInvalidVariant = packagingVariants.some((variant) => {
         if (!variant || typeof variant !== "object") return true;
@@ -202,19 +173,17 @@ function validatePackagingVariants(packagingVariants: unknown, requireWeightComp
             !isPositiveNumber(item.density_factor);
         if (invalidMeasurements) return true;
 
-        try {
-            resolveProductWeightBreakdown(item, { requireComplete: requireWeightComponents });
-            return requireWeightComponents && !isPositiveNumber(item.weight_unit_id);
-        } catch {
-            return true;
-        }
+        weightValidationError = validateProductWeightForProductType(item, productType);
+        return Boolean(weightValidationError);
     });
 
     return hasInvalidVariant
-        ? requireWeightComponents
+        ? !requireWeightComponents && weightValidationError
+            ? `Variant weight: ${weightValidationError}`
+            : requireWeightComponents
             ? "Packaging variants require valid UOM, conversion count, density, net weight, outer carton weight, pallet weight, and weight unit values."
             : "Variants require valid UOM, conversion count, and any supplied weight components must be complete."
-        : null;
+            : null;
 }
 
 type ResolvedPackagingVariant = {
@@ -319,8 +288,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const isPackagingMaterial = Number(productDetails.product_type) === 390;
-        const variantsError = validatePackagingVariants(classifiedVariants, isPackagingMaterial);
+        const isPackagingMaterial = isPackagingMaterialProductType(productDetails.product_type);
+        const variantsError = validatePackagingVariants(classifiedVariants, productDetails.product_type);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
@@ -592,8 +561,8 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const isPackagingMaterial = Number(effectiveWeightDetails.product_type) === 390;
-        const variantsError = validatePackagingVariants(classifiedVariants, isPackagingMaterial);
+        const isPackagingMaterial = isPackagingMaterialProductType(effectiveWeightDetails.product_type);
+        const variantsError = validatePackagingVariants(classifiedVariants, effectiveWeightDetails.product_type);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
