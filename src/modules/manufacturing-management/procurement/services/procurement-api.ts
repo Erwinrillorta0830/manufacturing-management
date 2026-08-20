@@ -354,14 +354,17 @@ export async function fetchLinkedProducts(supplierId: number): Promise<LinkedPro
 export async function fetchLinkedProductsPage(
     supplierId: number,
     page: number,
-    pageSize: number
+    pageSize: number,
+    search = "",
+    signal?: AbortSignal
 ): Promise<LinkedProductPageResponse> {
     const params = new URLSearchParams({
         supplierId: String(supplierId),
         page: String(page),
         pageSize: String(pageSize)
     });
-    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers/products?${params.toString()}`);
+    if (search.trim()) params.set("search", search.trim());
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers/products?${params.toString()}`, { signal });
     return handleResponse(res, "Failed to fetch linked product page") as Promise<LinkedProductPageResponse>;
 }
 

@@ -484,10 +484,12 @@ export async function fetchProductsBySupplier(supplierId: number): Promise<Direc
 export async function fetchProductsBySupplierPage(
     supplierId: number,
     requestedPage = 1,
-    requestedPageSize = SUPPLIER_PAGE_SIZE_DEFAULT
+    requestedPageSize = SUPPLIER_PAGE_SIZE_DEFAULT,
+    search = ""
 ): Promise<LinkedProductPageResponse> {
     const page = normalizePage(requestedPage, 1);
     const pageSize = normalizePageSize(requestedPageSize);
+    const normalizedSearch = search.trim();
     const params = new URLSearchParams({
         "filter[supplier_id][_eq]": String(supplierId),
         fields: PRODUCT_FIELDS,
@@ -496,6 +498,10 @@ export async function fetchProductsBySupplierPage(
         offset: String((page - 1) * pageSize),
         meta: "filter_count"
     });
+    if (normalizedSearch) {
+        params.set("filter[_or][0][product_id][product_name][_icontains]", normalizedSearch);
+        params.set("filter[_or][1][product_id][product_code][_icontains]", normalizedSearch);
+    }
 
     try {
         const response = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?${params.toString()}`, { headers, cache: "no-store" });

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Supplier, RawMaterial, SupplierFormState, LinkedProduct, SupplierCatalogUpdatePayload, SupplierPageResponse, LinkedProductPageResponse } from "../types";
 import {
     MapPin, Phone, Mail, Award, FileText, CheckCircle2,
-    AlertCircle, Globe, Building2, UserSquare2, Link as LinkIcon, Plus, Loader2
+    AlertCircle, Globe, Building2, UserSquare2, Link as LinkIcon, Plus, Loader2, Search, X
 } from "lucide-react";
 import { toast } from "sonner";
 import SupplierTable from "./SupplierTable";
@@ -77,10 +77,13 @@ export default function SuppliersDirectory({
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
     const [linkedProductPage, setLinkedProductPage] = useState(1);
     const [linkedProductPageSize, setLinkedProductPageSize] = useState(10);
+    const [linkedProductSearch, setLinkedProductSearch] = useState("");
     const [linkedProductPageData, setLinkedProductPageData] = useState<LinkedProductPageResponse>(EMPTY_LINKED_PRODUCT_PAGE);
     const [loadingLinkedProductPage, setLoadingLinkedProductPage] = useState(false);
     const [loadingLinkedProducts, setLoadingLinkedProducts] = useState(false);
     const [savingCatalogUpdates, setSavingCatalogUpdates] = useState(false);
+    const linkedProductRequestId = useRef(0);
+    const previousActiveSupplierId = useRef<number | null>(null);
 
     const filteredSuppliers = supplierPageData.data;
 
@@ -134,8 +137,16 @@ export default function SuppliersDirectory({
         return () => window.clearTimeout(timer);
     }, [foreignFilter, loadSupplierPage, search, statusFilter, supplierPage, supplierPageSize, supplierRefreshKey]);
 
-    const loadLinkedProductPage = useCallback(async (supplierId: number | null, page: number, pageSize: number) => {
+    const loadLinkedProductPage = useCallback(async (
+        supplierId: number | null,
+        page: number,
+        pageSize: number,
+        searchTerm: string,
+        requestId: number,
+        signal: AbortSignal
+    ) => {
         if (supplierId === null) {
+            if (requestId !== linkedProductRequestId.current) return;
             setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
             setLoadingLinkedProductPage(false);
             return;
@@ -143,16 +154,20 @@ export default function SuppliersDirectory({
 
         setLoadingLinkedProductPage(true);
         try {
-            const data = await fetchLinkedProductsPage(supplierId, page, pageSize);
+            const data = await fetchLinkedProductsPage(supplierId, page, pageSize, searchTerm, signal);
+            if (signal.aborted || requestId !== linkedProductRequestId.current) return;
             setLinkedProductPageData(data);
             if (data.pagination.totalPages < page) {
                 setLinkedProductPage(data.pagination.totalPages);
             }
         } catch (error) {
+            if (signal.aborted || requestId !== linkedProductRequestId.current) return;
             console.error(error);
             setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
         } finally {
-            setLoadingLinkedProductPage(false);
+            if (requestId === linkedProductRequestId.current) {
+                setLoadingLinkedProductPage(false);
+            }
         }
     }, []);
 
@@ -169,8 +184,34 @@ export default function SuppliersDirectory({
     }, []);
 
     useEffect(() => {
-        void loadLinkedProductPage(activeSupplierId, linkedProductPage, linkedProductPageSize);
-    }, [activeSupplierId, linkedProductPage, linkedProductPageSize, loadLinkedProductPage]);
+        const requestId = linkedProductRequestId.current + 1;
+        linkedProductRequestId.current = requestId;
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => {
+            void loadLinkedProductPage(
+                activeSupplierId,
+                linkedProductPage,
+                linkedProductPageSize,
+                linkedProductSearch,
+                requestId,
+                controller.signal
+            );
+        }, linkedProductSearch.trim() ? 250 : 0);
+
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [activeSupplierId, linkedProductPage, linkedProductPageSize, linkedProductSearch, loadLinkedProductPage]);
+
+    useEffect(() => {
+        if (previousActiveSupplierId.current !== null && previousActiveSupplierId.current !== activeSupplierId) {
+            setLinkedProductSearch("");
+            setLinkedProductPage(1);
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+        }
+        previousActiveSupplierId.current = activeSupplierId;
+    }, [activeSupplierId]);
 
     useEffect(() => {
         if (isCatalogMatrixOpen && activeSupplierId !== null) {
@@ -180,6 +221,7 @@ export default function SuppliersDirectory({
 
     const handleSelectSupplier = (supplierId: number) => {
         setSelectedSupplierId(supplierId);
+        setLinkedProductSearch("");
         setLinkedProductPage(1);
         setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
     };
@@ -218,6 +260,16 @@ export default function SuppliersDirectory({
         setLinkedProductPage(1);
     };
 
+    const handleLinkedProductSearchChange = (value: string) => {
+        setLinkedProductSearch(value);
+        setLinkedProductPage(1);
+    };
+
+    const clearLinkedProductSearch = () => {
+        setLinkedProductSearch("");
+        setLinkedProductPage(1);
+    };
+
     const handleSaveCatalogUpdates = async (payload: SupplierCatalogUpdatePayload) => {
         if (activeSupplierId === null || payload.supplierId !== activeSupplierId) {
             throw new Error("Select a supplier before saving catalog updates.");
@@ -225,8 +277,17 @@ export default function SuppliersDirectory({
         setSavingCatalogUpdates(true);
         try {
             const result = await saveSupplierCatalogUpdates(payload);
+            const refreshRequestId = linkedProductRequestId.current + 1;
+            linkedProductRequestId.current = refreshRequestId;
             await Promise.all([
-                loadLinkedProductPage(activeSupplierId, linkedProductPage, linkedProductPageSize),
+                loadLinkedProductPage(
+                    activeSupplierId,
+                    linkedProductPage,
+                    linkedProductPageSize,
+                    linkedProductSearch,
+                    refreshRequestId,
+                    new AbortController().signal
+                ),
                 loadLinkedProducts(activeSupplierId)
             ]);
             const addedCount = result.added?.length || 0;
@@ -476,12 +537,36 @@ export default function SuppliersDirectory({
                                     </div>
                                 </div>
 
-                                <button
-                                    onClick={() => setIsCatalogMatrixOpen(true)}
-                                    className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
-                                >
-                                    <Plus className="h-3.5 w-3.5" /> Manage Catalog Matrix
-                                </button>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+                                    <div className="relative w-full sm:w-64">
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                        <input
+                                            type="search"
+                                            value={linkedProductSearch}
+                                            onChange={event => handleLinkedProductSearchChange(event.target.value)}
+                                            placeholder="Search linked items by name or code..."
+                                            aria-label="Search linked items by name or code"
+                                            className="h-8 w-full rounded-lg border bg-background pl-8 pr-8 text-xs outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary focus:ring-1 focus:ring-primary"
+                                        />
+                                        {linkedProductSearch && (
+                                            <button
+                                                type="button"
+                                                onClick={clearLinkedProductSearch}
+                                                aria-label="Clear linked item search"
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCatalogMatrixOpen(true)}
+                                        className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" /> Manage Catalog Matrix
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Linked Products Preview Grid */}
@@ -491,21 +576,41 @@ export default function SuppliersDirectory({
                                     <span>Loading associated products...</span>
                                 </div>
                             ) : linkedProductPageData.data.length === 0 ? (
-                                <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
-                                    <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
-                                        <LinkIcon className="h-6 w-6" />
+                                linkedProductSearch.trim() ? (
+                                    <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
+                                        <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
+                                            <Search className="h-6 w-6" />
+                                        </div>
+                                        <h5 className="text-xs font-bold text-foreground">No linked items match your search</h5>
+                                        <p className="text-[11px] text-muted-foreground max-w-sm">
+                                            Try another product name or code, or clear the search to view all associated items.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={clearLinkedProductSearch}
+                                            className="mt-2 text-xs text-primary font-bold border border-primary/30 hover:bg-primary/10 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                                        >
+                                            Clear search
+                                        </button>
                                     </div>
-                                    <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
-                                    <p className="text-[11px] text-muted-foreground max-w-sm">
-                                        Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
-                                    </p>
-                                    <button
-                                        onClick={() => setIsCatalogMatrixOpen(true)}
-                                        className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
-                                    >
-                                        <Plus className="h-3.5 w-3.5" /> Associate First Product
-                                    </button>
-                                </div>
+                                ) : (
+                                    <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
+                                        <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
+                                            <LinkIcon className="h-6 w-6" />
+                                        </div>
+                                        <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
+                                        <p className="text-[11px] text-muted-foreground max-w-sm">
+                                            Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCatalogMatrixOpen(true)}
+                                            className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" /> Associate First Product
+                                        </button>
+                                    </div>
+                                )
                             ) : (
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     {linkedProductPageData.data.map((lp: LinkedProduct) => {
