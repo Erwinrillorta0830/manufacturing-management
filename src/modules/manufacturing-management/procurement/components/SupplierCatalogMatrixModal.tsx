@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Supplier, RawMaterial, LinkedProduct, SupplierCatalogUpdatePayload } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, Search, Trash2, X, AlertCircle, Loader2, CheckCircle2, Globe, Save } from "lucide-react";
@@ -79,6 +79,33 @@ function toStagedLinkedProduct(supplierId: number, material: RawMaterial): Linke
     };
 }
 
+interface CatalogDraft {
+    supplierId: number;
+    initialLinkedProducts: LinkedProduct[];
+    stagedLinkedProducts: LinkedProduct[];
+    pendingAddedProductIds: number[];
+    pendingRemovedLinkIds: number[];
+}
+
+function createCatalogDraft(supplierId: number, linkedProducts: LinkedProduct[]): CatalogDraft {
+    return {
+        supplierId,
+        initialLinkedProducts: linkedProducts,
+        stagedLinkedProducts: linkedProducts,
+        pendingAddedProductIds: [],
+        pendingRemovedLinkIds: []
+    };
+}
+
+function getInitialLinkByProductId(linkedProducts: LinkedProduct[]): Map<number, LinkedProduct> {
+    const map = new Map<number, LinkedProduct>();
+    linkedProducts.forEach(link => {
+        const productId = getLinkedProductId(link);
+        if (Number.isInteger(productId) && productId > 0) map.set(productId, link);
+    });
+    return map;
+}
+
 export default function SupplierCatalogMatrixModal({
     isOpen,
     onClose,
@@ -89,43 +116,14 @@ export default function SupplierCatalogMatrixModal({
     onSaveUpdates,
     savingUpdates
 }: SupplierCatalogMatrixModalProps) {
-    const [initialLinkedProducts, setInitialLinkedProducts] = useState<LinkedProduct[]>([]);
-    const [stagedLinkedProducts, setStagedLinkedProducts] = useState<LinkedProduct[]>([]);
-    const [pendingAddedProductIds, setPendingAddedProductIds] = useState<number[]>([]);
-    const [pendingRemovedLinkIds, setPendingRemovedLinkIds] = useState<number[]>([]);
-    const [initializedSupplierId, setInitializedSupplierId] = useState<number | null>(null);
+    const [catalogDraft, setCatalogDraft] = useState<CatalogDraft | null>(null);
     const [linkProductSearch, setLinkProductSearch] = useState("");
     const [linkedFilterSearch, setLinkedFilterSearch] = useState("");
 
-    useEffect(() => {
-        if (!isOpen) {
-            setInitializedSupplierId(null);
-            setInitialLinkedProducts([]);
-            setStagedLinkedProducts([]);
-            setPendingAddedProductIds([]);
-            setPendingRemovedLinkIds([]);
-            setLinkProductSearch("");
-            setLinkedFilterSearch("");
-            return;
-        }
-
-        if (!supplier || loadingLinkedProducts || initializedSupplierId === supplier.id) return;
-
-        setInitialLinkedProducts(linkedProducts);
-        setStagedLinkedProducts(linkedProducts);
-        setPendingAddedProductIds([]);
-        setPendingRemovedLinkIds([]);
-        setInitializedSupplierId(supplier.id);
-    }, [isOpen, supplier, loadingLinkedProducts, initializedSupplierId, linkedProducts]);
-
-    const initialLinkByProductId = useMemo(() => {
-        const map = new Map<number, LinkedProduct>();
-        initialLinkedProducts.forEach(link => {
-            const productId = getLinkedProductId(link);
-            if (Number.isInteger(productId) && productId > 0) map.set(productId, link);
-        });
-        return map;
-    }, [initialLinkedProducts]);
+    const activeDraft = catalogDraft?.supplierId === supplier?.id ? catalogDraft : null;
+    const stagedLinkedProducts = activeDraft?.stagedLinkedProducts ?? linkedProducts;
+    const pendingAddedProductIds = activeDraft?.pendingAddedProductIds ?? [];
+    const pendingRemovedLinkIds = activeDraft?.pendingRemovedLinkIds ?? [];
 
     const stagedProductIds = useMemo(
         () => new Set(stagedLinkedProducts.map(getLinkedProductId).filter(productId => Number.isInteger(productId))),
@@ -154,40 +152,71 @@ export default function SupplierCatalogMatrixModal({
     const stageProducts = (materials: RawMaterial[]) => {
         if (!supplier || materials.length === 0) return;
 
-        const newMaterials = materials.filter(material => !stagedProductIds.has(Number(material.product_id)));
-        if (newMaterials.length === 0) return;
+        setCatalogDraft(previous => {
+            const current = previous?.supplierId === supplier.id
+                ? previous
+                : createCatalogDraft(supplier.id, linkedProducts);
+            const currentProductIds = new Set(
+                current.stagedLinkedProducts
+                    .map(getLinkedProductId)
+                    .filter(productId => Number.isInteger(productId))
+            );
+            const newMaterials = materials.filter(material => !currentProductIds.has(Number(material.product_id)));
+            if (newMaterials.length === 0) return current;
 
-        setStagedLinkedProducts(previous => [
-            ...previous,
-            ...newMaterials.map(material => toStagedLinkedProduct(supplier.id, material))
-        ]);
+            const newProductIds = newMaterials.map(material => Number(material.product_id));
+            const initialLinks = getInitialLinkByProductId(current.initialLinkedProducts);
+            const restoredLinkIds = newMaterials
+                .map(material => initialLinks.get(Number(material.product_id))?.id)
+                .filter((linkId): linkId is number => Number.isInteger(linkId));
 
-        const newProductIds = newMaterials.map(material => Number(material.product_id));
-        setPendingAddedProductIds(previous => Array.from(new Set([
-            ...previous,
-            ...newProductIds.filter(productId => !initialLinkByProductId.has(productId))
-        ])));
-
-        const restoredLinkIds = newMaterials
-            .map(material => initialLinkByProductId.get(Number(material.product_id))?.id)
-            .filter((linkId): linkId is number => Number.isInteger(linkId));
-        if (restoredLinkIds.length > 0) {
-            setPendingRemovedLinkIds(previous => previous.filter(linkId => !restoredLinkIds.includes(linkId)));
-        }
+            return {
+                ...current,
+                stagedLinkedProducts: [
+                    ...current.stagedLinkedProducts,
+                    ...newMaterials.map(material => toStagedLinkedProduct(supplier.id, material))
+                ],
+                pendingAddedProductIds: Array.from(new Set([
+                    ...current.pendingAddedProductIds,
+                    ...newProductIds.filter(productId => !initialLinks.has(productId))
+                ])),
+                pendingRemovedLinkIds: restoredLinkIds.length > 0
+                    ? current.pendingRemovedLinkIds.filter(linkId => !restoredLinkIds.includes(linkId))
+                    : current.pendingRemovedLinkIds
+            };
+        });
     };
 
     const stageUnlink = (link: LinkedProduct) => {
         const productId = getLinkedProductId(link);
         if (!Number.isInteger(productId)) return;
 
-        setStagedLinkedProducts(previous => previous.filter(item => getLinkedProductId(item) !== productId));
+        if (!supplier) return;
 
-        const initialLink = initialLinkByProductId.get(productId);
-        if (initialLink) {
-            setPendingRemovedLinkIds(previous => Array.from(new Set([...previous, initialLink.id])));
-        } else {
-            setPendingAddedProductIds(previous => previous.filter(id => id !== productId));
-        }
+        setCatalogDraft(previous => {
+            const current = previous?.supplierId === supplier.id
+                ? previous
+                : createCatalogDraft(supplier.id, linkedProducts);
+            const initialLink = getInitialLinkByProductId(current.initialLinkedProducts).get(productId);
+
+            return {
+                ...current,
+                stagedLinkedProducts: current.stagedLinkedProducts.filter(item => getLinkedProductId(item) !== productId),
+                pendingRemovedLinkIds: initialLink
+                    ? Array.from(new Set([...current.pendingRemovedLinkIds, initialLink.id]))
+                    : current.pendingRemovedLinkIds,
+                pendingAddedProductIds: initialLink
+                    ? current.pendingAddedProductIds
+                    : current.pendingAddedProductIds.filter(id => id !== productId)
+            };
+        });
+    };
+
+    const handleClose = () => {
+        setCatalogDraft(null);
+        setLinkProductSearch("");
+        setLinkedFilterSearch("");
+        onClose();
     };
 
     const handleSaveUpdates = async () => {
@@ -201,7 +230,7 @@ export default function SupplierCatalogMatrixModal({
 
         try {
             await onSaveUpdates(payload);
-            onClose();
+            handleClose();
         } catch (error) {
             console.error(error);
         }
@@ -236,7 +265,7 @@ export default function SupplierCatalogMatrixModal({
                                 </div>
                             </div>
                             <button
-                                onClick={onClose}
+                                onClick={handleClose}
                                 className="text-muted-foreground hover:text-foreground text-xs p-1 rounded-lg hover:bg-muted"
                                 aria-label="Close catalog matrix"
                             >
@@ -445,7 +474,7 @@ export default function SupplierCatalogMatrixModal({
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
-                                    onClick={onClose}
+                                    onClick={handleClose}
                                     disabled={savingUpdates}
                                     className="px-4 py-2 rounded-xl text-xs font-bold border bg-background hover:bg-muted disabled:opacity-50 transition-all"
                                 >

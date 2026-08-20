@@ -454,6 +454,7 @@ export default function SuppliersDirectory({
             />
 
             <SupplierCatalogMatrixModal
+                key={`supplier-catalog-${activeSupplierId ?? "none"}-${isCatalogMatrixOpen ? "open" : "closed"}`}
                 isOpen={isCatalogMatrixOpen}
                 onClose={() => setIsCatalogMatrixOpen(false)}
                 supplier={activeSupplier || null}
