@@ -204,6 +204,10 @@ export function RawMaterialModal({
     const isPackagingMaterial = isPackagingMaterialProductType(formProductType);
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
+    const baseUomId = formUom === "" ? null : Number(formUom);
+    const eligibleVariantUomOptions = uomOptions.filter(option =>
+        baseUomId === null || Number(option.value) !== baseUomId
+    );
     const hasNetWeightValue = formNetWeight.trim() !== "";
     const hasOuterCartonWeightValue = formOuterCartonWeight.trim() !== "";
     const hasPalletWeightValue = formPalletWeight.trim() !== "";
@@ -797,6 +801,17 @@ export function RawMaterialModal({
                                 <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                                     {packagingVariants.map((v, vIdx) => {
                                         const matchedUom = uomOptions.find(u => u.value === String(v.uomId));
+                                        const usesParentUom = baseUomId !== null && Number(v.uomId) === baseUomId;
+                                        const variantUomOptions = usesParentUom && matchedUom
+                                            ? [
+                                                ...eligibleVariantUomOptions,
+                                                {
+                                                    ...matchedUom,
+                                                    label: `${matchedUom.label} — Parent Primary UOM (select another)`,
+                                                    disabled: true
+                                                }
+                                            ]
+                                            : eligibleVariantUomOptions;
                                         const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
                                         const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
@@ -845,12 +860,17 @@ export function RawMaterialModal({
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Outer Package UOM *</label>
                                                         <CreatableSelect
-                                                            options={uomOptions}
+                                                            options={variantUomOptions}
                                                             value={String(v.uomId)}
                                                             onValueChange={(val: string) => handleUpdateVariant(vIdx, "uomId", Number(val))}
                                                             placeholder="Select Outer UOM..."
                                                             className="h-8 text-xs"
                                                         />
+                                                        {usesParentUom && (
+                                                            <p className="mt-1 text-[10px] font-medium text-destructive">
+                                                                The parent Primary UOM cannot be used for an outer variant.
+                                                            </p>
+                                                        )}
                                                     </div>
 
                                                     <div>

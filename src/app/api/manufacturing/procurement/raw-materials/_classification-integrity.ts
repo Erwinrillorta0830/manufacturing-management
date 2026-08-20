@@ -7,6 +7,7 @@ export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
 type ProductRecord = {
     product_id?: unknown;
     product_type?: unknown;
+    unit_of_measurement?: unknown;
     product_brand?: unknown;
     product_category?: unknown;
     product_class?: unknown;
@@ -71,6 +72,16 @@ function parentIdOf(product: ProductRecord): number | null {
     return asPositiveId(product.parent_id);
 }
 
+function unitIdOf(value: unknown): number | null {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        return unitIdOf(record.unit_id ?? record.id ?? record.value);
+    }
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function isActiveProduct(product: ProductRecord): boolean {
     const value = product.isActive;
     if (typeof value === "boolean") return value;
@@ -97,7 +108,7 @@ function productTypeOf(product: ProductRecord, label: string): number {
 
 async function fetchProduct(productId: number): Promise<ProductRecord> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,product_brand,product_category,product_class,product_segment,product_section,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,parent_id,isActive`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id,product_brand,product_category,product_class,product_segment,product_section,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,parent_id,isActive`,
         { headers, cache: "no-store" }
     );
     if (response.status === 404) {
@@ -141,6 +152,39 @@ function ensureParentIsRoot(parent: ProductRecord, parentId: number): void {
     if (parentIdOf(parent)) {
         throw conflict("A child variant cannot be used as the parent of another raw-material family.", { parentId });
     }
+}
+
+function ensureVariantsUseOuterUom(
+    baseProduct: ProductRecord | null,
+    productDetails: Record<string, unknown>,
+    packagingVariants: Record<string, unknown>[],
+    productId?: number
+): void {
+    if (packagingVariants.length === 0) return;
+
+    const baseUomId = unitIdOf(baseProduct?.unit_of_measurement ?? productDetails.unit_of_measurement);
+    if (!baseUomId) {
+        throw new RawMaterialClassificationError(
+            400,
+            "PARENT_UOM_REQUIRED",
+            "A valid Primary UOM is required before adding packaging variants.",
+            { productId }
+        );
+    }
+
+    const conflictingVariant = packagingVariants.find(variant => unitIdOf(variant.unit_of_measurement) === baseUomId);
+    if (!conflictingVariant) return;
+
+    throw new RawMaterialClassificationError(
+        409,
+        "PARENT_BASE_UOM_CONFLICT",
+        "A family variant cannot use the parent product's Primary UOM. Choose a different Outer Package UOM.",
+        {
+            productId: baseProduct ? productIdOf(baseProduct) : productId,
+            baseUomId,
+            variantProductId: asPositiveId(conflictingVariant.product_id)
+        }
+    );
 }
 
 export async function enforceClassificationIntegrity({
@@ -276,6 +320,8 @@ export async function enforceClassificationIntegrity({
             product_type: authoritativeProductType
         };
     });
+
+    ensureVariantsUseOuterUom(currentProduct, productDetails, normalizedVariants, productId);
 
     const normalizedProductDetails = hasParentField
         ? { ...productDetails, parent_id: requestedParentId }
