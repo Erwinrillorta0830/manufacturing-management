@@ -6,6 +6,23 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
+const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RELEASE_DRAFT_FETCH_TIMEOUT_MS);
+    try {
+        return await fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+            throw new Error(`Inventory allocation request timed out after ${RELEASE_DRAFT_FETCH_TIMEOUT_MS / 1000} seconds`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 
 export async function handlePOST(request: Request) {
     try {
@@ -19,7 +36,7 @@ export async function handlePOST(request: Request) {
             }
 
             // 1. Fetch Job Order Header
-            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=job_order_id,job_order_no,product_id,version_id,target_quantity,status,branch_id,remarks,created_by`, { headers, cache: "no-store" });
+            const joRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=job_order_id,job_order_no,product_id,version_id,target_quantity,status,branch_id,remarks,created_by`, { headers, cache: "no-store" });
             if (!joRes.ok) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
@@ -33,7 +50,7 @@ export async function handlePOST(request: Request) {
             }
 
             // 2. Fetch Job Order Materials Worksheet
-            const matsRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joData.job_order_id}&limit=-1`, { headers, cache: "no-store" });
+            const matsRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joData.job_order_id}&limit=-1`, { headers, cache: "no-store" });
             const mats = matsRes.ok ? (await matsRes.json()).data || [] : [];
 
             // 3. For each material in the worksheet, try to reserve any remaining shortfall
@@ -58,7 +75,7 @@ export async function handlePOST(request: Request) {
             if (shortfallProductIds.length > 0) {
                 // Fetch valid receipts
                 const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${shortfallProductIds.join(",")}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0&filter[branch_id][_eq]=${branchId}&sort=expiry_date&limit=-1`;
-                const receiptsRes = await fetch(receiptsUrl, { headers });
+                const receiptsRes = await fetchWithTimeout(receiptsUrl, { headers });
                 const validReceipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
                 validReceipts.forEach((rec: any) => {
                     const pId = Number(rec.product_id);
@@ -78,7 +95,7 @@ export async function handlePOST(request: Request) {
                                 { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
                             ]
                         }));
-                        const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers });
+                        const resRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=purchase_order_receiving_id,reserved_quantity&limit=-1`, { headers });
                         if (resRes.ok) {
                             const reservationsData = (await resRes.json()).data || [];
                             reservationsData.forEach((r: any) => {
@@ -100,7 +117,7 @@ export async function handlePOST(request: Request) {
                         { branch_id: { _eq: branchId } }
                     ]
                 }));
-                const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
+                const movRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
                 const movements = movRes.ok ? (await movRes.json()).data || [] : [];
                 movements.forEach((mov: any) => {
                     const productId = Number(mov.product_id?.product_id || mov.product_id);
@@ -112,7 +129,7 @@ export async function handlePOST(request: Request) {
 
                 // Fetch product names for shortfall/error reporting
                 try {
-                    const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${shortfallProductIds.join(",")}&fields=product_id,product_name&limit=-1`, { headers });
+                    const productsRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${shortfallProductIds.join(",")}&fields=product_id,product_name&limit=-1`, { headers });
                     if (productsRes.ok) {
                         const prods = (await productsRes.json()).data || [];
                         prods.forEach((p: any) => productNamesMap.set(Number(p.product_id), p.product_name));
@@ -173,7 +190,7 @@ export async function handlePOST(request: Request) {
                             created_by: joData.created_by ? Number(joData.created_by) : null
                         };
                         writePromises.push(
-                            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+                            fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
                                 method: "POST",
                                 headers,
                                 body: JSON.stringify(reservationPayload)
@@ -184,7 +201,7 @@ export async function handlePOST(request: Request) {
                     // Update parent requirements row's reserved_quantity
                     const updatedReservedQty = reservedQty + newlyReservedQty;
                     writePromises.push(
-                        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${mat.jo_material_id || mat.id}`, {
+                        fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${mat.jo_material_id || mat.id}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({ reserved_quantity: updatedReservedQty })
@@ -209,7 +226,7 @@ export async function handlePOST(request: Request) {
 
             if (allRequirementsMet || body.forceRelease === true) {
                 // Change status to Released
-                const patchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
+                const patchRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({ status: "Released" })
@@ -586,6 +603,7 @@ export async function handlePOST(request: Request) {
             branch_id: jo.branch_id || null,
             shift_option: jo.shiftOption || "8",
             daily_breakdown: jo.dailyBreakdown || null,
+            remarks: jo.remarks || null,
             created_at: await getISOStringInConfiguredTimezone(),
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,

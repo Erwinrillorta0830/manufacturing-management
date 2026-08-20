@@ -15,15 +15,15 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
-async function withTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
+async function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = WIZARD_STEP_TIMEOUT_MS): Promise<T> {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
         return await Promise.race([
             operation,
             new Promise<T>((_, reject) => {
                 timeoutId = setTimeout(() => {
-                    reject(new Error(`${label} timed out after ${WIZARD_STEP_TIMEOUT_MS / 1000} seconds`));
-                }, WIZARD_STEP_TIMEOUT_MS);
+                    reject(new Error(`${label} timed out after ${timeoutMs / 1000} seconds`));
+                }, timeoutMs);
             })
         ]);
     } finally {
@@ -837,10 +837,6 @@ export async function handleGET(request: Request) {
                 "BOM and routing details"
             );
 
-            // Keep the preview bounded. Routings still render with the operation fallback below;
-            // loading the entire operations catalog is not required to calculate requirements.
-            const operations: any[] = [];
-
             const { version, routes } = bomDetails;
             if (!version) {
                 return NextResponse.json({
@@ -850,6 +846,25 @@ export async function handleGET(request: Request) {
                     subAssemblyBoms: {},
                     inventories: []
                 });
+            }
+
+            // Resolve only the operations used by the selected recipe. Loading the entire catalog
+            // is unnecessary for the preview and can block an otherwise valid BOM calculation.
+            let operations: any[] = [];
+            const operationIds = Array.from(new Set(
+                routes.map((route: any) => Number(route.operation_id)).filter((id: number) => id > 0)
+            ));
+            if (operationIds.length > 0) {
+                try {
+                    const opRes = await withTimeout(
+                        fetch(`${DIRECTUS_URL}/items/manufacturing_operations?filter[id][_in]=${operationIds.join(",")}&limit=-1`, { headers }),
+                        "Selected manufacturing operations",
+                        5000
+                    );
+                    operations = opRes.ok ? (await opRes.json()).data || [] : [];
+                } catch (error) {
+                    console.warn("Selected manufacturing operations could not be loaded for the Step 2 preview:", error);
+                }
             }
 
             const operationsMap = new Map<number, string>(
@@ -1290,6 +1305,7 @@ export async function handleGET(request: Request) {
                 routingTasks: item.routing_tasks || [],
                 shiftOption: item.shift_option || "8",
                 dailyBreakdown: item.daily_breakdown || null,
+                remarks: item.remarks || null,
                 createdAt: item.created_at || null,
                 createdBy: item.created_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
