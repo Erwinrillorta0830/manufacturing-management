@@ -61,6 +61,8 @@ interface RawMaterialModalProps {
     classificationLocked: boolean;
     inheritedProductType?: number | null;
     classificationLockMessage: string;
+    parentSelectionLocked: boolean;
+    parentSelectionLockMessage: string;
     formIsActive: boolean;
     setFormIsActive: (v: boolean) => void;
     formParentId: string;
@@ -136,6 +138,8 @@ export function RawMaterialModal({
     classificationLocked,
     inheritedProductType,
     classificationLockMessage,
+    parentSelectionLocked,
+    parentSelectionLockMessage,
     formIsActive,
     setFormIsActive,
     formParentId,
@@ -507,7 +511,14 @@ export function RawMaterialModal({
                                     onValueChange={(val: string) => setFormParentId(val)}
                                     placeholder="None (Standalone Base Parent)"
                                     className="h-8 text-xs"
+                                    disabled={parentSelectionLocked}
+                                    aria-describedby={parentSelectionLocked ? "raw-material-parent-lock-message" : undefined}
                                 />
+                                {parentSelectionLocked && (
+                                    <p id="raw-material-parent-lock-message" className="text-[10px] font-semibold text-muted-foreground">
+                                        {parentSelectionLockMessage}
+                                    </p>
+                                )}
                             </div>
 
                             <div className="space-y-1">

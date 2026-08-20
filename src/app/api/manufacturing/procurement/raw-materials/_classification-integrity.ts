@@ -7,6 +7,7 @@ type ProductRecord = {
     product_id?: unknown;
     product_type?: unknown;
     parent_id?: unknown;
+    isActive?: unknown;
 };
 
 type ClassificationOperation = "create" | "update";
@@ -60,6 +61,17 @@ function parentIdOf(product: ProductRecord): number | null {
     return asPositiveId(product.parent_id);
 }
 
+function isActiveProduct(product: ProductRecord): boolean {
+    const value = product.isActive;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        return normalized !== "" && normalized !== "0" && normalized !== "false";
+    }
+    return false;
+}
+
 function productTypeOf(product: ProductRecord, label: string): number {
     const productType = parseClassification(product.product_type, label);
     if (!productType) {
@@ -75,7 +87,7 @@ function productTypeOf(product: ProductRecord, label: string): number {
 
 async function fetchProduct(productId: number): Promise<ProductRecord> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,parent_id`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,parent_id,isActive`,
         { headers, cache: "no-store" }
     );
     if (response.status === 404) {
@@ -94,7 +106,7 @@ async function fetchProduct(productId: number): Promise<ProductRecord> {
 async function fetchChildren(parentId: number): Promise<ProductRecord[]> {
     const params = new URLSearchParams({
         "filter[parent_id][_eq]": String(parentId),
-        fields: "product_id,product_type,parent_id",
+        fields: "product_id,product_type,parent_id,isActive",
         limit: "-1"
     });
     const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
@@ -141,6 +153,17 @@ export async function enforceClassificationIntegrity({
 
     const hasParentField = hasField(productDetails, "parent_id");
     const requestedParentId = hasParentField ? asPositiveId(productDetails.parent_id) : currentParentId;
+
+    const activeChildren = existingChildren.filter(isActiveProduct);
+    if (currentProduct && activeChildren.length > 0 && hasParentField && requestedParentId !== currentParentId) {
+        throw new RawMaterialClassificationError(
+            409,
+            "PARENT_RELATION_LOCKED",
+            "Parent selection cannot be changed while active child variants exist.",
+            { productId, parentId: currentParentId, activeChildCount: activeChildren.length }
+        );
+    }
+
     if (requestedParentId && productId && requestedParentId === productId) {
         throw conflict("A product cannot be its own parent.", { productId, parentId: requestedParentId });
     }
