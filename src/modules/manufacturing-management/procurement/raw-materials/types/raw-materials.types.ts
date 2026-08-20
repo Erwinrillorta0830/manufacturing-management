@@ -15,6 +15,18 @@ export interface SelectOption {
     label: string;
 }
 
+export interface TaxRateOption {
+    value: string;
+    label: string;
+    vatRate: number;
+    withholdingRate: number;
+}
+
+export interface PriceControlValue {
+    priceTypeId: number;
+    priceTypeName: string;
+}
+
 export type PurchaseQaParameterDataType = "Numeric" | "Boolean" | "Text";
 
 export interface PurchaseQaParameter {
@@ -76,6 +88,10 @@ export interface PackagingVariantPayload {
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
+    item_group_id?: number | null;
+    tax_rate_id?: number | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
     barcode?: string | null;
     maintaining_quantity?: number;
     product_image?: string | null;
@@ -103,6 +119,10 @@ export interface RegisterRawMaterialPayload {
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
+    item_group_id?: number | null;
+    tax_rate_id?: number | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
     parent_id?: number | null;
     maintaining_quantity?: number;
     product_image?: string | null;
@@ -141,6 +161,16 @@ export interface RawMaterialItem {
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
+    item_group_id?: number | null;
+    item_group_name?: string | null;
+    tax_rate_id?: number | null;
+    tax_rate?: {
+        vatRate: number;
+        withholdingRate: number;
+    } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: PriceControlValue | null;
     maintaining_quantity?: number | null;
     product_image?: string | null;
     purchaseQa?: PurchaseQaConfig;

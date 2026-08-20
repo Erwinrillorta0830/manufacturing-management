@@ -10,7 +10,9 @@ import {
     PackagingVariantFormState,
     PurchaseQaConfig,
     PurchaseQaParameter,
-    PurchaseQaSpecificationInput
+    PurchaseQaSpecificationInput,
+    PriceControlValue,
+    TaxRateOption
 } from "../types/raw-materials.types";
 import { 
     fetchRawMaterialMetadata, 
@@ -124,6 +126,8 @@ export function useRawMaterialForm(
     const [loadingUnits, setLoadingUnits] = useState(false);
     const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
     const [categoriesList, setCategoriesList] = useState<SelectOption[]>([]);
+    const [itemGroupsList, setItemGroupsList] = useState<SelectOption[]>([]);
+    const [taxRatesList, setTaxRatesList] = useState<TaxRateOption[]>([]);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
     const [purchaseQaParameters, setPurchaseQaParameters] = useState<PurchaseQaParameter[]>([]);
     const [loadingPurchaseQa, setLoadingPurchaseQa] = useState(false);
@@ -146,6 +150,11 @@ export function useRawMaterialForm(
     const [formProductClass, setFormProductClass] = useState<number | "">("");
     const [formProductSegment, setFormProductSegment] = useState<number | "">("");
     const [formProductSection, setFormProductSection] = useState<number | "">("");
+    const [formItemGroupId, setFormItemGroupId] = useState<number | "">("");
+    const [formTaxRateId, setFormTaxRateId] = useState<number | "">("");
+    const [formRegulatoryCode, setFormRegulatoryCode] = useState("");
+    const [formRegulatoryNotes, setFormRegulatoryNotes] = useState("");
+    const [formPriceControl, setFormPriceControl] = useState<PriceControlValue | null>(null);
     const [formBarcode, setFormBarcode] = useState("");
     const [formMaintainingQuantity, setFormMaintainingQuantity] = useState("0");
     const [formProductImage, setFormProductImage] = useState<string | null>(null);
@@ -249,6 +258,11 @@ export function useRawMaterialForm(
         setFormProductClass(shared.product_class == null ? "" : shared.product_class);
         setFormProductSegment(shared.product_segment == null ? "" : shared.product_segment);
         setFormProductSection(shared.product_section == null ? "" : shared.product_section);
+        setFormItemGroupId(shared.item_group_id == null ? "" : shared.item_group_id);
+        setFormTaxRateId(shared.tax_rate_id == null ? "" : shared.tax_rate_id);
+        setFormRegulatoryCode(shared.regulatory_code || "");
+        setFormRegulatoryNotes(shared.regulatory_notes || "");
+        setFormPriceControl(shared.price_control);
     }, []);
 
     const handleAddVariant = () => {
@@ -359,6 +373,8 @@ export function useRawMaterialForm(
                 setWeightUnits(meta.weightUnits);
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
+                setItemGroupsList(meta.itemGroups);
+                setTaxRatesList(meta.taxRates);
 
                 try {
                     setLoadingPurchaseQa(true);
@@ -403,6 +419,11 @@ export function useRawMaterialForm(
         setFormProductClass("");
         setFormProductSegment("");
         setFormProductSection("");
+        setFormItemGroupId("");
+        setFormTaxRateId("");
+        setFormRegulatoryCode("");
+        setFormRegulatoryNotes("");
+        setFormPriceControl(null);
         setFormBarcode("");
         setFormMaintainingQuantity("0");
         setFormProductImage(null);
@@ -494,6 +515,11 @@ export function useRawMaterialForm(
         setFormProductClass(item.product_class == null ? "" : Number(item.product_class));
         setFormProductSegment(item.product_segment == null ? "" : Number(item.product_segment));
         setFormProductSection(item.product_section == null ? "" : Number(item.product_section));
+        setFormItemGroupId(item.item_group_id == null ? "" : Number(item.item_group_id));
+        setFormTaxRateId(item.tax_rate_id == null ? "" : Number(item.tax_rate_id));
+        setFormRegulatoryCode(item.regulatory_code || "");
+        setFormRegulatoryNotes(item.regulatory_notes || "");
+        setFormPriceControl(item.price_control || null);
         if (parentItem) applyParentSharedAttributes(parentItem);
         setFormIsActive(item.isActive !== 0);
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
@@ -585,6 +611,11 @@ export function useRawMaterialForm(
             setFormProductClass("");
             setFormProductSegment("");
             setFormProductSection("");
+            setFormItemGroupId("");
+            setFormTaxRateId("");
+            setFormRegulatoryCode("");
+            setFormRegulatoryNotes("");
+            setFormPriceControl(null);
             resetChildSpecificFields();
         }
         if (val && !editingItem) {
@@ -604,6 +635,11 @@ export function useRawMaterialForm(
         setFormProductClass("");
         setFormProductSegment("");
         setFormProductSection("");
+        setFormItemGroupId("");
+        setFormTaxRateId("");
+        setFormRegulatoryCode("");
+        setFormRegulatoryNotes("");
+        setFormPriceControl(null);
         resetChildSpecificFields();
         setSubmitError(null);
     };
@@ -826,6 +862,10 @@ export function useRawMaterialForm(
                 product_class: formProductClass === "" ? null : Number(formProductClass),
                 product_segment: formProductSegment === "" ? null : Number(formProductSegment),
                 product_section: formProductSection === "" ? null : Number(formProductSection),
+                item_group_id: formItemGroupId === "" ? null : Number(formItemGroupId),
+                tax_rate_id: formTaxRateId === "" ? null : Number(formTaxRateId),
+                regulatory_code: formRegulatoryCode.trim() || null,
+                regulatory_notes: formRegulatoryNotes.trim() || null,
                 isActive: v.isActive ? 1 : 0,
                 barcode: v.barcode.trim() || undefined,
                 maintaining_quantity: Number(v.maintainingQuantity),
@@ -865,6 +905,10 @@ export function useRawMaterialForm(
             product_class: formProductClass === "" ? null : Number(formProductClass),
             product_segment: formProductSegment === "" ? null : Number(formProductSegment),
             product_section: formProductSection === "" ? null : Number(formProductSection),
+            item_group_id: formItemGroupId === "" ? null : Number(formItemGroupId),
+            tax_rate_id: formTaxRateId === "" ? null : Number(formTaxRateId),
+            regulatory_code: formRegulatoryCode.trim() || null,
+            regulatory_notes: formRegulatoryNotes.trim() || null,
             parent_id: formParentId ? Number(formParentId) : null,
             unit_of_measurement_count: parsedUomCount,
             isActive: formIsActive ? 1 : 0,
@@ -909,6 +953,8 @@ export function useRawMaterialForm(
         weightUnits,
         brandsList,
         categoriesList,
+        itemGroupsList,
+        taxRatesList,
         showValidationErrors,
         formName,
         setFormName,
@@ -934,6 +980,15 @@ export function useRawMaterialForm(
         setFormBrand,
         formCategory,
         setFormCategory,
+        formItemGroupId,
+        setFormItemGroupId,
+        formTaxRateId,
+        setFormTaxRateId,
+        formRegulatoryCode,
+        setFormRegulatoryCode,
+        formRegulatoryNotes,
+        setFormRegulatoryNotes,
+        formPriceControl,
         formBarcode,
         setFormBarcode,
         formMaintainingQuantity,

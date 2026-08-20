@@ -125,10 +125,21 @@ function normalizeRule(row: DirectusProductTypeRow): PurchaseOrderPriceTypeRule 
 }
 
 export async function fetchPurchaseOrderPriceTypeRules(): Promise<PurchaseOrderPriceTypeRule[]> {
-    const rows = await directusData<DirectusProductTypeRow[]>(
-        "/items/product_type?fields=id,name,default_purchase_price_type_id,default_purchase_price_type_id.price_type_id,default_purchase_price_type_id.price_type_name&sort=name&limit=-1",
-        "Unable to load product-type price rules."
-    );
+    let rows: DirectusProductTypeRow[];
+    try {
+        rows = await directusData<DirectusProductTypeRow[]>(
+            "/items/product_type?fields=id,name,default_purchase_price_type_id,default_purchase_price_type_id.price_type_id,default_purchase_price_type_id.price_type_name&sort=name&limit=-1",
+            "Unable to load product-type price rules."
+        );
+    } catch (error) {
+        // Some dummy/legacy Directus schemas store the mapping as an integer
+        // without a relation definition, so nested relation fields are invalid.
+        if (!(error instanceof PurchaseOrderPriceTypeError)) throw error;
+        rows = await directusData<DirectusProductTypeRow[]>(
+            "/items/product_type?fields=id,name,default_purchase_price_type_id&sort=name&limit=-1",
+            "Unable to load product-type price rules."
+        );
+    }
     const rules = rows.map(normalizeRule).filter((rule): rule is PurchaseOrderPriceTypeRule => Boolean(rule));
     const priceTypeIds = [...new Set(rules
         .map(rule => rule.priceTypeId)

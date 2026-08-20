@@ -12,6 +12,10 @@ type ProductRecord = {
     product_class?: unknown;
     product_segment?: unknown;
     product_section?: unknown;
+    item_group_id?: unknown;
+    tax_rate_id?: unknown;
+    regulatory_code?: unknown;
+    regulatory_notes?: unknown;
     parent_id?: unknown;
     isActive?: unknown;
 };
@@ -93,7 +97,7 @@ function productTypeOf(product: ProductRecord, label: string): number {
 
 async function fetchProduct(productId: number): Promise<ProductRecord> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,product_brand,product_category,product_class,product_segment,product_section,parent_id,isActive`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,product_brand,product_category,product_class,product_segment,product_section,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,parent_id,isActive`,
         { headers, cache: "no-store" }
     );
     if (response.status === 404) {

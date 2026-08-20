@@ -95,6 +95,15 @@ export default function RawMaterialsModule({
                 setFormBrand={formHook.setFormBrand}
                 formCategory={formHook.formCategory}
                 setFormCategory={formHook.setFormCategory}
+                formItemGroupId={formHook.formItemGroupId}
+                setFormItemGroupId={formHook.setFormItemGroupId}
+                formTaxRateId={formHook.formTaxRateId}
+                setFormTaxRateId={formHook.setFormTaxRateId}
+                formRegulatoryCode={formHook.formRegulatoryCode}
+                setFormRegulatoryCode={formHook.setFormRegulatoryCode}
+                formRegulatoryNotes={formHook.formRegulatoryNotes}
+                setFormRegulatoryNotes={formHook.setFormRegulatoryNotes}
+                formPriceControl={formHook.formPriceControl}
                 formBarcode={formHook.formBarcode}
                 setFormBarcode={formHook.setFormBarcode}
                 formMaintainingQuantity={formHook.formMaintainingQuantity}
@@ -138,6 +147,8 @@ export default function RawMaterialsModule({
                 parentProductOptions={formHook.parentProductOptions}
                 brandsList={formHook.brandsList}
                 categoriesList={formHook.categoriesList}
+                itemGroupsList={formHook.itemGroupsList}
+                taxRatesList={formHook.taxRatesList}
                 handleCreateBrand={formHook.handleCreateBrand}
                 handleCreateCategory={formHook.handleCreateCategory}
                 onSubmit={formHook.handleFormSubmit}

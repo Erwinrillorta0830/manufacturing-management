@@ -6,7 +6,9 @@ import {
     SelectOption,
     PackagingVariantFormState,
     PurchaseQaConfig,
-    PurchaseQaParameter
+    PurchaseQaParameter,
+    PriceControlValue,
+    TaxRateOption
 } from "../types/raw-materials.types";
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
@@ -44,6 +46,15 @@ interface RawMaterialModalProps {
     setFormBrand: (v: string) => void;
     formCategory: string;
     setFormCategory: (v: string) => void;
+    formItemGroupId: number | "";
+    setFormItemGroupId: (v: number | "") => void;
+    formTaxRateId: number | "";
+    setFormTaxRateId: (v: number | "") => void;
+    formRegulatoryCode: string;
+    setFormRegulatoryCode: (v: string) => void;
+    formRegulatoryNotes: string;
+    setFormRegulatoryNotes: (v: string) => void;
+    formPriceControl: PriceControlValue | null;
     formBarcode: string;
     setFormBarcode: (v: string) => void;
     formMaintainingQuantity: string;
@@ -87,6 +98,8 @@ interface RawMaterialModalProps {
     parentProductOptions: SelectOption[];
     brandsList: SelectOption[];
     categoriesList: SelectOption[];
+    itemGroupsList: SelectOption[];
+    taxRatesList: TaxRateOption[];
     handleCreateBrand: (name: string) => void;
     handleCreateCategory: (name: string) => void;
     onSubmit: (e: React.FormEvent) => void;
@@ -123,6 +136,15 @@ export function RawMaterialModal({
     setFormBrand,
     formCategory,
     setFormCategory,
+    formItemGroupId,
+    setFormItemGroupId,
+    formTaxRateId,
+    setFormTaxRateId,
+    formRegulatoryCode,
+    setFormRegulatoryCode,
+    formRegulatoryNotes,
+    setFormRegulatoryNotes,
+    formPriceControl,
     formBarcode,
     setFormBarcode,
     formMaintainingQuantity,
@@ -166,6 +188,8 @@ export function RawMaterialModal({
     parentProductOptions,
     brandsList,
     categoriesList,
+    itemGroupsList,
+    taxRatesList,
     handleCreateBrand,
     handleCreateCategory,
     onSubmit
@@ -326,6 +350,85 @@ export function RawMaterialModal({
                                 placeholder="Category..."
                                 className="h-8.5 text-xs"
                                 disabled={sharedAttributesLocked}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Shared Parent Master Attributes */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-primary/5 p-3 rounded-xl border border-primary/20">
+                        <div className="sm:col-span-4 flex items-center justify-between">
+                            <div>
+                                <p className="text-[10px] font-black text-primary uppercase tracking-wider">Shared Master Attributes</p>
+                                <p className="text-[10px] text-muted-foreground">Inherited by child SKUs; maintain physical measurements separately per variant.</p>
+                            </div>
+                            {sharedAttributesLocked && <span className="text-[10px] font-bold text-primary">Inherited from parent</span>}
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Price Control / Valuation
+                            </label>
+                            <div
+                                data-testid="raw-material-price-control"
+                                className="min-h-8 p-1.5 border rounded-lg text-xs font-bold bg-muted/40 flex items-center"
+                            >
+                                {formPriceControl?.priceTypeName || <span className="text-amber-600">Not configured</span>}
+                            </div>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Item Group {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <CreatableSelect
+                                options={itemGroupsList}
+                                value={String(formItemGroupId)}
+                                onValueChange={(val: string) => setFormItemGroupId(Number(val))}
+                                placeholder="Item Group..."
+                                className="h-8 text-xs"
+                                disabled={sharedAttributesLocked}
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Tax Profile {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <CreatableSelect
+                                options={taxRatesList}
+                                value={String(formTaxRateId)}
+                                onValueChange={(val: string) => setFormTaxRateId(Number(val))}
+                                placeholder="Tax Profile..."
+                                className="h-8 text-xs"
+                                disabled={sharedAttributesLocked}
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Regulatory Code {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <input
+                                type="text"
+                                value={formRegulatoryCode}
+                                onChange={event => setFormRegulatoryCode(event.target.value)}
+                                placeholder="Optional code"
+                                disabled={sharedAttributesLocked}
+                                className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary disabled:opacity-60 disabled:cursor-not-allowed"
+                            />
+                        </div>
+
+                        <div className="sm:col-span-4 space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Regulatory Notes {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <textarea
+                                rows={2}
+                                value={formRegulatoryNotes}
+                                onChange={event => setFormRegulatoryNotes(event.target.value)}
+                                placeholder="Optional handling, compliance, or regulatory notes"
+                                disabled={sharedAttributesLocked}
+                                className="w-full p-1.5 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary resize-y disabled:opacity-60 disabled:cursor-not-allowed"
                             />
                         </div>
                     </div>

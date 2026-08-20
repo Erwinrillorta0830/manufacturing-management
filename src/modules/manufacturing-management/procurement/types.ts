@@ -319,6 +319,13 @@ export interface RawMaterial {
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
+    item_group_id?: number | null;
+    item_group_name?: string | null;
+    tax_rate_id?: number | null;
+    tax_rate?: { vatRate: number; withholdingRate: number } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId: number; priceTypeName: string } | null;
     isActive?: number;
     date_added?: string;
     last_updated?: string;
@@ -364,6 +371,10 @@ export interface RegisterRawMaterialPayload {
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
+    item_group_id?: number | null;
+    tax_rate_id?: number | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
     parent_id?: number | null;
     unit_of_measurement_count?: number | null;
     maintaining_quantity?: number;
@@ -539,6 +550,11 @@ export interface BFFCatalogProduct {
     product_class?: number | { class_id?: number; id?: number } | null;
     product_segment?: number | { segment_id?: number; id?: number } | null;
     product_section?: number | { section_id?: number; id?: number } | null;
+    item_group_id?: number | { item_group_id?: number; id?: number; group_code?: string; group_name?: string } | null;
+    tax_rate_id?: number | { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId?: number; priceTypeName?: string } | null;
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;

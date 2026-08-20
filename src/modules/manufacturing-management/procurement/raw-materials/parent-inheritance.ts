@@ -5,6 +5,14 @@ export interface ParentSharedAttributes {
     product_class: number | null;
     product_segment: number | null;
     product_section: number | null;
+    item_group_id: number | null;
+    tax_rate_id: number | null;
+    regulatory_code: string | null;
+    regulatory_notes: string | null;
+    price_control: {
+        priceTypeId: number;
+        priceTypeName: string;
+    } | null;
 }
 
 function relationId(value: unknown, keys: string[]): number | null {
@@ -32,6 +40,30 @@ function classificationId(value: unknown): number | null {
     return relationId(value, ["id", "class_id", "segment_id", "section_id"]);
 }
 
+function normalizedText(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return normalized || null;
+}
+
+function resolvePriceControl(productType: unknown, explicit: unknown): ParentSharedAttributes["price_control"] {
+    const productTypeRecord = productType && typeof productType === "object"
+        ? productType as Record<string, unknown>
+        : null;
+    const directRecord = explicit && typeof explicit === "object"
+        ? explicit as Record<string, unknown>
+        : null;
+    const priceType = directRecord
+        ?? (productTypeRecord?.default_purchase_price_type_id && typeof productTypeRecord.default_purchase_price_type_id === "object"
+            ? productTypeRecord.default_purchase_price_type_id as Record<string, unknown>
+            : null);
+    const priceTypeId = relationId(priceType, ["price_type_id", "priceTypeId", "id"]);
+    const priceTypeName = normalizedText(priceType?.price_type_name ?? priceType?.priceTypeName ?? priceType?.name);
+    return priceTypeId && priceTypeName
+        ? { priceTypeId, priceTypeName }
+        : null;
+}
+
 export function resolveParentSharedAttributes(product: {
     product_type?: unknown;
     product_brand?: unknown;
@@ -39,6 +71,11 @@ export function resolveParentSharedAttributes(product: {
     product_class?: unknown;
     product_segment?: unknown;
     product_section?: unknown;
+    item_group_id?: unknown;
+    tax_rate_id?: unknown;
+    regulatory_code?: unknown;
+    regulatory_notes?: unknown;
+    price_control?: unknown;
 }): ParentSharedAttributes {
     const productType = relationId(product.product_type, ["id", "product_type"]);
 
@@ -48,6 +85,11 @@ export function resolveParentSharedAttributes(product: {
         product_category: relationId(product.product_category, ["category_id", "id"]),
         product_class: classificationId(product.product_class),
         product_segment: classificationId(product.product_segment),
-        product_section: classificationId(product.product_section)
+        product_section: classificationId(product.product_section),
+        item_group_id: relationId(product.item_group_id, ["item_group_id", "id"]),
+        tax_rate_id: relationId(product.tax_rate_id, ["TaxID", "tax_id", "id"]),
+        regulatory_code: normalizedText(product.regulatory_code),
+        regulatory_notes: normalizedText(product.regulatory_notes),
+        price_control: resolvePriceControl(product.product_type, product.price_control)
     };
 }
