@@ -19,10 +19,10 @@ import { apiStatusParam } from "../utils/pcrQuery";
 import { readApiResponse } from "../../shared/apiHttp";
 
 /** Existing consolidated lookups route */
-const LOOKUPS_ENDPOINT = "/api/manufacturing/price-control/lookups";
+const LOOKUPS_ENDPOINT = "/api/manufacturing/financial-management/price-control/lookups";
 
 /** Existing products route (DO NOT CHANGE route.ts; we only consume it) */
-const PRODUCT_SEARCH_ENDPOINT = "/api/manufacturing/price-control/products";
+const PRODUCT_SEARCH_ENDPOINT = "/api/manufacturing/financial-management/price-control/products";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
@@ -63,7 +63,7 @@ export async function listRequests(query: ListQuery) {
     if (query.requested_by) sp.set("requested_by", String(query.requested_by));
 
     return http<{ data: PriceChangeRequestRow[]; meta: ListMeta | null }>(
-        `/api/manufacturing/price-control/price-change-requests?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/price-change-requests?${sp.toString()}`,
     );
 }
 
@@ -74,7 +74,7 @@ export async function listCostRequests(query: ListQuery) {
     if (query.requested_by) sp.set("requested_by", String(query.requested_by));
 
     return http<{ data: CostChangeRequestRow[]; meta: ListMeta | null }>(
-        `/api/manufacturing/price-control/cost-change-requests?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/cost-change-requests?${sp.toString()}`,
     );
 }
 
@@ -83,7 +83,7 @@ export async function createCostRequest(payload: CreateCCRPayload) {
         data: CostChangeRequestRow;
         header_id?: number;
         reference_no?: string | null;
-    }>(`/api/manufacturing/price-control/cost-change-requests`, {
+    }>(`/api/manufacturing/financial-management/price-control/cost-change-requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -102,7 +102,7 @@ export async function createBulkCostChangeRequests(payload: {
         reference_no?: string | null;
         skipped_duplicates?: number;
         skipped_existing_pending?: number;
-    }>(`/api/manufacturing/price-control/cost-change-requests/bulk`, {
+    }>(`/api/manufacturing/financial-management/price-control/cost-change-requests/bulk`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -133,7 +133,7 @@ export async function saveMixedPricingChanges(payload: {
             header_id?: number;
             reference_no?: string | null;
         };
-    }>(`/api/manufacturing/price-control/mixed-save`, {
+    }>(`/api/manufacturing/financial-management/price-control/mixed-save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -141,7 +141,7 @@ export async function saveMixedPricingChanges(payload: {
 }
 
 export async function actionCostRequest(payload: ActionPayload) {
-    return http<{ data: CostChangeRequestRow }>(`/api/manufacturing/price-control/cost-change-requests/actions`, {
+    return http<{ data: CostChangeRequestRow }>(`/api/manufacturing/financial-management/price-control/cost-change-requests/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -149,7 +149,7 @@ export async function actionCostRequest(payload: ActionPayload) {
 }
 
 export async function actionCostRequestsBulk(payload: BulkCostActionPayload) {
-    return http<BulkCostActionResponse>(`/api/manufacturing/price-control/cost-change-requests/actions/bulk`, {
+    return http<BulkCostActionResponse>(`/api/manufacturing/financial-management/price-control/cost-change-requests/actions/bulk`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -157,7 +157,7 @@ export async function actionCostRequestsBulk(payload: BulkCostActionPayload) {
 }
 
 export async function actionPriceRequest(payload: PriceActionPayload) {
-    return http<{ data: PriceChangeRequestRow }>(`/api/manufacturing/price-control/price-change-requests/actions`, {
+    return http<{ data: PriceChangeRequestRow }>(`/api/manufacturing/financial-management/price-control/price-change-requests/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -296,7 +296,7 @@ function mapProductSearchRow(item: unknown): ProductSearchRow | null {
 }
 
 export async function getPriceTypes() {
-    const res = await http<{ data: PriceTypeOption[] }>("/api/manufacturing/price-control/price-types");
+    const res = await http<{ data: PriceTypeOption[] }>("/api/manufacturing/financial-management/price-control/price-types");
     return {
         data: (res.data ?? [])
             .map((item) => ({
@@ -393,7 +393,7 @@ export async function getProductsByIds(
                 active_only,
             });
             const res = await http<{ data: unknown[] }>(
-                `/api/manufacturing/price-control/products?${sp.toString()}`,
+                `/api/manufacturing/financial-management/price-control/products?${sp.toString()}`,
             );
             return (res.data ?? [])
                 .map(mapProductSearchRow)
@@ -428,7 +428,7 @@ export async function getProductsPage(params: {
     }
 
     const res = await http<{ data: unknown[]; meta?: ProductsMeta }>(
-        `/api/manufacturing/price-control/products?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/products?${sp.toString()}`,
     );
 
     return {
@@ -452,7 +452,7 @@ export async function getPricesForProducts(productIds: number[]) {
     const results = await Promise.all(
         chunks.map(async (chunk) => {
             const sp = new URLSearchParams({ product_ids: chunk.join(",") });
-            const res = await http<{ data: unknown[] }>(`/api/manufacturing/price-control/prices?${sp.toString()}`);
+            const res = await http<{ data: unknown[] }>(`/api/manufacturing/financial-management/price-control/prices?${sp.toString()}`);
 
             return (res.data ?? [])
                 .map((item): TierPriceRow | null => {
@@ -500,7 +500,7 @@ export async function getPendingPriceRequestsForProducts(productIds: number[]) {
                 product_ids: chunk.join(","),
             });
             const res = await http<{ data: unknown[] }>(
-                `/api/manufacturing/price-control/price-change-requests?${sp.toString()}`,
+                `/api/manufacturing/financial-management/price-control/price-change-requests?${sp.toString()}`,
             );
 
             return (res.data ?? [])
@@ -541,7 +541,7 @@ export async function getPendingCostRequestsForProducts(productIds: number[]) {
                 product_ids: chunk.join(","),
             });
             const res = await http<{ data: unknown[] }>(
-                `/api/manufacturing/price-control/cost-change-requests?${sp.toString()}`,
+                `/api/manufacturing/financial-management/price-control/cost-change-requests?${sp.toString()}`,
             );
 
             return (res.data ?? [])
@@ -568,7 +568,7 @@ export async function listPriceChangeBatches(query: ListQuery) {
     appendListQuery(sp, query);
 
     return http<{ data: PriceChangeBatchHeader[]; meta: ListMeta | null }>(
-        `/api/manufacturing/price-control/price-change-batches?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/price-change-batches?${sp.toString()}`,
     );
 }
 
@@ -578,25 +578,25 @@ export async function listUnifiedApprovals(query: ListQuery, scope: "all" | "pri
     sp.set("scope", scope);
 
     return http<{ data: UnifiedApprovalRow[]; meta: ListMeta | null }>(
-        `/api/manufacturing/price-control/price-change-approvals?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/price-change-approvals?${sp.toString()}`,
     );
 }
 
 export async function getPriceChangeBatch(headerId: number) {
     return http<{ data: PriceChangeBatchDetail }>(
-        `/api/manufacturing/price-control/price-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/price-change-batches/${headerId}`,
     );
 }
 
 export async function getListCostBatch(headerId: number) {
     return http<{ data: ListCostBatchDetail }>(
-        `/api/manufacturing/price-control/cost-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/cost-change-batches/${headerId}`,
     );
 }
 
 export async function getUnifiedBatch(headerId: number) {
     return http<{ data: UnifiedBatchDetail }>(
-        `/api/manufacturing/price-control/unified-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/unified-batches/${headerId}`,
     );
 }
 
@@ -606,7 +606,7 @@ export async function createPriceChangeBatch(payload: CreatePriceChangeBatchPayl
         created: number;
         skipped_duplicates?: number;
         skipped_existing_pending?: number;
-    }>(`/api/manufacturing/price-control/price-change-batches`, {
+    }>(`/api/manufacturing/financial-management/price-control/price-change-batches`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -743,7 +743,7 @@ export async function overrideScheduledPriceChange(payload: {
     action: ScheduledOverrideAction;
     reject_reason?: string;
 }) {
-    return http<ScheduledOverrideResponse>(`/api/manufacturing/price-control/scheduled-price-changes/override`, {
+    return http<ScheduledOverrideResponse>(`/api/manufacturing/financial-management/price-control/scheduled-price-changes/override`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -752,7 +752,7 @@ export async function overrideScheduledPriceChange(payload: {
 
 export async function approvePriceChangeBatch(headerId: number, effectiveAt?: string | null) {
     return http<ApprovalResponse>(
-        `/api/manufacturing/price-control/price-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/price-change-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -763,7 +763,7 @@ export async function approvePriceChangeBatch(headerId: number, effectiveAt?: st
 
 export async function approveListCostBatch(headerId: number, effectiveAt?: string | null) {
     return http<ApprovalResponse>(
-        `/api/manufacturing/price-control/cost-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/cost-change-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -774,7 +774,7 @@ export async function approveListCostBatch(headerId: number, effectiveAt?: strin
 
 export async function rejectPriceChangeBatch(headerId: number, reject_reason: string) {
     return http<{ ok: boolean; header_id: number; rejected: number }>(
-        `/api/manufacturing/price-control/price-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/price-change-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -785,7 +785,7 @@ export async function rejectPriceChangeBatch(headerId: number, reject_reason: st
 
 export async function rejectListCostBatch(headerId: number, reject_reason: string) {
     return http<{ ok: boolean; header_id: number; rejected: number }>(
-        `/api/manufacturing/price-control/cost-change-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/cost-change-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -796,7 +796,7 @@ export async function rejectListCostBatch(headerId: number, reject_reason: strin
 
 export async function approveUnifiedBatch(headerId: number, effectiveAt?: string | null) {
     return http<ApprovalResponse>(
-        `/api/manufacturing/price-control/unified-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/unified-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -807,7 +807,7 @@ export async function approveUnifiedBatch(headerId: number, effectiveAt?: string
 
 export async function retryUnifiedBatch(headerId: number) {
     return http<ApprovalResponse>(
-        `/api/manufacturing/price-control/unified-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/unified-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -818,7 +818,7 @@ export async function retryUnifiedBatch(headerId: number) {
 
 export async function rejectUnifiedBatch(headerId: number, reject_reason: string) {
     return http<{ ok: boolean; header_id: number; rejected: number }>(
-        `/api/manufacturing/price-control/unified-batches/${headerId}`,
+        `/api/manufacturing/financial-management/price-control/unified-batches/${headerId}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },

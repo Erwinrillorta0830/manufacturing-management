@@ -1,4 +1,4 @@
-import type { Brand, Category, FilterState, MatrixRow, PriceType, ProductRow, VariantCell } from "../types";
+import type { Brand, Category, FilterState, MatrixRow, PriceType, ProductRow, VariantCell, VersionRow } from "../types";
 import { getPricesForProducts } from "../../product-pricing/providers/pricingApi";
 import { emptyPivot, pivotPrices } from "../../product-pricing/utils/pivot";
 
@@ -61,7 +61,7 @@ export async function fetchPrintablesPage(
     params: URLSearchParams,
     init?: { signal?: AbortSignal },
 ): Promise<PrintablesPageResponse> {
-    const res = await fetch(`/api/manufacturing/price-control/printables?${params.toString()}`, {
+    const res = await fetch(`/api/manufacturing/financial-management/price-control/printables?${params.toString()}`, {
         signal: init?.signal,
     });
     const json = (await res.json().catch(() => ({}))) as PrintablesPageResponse;
@@ -168,10 +168,21 @@ export function assembleMatrixRowsFromProducts(
             };
         }
 
+        const versions: VersionRow[] = (display.versions || []).map((v) => {
+            const tiers: Record<string, number | null> = {};
+            if (v.prices) {
+                for (const [ptId, p] of Object.entries(v.prices)) {
+                    tiers[String(ptId)] = p.price_per_unit != null ? Number(p.price_per_unit) : null;
+                }
+            }
+            return { version: v, tiers };
+        });
+
         matrixRows.push({
             group_id: groupId,
             display,
             variantsByUnitId,
+            versions,
             category_name: catMap.get(Number(display.product_category)) || "—",
             brand_name: brandMap.get(Number(display.product_brand)) || "—",
         });
@@ -236,10 +247,21 @@ export async function assembleMatrixRowsWithPrices(
             };
         }
 
+        const versions: VersionRow[] = (display.versions || []).map((v) => {
+            const tiers: Record<string, number | null> = {};
+            if (v.prices) {
+                for (const [ptId, p] of Object.entries(v.prices)) {
+                    tiers[String(ptId)] = p.price_per_unit != null ? Number(p.price_per_unit) : null;
+                }
+            }
+            return { version: v, tiers };
+        });
+
         matrixRows.push({
             group_id: groupId,
             display,
             variantsByUnitId,
+            versions,
             category_name: catMap.get(Number(display.product_category)) || "—",
             brand_name: brandMap.get(Number(display.product_brand)) || "—",
         });

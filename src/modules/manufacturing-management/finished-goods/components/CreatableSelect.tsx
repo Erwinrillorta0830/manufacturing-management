@@ -12,13 +12,13 @@ import {
     CommandInput,
     CommandItem,
     CommandList,
-} from "@/components/ui/command";
+} from "./ui/local-command";
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
     PopoverAnchor,
-} from "@/components/ui/popover";
+} from "./ui/local-popover";
 
 export interface CreatableSelectProps {
     options: { value: string; label: string; labelNode?: React.ReactNode }[];
@@ -149,20 +149,20 @@ export function CreatableSelect({
                 </PopoverTrigger>
             )}
             <PopoverContent
-                className={cn("w-[--radix-popover-trigger-width] p-0", popoverClassName)}
+                className={cn("w-[--radix-popover-trigger-width] p-0 z-[100]", popoverClassName)}
                 align="start"
+                sideOffset={4}
                 onOpenAutoFocus={variant === "inline" ? (e) => e.preventDefault() : undefined}
             >
                 <Command shouldFilter={false}>
                     {variant !== "inline" && (
-
                         <CommandInput
                             placeholder={`Search ${placeholder.toLowerCase()}...`}
                             value={searchQuery}
                             onValueChange={setSearchQuery}
                         />
                     )}
-                    <CommandList>
+                    <CommandList className="max-h-64 overflow-x-hidden overflow-y-auto">
                         {filteredOptions.length === 0 && (
                             <CommandEmpty className="py-2 px-3 text-xs flex flex-col gap-2">
                                 <span>No results found.</span>

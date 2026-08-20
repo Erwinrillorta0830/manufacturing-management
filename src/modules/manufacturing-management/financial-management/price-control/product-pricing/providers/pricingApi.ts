@@ -25,25 +25,25 @@ type ProductsMeta = {
 };
 
 export async function getPriceTypes() {
-    return http<{ data: PriceType[] }>("/api/manufacturing/price-control/price-types");
+    return http<{ data: PriceType[] }>("/api/manufacturing/financial-management/price-control/price-types");
 }
 
 export async function createPriceType(data: Partial<PriceType>) {
-    return http<{ data: PriceType }>("/api/manufacturing/price-control/price-types", {
+    return http<{ data: PriceType }>("/api/manufacturing/financial-management/price-control/price-types", {
         method: "POST",
         body: JSON.stringify(data),
     });
 }
 
 export async function updatePriceType(id: number, data: Partial<PriceType>) {
-    return http<{ data: PriceType }>(`/api/manufacturing/price-control/price-types/${id}`, {
+    return http<{ data: PriceType }>(`/api/manufacturing/financial-management/price-control/price-types/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
     });
 }
 
 export async function deletePriceType(id: number) {
-    return http<{ ok: boolean }>(`/api/manufacturing/price-control/price-types/${id}`, {
+    return http<{ ok: boolean }>(`/api/manufacturing/financial-management/price-control/price-types/${id}`, {
         method: "DELETE",
     });
 }
@@ -62,7 +62,7 @@ export async function getLookups(params?: {
 
     const qs = sp.toString();
     return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[] } }>(
-        `/api/manufacturing/price-control/lookups${qs ? `?${qs}` : ""}`,
+        `/api/manufacturing/financial-management/price-control/lookups${qs ? `?${qs}` : ""}`,
     );
 }
 
@@ -92,7 +92,7 @@ export async function getProducts(params: {
     }
 
     return http<{ data: ProductRow[]; meta: ProductsMeta }>(
-        `/api/manufacturing/price-control/products?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/products?${sp.toString()}`,
     );
 }
 
@@ -128,7 +128,7 @@ export async function getMatrixPage(params: {
         prices: PriceRow[];
         pending_price_requests: PriceChangeRequest[];
         pending_cost_requests: CostChangeRequest[];
-    }>(`/api/manufacturing/price-control/products/matrix-page?${sp.toString()}`);
+    }>(`/api/manufacturing/financial-management/price-control/products/matrix-page?${sp.toString()}`);
 }
 
 export type PrintFilterParams = {
@@ -177,7 +177,7 @@ export async function getPrintProducts(params: PrintFilterParams) {
     const sp = buildPrintSearchParams(params);
 
     return http<{ data: ProductRow[] }>(
-        `/api/manufacturing/price-control/print/products?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/print/products?${sp.toString()}`,
     );
 }
 
@@ -186,7 +186,7 @@ export async function getPrintMatrixMeta(params: PrintFilterParams, init?: Reque
     sp.set("step", "meta");
 
     return http<PrintMatrixMetaResponse>(
-        `/api/manufacturing/price-control/print/matrix?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/print/matrix?${sp.toString()}`,
         init,
     );
 }
@@ -200,7 +200,7 @@ export async function getPrintMatrixPage(
     sp.set("group_ids", params.group_ids);
 
     return http<PrintMatrixPageResponse>(
-        `/api/manufacturing/price-control/print/matrix?${sp.toString()}`,
+        `/api/manufacturing/financial-management/price-control/print/matrix?${sp.toString()}`,
         init,
     );
 }
@@ -220,7 +220,7 @@ export async function getPricesForProducts(productIds: number[], init?: RequestI
         chunks.map(async (chunk) => {
             const sp = new URLSearchParams({ product_ids: chunk.join(",") });
             return http<{ data: PriceRow[] }>(
-                `/api/manufacturing/price-control/prices?${sp.toString()}`,
+                `/api/manufacturing/financial-management/price-control/prices?${sp.toString()}`,
                 init,
             );
         }),
@@ -231,7 +231,7 @@ export async function getPricesForProducts(productIds: number[], init?: RequestI
 }
 
 export async function upsertPrices(lines: UpsertLine[]) {
-    return http<{ ok: boolean; affected: number }>(`/api/manufacturing/price-control/prices-upsert`, {
+    return http<{ ok: boolean; affected: number }>(`/api/manufacturing/financial-management/price-control/prices-upsert`, {
         method: "POST",
         body: JSON.stringify({ lines }),
     });
@@ -246,7 +246,7 @@ export async function createPriceChangeBatch(
         created: number;
         skipped_duplicates?: number;
         skipped_existing_pending?: number;
-    }>(`/api/manufacturing/price-control/price-change-batches`, {
+    }>(`/api/manufacturing/financial-management/price-control/price-change-batches`, {
         method: "POST",
         body: JSON.stringify({
             supplier_id: batch.supplier_id,
@@ -258,7 +258,7 @@ export async function createPriceChangeBatch(
 }
 
 export async function bulkUpdateProducts(items: { product_id: number; cost_per_unit: number | null }[]) {
-    return http<{ ok: boolean; affected: number }>(`/api/manufacturing/price-control/products/bulk-patch`, {
+    return http<{ ok: boolean; affected: number }>(`/api/manufacturing/financial-management/price-control/products/bulk-patch`, {
         method: "POST",
         body: JSON.stringify({ items }),
     });
@@ -282,7 +282,7 @@ export async function createCostChangeRequests(
         reference_no?: string | null;
         skipped_duplicates?: number;
         skipped_existing_pending?: number;
-    }>(`/api/manufacturing/price-control/cost-change-requests/bulk`, {
+    }>(`/api/manufacturing/financial-management/price-control/cost-change-requests/bulk`, {
         method: "POST",
         body: JSON.stringify(payload),
     });
@@ -320,7 +320,7 @@ export async function saveMixedPricingChanges(payload: {
         current_cost?: number | null;
     }[];
 }) {
-    return http<MixedSaveResponse>(`/api/manufacturing/price-control/mixed-save`, {
+    return http<MixedSaveResponse>(`/api/manufacturing/financial-management/price-control/mixed-save`, {
         method: "POST",
         body: JSON.stringify(payload),
     });
@@ -333,7 +333,7 @@ export async function getPendingPriceRequests(productIds: number[]) {
         status: "PENDING",
         product_ids: productIds.join(","),
     });
-    return http<{ data: PriceChangeRequest[] }>(`/api/manufacturing/price-control/price-change-requests?${sp.toString()}`);
+    return http<{ data: PriceChangeRequest[] }>(`/api/manufacturing/financial-management/price-control/price-change-requests?${sp.toString()}`);
 }
 
 export async function getPendingCostRequests(productIds: number[]) {
@@ -343,5 +343,5 @@ export async function getPendingCostRequests(productIds: number[]) {
         status: "PENDING",
         product_ids: productIds.join(","),
     });
-    return http<{ data: CostChangeRequest[] }>(`/api/manufacturing/price-control/cost-change-requests?${sp.toString()}`);
+    return http<{ data: CostChangeRequest[] }>(`/api/manufacturing/financial-management/price-control/cost-change-requests?${sp.toString()}`);
 }

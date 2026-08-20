@@ -1,5 +1,5 @@
 // src/modules/financial-management/printables-management/product-printables/providers/printablesApi.ts
-import type { Brand, Category, ProductRow, Supplier, Unit } from "../types";
+import type { Brand, Category, ProductRow, Supplier, Unit, ProductType } from "../types";
 
 async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
     const res = await fetch(input, {
@@ -33,8 +33,8 @@ export async function getLookups(params?: {
     const qs = sp.toString();
     // Reusing the existing lookups API if possible, or we could create a new one.
     // For now, I'll use the product-pricing lookups as they cover the same entities.
-    return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[] } }>(
-        `/api/manufacturing/price-control/printables/lookups${qs ? `?${qs}` : ""}`,
+    return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[]; productTypes: ProductType[] } }>(
+        `/api/manufacturing/financial-management/price-control/printables/lookups${qs ? `?${qs}` : ""}`,
     );
 }
 
@@ -51,5 +51,5 @@ export async function getProducts(params: {
     for (const [k, v] of Object.entries(params)) {
         if (v) sp.set(k, v);
     }
-    return http<{ data: ProductRow[] }>(`/api/manufacturing/price-control/printables?${sp.toString()}`);
+    return http<{ data: ProductRow[] }>(`/api/manufacturing/financial-management/price-control/printables?${sp.toString()}`);
 }

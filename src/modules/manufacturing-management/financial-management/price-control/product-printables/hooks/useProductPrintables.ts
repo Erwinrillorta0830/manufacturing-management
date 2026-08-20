@@ -62,7 +62,7 @@ export function useProductPrintables(
             sp.set("page", String(filters.page));
             sp.set("page_size", "50");
 
-            const res = await fetch(`/api/manufacturing/price-control/printables?${sp.toString()}`);
+            const res = await fetch(`/api/manufacturing/financial-management/price-control/printables?${sp.toString()}`);
             if (!res.ok) throw new Error("Failed to fetch products");
             const json = await res.json();
             const products: ProductRow[] = json.data ?? [];

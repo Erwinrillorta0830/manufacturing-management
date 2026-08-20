@@ -32,7 +32,7 @@ export function useLookups(filters?: Partial<FilterState>) {
                         category_id: categoryId,
                         brand_id: brandId,
                     }),
-                    fetch("/api/manufacturing/price-control/printables/price-types").then((r) => r.json())
+                    fetch("/api/manufacturing/financial-management/price-control/printables/price-types").then((r) => r.json())
                 ]);
 
                 if (!mounted) return;
