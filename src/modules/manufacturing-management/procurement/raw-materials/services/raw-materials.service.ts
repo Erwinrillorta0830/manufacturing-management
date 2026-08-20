@@ -2,6 +2,7 @@ import {
     UnitOption, 
     WeightUnitOption, 
     SelectOption,
+    TaxRateOption,
     PurchaseQaConfig,
     PurchaseQaParameter
 } from "../types/raw-materials.types";
@@ -20,20 +21,40 @@ export async function fetchRawMaterialMetadata(): Promise<{
     weightUnits: WeightUnitOption[];
     brands: SelectOption[];
     categories: SelectOption[];
+    itemGroups: SelectOption[];
+    taxRates: TaxRateOption[];
 }> {
-    const [unitsRes, brandsRes, categoriesRes, weightUnitsRes] = await Promise.all([
+    const [unitsRes, brandsRes, categoriesRes, weightUnitsRes, sharedMetadataRes] = await Promise.all([
         fetch("/api/manufacturing/finished-goods/units").then(res => res.json()),
         fetch("/api/manufacturing/finished-goods/brands").then(res => res.json()),
         fetch("/api/manufacturing/finished-goods/categories").then(res => res.json()),
-        fetch("/api/manufacturing/finished-goods/weight-units").then(res => res.json())
+        fetch("/api/manufacturing/finished-goods/weight-units").then(res => res.json()),
+        fetch("/api/manufacturing/procurement/raw-materials/metadata").then(async res => {
+            if (!res.ok) throw new Error(`Failed to load shared raw-material metadata (${res.status}).`);
+            return res.json();
+        })
     ]);
 
     const units: UnitOption[] = unitsRes || [];
     const weightUnits: WeightUnitOption[] = weightUnitsRes || [];
     const brands: SelectOption[] = (brandsData => (brandsData || []).map((b: { brand_id: number; brand_name: string }) => ({ value: String(b.brand_id), label: b.brand_name })))(brandsRes);
     const categories: SelectOption[] = (categoriesData => (categoriesData || []).map((c: { category_id: number; category_name: string }) => ({ value: String(c.category_id), label: c.category_name })))(categoriesRes);
+    const itemGroups: SelectOption[] = Array.isArray(sharedMetadataRes?.itemGroups)
+        ? sharedMetadataRes.itemGroups.map((group: { id: number; code?: string; name: string }) => ({
+            value: String(group.id),
+            label: group.code ? `${group.name} (${group.code.replace(/_/g, " ")})` : group.name
+        }))
+        : [];
+    const taxRates: TaxRateOption[] = Array.isArray(sharedMetadataRes?.taxRates)
+        ? sharedMetadataRes.taxRates.map((taxRate: { id: number; vatRate?: number; withholdingRate?: number }) => ({
+            value: String(taxRate.id),
+            label: `VAT ${(Number(taxRate.vatRate || 0) * 100).toFixed(2)}% / EWT ${(Number(taxRate.withholdingRate || 0) * 100).toFixed(2)}%`,
+            vatRate: Number(taxRate.vatRate || 0),
+            withholdingRate: Number(taxRate.withholdingRate || 0)
+        }))
+        : [];
 
-    return { units, weightUnits, brands, categories };
+    return { units, weightUnits, brands, categories, itemGroups, taxRates };
 }
 
 export async function createBrandOnTheFly(name: string): Promise<SelectOption> {

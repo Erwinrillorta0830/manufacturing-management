@@ -212,6 +212,16 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             catName = (p as { category_name?: string }).category_name;
         }
 
+        const itemGroup = p.item_group_id && typeof p.item_group_id === "object"
+            ? p.item_group_id as { item_group_id?: number; id?: number; group_name?: string }
+            : null;
+        const taxRate = p.tax_rate_id && typeof p.tax_rate_id === "object"
+            ? p.tax_rate_id as { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string }
+            : null;
+        const priceControl = p.price_control && typeof p.price_control === "object"
+            ? p.price_control as { priceTypeId?: number; priceTypeName?: string }
+            : null;
+
         return {
             product_id: p.product_id,
             parent_id: parentIdValue,
@@ -242,6 +252,21 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             category_name: catName,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,
+            product_class: p.product_class ? Number(typeof p.product_class === "object" ? (p.product_class as { class_id?: number; id?: number }).class_id || (p.product_class as { class_id?: number; id?: number }).id : p.product_class) : null,
+            product_segment: p.product_segment ? Number(typeof p.product_segment === "object" ? (p.product_segment as { segment_id?: number; id?: number }).segment_id || (p.product_segment as { segment_id?: number; id?: number }).id : p.product_segment) : null,
+            product_section: p.product_section ? Number(typeof p.product_section === "object" ? (p.product_section as { section_id?: number; id?: number }).section_id || (p.product_section as { section_id?: number; id?: number }).id : p.product_section) : null,
+            item_group_id: itemGroup ? Number(itemGroup.item_group_id || itemGroup.id) : (typeof p.item_group_id === "number" || typeof p.item_group_id === "string" ? Number(p.item_group_id) : null),
+            item_group_name: itemGroup?.group_name || null,
+            tax_rate_id: taxRate ? Number(taxRate.TaxID || taxRate.tax_id || taxRate.id) : (typeof p.tax_rate_id === "number" || typeof p.tax_rate_id === "string" ? Number(p.tax_rate_id) : null),
+            tax_rate: taxRate ? {
+                vatRate: Number(taxRate.VATRate || 0),
+                withholdingRate: Number(taxRate.WithholdingRate || 0)
+            } : null,
+            regulatory_code: p.regulatory_code || null,
+            regulatory_notes: p.regulatory_notes || null,
+            price_control: priceControl?.priceTypeId && priceControl.priceTypeName
+                ? { priceTypeId: Number(priceControl.priceTypeId), priceTypeName: priceControl.priceTypeName }
+                : null,
             isActive: p.isActive === false || p.isActive === 0 || String(p.isActive).trim().toLowerCase() === "false" || String(p.isActive).trim() === "0" ? 0 : 1,
             date_added: p.date_added,
             last_updated: p.last_updated

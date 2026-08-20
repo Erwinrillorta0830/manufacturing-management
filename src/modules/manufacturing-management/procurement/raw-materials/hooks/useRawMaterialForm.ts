@@ -10,7 +10,9 @@ import {
     PackagingVariantFormState,
     PurchaseQaConfig,
     PurchaseQaParameter,
-    PurchaseQaSpecificationInput
+    PurchaseQaSpecificationInput,
+    PriceControlValue,
+    TaxRateOption
 } from "../types/raw-materials.types";
 import { 
     fetchRawMaterialMetadata, 
@@ -21,6 +23,7 @@ import {
     fetchPurchaseQaParameters
 } from "../services/raw-materials.service";
 import { resolveProductWeightBreakdown } from "../../packaging-weight";
+import { resolveParentSharedAttributes } from "../parent-inheritance";
 
 function emptyPurchaseQaConfig(): PurchaseQaConfig {
     return { inspectionRequired: false, specifications: [] };
@@ -123,6 +126,8 @@ export function useRawMaterialForm(
     const [loadingUnits, setLoadingUnits] = useState(false);
     const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
     const [categoriesList, setCategoriesList] = useState<SelectOption[]>([]);
+    const [itemGroupsList, setItemGroupsList] = useState<SelectOption[]>([]);
+    const [taxRatesList, setTaxRatesList] = useState<TaxRateOption[]>([]);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
     const [purchaseQaParameters, setPurchaseQaParameters] = useState<PurchaseQaParameter[]>([]);
     const [loadingPurchaseQa, setLoadingPurchaseQa] = useState(false);
@@ -142,6 +147,14 @@ export function useRawMaterialForm(
     const [formWeightUnitId, setFormWeightUnitId] = useState<number | "">("");
     const [formBrand, setFormBrand] = useState("");
     const [formCategory, setFormCategory] = useState("");
+    const [formProductClass, setFormProductClass] = useState<number | "">("");
+    const [formProductSegment, setFormProductSegment] = useState<number | "">("");
+    const [formProductSection, setFormProductSection] = useState<number | "">("");
+    const [formItemGroupId, setFormItemGroupId] = useState<number | "">("");
+    const [formTaxRateId, setFormTaxRateId] = useState<number | "">("");
+    const [formRegulatoryCode, setFormRegulatoryCode] = useState("");
+    const [formRegulatoryNotes, setFormRegulatoryNotes] = useState("");
+    const [formPriceControl, setFormPriceControl] = useState<PriceControlValue | null>(null);
     const [formBarcode, setFormBarcode] = useState("");
     const [formMaintainingQuantity, setFormMaintainingQuantity] = useState("0");
     const [formProductImage, setFormProductImage] = useState<string | null>(null);
@@ -225,13 +238,43 @@ export function useRawMaterialForm(
         if (!classificationLocked) setFormProductType(value);
     };
 
+    const resetChildSpecificFields = useCallback(() => {
+        setFormUom("");
+        setFormUomCount("");
+        setFormDensity("");
+        setFormWeight("");
+        setFormNetWeight("");
+        setFormOuterCartonWeight("");
+        setFormPalletWeight("");
+        setFormWeightUnitId("");
+        setPackagingVariants([]);
+    }, []);
+
+    const applyParentSharedAttributes = useCallback((parentItem: RawMaterialItem) => {
+        const shared = resolveParentSharedAttributes(parentItem);
+        setFormProductType(shared.product_type || 389);
+        setFormBrand(shared.product_brand == null ? "" : String(shared.product_brand));
+        setFormCategory(shared.product_category == null ? "" : String(shared.product_category));
+        setFormProductClass(shared.product_class == null ? "" : shared.product_class);
+        setFormProductSegment(shared.product_segment == null ? "" : shared.product_segment);
+        setFormProductSection(shared.product_section == null ? "" : shared.product_section);
+        setFormItemGroupId(shared.item_group_id == null ? "" : shared.item_group_id);
+        setFormTaxRateId(shared.tax_rate_id == null ? "" : shared.tax_rate_id);
+        setFormRegulatoryCode(shared.regulatory_code || "");
+        setFormRegulatoryNotes(shared.regulatory_notes || "");
+        setFormPriceControl(shared.price_control);
+    }, []);
+
     const handleAddVariant = () => {
         setPackagingVariants([...packagingVariants, {
             uomId: "",
             count: "",
+            density: "",
+            weight: "",
             netWeight: "",
             outerCartonWeight: "",
             palletWeight: "",
+            weightUnitId: "",
             codeSuffix: "",
             isActive: true,
             barcode: "",
@@ -290,9 +333,12 @@ export function useRawMaterialForm(
         setPackagingVariants([...packagingVariants, {
             uomId,
             count,
+            density: "",
+            weight: "",
             netWeight: "",
             outerCartonWeight: "",
             palletWeight: "",
+            weightUnitId: "",
             codeSuffix,
             isActive: true,
             barcode: "",
@@ -327,6 +373,8 @@ export function useRawMaterialForm(
                 setWeightUnits(meta.weightUnits);
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
+                setItemGroupsList(meta.itemGroups);
+                setTaxRatesList(meta.taxRates);
 
                 try {
                     setLoadingPurchaseQa(true);
@@ -368,6 +416,14 @@ export function useRawMaterialForm(
         setFormWeightUnitId("");
         setFormBrand("");
         setFormCategory("");
+        setFormProductClass("");
+        setFormProductSegment("");
+        setFormProductSection("");
+        setFormItemGroupId("");
+        setFormTaxRateId("");
+        setFormRegulatoryCode("");
+        setFormRegulatoryNotes("");
+        setFormPriceControl(null);
         setFormBarcode("");
         setFormMaintainingQuantity("0");
         setFormProductImage(null);
@@ -456,6 +512,15 @@ export function useRawMaterialForm(
             ? rawMaterials.find(rm => Number(rm.product_id) === Number(item.parent_id))
             : undefined;
         setFormProductType(parentItem?.product_type || item.product_type || 389);
+        setFormProductClass(item.product_class == null ? "" : Number(item.product_class));
+        setFormProductSegment(item.product_segment == null ? "" : Number(item.product_segment));
+        setFormProductSection(item.product_section == null ? "" : Number(item.product_section));
+        setFormItemGroupId(item.item_group_id == null ? "" : Number(item.item_group_id));
+        setFormTaxRateId(item.tax_rate_id == null ? "" : Number(item.tax_rate_id));
+        setFormRegulatoryCode(item.regulatory_code || "");
+        setFormRegulatoryNotes(item.regulatory_notes || "");
+        setFormPriceControl(item.price_control || null);
+        if (parentItem) applyParentSharedAttributes(parentItem);
         setFormIsActive(item.isActive !== 0);
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
@@ -478,9 +543,14 @@ export function useRawMaterialForm(
                     productId: c.product_id,
                     uomId: c.unit_of_measurement?.unit_id || "",
                     count: String(c.unit_of_measurement_count || "1"),
+                    density: c.density_factor != null ? String(c.density_factor) : "",
+                    weight: c.weight != null && Number(c.weight) > 0 ? String(c.weight) : "",
                     netWeight: c.net_weight != null ? String(c.net_weight) : "",
                     outerCartonWeight: c.outer_carton_weight != null ? String(c.outer_carton_weight) : "",
                     palletWeight: c.pallet_weight != null ? String(c.pallet_weight) : "",
+                    weightUnitId: typeof c.weight_unit_id === "object"
+                        ? (c.weight_unit_id?.id || c.weight_unit_id?.unit_id || "")
+                        : (c.weight_unit_id || ""),
                     codeSuffix: suffix,
                     isExisting: true,
                     isActive: c.isActive !== 0,
@@ -499,7 +569,7 @@ export function useRawMaterialForm(
         fetchLinkedSuppliers(item.product_id)
             .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
             .catch(err => console.error("Failed to load item suppliers:", err));
-    }, [loadPurchaseQaForFamily, rawMaterials]);
+    }, [applyParentSharedAttributes, loadPurchaseQaForFamily, rawMaterials]);
 
     const handleStartEdit = (item: RawMaterialItem) => {
         setEditingItem(item);
@@ -532,8 +602,21 @@ export function useRawMaterialForm(
         if (val && !parentItem) return;
 
         setFormParentId(val);
-        if (parentItem?.product_type) {
-            setFormProductType(Number(parentItem.product_type));
+        if (parentItem) {
+            applyParentSharedAttributes(parentItem);
+            resetChildSpecificFields();
+        } else {
+            setFormBrand("");
+            setFormCategory("");
+            setFormProductClass("");
+            setFormProductSegment("");
+            setFormProductSection("");
+            setFormItemGroupId("");
+            setFormTaxRateId("");
+            setFormRegulatoryCode("");
+            setFormRegulatoryNotes("");
+            setFormPriceControl(null);
+            resetChildSpecificFields();
         }
         if (val && !editingItem) {
             if (parentItem && parentItem.product_code) {
@@ -547,6 +630,17 @@ export function useRawMaterialForm(
     const handleClearParentSelection = () => {
         if (parentSelectionLocked) return;
         setFormParentId("");
+        setFormBrand("");
+        setFormCategory("");
+        setFormProductClass("");
+        setFormProductSegment("");
+        setFormProductSection("");
+        setFormItemGroupId("");
+        setFormTaxRateId("");
+        setFormRegulatoryCode("");
+        setFormRegulatoryNotes("");
+        setFormPriceControl(null);
+        resetChildSpecificFields();
         setSubmitError(null);
     };
 
@@ -691,12 +785,15 @@ export function useRawMaterialForm(
             !v.count ||
             !Number.isFinite(Number(v.count)) ||
             Number(v.count) <= 0 ||
+            !v.density ||
+            !Number.isFinite(Number(v.density)) ||
+            Number(v.density) <= 0 ||
             (isPackagingMaterial && !parseWeightForm(
                 v.netWeight,
                 v.outerCartonWeight,
                 v.palletWeight,
-                formWeightUnitId,
-                "",
+                v.weightUnitId,
+                v.weight,
                 true
             ).valid)
         );
@@ -742,25 +839,33 @@ export function useRawMaterialForm(
                 v.netWeight,
                 v.outerCartonWeight,
                 v.palletWeight,
-                formWeightUnitId,
-                "",
+                v.weightUnitId,
+                v.weight,
                 isPackagingMaterial
             );
+            const variantWeightUnitId = v.weightUnitId === "" ? null : Number(v.weightUnitId);
+            const variantDensity = Number(v.density);
             return {
                 product_id: v.productId,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
                 unit_of_measurement: Number(v.uomId),
                 unit_of_measurement_count: variantCount,
-                density_factor: parsedDensity,
-                weight: isPackagingMaterial
-                    ? variantWeight.grossWeight
-                    : (parsedBaseWeight == null ? null : parsedBaseWeight * variantCount),
+                density_factor: variantDensity,
+                weight: variantWeight.grossWeight,
                 net_weight: variantWeight.hasComponents ? Number(v.netWeight) : undefined,
                 outer_carton_weight: variantWeight.hasComponents ? Number(v.outerCartonWeight) : undefined,
                 pallet_weight: variantWeight.hasComponents ? Number(v.palletWeight) : undefined,
-                weight_unit_id: selectedWeightUnitIdNum as number,
+                weight_unit_id: variantWeightUnitId,
                 product_brand: formBrand ? Number(formBrand) : undefined,
                 product_category: formCategory ? Number(formCategory) : undefined,
+                product_type: formProductType,
+                product_class: formProductClass === "" ? null : Number(formProductClass),
+                product_segment: formProductSegment === "" ? null : Number(formProductSegment),
+                product_section: formProductSection === "" ? null : Number(formProductSection),
+                item_group_id: formItemGroupId === "" ? null : Number(formItemGroupId),
+                tax_rate_id: formTaxRateId === "" ? null : Number(formTaxRateId),
+                regulatory_code: formRegulatoryCode.trim() || null,
+                regulatory_notes: formRegulatoryNotes.trim() || null,
                 isActive: v.isActive ? 1 : 0,
                 barcode: v.barcode.trim() || undefined,
                 maintaining_quantity: Number(v.maintainingQuantity),
@@ -797,6 +902,13 @@ export function useRawMaterialForm(
             product_brand: formBrand ? Number(formBrand) : undefined,
             product_category: formCategory ? Number(formCategory) : undefined,
             product_type: formProductType,
+            product_class: formProductClass === "" ? null : Number(formProductClass),
+            product_segment: formProductSegment === "" ? null : Number(formProductSegment),
+            product_section: formProductSection === "" ? null : Number(formProductSection),
+            item_group_id: formItemGroupId === "" ? null : Number(formItemGroupId),
+            tax_rate_id: formTaxRateId === "" ? null : Number(formTaxRateId),
+            regulatory_code: formRegulatoryCode.trim() || null,
+            regulatory_notes: formRegulatoryNotes.trim() || null,
             parent_id: formParentId ? Number(formParentId) : null,
             unit_of_measurement_count: parsedUomCount,
             isActive: formIsActive ? 1 : 0,
@@ -841,6 +953,8 @@ export function useRawMaterialForm(
         weightUnits,
         brandsList,
         categoriesList,
+        itemGroupsList,
+        taxRatesList,
         showValidationErrors,
         formName,
         setFormName,
@@ -866,6 +980,15 @@ export function useRawMaterialForm(
         setFormBrand,
         formCategory,
         setFormCategory,
+        formItemGroupId,
+        setFormItemGroupId,
+        formTaxRateId,
+        setFormTaxRateId,
+        formRegulatoryCode,
+        setFormRegulatoryCode,
+        formRegulatoryNotes,
+        setFormRegulatoryNotes,
+        formPriceControl,
         formBarcode,
         setFormBarcode,
         formMaintainingQuantity,
