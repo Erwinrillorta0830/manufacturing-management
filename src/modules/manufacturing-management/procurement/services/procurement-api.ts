@@ -1,4 +1,4 @@
-import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse } from "../types";
+import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse, SupplierCatalogUpdatePayload, SupplierCatalogUpdateResult } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
@@ -344,6 +344,17 @@ export async function unlinkProductFromSupplier(linkId: number): Promise<unknown
         method: "DELETE"
     });
     return handleResponse(res, "Failed to unlink product from supplier");
+}
+
+export async function saveSupplierCatalogUpdates(
+    payload: SupplierCatalogUpdatePayload
+): Promise<SupplierCatalogUpdateResult> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/suppliers/products", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(res, "Failed to save supplier catalog updates");
 }
 
 interface PSGCResponseItem {

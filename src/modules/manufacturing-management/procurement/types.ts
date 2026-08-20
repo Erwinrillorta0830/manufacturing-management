@@ -339,12 +339,25 @@ export interface LinkedProduct {
         product_code?: string;
         product_name?: string;
         description?: string;
+        parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
             unit_name?: string;
             unit_shortcut?: string;
         };
     };
+}
+
+export interface SupplierCatalogUpdatePayload {
+    supplierId: number;
+    addProductIds: number[];
+    removeLinkIds: number[];
+}
+
+export interface SupplierCatalogUpdateResult {
+    success: boolean;
+    added: number[];
+    removed: number[];
 }
 
 export interface PSGCItem {

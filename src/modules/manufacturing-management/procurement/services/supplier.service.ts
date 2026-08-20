@@ -7,6 +7,7 @@ import {
     fetchLinkedProducts,
     linkProductToSupplier,
     unlinkProductFromSupplier,
+    saveSupplierCatalogUpdates,
     fetchPHProvinces,
     fetchPHCities,
     fetchPHBarangays
@@ -21,6 +22,7 @@ export {
     fetchLinkedProducts,
     linkProductToSupplier,
     unlinkProductFromSupplier,
+    saveSupplierCatalogUpdates,
     fetchPHProvinces,
     fetchPHCities,
     fetchPHBarangays
