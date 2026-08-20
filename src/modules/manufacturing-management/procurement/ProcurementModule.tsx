@@ -26,6 +26,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         rawMaterialsLoading,
         submittingExpenses,
         suppliers,
+        supplierDirectoryRefreshKey,
         shipments,
         rawMaterials,
         paymentModes,
@@ -122,7 +123,6 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
 
                 {activeTab === "suppliers" && (
                     <SuppliersDirectory
-                        suppliers={suppliers}
                         isModalOpen={isSupplierModalOpen}
                         setIsModalOpen={setIsSupplierModalOpen}
                         supplierForm={supplierForm}
@@ -132,6 +132,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         onStartEditSupplier={handleStartEditSupplier}
                         onCreateSupplier={handleCreateSupplier}
                         rawMaterials={rawMaterials}
+                        supplierRefreshKey={supplierDirectoryRefreshKey}
                     />
                 )}
 

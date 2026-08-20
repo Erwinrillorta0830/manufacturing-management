@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../../_directus";
-import { fetchProductsBySupplier } from "../suppliers-helper";
+import { fetchProductsBySupplier, fetchProductsBySupplierPage } from "../suppliers-helper";
 
 const TRANSIENT_UPSTREAM_STATUSES = new Set([502, 503, 504]);
 
@@ -101,6 +101,20 @@ export async function GET(request: Request) {
         if (!supplierId) {
             return NextResponse.json({ error: "Supplier ID is required" }, { status: 400 });
         }
+
+        const pageParam = searchParams.get("page");
+        const pageSizeParam = searchParams.get("pageSize");
+        if (pageParam !== null || pageSizeParam !== null) {
+            const page = pageParam === null ? 1 : Number(pageParam);
+            const pageSize = pageSizeParam === null ? 10 : Number(pageSizeParam);
+            if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
+                return NextResponse.json({ error: "page and pageSize must be positive integers" }, { status: 400 });
+            }
+
+            const result = await fetchProductsBySupplierPage(Number(supplierId), page, pageSize);
+            return NextResponse.json(result);
+        }
+
         const products = await fetchProductsBySupplier(Number(supplierId));
         return NextResponse.json(products);
     } catch (e) {
