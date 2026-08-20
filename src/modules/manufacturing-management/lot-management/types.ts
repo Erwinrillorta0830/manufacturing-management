@@ -4,6 +4,8 @@ export interface DirectusLot {
     lot_id: number;
     lot_name: string;
     inventory_type_id: number | { id: number; name: string } | null;
+    unit_id?: number | { unit_id: number; unit_name: string; unit_shortcut?: string } | null;
+    uom_id?: number | { unit_id: number; unit_name: string; unit_shortcut?: string } | null;
     max_batch_capacity: number;
     created_at: string;
     updated_at: string;
@@ -16,6 +18,14 @@ export interface DirectusInventoryType {
     name: string;
 }
 
+export interface DirectusUnit {
+    unit_id: number;
+    unit_name: string;
+    unit_shortcut?: string | null;
+    order?: number | null;
+    sku_code?: string | null;
+}
+
 // ─── Frontend Types (camelCase) ──────────────────────────────────────
 
 export interface Lot {
@@ -23,6 +33,9 @@ export interface Lot {
     lotName: string;
     inventoryTypeId: number;
     inventoryTypeName: string;
+    uomId: number | null;
+    uomName: string;
+    uomShortcut: string;
     maxBatchCapacity: number;
     createdAt: string;
     updatedAt: string;
@@ -36,14 +49,27 @@ export interface InventoryType {
     typeName: string;
 }
 
+export interface UnitOfMeasure {
+    unitId: number;
+    unitName: string;
+    unitShortcut: string;
+    order?: number | null;
+    skuCode?: string | null;
+}
+
 export interface CreateLotPayload {
     lot_name: string;
     inventory_type_id: number;
+    unit_id?: number | null;
+    uom_id?: number | null;
     max_batch_capacity: number;
 }
 
 export interface UpdateLotPayload {
     lot_name?: string;
     inventory_type_id?: number;
+    unit_id?: number | null;
+    uom_id?: number | null;
     max_batch_capacity?: number;
 }
+

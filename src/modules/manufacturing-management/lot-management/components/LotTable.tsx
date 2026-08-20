@@ -142,44 +142,66 @@ export default function LotTable({
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <TableHead className="w-[100px]">No.</TableHead>
-                                <TableHead>Lot Name</TableHead>
+                                <TableHead className="w-[80px]">No.</TableHead>
+                                <TableHead>Storage Location</TableHead>
                                 <TableHead>Inventory Type</TableHead>
-                                <TableHead>Max Capacity (pcs)</TableHead>
+                                <TableHead>UOM</TableHead>
+                                <TableHead>Max Capacity</TableHead>
                                 <TableHead>Created By</TableHead>
                                 <TableHead className="text-right w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedLots.map((lot) => (
-                                <TableRow key={lot.lotId}>
-                                    <TableCell className="font-medium">{lot.displayNumber}</TableCell>
-                                    <TableCell className="font-semibold text-foreground">
-                                        {lot.lotName}
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${getInventoryTypeBadgeStyles(lot.inventoryTypeName)}`}>
-                                            {lot.inventoryTypeName}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell>{lot.maxBatchCapacity.toLocaleString()} pcs</TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                        {lot.createdBy || "System"}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        <div className="flex justify-end gap-1">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={() => onEdit(lot)}
-                                                className="h-8 w-8 text-muted-foreground hover:text-primary"
-                                            >
-                                                <Pencil className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                            ))}
+                            {paginatedLots.map((lot) => {
+                                const unitLabel = lot.uomShortcut || lot.uomName || "";
+                                return (
+                                    <TableRow key={lot.lotId}>
+                                        <TableCell className="font-medium">{lot.displayNumber}</TableCell>
+                                        <TableCell className="font-semibold text-foreground">
+                                            {lot.lotName}
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${getInventoryTypeBadgeStyles(lot.inventoryTypeName)}`}>
+                                                {lot.inventoryTypeName}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell>
+                                            {unitLabel ? (
+                                                <span className="px-2 py-0.5 rounded text-xs font-semibold bg-muted text-muted-foreground border border-border uppercase">
+                                                    {unitLabel}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">
+                                                    -
+                                                </span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="font-medium">
+                                            {lot.maxBatchCapacity.toLocaleString()}
+                                            {unitLabel && (
+                                                <span className="text-xs text-muted-foreground font-normal ml-1">
+                                                    {unitLabel}
+                                                </span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                            {lot.createdBy || "System"}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => onEdit(lot)}
+                                                    className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                                >
+                                                    <Pencil className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })}
                         </TableBody>
                     </Table>
                 )}

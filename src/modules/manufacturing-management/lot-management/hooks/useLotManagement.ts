@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
     Lot,
     InventoryType,
+    UnitOfMeasure,
     CreateLotPayload,
     UpdateLotPayload
 } from "../types";
@@ -11,12 +12,14 @@ import {
     createLot,
     updateLot,
     deleteLot,
-    fetchInventoryTypes
+    fetchInventoryTypes,
+    fetchUoms
 } from "../services/lot-management-api";
 
 export function useLotManagement() {
     const [lots, setLots] = useState<Lot[]>([]);
     const [inventoryTypes, setInventoryTypes] = useState<InventoryType[]>([]);
+    const [uoms, setUoms] = useState<UnitOfMeasure[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
@@ -27,28 +30,33 @@ export function useLotManagement() {
     const [formData, setFormData] = useState<{
         lotName: string;
         inventoryTypeId: number | "";
+        uomId: number | "";
         maxBatchCapacity: string;
     }>({
         lotName: "",
         inventoryTypeId: "",
+        uomId: "",
         maxBatchCapacity: ""
     });
 
     const [formErrors, setFormErrors] = useState<{
         lotName?: boolean;
         inventoryTypeId?: boolean;
+        uomId?: boolean;
         maxBatchCapacity?: boolean;
     }>({});
 
     const loadLots = async () => {
         setLoading(true);
         try {
-            const [lotsList, typesList] = await Promise.all([
+            const [lotsList, typesList, uomsList] = await Promise.all([
                 fetchLots(),
-                fetchInventoryTypes()
+                fetchInventoryTypes(),
+                fetchUoms().catch(() => [])
             ]);
             setLots(lotsList);
             setInventoryTypes(typesList);
+            setUoms(uomsList);
         } catch (e) {
             console.error("Failed to load lots:", e);
             toast.error("Failed to load lots data");
@@ -65,6 +73,7 @@ export function useLotManagement() {
         setFormData({
             lotName: "",
             inventoryTypeId: "",
+            uomId: "",
             maxBatchCapacity: ""
         });
         setFormErrors({});
@@ -76,6 +85,7 @@ export function useLotManagement() {
         setFormData({
             lotName: lot.lotName,
             inventoryTypeId: lot.inventoryTypeId,
+            uomId: lot.uomId !== null && lot.uomId !== undefined ? lot.uomId : "",
             maxBatchCapacity: String(lot.maxBatchCapacity)
         });
         setFormErrors({});
@@ -87,6 +97,7 @@ export function useLotManagement() {
         setFormData({
             lotName: "",
             inventoryTypeId: "",
+            uomId: "",
             maxBatchCapacity: ""
         });
         setFormErrors({});
@@ -122,12 +133,14 @@ export function useLotManagement() {
     const validateForm = (): boolean => {
         const isNameEmpty = !formData.lotName.trim();
         const isTypeEmpty = formData.inventoryTypeId === "";
+        const isUomEmpty = !editingLot && formData.uomId === "";
         const capacityNum = Number(formData.maxBatchCapacity);
         const isCapacityInvalid = isNaN(capacityNum) || capacityNum <= 0;
 
         const newErrors = {
             lotName: isNameEmpty || isDuplicateLotName,
             inventoryTypeId: isTypeEmpty,
+            uomId: isUomEmpty,
             maxBatchCapacity: isCapacityInvalid
         };
         setFormErrors(newErrors);
@@ -144,6 +157,10 @@ export function useLotManagement() {
             toast.error("Inventory Type is required");
             return false;
         }
+        if (isUomEmpty) {
+            toast.error("Unit of Measure (UOM) is required");
+            return false;
+        }
         if (isCapacityInvalid) {
             toast.error("Max Capacity must be a positive number greater than 0");
             return false;
@@ -155,12 +172,18 @@ export function useLotManagement() {
         if (!validateForm()) return;
         setSaving(true);
         try {
+            const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: CreateLotPayload = {
                 lot_name: formData.lotName.trim(),
                 inventory_type_id: Number(formData.inventoryTypeId),
+                unit_id: uomNum,
+                uom_id: uomNum,
                 max_batch_capacity: Number(formData.maxBatchCapacity)
             };
-            await createLot(payload);
+            const result = await createLot(payload);
+            if (!result || !result.success) {
+                throw new Error("Failed to create lot");
+            }
             toast.success("Lot created successfully!");
             closeDialog();
             await loadLots();
@@ -177,12 +200,19 @@ export function useLotManagement() {
         if (!validateForm()) return;
         setSaving(true);
         try {
+            const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: UpdateLotPayload = {
                 lot_name: formData.lotName.trim(),
                 inventory_type_id: Number(formData.inventoryTypeId),
+                unit_id: uomNum,
+                uom_id: uomNum,
                 max_batch_capacity: Number(formData.maxBatchCapacity)
             };
-            await updateLot(editingLot.lotId, payload);
+
+            const result = await updateLot(editingLot.lotId, payload);
+            if (!result || !result.success) {
+                throw new Error("Failed to update lot");
+            }
             toast.success("Lot updated successfully!");
             closeDialog();
             await loadLots();
@@ -209,7 +239,28 @@ export function useLotManagement() {
     };
 
     const filteredLots = useMemo(() => {
-        const sortedBaseLots = [...lots].sort((a, b) => a.lotId - b.lotId);
+        const parseUtcTime = (dateStr?: string | null): number => {
+            if (!dateStr) return 0;
+            try {
+                let normalized = dateStr.trim();
+                if (!normalized.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(normalized)) {
+                    normalized = normalized.replace(" ", "T") + "Z";
+                }
+                const parsed = new Date(normalized).getTime();
+                return isNaN(parsed) ? 0 : parsed;
+            } catch {
+                return 0;
+            }
+        };
+
+        const sortedBaseLots = [...lots].sort((a, b) => {
+            const timeA = parseUtcTime(a.updatedAt || a.createdAt);
+            const timeB = parseUtcTime(b.updatedAt || b.createdAt);
+            if (timeB !== timeA) {
+                return timeB - timeA;
+            }
+            return b.lotId - a.lotId;
+        });
 
         return sortedBaseLots
             .filter((lot) => {
@@ -220,19 +271,16 @@ export function useLotManagement() {
                     filterType === "all" || lot.inventoryTypeId === Number(filterType);
                 return matchesSearch && matchesType;
             })
-            .map((lot) => {
-                const originalIndex = sortedBaseLots.findIndex((l) => l.lotId === lot.lotId);
-                const displayNumber = originalIndex !== -1 ? originalIndex + 1 : 0;
-                return {
-                    ...lot,
-                    displayNumber
-                };
-            });
+            .map((lot, index) => ({
+                ...lot,
+                displayNumber: index + 1
+            }));
     }, [lots, searchQuery, filterType]);
 
     return {
         lots,
         inventoryTypes,
+        uoms,
         loading,
         saving,
         searchQuery,
@@ -255,3 +303,4 @@ export function useLotManagement() {
         loadLots
     };
 }
+
