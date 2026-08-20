@@ -43,9 +43,12 @@ export interface PackagingVariantFormState {
     productId?: number;
     uomId: number | "";
     count: string;
+    density: string;
+    weight: string;
     netWeight: string;
     outerCartonWeight: string;
     palletWeight: string;
+    weightUnitId: number | "";
     codeSuffix: string;
     isExisting?: boolean;
     isActive: boolean;
@@ -66,9 +69,13 @@ export interface PackagingVariantPayload {
     net_weight?: number | null;
     outer_carton_weight?: number | null;
     pallet_weight?: number | null;
-    weight_unit_id: number;
+    weight_unit_id: number | null;
     product_brand?: number;
     product_category?: number;
+    product_type?: number;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     barcode?: string | null;
     maintaining_quantity?: number;
     product_image?: string | null;
@@ -93,6 +100,9 @@ export interface RegisterRawMaterialPayload {
     product_brand?: number;
     product_category?: number;
     product_type?: number;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     parent_id?: number | null;
     maintaining_quantity?: number;
     product_image?: string | null;
@@ -128,6 +138,9 @@ export interface RawMaterialItem {
     product_brand?: number | string | { brand_id?: number; brand_name?: string } | null;
     brand_name?: string;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     maintaining_quantity?: number | null;
     product_image?: string | null;
     purchaseQa?: PurchaseQaConfig;

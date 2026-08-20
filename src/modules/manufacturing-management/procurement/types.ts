@@ -316,6 +316,9 @@ export interface RawMaterial {
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     isActive?: number;
     date_added?: string;
     last_updated?: string;
@@ -358,6 +361,9 @@ export interface RegisterRawMaterialPayload {
     product_brand?: number | null;
     product_category?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     parent_id?: number | null;
     unit_of_measurement_count?: number | null;
     maintaining_quantity?: number;
@@ -457,6 +463,9 @@ export interface PackagingVariant {
     product_brand?: number | null;
     product_category?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     parent_id?: number | null;
     barcode?: string | null;
     maintaining_quantity?: number;
@@ -527,6 +536,9 @@ export interface BFFCatalogProduct {
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;
+    product_class?: number | { class_id?: number; id?: number } | null;
+    product_segment?: number | { segment_id?: number; id?: number } | null;
+    product_section?: number | { section_id?: number; id?: number } | null;
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;

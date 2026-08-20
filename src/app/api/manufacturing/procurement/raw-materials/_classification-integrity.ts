@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { resolveParentSharedAttributes } from "@/modules/manufacturing-management/procurement/raw-materials/parent-inheritance";
 
 export const RAW_MATERIAL_PRODUCT_TYPE = 389;
 export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
@@ -6,6 +7,11 @@ export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
 type ProductRecord = {
     product_id?: unknown;
     product_type?: unknown;
+    product_brand?: unknown;
+    product_category?: unknown;
+    product_class?: unknown;
+    product_segment?: unknown;
+    product_section?: unknown;
     parent_id?: unknown;
     isActive?: unknown;
 };
@@ -87,7 +93,7 @@ function productTypeOf(product: ProductRecord, label: string): number {
 
 async function fetchProduct(productId: number): Promise<ProductRecord> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,parent_id,isActive`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,product_brand,product_category,product_class,product_segment,product_section,parent_id,isActive`,
         { headers, cache: "no-store" }
     );
     if (response.status === 404) {
@@ -253,12 +259,26 @@ export async function enforceClassificationIntegrity({
             );
         }
 
-        return { ...variant, product_type: authoritativeProductType };
+        const sharedAttributes = requestedParent
+            ? resolveParentSharedAttributes(requestedParent)
+            : resolveParentSharedAttributes({
+                ...productDetails,
+                product_type: authoritativeProductType
+            });
+
+        return {
+            ...variant,
+            ...sharedAttributes,
+            product_type: authoritativeProductType
+        };
     });
 
     const normalizedProductDetails = hasParentField
         ? { ...productDetails, parent_id: requestedParentId }
         : { ...productDetails };
+    if (requestedParent) {
+        Object.assign(normalizedProductDetails, resolveParentSharedAttributes(requestedParent));
+    }
 
     return {
         productDetails: { ...normalizedProductDetails, product_type: authoritativeProductType },

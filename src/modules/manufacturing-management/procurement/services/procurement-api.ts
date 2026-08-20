@@ -242,6 +242,9 @@ export async function fetchRawMaterials(): Promise<RawMaterial[]> {
             category_name: catName,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,
+            product_class: p.product_class ? Number(typeof p.product_class === "object" ? (p.product_class as { class_id?: number; id?: number }).class_id || (p.product_class as { class_id?: number; id?: number }).id : p.product_class) : null,
+            product_segment: p.product_segment ? Number(typeof p.product_segment === "object" ? (p.product_segment as { segment_id?: number; id?: number }).segment_id || (p.product_segment as { segment_id?: number; id?: number }).id : p.product_segment) : null,
+            product_section: p.product_section ? Number(typeof p.product_section === "object" ? (p.product_section as { section_id?: number; id?: number }).section_id || (p.product_section as { section_id?: number; id?: number }).id : p.product_section) : null,
             isActive: p.isActive === false || p.isActive === 0 || String(p.isActive).trim().toLowerCase() === "false" || String(p.isActive).trim() === "0" ? 0 : 1,
             date_added: p.date_added,
             last_updated: p.last_updated

@@ -668,7 +668,8 @@ export async function PATCH(request: Request) {
 
         await syncProductQaSpecifications(Number(productId), purchaseQa);
 
-        // If cascadeToChildren option is selected, sync category, brand, and density down to existing family children
+        // If cascadeToChildren option is selected, sync shared parent metadata only.
+        // Child UOM, density, weights, and weight units remain child-specific.
         if (productDetails.cascadeToChildren) {
             try {
                 const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
@@ -677,7 +678,9 @@ export async function PATCH(request: Request) {
                     const cascadeFields: Record<string, unknown> = {};
                     if (productDetails.product_brand !== undefined) cascadeFields.product_brand = productDetails.product_brand;
                     if (productDetails.product_category !== undefined) cascadeFields.product_category = productDetails.product_category;
-                    if (productDetails.density_factor !== undefined) cascadeFields.density_factor = productDetails.density_factor;
+                    if (productDetails.product_class !== undefined) cascadeFields.product_class = productDetails.product_class;
+                    if (productDetails.product_segment !== undefined) cascadeFields.product_segment = productDetails.product_segment;
+                    if (productDetails.product_section !== undefined) cascadeFields.product_section = productDetails.product_section;
 
                     if (Object.keys(cascadeFields).length > 0) {
                         const cascadePayload = { ...cascadeFields, ...auditFields };
@@ -707,8 +710,8 @@ export async function PATCH(request: Request) {
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
                         ...variantWeightPayload,
-                        product_brand: variant.product_brand !== undefined ? variant.product_brand : (productDetails.product_brand !== undefined ? productDetails.product_brand : null),
-                        product_category: variant.product_category !== undefined ? variant.product_category : (productDetails.product_category !== undefined ? productDetails.product_category : null),
+                        product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
+                        product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
                         product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
                         product_section: variant.product_section !== undefined ? variant.product_section : null,
