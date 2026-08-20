@@ -289,12 +289,14 @@ export function useRawMaterialForm(
     };
 
     const handleAddPresetVariant = (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => {
+        const baseUomId = formUom === "" ? null : Number(formUom);
+        const eligibleUnits = units.filter(unit => baseUomId === null || unit.unit_id !== baseUomId);
         const findUom = (keywords: string[]) => {
-            return units.find(u => {
+            return eligibleUnits.find(u => {
                 const sc = (u.unit_shortcut || "").toLowerCase();
                 const nm = (u.unit_name || "").toLowerCase();
                 return keywords.some(k => sc.includes(k) || nm.includes(k));
-            })?.unit_id || (units.length > 0 ? units[0].unit_id : (formUom || ""));
+            })?.unit_id || "";
         };
 
         let uomId: number | "" = "";
@@ -332,6 +334,11 @@ export function useRawMaterialForm(
                 count = "12";
                 codeSuffix = "CASE12";
                 break;
+        }
+
+        if (!uomId) {
+            toast.error(`No eligible Outer Package UOM is available for the "${codeSuffix}" preset.`);
+            return;
         }
 
         setPackagingVariants([...packagingVariants, {
@@ -782,10 +789,12 @@ export function useRawMaterialForm(
         }
 
         // Check variants validation
+        const baseUomId = Number(formUom);
         const invalidVariant = packagingVariants
             .map((variant, index) => ({
                 index,
                 variant,
+                usesParentUom: baseUomId !== null && Number(variant.uomId) === baseUomId,
                 weightValidationError: validateProductWeightForProductType({
                     weight: variant.weight,
                     net_weight: variant.netWeight,
@@ -794,7 +803,8 @@ export function useRawMaterialForm(
                     weight_unit_id: variant.weightUnitId
                 }, formProductType)
             }))
-            .find(({ variant, weightValidationError }) =>
+            .find(({ variant, usesParentUom, weightValidationError }) =>
+                usesParentUom ||
                 !variant.uomId ||
                 !variant.count ||
                 !Number.isFinite(Number(variant.count)) ||
@@ -805,7 +815,9 @@ export function useRawMaterialForm(
                 Boolean(weightValidationError)
             );
         if (invalidVariant) {
-            toast.error(!isPackagingMaterial && invalidVariant.weightValidationError
+            toast.error(invalidVariant.usesParentUom
+                ? `Variant ${invalidVariant.index + 1}: The parent Primary UOM cannot be used as an Outer Package UOM. Select a different UOM.`
+                : !isPackagingMaterial && invalidVariant.weightValidationError
                 ? `Variant ${invalidVariant.index + 1}: ${invalidVariant.weightValidationError}`
                 : "Please fill out all variant UOM, conversion count, and density fields correctly.");
             return;
