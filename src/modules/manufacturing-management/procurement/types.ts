@@ -339,12 +339,49 @@ export interface LinkedProduct {
         product_code?: string;
         product_name?: string;
         description?: string;
+        parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
             unit_name?: string;
             unit_shortcut?: string;
         };
     };
+}
+
+export interface PaginationMeta {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+export interface SupplierStatusCounts {
+    active: number;
+    inactive: number;
+    all: number;
+}
+
+export interface SupplierPageResponse {
+    data: Supplier[];
+    pagination: PaginationMeta;
+    counts: SupplierStatusCounts;
+}
+
+export interface LinkedProductPageResponse {
+    data: LinkedProduct[];
+    pagination: PaginationMeta;
+}
+
+export interface SupplierCatalogUpdatePayload {
+    supplierId: number;
+    addProductIds: number[];
+    removeLinkIds: number[];
+}
+
+export interface SupplierCatalogUpdateResult {
+    success: boolean;
+    added: number[];
+    removed: number[];
 }
 
 export interface PSGCItem {

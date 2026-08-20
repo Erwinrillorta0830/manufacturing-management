@@ -5,8 +5,11 @@ import {
     createSupplier,
     updateSupplier,
     fetchLinkedProducts,
+    fetchSupplierPage,
+    fetchLinkedProductsPage,
     linkProductToSupplier,
     unlinkProductFromSupplier,
+    saveSupplierCatalogUpdates,
     fetchPHProvinces,
     fetchPHCities,
     fetchPHBarangays
@@ -19,8 +22,11 @@ export {
     createSupplier,
     updateSupplier,
     fetchLinkedProducts,
+    fetchSupplierPage,
+    fetchLinkedProductsPage,
     linkProductToSupplier,
     unlinkProductFromSupplier,
+    saveSupplierCatalogUpdates,
     fetchPHProvinces,
     fetchPHCities,
     fetchPHBarangays

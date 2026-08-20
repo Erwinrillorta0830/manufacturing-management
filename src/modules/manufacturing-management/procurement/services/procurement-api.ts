@@ -1,7 +1,16 @@
-import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse } from "../types";
+import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, LinkedProductPageResponse, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse, SupplierCatalogUpdatePayload, SupplierCatalogUpdateResult, SupplierPageResponse } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
+export type SupplierForeignFilter = "all" | "local" | "foreign";
+
+export interface SupplierDirectoryQuery {
+    status: SupplierStatusFilter;
+    search: string;
+    foreign: SupplierForeignFilter;
+    page: number;
+    pageSize: number;
+}
 
 let refreshPromise: Promise<boolean> | null = null;
 let sessionRedirecting = false;
@@ -72,6 +81,18 @@ async function handleResponse(res: Response, fallbackMessage: string) {
 export async function fetchSuppliers(status: SupplierStatusFilter = "active"): Promise<Supplier[]> {
     const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers?status=${status}`);
     return handleResponse(res, "Failed to fetch suppliers");
+}
+
+export async function fetchSupplierPage(query: SupplierDirectoryQuery): Promise<SupplierPageResponse> {
+    const params = new URLSearchParams({
+        status: query.status,
+        search: query.search,
+        foreign: query.foreign,
+        page: String(query.page),
+        pageSize: String(query.pageSize)
+    });
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers?${params.toString()}`);
+    return handleResponse(res, "Failed to fetch supplier page") as Promise<SupplierPageResponse>;
 }
 
 export async function fetchActiveSupplierCurrencies(): Promise<SupplierCurrencyOption[]> {
@@ -178,8 +199,12 @@ export async function deleteLandedCostAttachment(purchaseOrderId: number, attach
     if (!res.ok) await handleResponse(res, "Failed to delete landed-cost document");
 }
 
-export async function fetchRawMaterials(): Promise<RawMaterial[]> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/products?limit=250&excludeRollup=true");
+export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+    const params = new URLSearchParams({
+        limit: String(limit),
+        excludeRollup: "true"
+    });
+    const res = await fetchWithSessionRetry(`/api/manufacturing/finished-goods/products?${params.toString()}`);
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
     // Filter to exclude finished goods while retaining variants that inherit their
@@ -330,6 +355,23 @@ export async function fetchLinkedProducts(supplierId: number): Promise<LinkedPro
     return handleResponse(res, "Failed to fetch linked products");
 }
 
+export async function fetchLinkedProductsPage(
+    supplierId: number,
+    page: number,
+    pageSize: number,
+    search = "",
+    signal?: AbortSignal
+): Promise<LinkedProductPageResponse> {
+    const params = new URLSearchParams({
+        supplierId: String(supplierId),
+        page: String(page),
+        pageSize: String(pageSize)
+    });
+    if (search.trim()) params.set("search", search.trim());
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers/products?${params.toString()}`, { signal });
+    return handleResponse(res, "Failed to fetch linked product page") as Promise<LinkedProductPageResponse>;
+}
+
 export async function linkProductToSupplier(supplierId: number, productId: number): Promise<unknown> {
     const res = await fetchWithSessionRetry("/api/manufacturing/procurement/suppliers/products", {
         method: "POST",
@@ -344,6 +386,17 @@ export async function unlinkProductFromSupplier(linkId: number): Promise<unknown
         method: "DELETE"
     });
     return handleResponse(res, "Failed to unlink product from supplier");
+}
+
+export async function saveSupplierCatalogUpdates(
+    payload: SupplierCatalogUpdatePayload
+): Promise<SupplierCatalogUpdateResult> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/suppliers/products", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(res, "Failed to save supplier catalog updates");
 }
 
 interface PSGCResponseItem {
