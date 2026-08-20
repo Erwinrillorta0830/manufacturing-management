@@ -348,6 +348,30 @@ export interface LinkedProduct {
     };
 }
 
+export interface PaginationMeta {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+export interface SupplierStatusCounts {
+    active: number;
+    inactive: number;
+    all: number;
+}
+
+export interface SupplierPageResponse {
+    data: Supplier[];
+    pagination: PaginationMeta;
+    counts: SupplierStatusCounts;
+}
+
+export interface LinkedProductPageResponse {
+    data: LinkedProduct[];
+    pagination: PaginationMeta;
+}
+
 export interface SupplierCatalogUpdatePayload {
     supplierId: number;
     addProductIds: number[];

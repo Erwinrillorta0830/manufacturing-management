@@ -1,14 +1,16 @@
 import React from "react";
-import { Supplier } from "../types";
+import { Supplier, SupplierStatusCounts } from "../types";
 import { Search, Plus, MapPin, Globe, Building2, X, Award } from "lucide-react";
 import { isSupplierActive, isSupplierNonBuy, isSupplierForeign } from "../services/supplier.service";
+import type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
+import PaginationFooter from "./PaginationFooter";
 
-export type SupplierStatusFilter = "active" | "inactive" | "all";
-export type SupplierForeignFilter = "all" | "local" | "foreign";
+export type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
 
 export interface SupplierTableProps {
-    suppliers: Supplier[];
     filteredSuppliers: Supplier[];
+    totalSuppliers: number;
+    statusCounts: SupplierStatusCounts;
     selectedSupplierId: number | null;
     onSelectSupplier: (id: number) => void;
     search: string;
@@ -19,11 +21,19 @@ export interface SupplierTableProps {
     onForeignFilterChange: (filter: SupplierForeignFilter) => void;
     onOpenRegisterModal: () => void;
     onOpenEvaluationModal?: (supplier: Supplier) => void;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+    onPageSizeChange: (pageSize: number) => void;
+    loading?: boolean;
+    error?: string | null;
 }
 
 export default function SupplierTable({
-    suppliers,
     filteredSuppliers,
+    totalSuppliers,
+    statusCounts,
     selectedSupplierId,
     onSelectSupplier,
     search,
@@ -33,7 +43,14 @@ export default function SupplierTable({
     foreignFilter,
     onForeignFilterChange,
     onOpenRegisterModal,
-    onOpenEvaluationModal
+    onOpenEvaluationModal,
+    page,
+    pageSize,
+    totalPages,
+    onPageChange,
+    onPageSizeChange,
+    loading = false,
+    error = null
 }: SupplierTableProps) {
     const activeSupplierId = selectedSupplierId ?? filteredSuppliers[0]?.id ?? null;
 
@@ -43,7 +60,7 @@ export default function SupplierTable({
                 <div className="flex items-center justify-between">
                     <h3 className="font-bold text-sm text-foreground flex items-center gap-1.5">
                         <Building2 className="h-4 w-4 text-primary" />
-                        Suppliers Directory ({filteredSuppliers.length})
+                        Suppliers Directory ({totalSuppliers})
                     </h3>
                     <button
                         onClick={onOpenRegisterModal}
@@ -55,9 +72,7 @@ export default function SupplierTable({
                 <div className="flex items-center gap-2">
                     <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1 flex-1" role="group" aria-label="Supplier status filter">
                         {(["active", "inactive", "all"] as SupplierStatusFilter[]).map(filter => {
-                            const count = suppliers.filter(s =>
-                                filter === "all" || (filter === "active" ? isSupplierActive(s) : !isSupplierActive(s))
-                            ).length;
+                            const count = statusCounts[filter];
                             return (
                                 <button
                                     key={filter}
@@ -105,7 +120,11 @@ export default function SupplierTable({
             </div>
 
             <div className="flex-1 overflow-y-auto divide-y">
-                {filteredSuppliers.length === 0 ? (
+                {loading ? (
+                    <div className="p-8 text-center text-xs text-muted-foreground">Loading suppliers...</div>
+                ) : error ? (
+                    <div className="p-8 text-center text-xs text-destructive">{error}</div>
+                ) : filteredSuppliers.length === 0 ? (
                     <div className="p-8 text-center text-xs text-muted-foreground">
                         No suppliers found. Click &quot;Register&quot; to add one.
                     </div>
@@ -176,6 +195,15 @@ export default function SupplierTable({
                     })
                 )}
             </div>
+            <PaginationFooter
+                page={page}
+                pageSize={pageSize}
+                total={totalSuppliers}
+                totalPages={totalPages}
+                onPageChange={onPageChange}
+                onPageSizeChange={onPageSizeChange}
+                itemLabel="suppliers"
+            />
         </div>
     );
 }

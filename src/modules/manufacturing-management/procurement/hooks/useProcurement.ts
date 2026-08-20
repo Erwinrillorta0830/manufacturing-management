@@ -45,6 +45,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     // Data lists
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+    const [supplierDirectoryRefreshKey, setSupplierDirectoryRefreshKey] = useState(0);
     const [shipments, setShipments] = useState<IncomingShipment[]>([]);
     const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
     const [paymentModes, setPaymentModes] = useState<import("../types").PurchaseOrderPaymentMode[]>([]);
@@ -264,7 +265,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
     // Load only the data required by the current procurement page. In particular,
     // raw-materials does not need the purchase-order shipment endpoint.
     useEffect(() => {
-        if (activeTab === "suppliers" || activeTab === "raw-materials" || activeTab === "incoming-shipments") {
+        if (activeTab === "raw-materials" || activeTab === "incoming-shipments") {
             loadSuppliers();
             loadRawMaterials();
         }
@@ -448,7 +449,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 representatives: []
             });
             setSupplierError(null);
-            loadSuppliers();
+            if (activeTab === "suppliers") {
+                setSupplierDirectoryRefreshKey(previous => previous + 1);
+            } else {
+                void loadSuppliers();
+            }
         } catch (e) {
             const rawMsg = (e as Error).message || "Failed to submit supplier";
             const userFriendlyMsg = parseCreationError(rawMsg);
@@ -798,6 +803,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         rawMaterialsLoading,
         submittingExpenses,
         suppliers,
+        supplierDirectoryRefreshKey,
         shipments,
         rawMaterials,
         paymentModes,

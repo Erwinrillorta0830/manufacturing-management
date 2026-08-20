@@ -1,26 +1,29 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { Supplier, RawMaterial, SupplierFormState, LinkedProduct, SupplierCatalogUpdatePayload } from "../types";
+import { Supplier, RawMaterial, SupplierFormState, LinkedProduct, SupplierCatalogUpdatePayload, SupplierPageResponse, LinkedProductPageResponse } from "../types";
 import {
     MapPin, Phone, Mail, Award, FileText, CheckCircle2,
     AlertCircle, Globe, Building2, UserSquare2, Link as LinkIcon, Plus, Loader2
 } from "lucide-react";
 import { toast } from "sonner";
-import SupplierTable, { SupplierStatusFilter, SupplierForeignFilter } from "./SupplierTable";
+import SupplierTable from "./SupplierTable";
 import SupplierFormModal from "./SupplierFormModal";
 import SupplierEvaluationModal from "./SupplierEvaluationModal";
 import SupplierCatalogMatrixModal from "./SupplierCatalogMatrixModal";
 import {
     fetchLinkedProducts,
+    fetchLinkedProductsPage,
+    fetchSupplierPage,
     saveSupplierCatalogUpdates,
     isSupplierActive,
     isSupplierNonBuy,
     isSupplierForeign,
     cleanNotes
 } from "../services/supplier.service";
+import type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
+import PaginationFooter from "./PaginationFooter";
 import { isForeignCountry } from "../supplier-country";
 
 interface SuppliersDirectoryProps {
-    suppliers: Supplier[];
     isModalOpen: boolean;
     setIsModalOpen: (open: boolean) => void;
     supplierForm: SupplierFormState;
@@ -30,10 +33,21 @@ interface SuppliersDirectoryProps {
     onStartEditSupplier?: (supplier: Supplier) => void;
     onCreateSupplier: (e: React.FormEvent) => void;
     rawMaterials?: RawMaterial[];
+    supplierRefreshKey?: number;
 }
 
+const EMPTY_SUPPLIER_PAGE: SupplierPageResponse = {
+    data: [],
+    pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+    counts: { active: 0, inactive: 0, all: 0 }
+};
+
+const EMPTY_LINKED_PRODUCT_PAGE: LinkedProductPageResponse = {
+    data: [],
+    pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 }
+};
+
 export default function SuppliersDirectory({
-    suppliers,
     isModalOpen,
     setIsModalOpen,
     supplierForm,
@@ -42,11 +56,17 @@ export default function SuppliersDirectory({
     isEditingSupplier = false,
     onStartEditSupplier,
     onCreateSupplier,
-    rawMaterials = []
+    rawMaterials = [],
+    supplierRefreshKey = 0
 }: SuppliersDirectoryProps) {
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("active");
     const [foreignFilter, setForeignFilter] = useState<SupplierForeignFilter>("all");
+    const [supplierPage, setSupplierPage] = useState(1);
+    const [supplierPageSize, setSupplierPageSize] = useState(10);
+    const [supplierPageData, setSupplierPageData] = useState<SupplierPageResponse>(EMPTY_SUPPLIER_PAGE);
+    const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+    const [supplierPageError, setSupplierPageError] = useState<string | null>(null);
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
 
     // Modals state
@@ -55,28 +75,14 @@ export default function SuppliersDirectory({
 
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
+    const [linkedProductPage, setLinkedProductPage] = useState(1);
+    const [linkedProductPageSize, setLinkedProductPageSize] = useState(10);
+    const [linkedProductPageData, setLinkedProductPageData] = useState<LinkedProductPageResponse>(EMPTY_LINKED_PRODUCT_PAGE);
+    const [loadingLinkedProductPage, setLoadingLinkedProductPage] = useState(false);
     const [loadingLinkedProducts, setLoadingLinkedProducts] = useState(false);
     const [savingCatalogUpdates, setSavingCatalogUpdates] = useState(false);
 
-    const checkForeign = useCallback((s: Supplier | null | undefined): boolean => {
-        return isSupplierForeign(s);
-    }, []);
-
-    const filteredSuppliers = useMemo(() => {
-        const normalizedSearch = search.toLowerCase();
-        return suppliers.filter(s => {
-            const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? isSupplierActive(s) : !isSupplierActive(s));
-            if (!matchesStatus) return false;
-
-            const isForeign = checkForeign(s);
-            const matchesForeign = foreignFilter === "all" || (foreignFilter === "foreign" ? isForeign : !isForeign);
-            if (!matchesForeign) return false;
-
-            return s.supplier_name.toLowerCase().includes(normalizedSearch) ||
-                s.supplier_shortcut?.toLowerCase().includes(normalizedSearch) ||
-                s.tin_number?.includes(search);
-        });
-    }, [suppliers, search, statusFilter, foreignFilter, checkForeign]);
+    const filteredSuppliers = supplierPageData.data;
 
     const activeSupplier = useMemo(() => {
         if (selectedSupplierId !== null) {
@@ -86,6 +92,69 @@ export default function SuppliersDirectory({
     }, [selectedSupplierId, filteredSuppliers]);
 
     const activeSupplierId = activeSupplier?.id ?? null;
+
+    const loadSupplierPage = useCallback(async (
+        page: number,
+        pageSize: number,
+        nextSearch: string,
+        nextStatus: SupplierStatusFilter,
+        nextForeign: SupplierForeignFilter
+    ) => {
+        setLoadingSuppliers(true);
+        setSupplierPageError(null);
+        try {
+            const data = await fetchSupplierPage({
+                page,
+                pageSize,
+                search: nextSearch,
+                status: nextStatus,
+                foreign: nextForeign
+            });
+            setSupplierPageData(data);
+            if (data.pagination.totalPages < page) {
+                setSupplierPage(data.pagination.totalPages);
+            }
+            setSelectedSupplierId(previous => data.data.some(supplier => supplier.id === previous)
+                ? previous
+                : (data.data[0]?.id ?? null));
+        } catch (error) {
+            console.error(error);
+            setSupplierPageError((error as Error).message || "Failed to load suppliers");
+            setSupplierPageData(previous => ({ ...previous, data: [] }));
+        } finally {
+            setLoadingSuppliers(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            void loadSupplierPage(supplierPage, supplierPageSize, search, statusFilter, foreignFilter);
+        }, search.trim() ? 250 : 0);
+
+        return () => window.clearTimeout(timer);
+    }, [foreignFilter, loadSupplierPage, search, statusFilter, supplierPage, supplierPageSize, supplierRefreshKey]);
+
+    const loadLinkedProductPage = useCallback(async (supplierId: number | null, page: number, pageSize: number) => {
+        if (supplierId === null) {
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+            setLoadingLinkedProductPage(false);
+            return;
+        }
+
+        setLoadingLinkedProductPage(true);
+        try {
+            const data = await fetchLinkedProductsPage(supplierId, page, pageSize);
+            setLinkedProductPageData(data);
+            if (data.pagination.totalPages < page) {
+                setLinkedProductPage(data.pagination.totalPages);
+            }
+        } catch (error) {
+            console.error(error);
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+        } finally {
+            setLoadingLinkedProductPage(false);
+        }
+    }, []);
 
     const loadLinkedProducts = useCallback(async (supplierId: number) => {
         setLoadingLinkedProducts(true);
@@ -100,12 +169,54 @@ export default function SuppliersDirectory({
     }, []);
 
     useEffect(() => {
-        if (activeSupplierId !== null) {
-            loadLinkedProducts(activeSupplierId);
-        } else {
-            setLinkedProducts([]);
+        void loadLinkedProductPage(activeSupplierId, linkedProductPage, linkedProductPageSize);
+    }, [activeSupplierId, linkedProductPage, linkedProductPageSize, loadLinkedProductPage]);
+
+    useEffect(() => {
+        if (isCatalogMatrixOpen && activeSupplierId !== null) {
+            void loadLinkedProducts(activeSupplierId);
         }
-    }, [activeSupplierId, loadLinkedProducts]);
+    }, [activeSupplierId, isCatalogMatrixOpen, loadLinkedProducts]);
+
+    const handleSelectSupplier = (supplierId: number) => {
+        setSelectedSupplierId(supplierId);
+        setLinkedProductPage(1);
+        setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+    };
+
+    const handleSearchChange = (value: string) => {
+        setSearch(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleStatusFilterChange = (value: SupplierStatusFilter) => {
+        setStatusFilter(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleForeignFilterChange = (value: SupplierForeignFilter) => {
+        setForeignFilter(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleSupplierPageChange = (page: number) => {
+        setSupplierPage(page);
+        setLinkedProductPage(1);
+    };
+
+    const handleSupplierPageSizeChange = (pageSize: number) => {
+        setSupplierPageSize(pageSize);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleLinkedProductPageSizeChange = (pageSize: number) => {
+        setLinkedProductPageSize(pageSize);
+        setLinkedProductPage(1);
+    };
 
     const handleSaveCatalogUpdates = async (payload: SupplierCatalogUpdatePayload) => {
         if (activeSupplierId === null || payload.supplierId !== activeSupplierId) {
@@ -114,7 +225,10 @@ export default function SuppliersDirectory({
         setSavingCatalogUpdates(true);
         try {
             const result = await saveSupplierCatalogUpdates(payload);
-            await loadLinkedProducts(activeSupplierId);
+            await Promise.all([
+                loadLinkedProductPage(activeSupplierId, linkedProductPage, linkedProductPageSize),
+                loadLinkedProducts(activeSupplierId)
+            ]);
             const addedCount = result.added?.length || 0;
             const removedCount = result.removed?.length || 0;
             toast.success(`Catalog updates saved (${addedCount} added, ${removedCount} removed)`);
@@ -131,18 +245,26 @@ export default function SuppliersDirectory({
         <div className="flex flex-col lg:flex-row gap-6 h-full min-h-0">
             {/* Left side: Directory List & Filter Toolbar */}
             <SupplierTable
-                suppliers={suppliers}
                 filteredSuppliers={filteredSuppliers}
+                totalSuppliers={supplierPageData.pagination.total}
+                statusCounts={supplierPageData.counts}
                 selectedSupplierId={selectedSupplierId}
-                onSelectSupplier={setSelectedSupplierId}
+                onSelectSupplier={handleSelectSupplier}
                 search={search}
-                onSearchChange={setSearch}
+                onSearchChange={handleSearchChange}
                 statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
+                onStatusFilterChange={handleStatusFilterChange}
                 foreignFilter={foreignFilter}
-                onForeignFilterChange={setForeignFilter}
+                onForeignFilterChange={handleForeignFilterChange}
                 onOpenRegisterModal={() => setIsModalOpen(true)}
                 onOpenEvaluationModal={() => setIsEvaluationOpen(true)}
+                page={supplierPage}
+                pageSize={supplierPageSize}
+                totalPages={supplierPageData.pagination.totalPages}
+                onPageChange={handleSupplierPageChange}
+                onPageSizeChange={handleSupplierPageSizeChange}
+                loading={loadingSuppliers}
+                error={supplierPageError}
             />
 
             {/* Right side: Detailed Supplier Profile */}
@@ -345,7 +467,7 @@ export default function SuppliersDirectory({
                                             </h4>
                                             <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full flex items-center gap-1">
                                                 <CheckCircle2 className="h-3 w-3 text-primary" />
-                                                {linkedProducts.length} Linked
+                                                {linkedProductPageData.pagination.total} Linked
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-muted-foreground">
@@ -363,12 +485,12 @@ export default function SuppliersDirectory({
                             </div>
 
                             {/* Linked Products Preview Grid */}
-                            {loadingLinkedProducts ? (
+                            {loadingLinkedProductPage ? (
                                 <div className="text-center text-xs text-muted-foreground py-6 flex items-center justify-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     <span>Loading associated products...</span>
                                 </div>
-                            ) : linkedProducts.length === 0 ? (
+                            ) : linkedProductPageData.data.length === 0 ? (
                                 <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
                                     <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
                                         <LinkIcon className="h-6 w-6" />
@@ -386,7 +508,7 @@ export default function SuppliersDirectory({
                                 </div>
                             ) : (
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    {linkedProducts.map((lp: LinkedProduct) => {
+                                    {linkedProductPageData.data.map((lp: LinkedProduct) => {
                                         const uom = lp.product_id?.unit_of_measurement?.unit_shortcut || lp.product_id?.unit_of_measurement?.unit_name;
                                         return (
                                             <div
@@ -424,6 +546,15 @@ export default function SuppliersDirectory({
                                     })}
                                 </div>
                             )}
+                            <PaginationFooter
+                                page={linkedProductPage}
+                                pageSize={linkedProductPageSize}
+                                total={linkedProductPageData.pagination.total}
+                                totalPages={linkedProductPageData.pagination.totalPages}
+                                onPageChange={setLinkedProductPage}
+                                onPageSizeChange={handleLinkedProductPageSizeChange}
+                                itemLabel="linked products"
+                            />
                         </div>
                     </>
                 ) : (
