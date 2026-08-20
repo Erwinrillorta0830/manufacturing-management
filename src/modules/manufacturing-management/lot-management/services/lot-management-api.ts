@@ -1,7 +1,7 @@
-import { Lot, CreateLotPayload, UpdateLotPayload, InventoryType } from "../types";
+import { Lot, CreateLotPayload, UpdateLotPayload, InventoryType, UnitOfMeasure } from "../types";
 
 export async function fetchLots(): Promise<Lot[]> {
-    const res = await fetch("/api/manufacturing/lots");
+    const res = await fetch(`/api/manufacturing/lots?_t=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error("Failed to fetch lots from BFF");
     }
@@ -54,9 +54,18 @@ export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
 }
 
 export async function fetchInventoryTypes(): Promise<InventoryType[]> {
-    const res = await fetch("/api/manufacturing/lots/inventory-types");
+    const res = await fetch("/api/manufacturing/lots/inventory-types", { cache: "no-store" });
     if (!res.ok) {
         throw new Error("Failed to fetch inventory types lookup from BFF");
     }
     return await res.json();
 }
+
+export async function fetchUoms(): Promise<UnitOfMeasure[]> {
+    const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("Failed to fetch UOM lookup from BFF");
+    }
+    return await res.json();
+}
+
