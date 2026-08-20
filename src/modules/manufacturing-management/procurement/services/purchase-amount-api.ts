@@ -1,5 +1,5 @@
 export async function fetchEligibleOrders() {
-    const res = await fetch("/api/manufacturing/procurement/shipments?landedCostOnly=true");
+    const res = await fetch("/api/manufacturing/procurement/shipments?landedCostOnly=true&includePosted=true");
     if (!res.ok) throw new Error("Failed to fetch purchase orders");
     const data = await res.json();
     return Array.isArray(data) ? data : data?.data || [];

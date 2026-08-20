@@ -403,6 +403,7 @@ export async function handlePATCH(request: Request) {
         if (patch.products !== undefined) dbPatch.products = patch.products;
         if (patch.shiftOption !== undefined) dbPatch.shift_option = patch.shiftOption;
         if (patch.dailyBreakdown !== undefined) dbPatch.daily_breakdown = patch.dailyBreakdown;
+        if (patch.remarks !== undefined) dbPatch.remarks = patch.remarks;
 
         const result = await updateJobOrder(joId, dbPatch);
         return NextResponse.json({ success: true, data: result });

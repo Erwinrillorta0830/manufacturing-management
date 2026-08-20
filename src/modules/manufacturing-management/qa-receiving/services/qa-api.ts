@@ -1,4 +1,4 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult } from "../types";
 
 export interface QuarantineDispositionResponse {
     stock: QuarantineStock[];
@@ -130,6 +130,35 @@ export async function commitReceivingQa(payload: ReceivingCommitPayload, idempot
         throw new Error("Receiving commit returned an invalid response.");
     }
     return body.data as ReceivingCommitResult;
+}
+
+export async function forceReceivePurchaseOrder(
+    payload: { shipmentId: number; workflowRevision: number; reason: string },
+    idempotencyKey: string
+): Promise<ForceReceivedResult> {
+    const res = await fetch("/api/manufacturing/qa-receiving/force-received", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey
+        },
+        body: JSON.stringify(payload)
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to force-receive the purchase order.");
+    const data = body.data as ForceReceivedResult | undefined;
+    if (
+        !data
+        || data.status !== "Received"
+        || Number(data.inventoryStatus) !== 6
+        || Number(data.paymentStatus) !== 2
+        || data.isForceReceived !== true
+        || !Array.isArray(data.lines)
+        || data.lines.some(line => Number(line.remainingQuantity) !== 0 || Number(line.remainingAcceptedQuantity) !== 0)
+    ) {
+        throw new Error("Force Received returned an invalid closure response.");
+    }
+    return data;
 }
 
 export async function fetchQuarantineDispositions(signal?: AbortSignal): Promise<QuarantineDispositionResponse> {

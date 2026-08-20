@@ -36,6 +36,14 @@ export interface Supplier {
     representatives?: SupplierRepresentative[];
 }
 
+export interface SupplierCurrencyOption {
+    forex_id: number;
+    currency_code: string;
+    currency_name: string;
+    symbol?: string;
+    is_active?: number | boolean;
+}
+
 export interface SupplierFormState {
     supplier_name: string;
     supplier_shortcut: string;
@@ -100,6 +108,10 @@ export interface IncomingShipment {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    isForceReceived?: boolean;
+    forceReceivedAt?: string | null;
+    forceReceivedBy?: number | null;
+    forceReceivedReason?: string | null;
 }
 
 export interface ShipmentLineItem {
@@ -183,6 +195,100 @@ export interface LandedCostDraftResponse {
     preview?: unknown;
 }
 
+export type LandedCostAuditStatus = "VERIFIED" | "NOT_VERIFIED" | "NOT_APPLICABLE";
+export type LandedCostAccountingAuditStatus = "POSTED" | "NOT_VERIFIED" | "NOT_APPLICABLE";
+
+export interface LandedCostAuditAllocationLine {
+    id: number | null;
+    purchaseOrderProductId: number | null;
+    receivingLineId: number | null;
+    productId: number | null;
+    productName: string;
+    categoryType: string | null;
+    receivedQuantity: number;
+    baseUnitCostPhp: number;
+    allocatedFee: number;
+    addedUnitCost: number;
+    finalLandedUnitCost: number;
+    roundingVariance: number;
+    isRoundingRecipient: boolean;
+}
+
+export interface LandedCostAuditValuationRow {
+    id: number | null;
+    productId: number | null;
+    productName: string;
+    quantity: number;
+    unitCostBefore: number;
+    unitCostAfter: number;
+    valuationDelta: number;
+    expectedValuationDelta: number;
+    currentProductCost: number | null;
+    equationMatches: boolean;
+    matchesProductCost: boolean;
+}
+
+export interface LandedCostAuditAccountingLine {
+    id: number | null;
+    accountId: number | null;
+    lineCode: string;
+    debit: number;
+    credit: number;
+    remarks: string;
+}
+
+export interface LandedCostAuditResponse {
+    purchaseOrderId: number;
+    computationId: number | null;
+    auditStatus: LandedCostAuditStatus;
+    computation: {
+        id: number;
+        purchaseOrderId: number;
+        allocationRule: LandedCostAllocationRule;
+        status: LandedCostComputationRecord["status"];
+        totalLandedFee: number;
+        roundingVariance: number;
+        finalizationKey: string | null;
+        finalizedAt: string | null;
+    } | null;
+    allocation: {
+        totalAllocatedFee: number;
+        expectedFee: number;
+        matchesTotal: boolean;
+        lines: LandedCostAuditAllocationLine[];
+    };
+    valuation: {
+        rowCount: number;
+        totalQuantity: number;
+        expectedQuantity: number;
+        totalDelta: number;
+        matches: boolean;
+        masterCostDriftCount: number;
+        rows: LandedCostAuditValuationRow[];
+    };
+    accountingVariance: {
+        required: boolean;
+        variance: number;
+        expectedAmount: number;
+        debitTotal: number;
+        creditTotal: number;
+        balanced: boolean;
+        status: LandedCostAccountingAuditStatus;
+        entry: {
+            id: number;
+            entryNo: string | null;
+            status: string | null;
+            totalDebit: number;
+            totalCredit: number;
+            postingDate: string | null;
+        } | null;
+        lines: LandedCostAuditAccountingLine[];
+        configuredInventoryAccountId: number | null;
+        configuredVarianceAccountId: number | null;
+    };
+    reasons: string[];
+}
+
 export interface RawMaterial {
     product_id: number;
     parent_id?: number | null;
@@ -210,6 +316,16 @@ export interface RawMaterial {
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
+    item_group_id?: number | null;
+    item_group_name?: string | null;
+    tax_rate_id?: number | null;
+    tax_rate?: { vatRate: number; withholdingRate: number } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId: number; priceTypeName: string } | null;
     isActive?: number;
     date_added?: string;
     last_updated?: string;
@@ -252,6 +368,13 @@ export interface RegisterRawMaterialPayload {
     product_brand?: number | null;
     product_category?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
+    item_group_id?: number | null;
+    tax_rate_id?: number | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
     parent_id?: number | null;
     unit_of_measurement_count?: number | null;
     maintaining_quantity?: number;
@@ -351,6 +474,9 @@ export interface PackagingVariant {
     product_brand?: number | null;
     product_category?: number | null;
     product_type?: number | null;
+    product_class?: number | null;
+    product_segment?: number | null;
+    product_section?: number | null;
     parent_id?: number | null;
     barcode?: string | null;
     maintaining_quantity?: number;
@@ -421,6 +547,14 @@ export interface BFFCatalogProduct {
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;
+    product_class?: number | { class_id?: number; id?: number } | null;
+    product_segment?: number | { segment_id?: number; id?: number } | null;
+    product_section?: number | { section_id?: number; id?: number } | null;
+    item_group_id?: number | { item_group_id?: number; id?: number; group_code?: string; group_name?: string } | null;
+    tax_rate_id?: number | { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId?: number; priceTypeName?: string } | null;
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;

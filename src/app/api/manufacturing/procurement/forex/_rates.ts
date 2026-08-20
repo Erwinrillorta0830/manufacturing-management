@@ -61,18 +61,34 @@ export async function getActiveForexRates(): Promise<ForexConfig[]> {
     let activeRates: ForexConfig[] = [...fallbackActiveRates];
 
     try {
-        const configRes = await procurementDirectusFetch("/items/forex_configurations?filter[is_active][_eq]=1&sort=currency_code");
-        if (configRes.ok) {
-            const configJson = await configRes.json();
-            if (Array.isArray(configJson.data) && configJson.data.length > 0) {
-                activeRates = configJson.data.map((item: Record<string, unknown>) => mapForexConfig(item));
-            }
+        const configuredRates = await getConfiguredActiveForexRates();
+        if (configuredRates.length > 0) {
+            activeRates = configuredRates;
         }
     } catch (e) {
         console.warn("[Procurement Forex API] Directus forex_configurations fetch skipped, using active cache", e);
     }
 
     return activeRates;
+}
+
+/**
+ * Returns only active currencies configured in Directus.
+ * Supplier registration uses this strict variant so a Directus failure never
+ * turns a stale fallback currency into a selectable supplier currency.
+ */
+export async function getConfiguredActiveForexRates(): Promise<ForexConfig[]> {
+    const configRes = await procurementDirectusFetch("/items/forex_configurations?filter[is_active][_eq]=1&sort=currency_code");
+    if (!configRes.ok) {
+        throw new Error(`Failed to load active forex configurations: ${configRes.status}`);
+    }
+
+    const configJson = await configRes.json();
+    if (!Array.isArray(configJson.data)) return [];
+
+    return configJson.data
+        .map((item: Record<string, unknown>) => mapForexConfig(item))
+        .filter((item: ForexConfig) => item.currency_code.trim().length > 0 && item.is_active === 1);
 }
 
 export async function getForexRateHistory(): Promise<ForexRateHistory[]> {

@@ -5,6 +5,8 @@ import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
 import { ShipmentFormModal } from "./incoming-shipments/ShipmentFormModal";
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
+import { toast } from "sonner";
+import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 
 export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } from "./incoming-shipments/types";
 
@@ -43,6 +45,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     const [statusFilter, setStatusFilter] = useState("All");
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(5);
+    const [printLoading, setPrintLoading] = useState(false);
 
     const {
         editingShipmentId,
@@ -145,6 +148,22 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
 
     const hasListFilters = Boolean(search.trim() || statusFilter !== "All");
 
+    const handlePrintPurchaseOrder = async () => {
+        if (!activeShipment) return;
+        try {
+            setPrintLoading(true);
+            await downloadPurchaseOrderPrintable({
+                purchaseOrderId: activeShipment.shipment_id,
+                documentType: "PURCHASE_ORDER"
+            });
+            toast.success("Purchase-order printable downloaded.");
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the purchase-order printable.");
+        } finally {
+            setPrintLoading(false);
+        }
+    };
+
     const supplierRawMaterials = useMemo(() => {
         if (!shipmentForm.supplier_id) return [];
         
@@ -174,10 +193,10 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         return suppliers.map(s => {
             const foreign = isSupplierForeign(s);
             const supCurr = s.currency || s.default_currency;
-            const curr = (supCurr && supCurr.toUpperCase()) || (foreign ? "USD" : "PHP");
+            const curr = supCurr?.toUpperCase();
             return {
                 value: String(s.id),
-                label: `${s.supplier_name} - ${foreign ? `Foreign (${curr})` : `Local (${curr})`}`,
+                label: `${s.supplier_name} - ${foreign ? `Foreign${curr ? ` (${curr})` : ""}` : `Local (${curr || "PHP"})`}`,
                 labelNode: (
                     <div className="flex items-center justify-between w-full gap-2 py-0.5">
                         <span className="font-semibold text-xs truncate flex items-center gap-1.5">
@@ -190,7 +209,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                         </span>
                         {foreign ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase tracking-wider shrink-0">
-                                <Globe className="h-2.5 w-2.5" /> Foreign ({curr})
+                                <Globe className="h-2.5 w-2.5" /> Foreign{curr ? ` (${curr})` : ""}
                             </span>
                         ) : (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 uppercase tracking-wider shrink-0">
@@ -238,6 +257,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 isSupplierForeign={isSupplierForeign}
                 onUpdateShipmentStatus={onUpdateShipmentStatus}
                 handleStartEdit={handleStartEdit}
+                onPrintPurchaseOrder={handlePrintPurchaseOrder}
+                printLoading={printLoading}
                 onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
                 lines={lines}
                 hasShipments={filteredShipments.length > 0}

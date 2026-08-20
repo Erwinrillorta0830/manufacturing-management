@@ -41,6 +41,7 @@ export function CreateBufferJODialog({
     const [loadingVersions, setLoadingVersions] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [hasLoadedDetails, setHasLoadedDetails] = useState(false);
+    const [detailsError, setDetailsError] = useState<string | null>(null);
 
     // Master list data
     const [products, setProducts] = useState<any[]>([]);
@@ -70,6 +71,15 @@ export function CreateBufferJODialog({
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
+
+    const normalizeInventoryMap = (value: any): Record<number, any> => {
+        if (!Array.isArray(value)) return value || {};
+        return value.reduce((map: Record<number, any>, item: any) => {
+            const productId = Number(item?.product_id);
+            if (productId > 0) map[productId] = item;
+            return map;
+        }, {});
+    };
 
     const selectedBranch = branches.find((b) => String(b.id) === selectedBranchId);
     const selectedProduct = products.find((p) => String(p.product_id) === selectedProductId);
@@ -139,6 +149,7 @@ export function CreateBufferJODialog({
             setVersions([]);
             setRemarks("");
             setHasLoadedDetails(false);
+            setDetailsError(null);
 
             // Setup default JO Code
             const code = `JO-BUF-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -264,26 +275,35 @@ export function CreateBufferJODialog({
         if (isOpen && selectedProductId && selectedVersionId && currentStep === 2 && !hasLoadedDetails) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
+                setDetailsError(null);
+                const controller = new AbortController();
+                const timeoutId = window.setTimeout(() => controller.abort(), 25000);
                 try {
                     const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${selectedBranchId || 1}`;
-                    const res = await fetch(url);
-                    if (res.ok) {
-                        const data = await res.json();
-                        setRoutings(data.routings || []);
-                        setComponents(data.components || []);
-                        setSubAssemblyBoms(data.subAssemblyBoms || {});
-                        setSubAssemblyRoutings(data.subAssemblyRoutings || {});
-                        setSubAssemblyVersions(data.subAssemblyVersions || {});
-                        setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
-                        setInventories(data.inventories || {});
-                        if (data.bom) {
-                            setBomBaseQty(Number(data.bom.base_quantity || 1));
-                        }
-                        setHasLoadedDetails(true);
+                    const res = await fetch(url, { signal: controller.signal });
+                    const data = await res.json().catch(() => null);
+                    if (!res.ok) {
+                        throw new Error(data?.error || `Failed to load BOM details (${res.status})`);
                     }
+                    if (!data?.bom) {
+                        throw new Error("The selected recipe version has no usable BOM details.");
+                    }
+                    setRoutings(data.routings || []);
+                    setComponents(data.components || []);
+                    setSubAssemblyBoms(data.subAssemblyBoms || {});
+                    setSubAssemblyRoutings(data.subAssemblyRoutings || {});
+                    setSubAssemblyVersions(data.subAssemblyVersions || {});
+                    setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
+                    setInventories(normalizeInventoryMap(data.inventories));
+                    setBomBaseQty(Number(data.bom.base_quantity || 1));
+                    setHasLoadedDetails(true);
                 } catch (err) {
                     console.error("Failed to load wizard details:", err);
+                    setDetailsError(err instanceof DOMException && err.name === "AbortError"
+                        ? "Loading BOM details timed out. Please retry."
+                        : err instanceof Error ? err.message : "Failed to load BOM details. Please retry.");
                 } finally {
+                    window.clearTimeout(timeoutId);
                     setLoadingDetails(false);
                 }
             };
@@ -302,7 +322,7 @@ export function CreateBufferJODialog({
                 setSubAssemblyBoms(prev => ({ ...prev, [subProdId]: data.bomItems || [] }));
                 setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing || { setup_time_hours: 0, run_time_hours_per_unit: 0, base_quantity: 1 } }));
                 if (data.inventories) {
-                    setInventories(prev => ({ ...prev, ...data.inventories }));
+                    setInventories(prev => ({ ...prev, ...normalizeInventoryMap(data.inventories) }));
                 }
             }
         } catch (e) {
@@ -889,6 +909,11 @@ export function CreateBufferJODialog({
                             totalEstimatedHours={totalEstimatedHours}
                             containerMetrics={containerMetrics}
                             cogsBreakdown={cogsBreakdown}
+                            detailsError={detailsError}
+                            retryDetails={() => {
+                                setDetailsError(null);
+                                setHasLoadedDetails(false);
+                            }}
                             components={components}
                             targetQuantity={targetQuantity}
                             bomBaseQty={bomBaseQty}
@@ -965,7 +990,7 @@ export function CreateBufferJODialog({
                             <Button
                                 size="sm"
                                 onClick={handleNextStep}
-                                disabled={loadingDetails || !joNumber || targetQuantity <= 0 || !selectedProductId || !selectedVersionId}
+                                disabled={loadingDetails || !!detailsError || (currentStep === 2 && !hasLoadedDetails) || !joNumber || targetQuantity <= 0 || !selectedProductId || !selectedVersionId}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />

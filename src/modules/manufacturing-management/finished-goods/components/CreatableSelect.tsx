@@ -12,19 +12,20 @@ import {
     CommandInput,
     CommandItem,
     CommandList,
-} from "./ui/local-command";
+} from "@/components/ui/command";
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
     PopoverAnchor,
-} from "./ui/local-popover";
+} from "@/components/ui/popover";
 
 export interface CreatableSelectProps {
-    options: { value: string; label: string; labelNode?: React.ReactNode }[];
+    options: { value: string; label: string; disabled?: boolean; labelNode?: React.ReactNode; triggerNode?: React.ReactNode }[];
     value?: string;
     onValueChange: (value: string) => void;
     placeholder?: string;
+    searchPlaceholder?: string;
     disabled?: boolean;
     className?: string;
     id?: string;
@@ -42,6 +43,7 @@ export function CreatableSelect({
     value,
     onValueChange,
     placeholder = "Select option...",
+    searchPlaceholder,
     disabled = false,
     className,
     id,
@@ -142,27 +144,26 @@ export function CreatableSelect({
                         data-index={dataIndex}
                     >
                         <span className="truncate w-full text-left">
-                            {selectedOption ? (selectedOption.labelNode || selectedOption.label) : placeholder}
+                            {selectedOption ? (selectedOption.triggerNode || selectedOption.labelNode || selectedOption.label) : placeholder}
                         </span>
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                 </PopoverTrigger>
             )}
             <PopoverContent
-                className={cn("w-[--radix-popover-trigger-width] p-0 z-[100]", popoverClassName)}
+                className={cn("w-[--radix-popover-trigger-width] p-0 shadow-lg border", popoverClassName)}
                 align="start"
-                sideOffset={4}
                 onOpenAutoFocus={variant === "inline" ? (e) => e.preventDefault() : undefined}
             >
                 <Command shouldFilter={false}>
                     {variant !== "inline" && (
                         <CommandInput
-                            placeholder={`Search ${placeholder.toLowerCase()}...`}
+                            placeholder={searchPlaceholder || `Search ${placeholder.toLowerCase().replace(/^(select or search|select|search)\s*/i, "")}...`}
                             value={searchQuery}
                             onValueChange={setSearchQuery}
                         />
                     )}
-                    <CommandList className="max-h-64 overflow-x-hidden overflow-y-auto">
+                    <CommandList>
                         {filteredOptions.length === 0 && (
                             <CommandEmpty className="py-2 px-3 text-xs flex flex-col gap-2">
                                 <span>No results found.</span>
@@ -187,11 +188,14 @@ export function CreatableSelect({
                                     <CommandItem
                                         key={itemKey}
                                         value={searchValue}
+                                        disabled={opt.disabled}
                                         onSelect={() => {
+                                            if (opt.disabled) return;
                                             onValueChange(opt.value);
                                             setOpen(false);
                                             setSearchQuery("");
                                         }}
+                                        className={cn(opt.disabled && "opacity-50 cursor-not-allowed pointer-events-none")}
                                     >
                                         <Check
                                             className={cn(

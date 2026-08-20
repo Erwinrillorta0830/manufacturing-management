@@ -77,7 +77,7 @@ export async function getLatestLandedCost(
  */
 export async function fetchAllProducts(search?: string, limit: number = -1): Promise<DirectusProduct[]> {
     try {
-        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
@@ -311,7 +311,7 @@ export async function calculateRollupCost(
 
                 materialsBatchSubtotal += lineCost;
 
-                const ingName = compProduct ? compProduct.product_name : `Component #${bomItem.product_id}`;
+                const ingName = compProduct ? compProduct.product_name : `Unresolved Material (ID #${bomItem.product_id} - Archived or Missing)`;
                 const uomName = bomItem.unit_of_measurement
                     ? (typeof bomItem.unit_of_measurement === "number"
                         ? (unitsMap.get(bomItem.unit_of_measurement) || "pc")

@@ -141,11 +141,13 @@ export default function InboundShipmentsList({
                                     {s.reference_number}
                                 </span>
                                 <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-extrabold border ${
-                                    s.status === "Receiving (QA)" || s.status === "For Pickup" || s.status === "Approved"
+                                    s.isForceReceived
+                                        ? "bg-violet-500/10 text-violet-600 border-violet-500/20"
+                                        : s.status === "Receiving (QA)" || s.status === "For Pickup" || s.status === "Approved"
                                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
                                         : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                                 }`}>
-                                    {s.status === "For Pickup" ? "QA (Receiving)" : s.status}
+                                    {s.isForceReceived ? "Force Received" : s.status === "For Pickup" ? "QA (Receiving)" : s.status}
                                 </span>
                             </div>
                             <div className="flex justify-between text-[10px] text-muted-foreground">

@@ -14,6 +14,7 @@ import {
 } from "@/modules/manufacturing-management/finished-goods/product-validation";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { fetchAllWeightUnits } from "../weight-units/weight-units-helper";
+import { fetchPurchaseOrderPriceTypeRules } from "@/app/api/manufacturing/purchase-orders/_price-type";
 
 interface DirectusProductCurrencyProfile {
     id: number;
@@ -45,6 +46,17 @@ interface DirectusProduct {
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;
     has_cogs?: boolean;
+    product_type?: number | string | { id?: number | string; name?: string } | null;
+    product_brand?: number | { brand_id?: number; id?: number } | null;
+    product_category?: number | { category_id?: number; id?: number; category_name?: string } | null;
+    product_class?: number | { class_id?: number; id?: number } | null;
+    product_segment?: number | { segment_id?: number; id?: number } | null;
+    product_section?: number | { section_id?: number; id?: number } | null;
+    item_group_id?: number | { item_group_id?: number; id?: number; group_code?: string; group_name?: string } | null;
+    tax_rate_id?: number | { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId: number; priceTypeName: string } | null;
 }
 
 export async function GET(request: Request) {
@@ -54,14 +66,23 @@ export async function GET(request: Request) {
         const limit = parseInt(searchParams.get("limit") || "-1");
         const excludeRollup = searchParams.get("excludeRollup") === "true";
 
-        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes";
+        const legacyFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }
 
+        const fetchProducts = async () => {
+            const response = await fetch(url, { headers, cache: "no-store" });
+            if (response.ok) return response;
+            const legacyUrl = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${legacyFields}${search && search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`;
+            console.warn("Product shared-attribute fields are not available; using the legacy product projection.");
+            return fetch(legacyUrl, { headers, cache: "no-store" });
+        };
+
         const [prodResult, versionsResult, profilesResult, weightUnitsResult] = await Promise.allSettled([
-            fetch(url, { headers, cache: "no-store" }),
+            fetchProducts(),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,status,base_quantity,expected_yield_percentage`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/product_currency_profiles?limit=-1`, { headers, cache: "no-store" }),
             fetchAllWeightUnits()
@@ -104,6 +125,14 @@ export async function GET(request: Request) {
         const weightUnitsData = weightUnitsResult.status === "fulfilled" ? weightUnitsResult.value : [];
         const weightUnitsMap = new Map((weightUnitsData || []).map(w => [w.id, w]));
 
+        let priceTypeRules: Awaited<ReturnType<typeof fetchPurchaseOrderPriceTypeRules>> = [];
+        try {
+            priceTypeRules = await fetchPurchaseOrderPriceTypeRules();
+        } catch (error) {
+            console.error("API Error parsing product price-control mappings:", error);
+        }
+        const priceTypeByProductType = new Map(priceTypeRules.map(rule => [rule.productTypeId, rule]));
+
         // Create product lookup map
         const productsMap = new Map<number, DirectusProduct>();
         products.forEach((p) => {
@@ -125,6 +154,14 @@ export async function GET(request: Request) {
                 const matched = weightUnitsMap.get(Number(productCopy.weight_unit_id));
                 if (matched) (productCopy as DirectusProduct & Record<string, unknown>).weight_unit_id = { id: matched.id, code: matched.code, name: matched.name };
             }
+            const productTypeId = typeof productCopy.product_type === "object" && productCopy.product_type !== null
+                ? Number(productCopy.product_type.id)
+                : Number(productCopy.product_type);
+            const priceType = priceTypeByProductType.get(productTypeId);
+            productCopy.product_type = Number.isFinite(productTypeId) ? productTypeId : null;
+            productCopy.price_control = priceType?.priceTypeId && priceType.priceTypeName
+                ? { priceTypeId: priceType.priceTypeId, priceTypeName: priceType.priceTypeName }
+                : null;
 
             if (excludeRollup) {
                 productCopy.has_cogs = false;
@@ -236,7 +273,7 @@ export async function POST(request: Request) {
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
             isActive: 1,
-            status: "Approved",
+            status: "Active",
             item_type: "regular",
             product_type: 388,
             date_added: productDetails.date_added || todayStr,
@@ -261,16 +298,16 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
-        // 2. Create Product Version (Draft status by default for first version)
+        // 2. Create Product Version (For Approval status by default for first version)
         const versionPayload = {
             product_id: productId,
             version_name: validatedDetails.versionName,
-            base_quantity: 1,
+            base_quantity: 1.0,
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
-            status: "Draft",
-            is_primary: false,
-            valid_from: todayStr
+            status: "For Approval",
+            valid_from: todayStr,
+            created_by: userId ? Number(userId) : null
         };
 
 

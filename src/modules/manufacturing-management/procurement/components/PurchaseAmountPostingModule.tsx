@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { DollarSign, Landmark, AlertTriangle, CheckCircle2, Calculator, ShieldCheck, ListFilter } from "lucide-react";
+import { DollarSign, Landmark, AlertTriangle, CheckCircle2, Calculator, ShieldCheck, ListFilter, Printer, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { usePurchaseAmountPosting } from "../hooks/usePurchaseAmountPosting";
 import { PurchaseAmountPostingModuleProps } from "./purchase-amount/types";
 import POSelectionCard from "./purchase-amount/POSelectionCard";
@@ -10,6 +11,7 @@ import LandedExpensesTable from "./purchase-amount/LandedExpensesTable";
 import LineItemsPostingTable from "./purchase-amount/LineItemsPostingTable";
 import PostedPOLedgerTable from "./purchase-amount/PostedPOLedgerTable";
 import LandedCostAttachments from "./LandedCostAttachments";
+import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 
 export default function PurchaseAmountPostingModule({
     shipments,
@@ -17,6 +19,7 @@ export default function PurchaseAmountPostingModule({
     setSelectedShipment: propSetSelectedShipment
 }: PurchaseAmountPostingModuleProps) {
     const [activeTab, setActiveTab] = useState<"posting" | "ledger">("posting");
+    const [printLoading, setPrintLoading] = useState(false);
 
     const {
         posting,
@@ -44,6 +47,21 @@ export default function PurchaseAmountPostingModule({
         propSelectedShipment as unknown as import("../hooks/usePurchaseAmountPosting").PurchaseOrderOption | null,
         propSetSelectedShipment as unknown as ((shipment: import("../hooks/usePurchaseAmountPosting").PurchaseOrderOption | null) => void)
     );
+
+    const handlePrintLandedCost = async () => {
+        if (!selectedShipment) return;
+        const purchaseOrderId = Number(selectedShipment.purchase_order_id || selectedShipment.shipment_id || selectedShipment.id);
+        if (!purchaseOrderId) return;
+        try {
+            setPrintLoading(true);
+            await downloadPurchaseOrderPrintable({ purchaseOrderId, documentType: "LANDED_COST" });
+            toast.success("Landed-cost printable downloaded.");
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the landed-cost printable.");
+        } finally {
+            setPrintLoading(false);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -91,10 +109,29 @@ export default function PurchaseAmountPostingModule({
                     </div>
 
                     {selectedShipment && activeTab === "posting" && (
-                        <div className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 ${isForeignPO ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"}`}>
-                            {isForeignPO ? <DollarSign className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}
-                            {isForeignPO ? "FOREIGN IMPORTATION (USD)" : "LOCAL PURCHASE (PHP)"}
-                        </div>
+                        <>
+                            <div className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 ${isForeignPO ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"}`}>
+                                {isForeignPO ? <DollarSign className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}
+                                {isForeignPO ? "FOREIGN IMPORTATION (USD)" : "LOCAL PURCHASE (PHP)"}
+                            </div>
+                            {(selectedShipment.isForceReceived || selectedShipment.forceReceivedAt) && (
+                                <div className="px-3 py-1.5 rounded-full text-xs font-bold bg-violet-500/10 text-violet-700 border border-violet-500/20">
+                                    Force Received
+                                    {typeof selectedShipment.forceReceivedReason === "string" && selectedShipment.forceReceivedReason
+                                        ? `: ${selectedShipment.forceReceivedReason}`
+                                        : ""}
+                                </div>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => void handlePrintLandedCost()}
+                                disabled={printLoading}
+                                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                                {printLoading ? "Preparing..." : "Print landed cost"}
+                            </button>
+                        </>
                     )}
                 </div>
             </div>

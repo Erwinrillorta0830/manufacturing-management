@@ -45,6 +45,7 @@ import {
     createQATemplate,
     saveQATemplate,
     normalizeProductActiveState,
+    resolveProductMasterStatus,
     extractId
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
@@ -164,7 +165,8 @@ export function useFinishedGoods(initialTab: string = "details") {
 
     // Selected product helper
     const selectedProduct = useMemo(() => {
-        return products.find(p => p.id === selectedProductId) || products[0];
+        if (!selectedProductId) return null;
+        return products.find(p => p.id === selectedProductId) || null;
     }, [products, selectedProductId]);
 
     // Fetch Forex Rate in a separate, non-blocking useEffect
@@ -245,6 +247,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             const parentId = p.parent_id && typeof p.parent_id === "object"
                 ? Number((p.parent_id as any).product_id)
                 : (p.parent_id ? Number(p.parent_id) : null);
+            const resolvedStatus = resolveProductMasterStatus((p as unknown as { status?: string }).status, p.isActive);
             return {
                 id: String(p.product_id),
                 sku: p.product_code || `SKU-${p.product_id}`,
@@ -257,7 +260,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                 targetSellingPrice: Number(p.price_per_unit || 0),
                 parentProduct: parentId === null,
                 parent_id: parentId,
-                isActive: normalizeProductActiveState(p.isActive),
+                status: resolvedStatus,
+                isActive: resolvedStatus === "Active",
                 bom: [],
                 routings: [],
                 densityFactor: p.density_factor ? Number(p.density_factor) : 1.0,
@@ -280,7 +284,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         if (mapped.length > 0) {
             setSelectedProductId(prev => {
                 const exists = mapped.some((p: Product) => p.id === prev);
-                return exists ? prev : mapped[0].id;
+                return exists ? prev : "";
             });
         }
     }, [allCatalogProducts]);
@@ -391,7 +395,8 @@ export function useFinishedGoods(initialTab: string = "details") {
             unit_of_measurement_count: selectedProduct.unit_of_measurement_count,
             product_image: selectedProduct.product_image,
             parent_id: selectedProduct.parent_id,
-
+            status: resolveProductMasterStatus(selectedProduct.status, selectedProduct.isActive),
+            isActive: resolveProductMasterStatus(selectedProduct.status, selectedProduct.isActive) === "Active"
         };
 
         if (selectedVersionId === null || !versions.some((v) => v.version_id === selectedVersionId && Number(v.product_id) === numericId)) {
@@ -467,7 +472,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                                     ingredients.push({
                                         id: String(b.id),
                                         productId: b.product_id,
-                                        name: foundProd ? foundProd.product_name : (b.product_name || `Component #${b.product_id}`),
+                                        name: foundProd ? foundProd.product_name : (b.product_name || `Unresolved Material (ID #${b.product_id} - Archived or Missing)`),
                                         type: "raw_material",
                                         quantity: b.quantity_required,
                                         uom: foundUnit ? foundUnit.unit_shortcut : String(b.unit_of_measurement || "pc"),
@@ -718,8 +723,8 @@ export function useFinishedGoods(initialTab: string = "details") {
                     setSelectedVersionId(vList[0].version_id);
                 }
 
-                // Switch tab straight to BOM
-                setActiveTab("bom");
+                // Switch tab immediately to Product Details
+                setActiveTab("details");
             }
         } catch (err) {
             clearInterval(interval);

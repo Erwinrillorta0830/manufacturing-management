@@ -11,8 +11,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
-// Wire the AssetsModule component
-import AssetsModule from "@/modules/manufacturing-management/assets/AssetsModule";
+// Wire the VOS AssetManagementModulePage component
+import AssetManagementModulePage from "@/modules/manufacturing-management/asset-management/AssetManagementModulePage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,9 +96,13 @@ export default async function AssetsPage() {
                                     <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="#">Master Data</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Asset &amp; Equipment Management
+                                        Asset & Equipment Management
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -113,7 +117,7 @@ export default async function AssetsPage() {
 
             {/* Scrollable Content wrapper */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
-                <AssetsModule />
+                <AssetManagementModulePage />
             </main>
         </div>
     );

@@ -35,6 +35,10 @@ export class ProductWeightValidationError extends Error {
     }
 }
 
+export function isPackagingMaterialProductType(productType: unknown): boolean {
+    return Number(productType) === 390;
+}
+
 export function toStandardKg(value: number | string | null | undefined, unitCodeOrShortcut?: string | null): number {
     const weight = Number(value);
     if (!Number.isFinite(weight) || weight <= 0) return 0;
@@ -138,6 +142,64 @@ function hasProvidedWeightValue(value: unknown): boolean {
     return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
 }
 
+function hasValidWeightUnit(value: unknown): boolean {
+    if (!hasProvidedWeightValue(value)) return false;
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return [record.id, record.unit_id, record.code, record.unit_shortcut, record.unit_name, record.name]
+            .some(hasProvidedWeightValue);
+    }
+    return Number.isFinite(Number(value)) && Number(value) > 0;
+}
+
+/**
+ * Apply the same weight policy to the form and the raw-material API:
+ * packaging products require component weights, while raw materials may
+ * omit weight data but must provide a complete set when any weight is entered.
+ */
+export function validateProductWeightForProductType(product: unknown, productType: unknown): string | null {
+    const value = product && typeof product === "object"
+        ? product as Record<string, unknown>
+        : {};
+    const isPackagingMaterial = isPackagingMaterialProductType(productType);
+    const hasWeight = hasProvidedWeightValue(value.weight) || hasProvidedWeightValue(value.product_weight);
+    const hasWeightUnit = hasProvidedWeightValue(value.weight_unit_id);
+    const hasWeightComponents = [
+        value.net_weight,
+        value.outer_carton_weight,
+        value.pallet_weight
+    ].some(hasProvidedWeightValue);
+
+    if (isPackagingMaterial || hasWeightComponents) {
+        try {
+            resolveProductWeightBreakdown(value, { requireComplete: true });
+            return null;
+        } catch (error) {
+            return error instanceof ProductWeightValidationError
+                ? error.message
+                : "Net weight, outer carton weight, pallet weight, and weight unit must be valid.";
+        }
+    }
+
+    if (hasWeight || hasWeightUnit) {
+        if (!hasWeight || !hasWeightUnit) {
+            return "Gross weight and weight unit must be provided together when supplied.";
+        }
+        if (!hasProvidedWeightValue(value.weight) && !hasProvidedWeightValue(value.product_weight)) {
+            return "Gross weight must be greater than 0 when supplied.";
+        }
+        const grossWeight = value.weight ?? value.product_weight;
+        if (!Number.isFinite(Number(grossWeight)) || Number(grossWeight) <= 0) {
+            return "Gross weight must be greater than 0 when supplied.";
+        }
+        if (!hasValidWeightUnit(value.weight_unit_id)) {
+            return "Weight unit must be valid when supplied.";
+        }
+    }
+
+    return null;
+}
+
 function parseWeightComponent(value: unknown, label: string, required: boolean): number | null {
     if (!hasProvidedWeightValue(value)) {
         if (required) throw new ProductWeightValidationError(`${label} is required.`);
@@ -153,12 +215,13 @@ function parseWeightComponent(value: unknown, label: string, required: boolean):
 
 export function resolveProductWeightBreakdown(
     product: unknown,
-    options: { requireComplete?: boolean } = {}
+    options: { requireComplete?: boolean; allowIncomplete?: boolean } = {}
 ): ProductWeightBreakdown {
     const value = product && typeof product === "object"
         ? product as Record<string, unknown>
         : {};
     const requireComplete = options.requireComplete === true;
+    const allowIncomplete = options.allowIncomplete === true && !requireComplete;
     const unitCode = productWeightUnitCode(value.weight_unit_id);
     const hasAnyComponent = [
         value.net_weight,
@@ -167,17 +230,17 @@ export function resolveProductWeightBreakdown(
     ].some(hasProvidedWeightValue);
 
     if (requireComplete || hasAnyComponent) {
-        if (!hasProvidedWeightValue(value.weight_unit_id)) {
+        if (!hasProvidedWeightValue(value.weight_unit_id) && !allowIncomplete) {
             throw new ProductWeightValidationError("Weight unit is required for weight components.");
         }
 
-        const netWeight = parseWeightComponent(value.net_weight, "Net weight", true);
-        const outerCartonWeight = parseWeightComponent(value.outer_carton_weight, "Outer carton weight", true);
-        const palletWeight = parseWeightComponent(value.pallet_weight, "Pallet weight", true);
-        if (netWeight === null || outerCartonWeight === null || palletWeight === null) {
+        const netWeight = parseWeightComponent(value.net_weight, "Net weight", !allowIncomplete);
+        const outerCartonWeight = parseWeightComponent(value.outer_carton_weight, "Outer carton weight", !allowIncomplete);
+        const palletWeight = parseWeightComponent(value.pallet_weight, "Pallet weight", !allowIncomplete);
+        if (!allowIncomplete && (netWeight === null || outerCartonWeight === null || palletWeight === null)) {
             throw new ProductWeightValidationError("All weight components are required.");
         }
-        const grossWeight = netWeight + outerCartonWeight + palletWeight;
+        const grossWeight = (netWeight || 0) + (outerCartonWeight || 0) + (palletWeight || 0);
         if (grossWeight <= 0) {
             throw new ProductWeightValidationError("Gross weight must be greater than 0.");
         }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { canTransitionInventoryStatus, INVENTORY_STATUS, shipmentStatusToInventoryStatus } from "../_domain";
+import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import {
     fetchIncomingShipments, 
     fetchShipmentLineItems, 
@@ -25,9 +26,11 @@ import { ProductCategoryTypeValidationError } from "../_category-type";
 class InvalidTransitionError extends Error {}
 
 async function requireAllowedTransition(shipmentId: number, targetStatus: number): Promise<void> {
-    const response = await fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=inventory_status,payment_status,approver_id,approval_requires_finance`, { headers, cache: "no-store" });
+    const response = await fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=inventory_status,payment_status,approver_id,approval_requires_finance,force_received_at`, { headers, cache: "no-store" });
     if (!response.ok) throw new Error("Failed to load the current purchase order status.");
     const order = (await response.json()).data || {};
+    const forceClosedMessage = forceReceivedIntakeMessage(order.force_received_at);
+    if (forceClosedMessage) throw new InvalidTransitionError(forceClosedMessage);
     const currentStatus = Number(order.inventory_status || 0);
     if (currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
         throw new InvalidTransitionError("Partially received purchase orders are view-only and cannot be changed.");
@@ -51,7 +54,8 @@ export async function GET(request: Request) {
         }
 
         const landedCostOnly = searchParams.get("landedCostOnly") === "true";
-        const shipments = await fetchIncomingShipments({ landedCostOnly });
+        const includePosted = searchParams.get("includePosted") === "true";
+        const shipments = await fetchIncomingShipments({ landedCostOnly, includePosted });
         return NextResponse.json(shipments);
     } catch (e) {
         console.error("API Error fetching shipments:", e);

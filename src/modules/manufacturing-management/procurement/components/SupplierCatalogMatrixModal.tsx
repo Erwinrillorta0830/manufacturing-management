@@ -58,7 +58,20 @@ export default function SupplierCatalogMatrixModal({
         return rm.product_name.toLowerCase().includes(query) || (rm.product_code && rm.product_code.toLowerCase().includes(query));
     });
 
+    const filteredLinkedProducts = linkedProducts.filter(lp => {
+        if (!linkedFilterSearch.trim()) return true;
+        const q = linkedFilterSearch.toLowerCase().trim();
+        const code = lp.product_id?.product_code || "";
+        const name = lp.product_id?.product_name || "";
+        return code.toLowerCase().includes(q) || name.toLowerCase().includes(q);
+    });
+
     const allSelected = availableRM.length > 0 && availableRM.every(rm => selectedProductIdsToLink.includes(String(rm.product_id)));
+
+    const toggleProductSelection = (productId: number | string) => {
+        const value = String(productId);
+        setSelectedProductIdsToLink(prev => prev.includes(value) ? prev.filter(id => id !== value) : [...prev, value]);
+    };
 
     const toggleSelectAll = () => {
         if (allSelected) {
@@ -151,70 +164,72 @@ export default function SupplierCatalogMatrixModal({
                                 )}
                             </div>
 
-                            {/* Available Products Grid */}
-                            <div className="border rounded-xl bg-background p-2 max-h-[180px] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                {availableRM.length === 0 ? (
-                                    <div className="col-span-2 text-center py-6 text-xs text-muted-foreground italic flex flex-col items-center justify-center gap-1">
-                                        <AlertCircle className="h-4 w-4 text-muted-foreground/40" />
-                                        <span>No unlinked raw materials match your search</span>
-                                    </div>
-                                ) : (
-                                    availableRM.map(rm => {
-                                        const isChecked = selectedProductIdsToLink.includes(String(rm.product_id));
-                                        const uomName = rm.unit_of_measurement?.unit_shortcut || rm.unit_of_measurement?.unit_name;
-                                        return (
-                                            <div
-                                                key={rm.product_id}
-                                                onClick={() => {
-                                                    const valStr = String(rm.product_id);
-                                                    if (isChecked) {
-                                                        setSelectedProductIdsToLink(prev => prev.filter(id => id !== valStr));
-                                                    } else {
-                                                        setSelectedProductIdsToLink(prev => [...prev, valStr]);
-                                                    }
-                                                }}
-                                                className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2 select-none ${
-                                                    isChecked
-                                                        ? "border-primary bg-primary/5 shadow-xs"
-                                                        : "border-border bg-card hover:bg-muted/40 hover:border-muted-foreground/30"
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-2.5 min-w-0">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isChecked}
-                                                        onChange={() => {}}
-                                                        className="rounded text-primary focus:ring-0 h-4 w-4 shrink-0"
-                                                    />
-                                                    <div className="min-w-0 space-y-0.5">
-                                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                                            {rm.product_code && (
-                                                                <span className="font-mono text-[9px] font-bold bg-muted px-1.5 py-0.5 rounded text-foreground border shrink-0">
-                                                                    {rm.product_code}
-                                                                </span>
-                                                            )}
-                                                            <span className="text-xs font-bold text-foreground truncate">
-                                                                {rm.product_name}
-                                                            </span>
-                                                        </div>
-                                                        {uomName && (
-                                                            <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                                                <span className="bg-primary/5 text-primary px-1.5 rounded font-semibold border border-primary/10">
-                                                                    {uomName}
-                                                                </span>
-                                                                {rm.cost_per_unit > 0 && (
-                                                                    <span className="font-mono text-[10px]">
-                                                                        ₱{Number(rm.cost_per_unit).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        )}
+                            {/* Available Products Table */}
+                            <div className="border rounded-xl bg-background max-h-[220px] overflow-auto">
+                                <table className="w-full min-w-[600px] text-left">
+                                    <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+                                        <tr className="border-b text-[10px] uppercase tracking-wider text-muted-foreground">
+                                            <th scope="col" className="w-12 px-3 py-2 font-bold">Select</th>
+                                            <th scope="col" className="w-32 px-3 py-2 font-bold">Product Code</th>
+                                            <th scope="col" className="px-3 py-2 font-bold">Catalog Item</th>
+                                            <th scope="col" className="w-20 px-3 py-2 font-bold">UOM</th>
+                                            <th scope="col" className="w-28 px-3 py-2 text-right font-bold">Unit Cost</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border/70">
+                                        {availableRM.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={5} className="text-center py-6 text-xs text-muted-foreground italic">
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        <AlertCircle className="h-4 w-4 text-muted-foreground/40" />
+                                                        <span>No unlinked raw materials match your search</span>
                                                     </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })
-                                )}
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            availableRM.map(rm => {
+                                                const isChecked = selectedProductIdsToLink.includes(String(rm.product_id));
+                                                const uomName = rm.unit_of_measurement?.unit_shortcut || rm.unit_of_measurement?.unit_name;
+                                                return (
+                                                    <tr
+                                                        key={rm.product_id}
+                                                        onClick={() => toggleProductSelection(rm.product_id)}
+                                                        aria-selected={isChecked}
+                                                        className={`cursor-pointer align-middle text-xs transition-colors ${
+                                                            isChecked ? "bg-primary/5" : "hover:bg-muted/40"
+                                                        }`}
+                                                    >
+                                                        <td className="px-3 py-2">
+                                                            <input
+                                                                id={`catalog-product-${rm.product_id}`}
+                                                                type="checkbox"
+                                                                checked={isChecked}
+                                                                onChange={() => toggleProductSelection(rm.product_id)}
+                                                                onClick={event => event.stopPropagation()}
+                                                                aria-label={`Select ${rm.product_name}`}
+                                                                className="rounded text-primary focus:ring-0 h-4 w-4"
+                                                            />
+                                                        </td>
+                                                        <td className="px-3 py-2 font-mono font-bold text-[10px] text-foreground break-all">
+                                                            {rm.product_code || "—"}
+                                                        </td>
+                                                        <td className="px-3 py-2 font-bold text-foreground whitespace-normal break-words">
+                                                            {rm.product_name}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-[10px] font-semibold text-primary">
+                                                            {uomName || "—"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-right font-mono text-[10px] text-foreground">
+                                                            {rm.cost_per_unit > 0
+                                                                ? `₱${Number(rm.cost_per_unit).toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                                                                : "—"}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
 
                             {/* Action bar */}
@@ -267,48 +282,55 @@ export default function SupplierCatalogMatrixModal({
                                     No raw materials currently associated with this vendor.
                                 </div>
                             ) : (
-                                <div className="grid gap-2.5 sm:grid-cols-2 max-h-[220px] overflow-y-auto pr-1">
-                                    {linkedProducts.filter(lp => {
-                                        if (!linkedFilterSearch.trim()) return true;
-                                        const q = linkedFilterSearch.toLowerCase().trim();
-                                        const code = lp.product_id?.product_code || "";
-                                        const name = lp.product_id?.product_name || "";
-                                        return code.toLowerCase().includes(q) || name.toLowerCase().includes(q);
-                                    }).map((lp: LinkedProduct) => {
-                                        const uom = lp.product_id?.unit_of_measurement?.unit_shortcut || lp.product_id?.unit_of_measurement?.unit_name;
-                                        return (
-                                            <div
-                                                key={lp.id}
-                                                className="border border-border/80 hover:border-primary/40 rounded-xl p-3 flex items-center justify-between bg-card hover:bg-muted/10 transition-all shadow-xs group border-l-4 border-l-primary/60"
-                                            >
-                                                <div className="space-y-1 min-w-0 pr-2">
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                        {lp.product_id?.product_code && (
-                                                            <span className="font-mono text-[9px] text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded font-bold uppercase shrink-0">
-                                                                {lp.product_id.product_code}
-                                                            </span>
-                                                        )}
-                                                        <span className="text-xs font-bold text-foreground truncate block">
-                                                            {lp.product_id?.product_name || "Unknown Product"}
-                                                        </span>
-                                                        {uom && (
-                                                            <span className="text-[10px] text-muted-foreground font-semibold bg-muted px-1.5 py-0.5 rounded border italic">
-                                                                {uom}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => onUnlinkProduct(lp.id)}
-                                                    disabled={unlinkingLinkId === lp.id}
-                                                    className="text-muted-foreground hover:text-red-600 p-1.5 rounded-lg hover:bg-red-500/10 transition-all cursor-pointer shrink-0"
-                                                    title="Unlink Product"
-                                                >
-                                                    {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
+                                <div className="border rounded-xl bg-background max-h-[220px] overflow-auto">
+                                    <table className="w-full min-w-[520px] text-left">
+                                        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+                                            <tr className="border-b text-[10px] uppercase tracking-wider text-muted-foreground">
+                                                <th scope="col" className="w-32 px-3 py-2 font-bold">Product Code</th>
+                                                <th scope="col" className="px-3 py-2 font-bold">Catalog Item</th>
+                                                <th scope="col" className="w-20 px-3 py-2 font-bold">UOM</th>
+                                                <th scope="col" className="w-20 px-3 py-2 text-right font-bold">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-border/70">
+                                            {filteredLinkedProducts.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={4} className="text-center py-6 text-xs text-muted-foreground italic">
+                                                        No linked raw materials match your search.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                filteredLinkedProducts.map((lp: LinkedProduct) => {
+                                                    const uom = lp.product_id?.unit_of_measurement?.unit_shortcut || lp.product_id?.unit_of_measurement?.unit_name;
+                                                    const productName = lp.product_id?.product_name || "Unknown Product";
+                                                    return (
+                                                        <tr key={lp.id} className="align-middle text-xs transition-colors hover:bg-muted/40">
+                                                            <td className="px-3 py-2 font-mono font-bold text-[10px] text-primary break-all">
+                                                                {lp.product_id?.product_code || "—"}
+                                                            </td>
+                                                            <td className="px-3 py-2 font-bold text-foreground whitespace-normal break-words">
+                                                                {productName}
+                                                            </td>
+                                                            <td className="px-3 py-2 text-[10px] font-semibold text-muted-foreground">
+                                                                {uom || "—"}
+                                                            </td>
+                                                            <td className="px-3 py-2 text-right">
+                                                                <button
+                                                                    onClick={() => onUnlinkProduct(lp.id)}
+                                                                    disabled={unlinkingLinkId === lp.id}
+                                                                    className="text-muted-foreground hover:text-red-600 p-1.5 rounded-lg hover:bg-red-500/10 transition-all cursor-pointer"
+                                                                    title="Unlink Product"
+                                                                    aria-label={`Unlink ${productName}`}
+                                                                >
+                                                                    {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             )}
                         </div>

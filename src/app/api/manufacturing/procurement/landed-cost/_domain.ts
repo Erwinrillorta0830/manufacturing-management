@@ -50,6 +50,7 @@ interface DirectusRecord {
 
 interface ReceivingRecord extends DirectusRecord {
     id?: number;
+    purchase_order_receiving_id?: unknown;
     purchase_order_product_id?: unknown;
     purchase_order_line_id?: unknown;
     product_id?: unknown;
@@ -133,6 +134,10 @@ function asPositiveId(value: unknown): number | null {
             ?? value
         : value);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function receivingRecordId(receiving: ReceivingRecord): number | null {
+    return asPositiveId(receiving.id ?? receiving.purchase_order_receiving_id ?? receiving.purchase_order_product_id);
 }
 
 function relationId(value: unknown, preferredKey: string): number | null {
@@ -451,6 +456,245 @@ export async function getLandedCostComputation(purchaseOrderId: number) {
     };
 }
 
+const AUDIT_TOLERANCE = 0.011;
+
+function withinAuditTolerance(actual: number, expected: number): boolean {
+    return Math.abs(actual - expected) < AUDIT_TOLERANCE;
+}
+
+function auditProductId(value: unknown): number | null {
+    return relationId(value, "product_id");
+}
+
+async function getActiveLandedCostSettings(): Promise<{ inventoryAccountId: number | null; varianceAccountId: number | null }> {
+    const rows = await listRows("manufacturing_landed_cost_settings", "filter[is_active][_eq]=1&limit=1");
+    const row = rows[0];
+    return {
+        inventoryAccountId: asPositiveId(row?.inventory_account_id),
+        varianceAccountId: asPositiveId(row?.rounding_variance_account_id)
+    };
+}
+
+export async function getLandedCostAudit(purchaseOrderId: number) {
+    const computation = await findComputation(purchaseOrderId);
+    if (!computation) {
+        return {
+            purchaseOrderId,
+            computationId: null,
+            auditStatus: "NOT_APPLICABLE" as const,
+            computation: null,
+            allocation: {
+                totalAllocatedFee: 0,
+                expectedFee: 0,
+                matchesTotal: false,
+                lines: []
+            },
+            valuation: {
+                rowCount: 0,
+                totalQuantity: 0,
+                totalDelta: 0,
+                matches: false,
+                rows: []
+            },
+            accountingVariance: {
+                required: false,
+                variance: 0,
+                balanced: false,
+                status: "NOT_APPLICABLE" as const,
+                entry: null,
+                lines: []
+            },
+            reasons: ["No landed-cost computation exists for this purchase order."]
+        };
+    }
+
+    const [allocationRows, valuationRows, journalEntries, settings] = await Promise.all([
+        listRows("purchase_order_landed_cost_allocations", `filter[computation_id][_eq]=${computation.id}&sort=id&limit=-1`),
+        listRows("purchase_order_inventory_valuation_ledger", `filter[computation_id][_eq]=${computation.id}&sort=id&limit=-1`),
+        listRows("purchase_order_landed_cost_journal_entries", `filter[computation_id][_eq]=${computation.id}&sort=-id&limit=-1`),
+        getActiveLandedCostSettings()
+    ]);
+
+    const productIds = Array.from(new Set(
+        valuationRows
+            .map(row => auditProductId(row.product_id))
+            .filter((id): id is number => id !== null)
+    ));
+    const productRows = productIds.length > 0
+        ? await listRows("products", `filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,cost_per_unit,estimated_unit_cost&limit=-1`)
+        : [];
+    const products = new Map<number, DirectusRecord>();
+    for (const product of productRows) {
+        const productId = auditProductId(product.product_id);
+        if (productId) products.set(productId, product);
+    }
+
+    const allocationLines = allocationRows.map(row => ({
+        id: asPositiveId(row.id),
+        purchaseOrderProductId: asPositiveId(row.purchase_order_product_id),
+        receivingLineId: asPositiveId(row.receiving_line_id),
+        productId: auditProductId(row.product_id),
+        productName: (() => {
+            const productId = auditProductId(row.product_id);
+            return productId ? String(products.get(productId)?.product_name || `Product #${productId}`) : "Unknown product";
+        })(),
+        categoryType: row.category_type ? String(row.category_type) : null,
+        receivedQuantity: asNumber(row.received_quantity),
+        baseUnitCostPhp: asNumber(row.base_unit_cost_php),
+        allocatedFee: asNumber(row.allocated_fee),
+        addedUnitCost: asNumber(row.added_unit_cost),
+        finalLandedUnitCost: asNumber(row.final_landed_unit_cost),
+        roundingVariance: asNumber(row.rounding_variance),
+        isRoundingRecipient: row.is_rounding_recipient === true || Number(row.is_rounding_recipient) === 1
+    }));
+    const expectedFee = asNumber(computation.total_landed_fee);
+    const totalAllocatedFee = roundMoney(allocationLines.reduce((sum, line) => sum + line.allocatedFee, 0));
+    const allocationMatches = allocationLines.length > 0 && withinAuditTolerance(totalAllocatedFee, expectedFee);
+
+    const valuationProductCounts = new Map<number, number>();
+    const valuationAuditRows = valuationRows.map(row => {
+        const productId = auditProductId(row.product_id);
+        if (productId) valuationProductCounts.set(productId, (valuationProductCounts.get(productId) || 0) + 1);
+        const quantity = asNumber(row.quantity);
+        const unitCostBefore = asNumber(row.unit_cost_before);
+        const unitCostAfter = asNumber(row.unit_cost_after);
+        const valuationDelta = asNumber(row.valuation_delta);
+        const expectedValuationDelta = roundMoney((unitCostAfter - unitCostBefore) * quantity);
+        const currentCost = productId && products.has(productId)
+            ? asNumber(products.get(productId)?.cost_per_unit)
+            : null;
+        return {
+            id: asPositiveId(row.id),
+            productId,
+            productName: productId ? String(products.get(productId)?.product_name || `Product #${productId}`) : "Unknown product",
+            quantity,
+            unitCostBefore,
+            unitCostAfter,
+            valuationDelta,
+            expectedValuationDelta,
+            currentProductCost: currentCost,
+            equationMatches: quantity > 0 && withinAuditTolerance(valuationDelta, expectedValuationDelta),
+            matchesProductCost: currentCost !== null && withinAuditTolerance(currentCost, unitCostAfter)
+        };
+    });
+    const expectedQuantity = allocationLines.reduce((sum, line) => sum + line.receivedQuantity, 0);
+    const totalQuantity = valuationAuditRows.reduce((sum, row) => sum + row.quantity, 0);
+    const totalDelta = roundMoney(valuationAuditRows.reduce((sum, row) => sum + row.valuationDelta, 0));
+    // The valuation ledger is the historical source of truth. Product master cost
+    // may legitimately change when a later PO is finalized, so that drift is
+    // reported separately instead of invalidating an older posting.
+    const valuationMatches = valuationAuditRows.length > 0
+        && withinAuditTolerance(totalQuantity, expectedQuantity)
+        && valuationAuditRows.every(row => row.equationMatches && row.productId !== null)
+        && Array.from(valuationProductCounts.values()).every(count => count === 1);
+    const masterCostDriftCount = valuationAuditRows.filter(row => row.currentProductCost !== null && !row.matchesProductCost).length;
+
+    const variance = asNumber(computation.rounding_variance);
+    const accountingRequired = Math.abs(variance) > 0.000001;
+    const selectedEntry = journalEntries[0];
+    const selectedEntryId = asPositiveId(selectedEntry?.id);
+    const journalLines = selectedEntryId
+        ? await listRows("purchase_order_landed_cost_journal_lines", `filter[entry_id][_eq]=${selectedEntryId}&sort=id&limit=-1`)
+        : [];
+    const accountingLines = journalLines.map(row => ({
+        id: asPositiveId(row.id),
+        accountId: asPositiveId(row.account_id),
+        lineCode: row.line_code ? String(row.line_code) : "",
+        debit: asNumber(row.debit),
+        credit: asNumber(row.credit),
+        remarks: row.remarks ? String(row.remarks) : ""
+    }));
+    const debitTotal = roundMoney(accountingLines.reduce((sum, line) => sum + line.debit, 0));
+    const creditTotal = roundMoney(accountingLines.reduce((sum, line) => sum + line.credit, 0));
+    const expectedVarianceAmount = roundMoney(Math.abs(variance));
+    const accountingBalanced = !accountingRequired
+        ? journalEntries.length === 0
+        : journalEntries.length === 1
+            && String(selectedEntry?.status || "").toUpperCase() === "POSTED"
+            && accountingLines.length === 2
+            && withinAuditTolerance(asNumber(selectedEntry?.total_debit), expectedVarianceAmount)
+            && withinAuditTolerance(asNumber(selectedEntry?.total_credit), expectedVarianceAmount)
+            && withinAuditTolerance(debitTotal, creditTotal)
+            && withinAuditTolerance(debitTotal, expectedVarianceAmount)
+            && accountingLines.every(line => line.accountId === settings.inventoryAccountId || line.accountId === settings.varianceAccountId)
+            && accountingLines.some(line => line.accountId === settings.inventoryAccountId)
+            && accountingLines.some(line => line.accountId === settings.varianceAccountId);
+    const accountingStatus = !accountingRequired && journalEntries.length === 0
+        ? "NOT_APPLICABLE" as const
+        : accountingBalanced
+            ? "POSTED" as const
+            : "NOT_VERIFIED" as const;
+
+    const reasons: string[] = [];
+    if (computation.status !== "FINALIZED") reasons.push(`Computation status is ${computation.status}, not FINALIZED.`);
+    if (!allocationMatches) reasons.push("Persisted landed-cost allocations do not reconcile to the computation total fee.");
+    if (!valuationMatches) reasons.push("Inventory valuation rows do not reconcile to the received allocation quantities and current product costs.");
+    if (accountingStatus === "NOT_VERIFIED") {
+        reasons.push(accountingRequired
+            ? "The required rounding-variance journal is missing, unbalanced, or does not match the configured accounts."
+            : "A rounding-variance journal exists even though the computation has no material variance.");
+    }
+
+    const auditStatus = computation.status === "FINALIZED"
+        && allocationMatches
+        && valuationMatches
+        && accountingStatus !== "NOT_VERIFIED"
+        ? "VERIFIED" as const
+        : "NOT_VERIFIED" as const;
+
+    return {
+        purchaseOrderId,
+        computationId: computation.id,
+        auditStatus,
+        computation: {
+            id: computation.id,
+            purchaseOrderId: computation.purchase_order_id,
+            allocationRule: computation.allocation_rule,
+            status: computation.status,
+            totalLandedFee: expectedFee,
+            roundingVariance: variance,
+            finalizationKey: computation.finalization_key ? String(computation.finalization_key) : null,
+            finalizedAt: computation.finalized_at ? String(computation.finalized_at) : null
+        },
+        allocation: {
+            totalAllocatedFee,
+            expectedFee,
+            matchesTotal: allocationMatches,
+            lines: allocationLines
+        },
+        valuation: {
+            rowCount: valuationAuditRows.length,
+            totalQuantity,
+            expectedQuantity,
+            totalDelta,
+            matches: valuationMatches,
+            masterCostDriftCount,
+            rows: valuationAuditRows
+        },
+        accountingVariance: {
+            required: accountingRequired,
+            variance,
+            expectedAmount: expectedVarianceAmount,
+            debitTotal,
+            creditTotal,
+            balanced: accountingBalanced,
+            status: accountingStatus,
+            entry: selectedEntryId ? {
+                id: selectedEntryId,
+                entryNo: selectedEntry?.entry_no ? String(selectedEntry.entry_no) : null,
+                status: selectedEntry?.status ? String(selectedEntry.status) : null,
+                totalDebit: asNumber(selectedEntry?.total_debit),
+                totalCredit: asNumber(selectedEntry?.total_credit),
+                postingDate: selectedEntry?.posting_date ? String(selectedEntry.posting_date) : null
+            } : null,
+            lines: accountingLines,
+            configuredInventoryAccountId: settings.inventoryAccountId,
+            configuredVarianceAccountId: settings.varianceAccountId
+        },
+        reasons
+    };
+}
+
 export async function saveLandedCostDraft(input: {
     purchaseOrderId: number;
     allocationRule: unknown;
@@ -704,7 +948,7 @@ export async function finalizeLandedCost(input: {
             const source = snapshot.lines.find(candidate => candidate.key === line.key);
             if (!source) continue;
             for (const receiving of source.receivingRows) {
-                const receivingId = asPositiveId(receiving.id);
+                const receivingId = receivingRecordId(receiving);
                 if (!receivingId) continue;
                 receivingBefore.set(receivingId, {
                     allocated_expense_php: receiving.allocated_expense_php,

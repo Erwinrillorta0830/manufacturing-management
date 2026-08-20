@@ -369,6 +369,17 @@ export interface DirectusProduct {
     density_factor?: number | null;
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;
+    product_type?: number | string | { id?: number | string; name?: string; default_purchase_price_type_id?: unknown } | null;
+    product_brand?: number | { brand_id?: number; id?: number } | null;
+    product_category?: number | { category_id?: number; id?: number; category_name?: string } | null;
+    product_class?: number | { class_id?: number; id?: number } | null;
+    product_segment?: number | { segment_id?: number; id?: number } | null;
+    product_section?: number | { section_id?: number; id?: number } | null;
+    item_group_id?: number | { item_group_id?: number; id?: number; group_code?: string; group_name?: string } | null;
+    tax_rate_id?: number | { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string } | null;
+    regulatory_code?: string | null;
+    regulatory_notes?: string | null;
+    price_control?: { priceTypeId: number; priceTypeName: string } | null;
 }
 
 export interface DirectusBOM {

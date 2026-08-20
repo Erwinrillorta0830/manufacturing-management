@@ -10,6 +10,7 @@ import {
     History,
     Ban,
     Loader2,
+    Printer,
     Search,
     ShieldCheck,
     X
@@ -18,6 +19,7 @@ import { toast } from "sonner";
 import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
+import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
 
 type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
@@ -73,6 +75,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
     const [search, setSearch] = useState("");
     const [remarks, setRemarks] = useState("");
     const [submitting, setSubmitting] = useState<"approve" | "reject" | "cancel" | null>(null);
+    const [printLoading, setPrintLoading] = useState(false);
     const visibleQueueTabs = useMemo(() => queueTabs, []);
 
     useEffect(() => {
@@ -182,6 +185,31 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
 
     const actionable = approvalDetail?.stage === stage;
 
+    const handlePrintFinanceDecision = async () => {
+        if (!selectedShipment || !approvalDetail) return;
+        const decision = approvalDetail.history
+            .slice()
+            .reverse()
+            .find(entry => entry.approval_stage === "Finance" && ["FinanceApproved", "Rejected", "Cancelled"].includes(entry.action));
+        if (!decision) {
+            toast.error("No Finance decision is available to print.");
+            return;
+        }
+        try {
+            setPrintLoading(true);
+            await downloadPurchaseOrderPrintable({
+                purchaseOrderId: selectedShipment.shipment_id,
+                documentType: "FINANCE_DECISION",
+                historyId: decision.history_id
+            });
+            toast.success("Finance decision printable downloaded.");
+        } catch (error) {
+            toast.error((error as Error).message || "Unable to generate the Finance decision printable.");
+        } finally {
+            setPrintLoading(false);
+        }
+    };
+
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -283,6 +311,15 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                     <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-bold text-primary">
                                         <ShieldCheck className="h-4 w-4" /> {approvalDetail.stage}
                                     </div>
+                                    <button
+                                        type="button"
+                                        onClick={handlePrintFinanceDecision}
+                                        disabled={printLoading}
+                                        className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                                        {printLoading ? "Preparing..." : "Print decision"}
+                                    </button>
                                 </div>
                             </div>
 

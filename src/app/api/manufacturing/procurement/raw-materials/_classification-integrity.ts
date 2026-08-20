@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { resolveParentSharedAttributes } from "@/modules/manufacturing-management/procurement/raw-materials/parent-inheritance";
 
 export const RAW_MATERIAL_PRODUCT_TYPE = 389;
 export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
@@ -6,7 +7,18 @@ export const PACKAGING_MATERIAL_PRODUCT_TYPE = 390;
 type ProductRecord = {
     product_id?: unknown;
     product_type?: unknown;
+    unit_of_measurement?: unknown;
+    product_brand?: unknown;
+    product_category?: unknown;
+    product_class?: unknown;
+    product_segment?: unknown;
+    product_section?: unknown;
+    item_group_id?: unknown;
+    tax_rate_id?: unknown;
+    regulatory_code?: unknown;
+    regulatory_notes?: unknown;
     parent_id?: unknown;
+    isActive?: unknown;
 };
 
 type ClassificationOperation = "create" | "update";
@@ -60,6 +72,27 @@ function parentIdOf(product: ProductRecord): number | null {
     return asPositiveId(product.parent_id);
 }
 
+function unitIdOf(value: unknown): number | null {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        return unitIdOf(record.unit_id ?? record.id ?? record.value);
+    }
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function isActiveProduct(product: ProductRecord): boolean {
+    const value = product.isActive;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        return normalized !== "" && normalized !== "0" && normalized !== "false";
+    }
+    return false;
+}
+
 function productTypeOf(product: ProductRecord, label: string): number {
     const productType = parseClassification(product.product_type, label);
     if (!productType) {
@@ -75,7 +108,7 @@ function productTypeOf(product: ProductRecord, label: string): number {
 
 async function fetchProduct(productId: number): Promise<ProductRecord> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,parent_id`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id,product_brand,product_category,product_class,product_segment,product_section,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,parent_id,isActive`,
         { headers, cache: "no-store" }
     );
     if (response.status === 404) {
@@ -94,7 +127,7 @@ async function fetchProduct(productId: number): Promise<ProductRecord> {
 async function fetchChildren(parentId: number): Promise<ProductRecord[]> {
     const params = new URLSearchParams({
         "filter[parent_id][_eq]": String(parentId),
-        fields: "product_id,product_type,parent_id",
+        fields: "product_id,product_type,parent_id,isActive",
         limit: "-1"
     });
     const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
@@ -121,6 +154,39 @@ function ensureParentIsRoot(parent: ProductRecord, parentId: number): void {
     }
 }
 
+function ensureVariantsUseOuterUom(
+    baseProduct: ProductRecord | null,
+    productDetails: Record<string, unknown>,
+    packagingVariants: Record<string, unknown>[],
+    productId?: number
+): void {
+    if (packagingVariants.length === 0) return;
+
+    const baseUomId = unitIdOf(baseProduct?.unit_of_measurement ?? productDetails.unit_of_measurement);
+    if (!baseUomId) {
+        throw new RawMaterialClassificationError(
+            400,
+            "PARENT_UOM_REQUIRED",
+            "A valid Primary UOM is required before adding packaging variants.",
+            { productId }
+        );
+    }
+
+    const conflictingVariant = packagingVariants.find(variant => unitIdOf(variant.unit_of_measurement) === baseUomId);
+    if (!conflictingVariant) return;
+
+    throw new RawMaterialClassificationError(
+        409,
+        "PARENT_BASE_UOM_CONFLICT",
+        "A family variant cannot use the parent product's Primary UOM. Choose a different Outer Package UOM.",
+        {
+            productId: baseProduct ? productIdOf(baseProduct) : productId,
+            baseUomId,
+            variantProductId: asPositiveId(conflictingVariant.product_id)
+        }
+    );
+}
+
 export async function enforceClassificationIntegrity({
     operation,
     productId,
@@ -141,6 +207,17 @@ export async function enforceClassificationIntegrity({
 
     const hasParentField = hasField(productDetails, "parent_id");
     const requestedParentId = hasParentField ? asPositiveId(productDetails.parent_id) : currentParentId;
+
+    const activeChildren = existingChildren.filter(isActiveProduct);
+    if (currentProduct && activeChildren.length > 0 && hasParentField && requestedParentId !== currentParentId) {
+        throw new RawMaterialClassificationError(
+            409,
+            "PARENT_RELATION_LOCKED",
+            "Parent selection cannot be changed while active child variants exist.",
+            { productId, parentId: currentParentId, activeChildCount: activeChildren.length }
+        );
+    }
+
     if (requestedParentId && productId && requestedParentId === productId) {
         throw conflict("A product cannot be its own parent.", { productId, parentId: requestedParentId });
     }
@@ -230,11 +307,31 @@ export async function enforceClassificationIntegrity({
             );
         }
 
-        return { ...variant, product_type: authoritativeProductType };
+        const sharedAttributes = requestedParent
+            ? resolveParentSharedAttributes(requestedParent)
+            : resolveParentSharedAttributes({
+                ...productDetails,
+                product_type: authoritativeProductType
+            });
+
+        return {
+            ...variant,
+            ...sharedAttributes,
+            product_type: authoritativeProductType
+        };
     });
 
+    ensureVariantsUseOuterUom(currentProduct, productDetails, normalizedVariants, productId);
+
+    const normalizedProductDetails = hasParentField
+        ? { ...productDetails, parent_id: requestedParentId }
+        : { ...productDetails };
+    if (requestedParent) {
+        Object.assign(normalizedProductDetails, resolveParentSharedAttributes(requestedParent));
+    }
+
     return {
-        productDetails: { ...productDetails, product_type: authoritativeProductType },
+        productDetails: { ...normalizedProductDetails, product_type: authoritativeProductType },
         packagingVariants: normalizedVariants
     };
 }

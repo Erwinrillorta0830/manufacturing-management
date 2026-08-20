@@ -3,8 +3,11 @@ import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
+import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
+import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
 import ProductQaChecklist from "./ProductQaChecklist";
+import ForceReceivedDialog from "./ForceReceivedDialog";
 
 interface ShipmentInspectionFormProps {
     selectedShipment: Shipment;
@@ -39,6 +42,8 @@ interface ShipmentInspectionFormProps {
     handleSubmitInspection: (e: React.FormEvent) => void;
     onReviewPreview: () => void;
     onCancel: () => void;
+    onForceReceived?: (reason: string) => Promise<void>;
+    forceReceivedSubmitting?: boolean;
 }
 
 interface SearchableStorageLotSelectProps {
@@ -201,8 +206,24 @@ export default function ShipmentInspectionForm({
     handleUpdateQaReading,
     handleSubmitInspection,
     onReviewPreview,
-    onCancel
+    onCancel,
+    onForceReceived,
+    forceReceivedSubmitting = false
 }: ShipmentInspectionFormProps) {
+    const [forceReceivedOpen, setForceReceivedOpen] = React.useState(false);
+    const forceClosed = Boolean(selectedShipment.isForceReceived || isForceReceived(selectedShipment.forceReceivedAt));
+    const canForceReceive = Boolean(onForceReceived) && canForceReceivePurchaseOrder({
+        inventoryStatus: selectedShipment.inventory_status ?? (selectedShipment.status === "Partially Received" ? INVENTORY_STATUS.PARTIALLY_RECEIVED : null),
+        isForceReceived: forceClosed,
+        isReplacement: Boolean(isReplacement)
+    });
+    const forceReceivedStamp = selectedShipment.forceReceivedAt
+        ? new Intl.DateTimeFormat("en-PH", {
+            dateStyle: "medium",
+            timeStyle: "short",
+            timeZone: "Asia/Manila"
+        }).format(new Date(selectedShipment.forceReceivedAt))
+        : null;
     const totalOrderedQty = React.useMemo(() => {
         return lineItems.reduce((sum, l) => sum + Number(l.quantity_ordered || 0), 0);
     }, [lineItems]);
@@ -376,6 +397,18 @@ export default function ShipmentInspectionForm({
                             {readOnly && (
                                 <span className="text-[9px] bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
                                     Received - View Only
+                                </span>
+                            )}
+                            {forceClosed && (
+                                <span className="text-[9px] bg-violet-500/10 text-violet-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
+                                    Force Received
+                                </span>
+                            )}
+                            {forceClosed && selectedShipment.forceReceivedReason && (
+                                <span className="text-[9px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-extrabold max-w-[280px] truncate" title={selectedShipment.forceReceivedReason}>
+                                    Reason: {selectedShipment.forceReceivedReason}
+                                    {selectedShipment.forceReceivedByName ? ` · ${selectedShipment.forceReceivedByName}` : selectedShipment.forceReceivedBy ? ` · User ${selectedShipment.forceReceivedBy}` : ""}
+                                    {forceReceivedStamp ? ` · ${forceReceivedStamp}` : ""}
                                 </span>
                             )}
                             {(readOnly || selectedShipment.status === "Received") && Number(selectedShipment.payment_status) === 2 && (
@@ -1144,6 +1177,16 @@ export default function ShipmentInspectionForm({
                 >
                     {readOnly ? "Back to Queue" : "Cancel Inspection"}
                 </button>
+                {canForceReceive && (
+                    <button
+                        type="button"
+                        onClick={() => setForceReceivedOpen(true)}
+                        disabled={forceReceivedSubmitting || loadingLines}
+                        className="px-5 py-2.5 border border-violet-300 text-violet-700 rounded-xl text-xs font-bold h-11 flex items-center justify-center cursor-pointer hover:bg-violet-500/10 disabled:opacity-60"
+                    >
+                        Force Received
+                    </button>
+                )}
                 {!readOnly && (
                     <button
                         type={hasPreview ? "button" : "submit"}
@@ -1156,6 +1199,19 @@ export default function ShipmentInspectionForm({
                 )}
                 </div>
             </div>
+            {onForceReceived && (
+                <ForceReceivedDialog
+                    open={forceReceivedOpen}
+                    shipment={selectedShipment}
+                    lineItems={lineItems}
+                    submitting={forceReceivedSubmitting}
+                    onCancel={() => setForceReceivedOpen(false)}
+                    onConfirm={async reason => {
+                        await onForceReceived(reason);
+                        setForceReceivedOpen(false);
+                    }}
+                />
+            )}
         </form>
     );
 }

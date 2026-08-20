@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { Lot, DirectusLot } from "@/modules/manufacturing-management/lot-management/types";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { Lot } from "@/modules/manufacturing-management/lot-management/types";
+ 
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,24 +40,23 @@ export async function GET() {
     // Main fetch
     try {
         const fields = [
-            "lot_id",
-            "lot_name",
+            "*",
             "inventory_type_id.id",
-            "inventory_type_id.name",
-            "max_batch_capacity",
-            "created_at",
-            "updated_at",
-            "created_by",
-            "updated_by"
+            "inventory_type_id.name"
         ].join(",");
 
-        const [res, usersRes] = await Promise.all([
+        const timestamp = Date.now();
+        const [res, usersRes, unitsRes] = await Promise.all([
             fetch(
-                `${DIRECTUS_URL}/items/lots?limit=-1&sort=-lot_id&fields=${fields}`,
+                `${DIRECTUS_URL}/items/lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ),
             fetch(
-                `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`,
+                `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`,
+                { headers, cache: "no-store" }
+            ).catch(() => null),
+            fetch(
+                `${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut,sku_code&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ).catch(() => null)
         ]);
@@ -67,7 +66,7 @@ export async function GET() {
         }
 
         const json = await res.json();
-        const rawLots: DirectusLot[] = json.data || [];
+        const rawLots: Record<string, unknown>[] = json.data || [];
 
         let usersList: { user_id: number; user_fname?: string; user_lname?: string }[] = [];
         if (usersRes && usersRes.ok) {
@@ -79,22 +78,58 @@ export async function GET() {
             }
         }
 
+        let unitsList: { unit_id: number; unit_name?: string; unit_shortcut?: string }[] = [];
+        if (unitsRes && unitsRes.ok) {
+            try {
+                const unitsJson = await unitsRes.json();
+                unitsList = unitsJson.data || [];
+            } catch (err) {
+                console.error("Error parsing units in GET lots:", err);
+            }
+        }
+
         const mappedLots: Lot[] = rawLots.map((row) => {
             let inventoryTypeId = 0;
             let inventoryTypeName = "Unknown";
 
-            if (row.inventory_type_id && typeof row.inventory_type_id === "object") {
-                inventoryTypeId = row.inventory_type_id.id;
-                inventoryTypeName = row.inventory_type_id.name;
-            } else if (typeof row.inventory_type_id === "number") {
-                inventoryTypeId = row.inventory_type_id;
+            const invType = row.inventory_type_id as { id?: number; name?: string } | number | null;
+            if (invType && typeof invType === "object") {
+                inventoryTypeId = Number(invType.id ?? 0);
+                inventoryTypeName = invType.name || "Unknown";
+            } else if (typeof invType === "number") {
+                inventoryTypeId = invType;
+            }
+
+            let uomId: number | null = null;
+            let uomName = "";
+            let uomShortcut = "";
+
+            const rawUnit = row.unit_id !== undefined && row.unit_id !== null ? row.unit_id : row.uom_id;
+            if (rawUnit && typeof rawUnit === "object") {
+                const obj = rawUnit as { unit_id?: number; id?: number; unit_name?: string; unit_shortcut?: string };
+                uomId = obj.unit_id ?? obj.id ?? null;
+                uomName = obj.unit_name || "";
+                uomShortcut = obj.unit_shortcut || obj.unit_name || "";
+            } else if (rawUnit !== null && rawUnit !== undefined && rawUnit !== "") {
+                const num = Number(rawUnit);
+                if (!isNaN(num)) uomId = num;
+            }
+
+            // Always cross-reference with unitsList to guarantee resolved name/shortcut
+            if (uomId !== null) {
+                const matchedUnit = unitsList.find((u) => Number(u.unit_id) === Number(uomId));
+                if (matchedUnit) {
+                    uomName = matchedUnit.unit_name || uomName;
+                    uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || uomShortcut;
+                }
             }
 
             let createdBy = "System";
             if (row.created_by) {
-                const userIdNum = typeof row.created_by === "object" && row.created_by !== null
-                    ? row.created_by.user_id
-                    : Number(row.created_by);
+                const userObj = row.created_by as { user_id?: number } | number;
+                const userIdNum = typeof userObj === "object" && userObj !== null
+                    ? userObj.user_id
+                    : Number(userObj);
                 const matchedUser = usersList.find((u) => Number(u.user_id) === Number(userIdNum));
                 if (matchedUser) {
                     createdBy = [matchedUser.user_fname, matchedUser.user_lname].filter(Boolean).join(" ") || `User #${userIdNum}`;
@@ -105,9 +140,10 @@ export async function GET() {
 
             let updatedBy = "System";
             if (row.updated_by) {
-                const userIdNum = typeof row.updated_by === "object" && row.updated_by !== null
-                    ? row.updated_by.user_id
-                    : Number(row.updated_by);
+                const userObj = row.updated_by as { user_id?: number } | number;
+                const userIdNum = typeof userObj === "object" && userObj !== null
+                    ? userObj.user_id
+                    : Number(userObj);
                 const matchedUser = usersList.find((u) => Number(u.user_id) === Number(userIdNum));
                 if (matchedUser) {
                     updatedBy = [matchedUser.user_fname, matchedUser.user_lname].filter(Boolean).join(" ") || `User #${userIdNum}`;
@@ -117,13 +153,16 @@ export async function GET() {
             }
 
             return {
-                lotId: row.lot_id,
-                lotName: row.lot_name,
+                lotId: Number(row.lot_id),
+                lotName: String(row.lot_name || ""),
                 inventoryTypeId,
                 inventoryTypeName,
-                maxBatchCapacity: row.max_batch_capacity,
-                createdAt: row.created_at,
-                updatedAt: row.updated_at,
+                uomId,
+                uomName,
+                uomShortcut,
+                maxBatchCapacity: Number(row.max_batch_capacity || 0),
+                createdAt: String(row.created_at || ""),
+                updatedAt: String(row.updated_at || ""),
                 createdBy,
                 updatedBy
             };
@@ -143,6 +182,7 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const { lot_name, inventory_type_id, max_batch_capacity } = body;
+        const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
 
         if (!lot_name || typeof lot_name !== "string" || !lot_name.trim()) {
             return NextResponse.json(
@@ -205,22 +245,43 @@ export async function POST(request: Request) {
             }
         }
 
-        const manilaIsoString = await getISOStringInConfiguredTimezone();
+        const utcIsoString = new Date().toISOString();
 
-        const res = await fetch(`${DIRECTUS_URL}/items/lots`, {
+        const postBody: Record<string, unknown> = {
+            lot_name: lot_name.trim(),
+            inventory_type_id,
+            max_batch_capacity,
+            created_by: userId ? Number(userId) : 24, // Fallback to seed user ID 24 if no active token
+            created_at: utcIsoString,
+            updated_at: utcIsoString
+        };
+
+        if (rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "") {
+            postBody.unit_id = Number(rawUnitId);
+        }
+
+        let res = await fetch(`${DIRECTUS_URL}/items/lots`, {
             method: "POST",
             headers,
-            body: JSON.stringify({
-                lot_name: lot_name.trim(),
-                inventory_type_id,
-                max_batch_capacity,
-                created_by: userId ? Number(userId) : 24, // Fallback to seed user ID 24 if no active token
-                created_at: manilaIsoString,
-                updated_at: manilaIsoString
-            })
+            body: JSON.stringify(postBody)
         });
 
-        if (!res.ok) {
+        // If Directus fails because unit_id is named uom_id in schema, retry with uom_id
+        if (!res.ok && postBody.unit_id !== undefined) {
+            const errTxt = await res.text();
+            if (errTxt.includes("unit_id")) {
+                postBody.uom_id = postBody.unit_id;
+                delete postBody.unit_id;
+                res = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(postBody)
+                });
+            }
+            if (!res.ok) {
+                throw new Error(`Directus failed to create lot: ${res.status} - ${errTxt}`);
+            }
+        } else if (!res.ok) {
             const errTxt = await res.text();
             throw new Error(`Directus failed to create lot: ${res.status} - ${errTxt}`);
         }
@@ -237,4 +298,5 @@ export async function POST(request: Request) {
         );
     }
 }
+
 

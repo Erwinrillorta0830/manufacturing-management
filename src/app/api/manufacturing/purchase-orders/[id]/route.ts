@@ -20,7 +20,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         await requirePurchaseOrderModuleAccess({ modulePaths: Object.values(PURCHASE_ORDER_MODULE_PATHS) });
         const id = idFrom((await context.params).id);
         if (!id) return NextResponse.json({ error: "Invalid purchase-order ID." }, { status: 400 });
-        return NextResponse.json({ data: await fetchShipmentLineItems(id) });
+        // QA Receiving must be able to inspect a PO even when packaging master data
+        // is incomplete. Landed-cost preview/finalization keeps the strict check.
+        return NextResponse.json({
+            data: await fetchShipmentLineItems(id, { requireCompletePackagingWeight: false })
+        });
     } catch (error) {
         return NextResponse.json({ error: (error as Error).message || "Failed to load purchase-order details." }, {
             status: error instanceof PurchaseOrderAuthorizationError || error instanceof ProductCategoryTypeValidationError ? error.status : 500

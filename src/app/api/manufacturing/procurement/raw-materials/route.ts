@@ -21,7 +21,9 @@ import {
 } from "./_classification-integrity";
 import {
     ProductWeightValidationError,
-    resolveProductWeightBreakdown
+    isPackagingMaterialProductType,
+    resolveProductWeightBreakdown,
+    validateProductWeightForProductType
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
 
@@ -63,12 +65,7 @@ function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | un
 }
 
 function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unknown> {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa"));
-}
-
-function hasWeightComponentValue(value: Record<string, unknown>): boolean {
-    return [value.net_weight, value.outer_carton_weight, value.pallet_weight]
-        .some(hasProvidedValue);
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa" && key !== "price_control"));
 }
 
 function buildWeightPayload(
@@ -159,40 +156,14 @@ function validateMeasurementFields(productDetails: Record<string, unknown>, requ
         }
     }
 
-    const isPackagingMaterial = Number(productDetails.product_type) === 390;
-    const hasWeight = hasProvidedValue(productDetails.weight);
-    const hasWeightUnit = hasProvidedValue(productDetails.weight_unit_id);
-    const hasWeightComponents = hasWeightComponentValue(productDetails);
-
-    if (isPackagingMaterial) {
-        try {
-            resolveProductWeightBreakdown(productDetails, { requireComplete: true });
-        } catch (error) {
-            return weightValidationMessage(error);
-        }
-    } else if (hasWeightComponents) {
-        try {
-            resolveProductWeightBreakdown(productDetails, { requireComplete: true });
-        } catch (error) {
-            return weightValidationMessage(error);
-        }
-    } else if (hasWeight || hasWeightUnit) {
-        if (!hasWeight || !hasWeightUnit) {
-            return "Gross weight and weight unit must be provided together when supplied.";
-        }
-        if (!isPositiveNumber(productDetails.weight)) {
-            return "Gross weight must be greater than 0 when supplied.";
-        }
-        if (!isPositiveNumber(productDetails.weight_unit_id)) {
-            return "Weight unit must be valid when supplied.";
-        }
-    }
-
-    return null;
+    return validateProductWeightForProductType(productDetails, productDetails.product_type);
 }
 
-function validatePackagingVariants(packagingVariants: unknown, requireWeightComponents: boolean): string | null {
+function validatePackagingVariants(packagingVariants: unknown, productType: unknown): string | null {
     if (!Array.isArray(packagingVariants) || packagingVariants.length === 0) return null;
+
+    const requireWeightComponents = isPackagingMaterialProductType(productType);
+    let weightValidationError: string | null = null;
 
     const hasInvalidVariant = packagingVariants.some((variant) => {
         if (!variant || typeof variant !== "object") return true;
@@ -202,19 +173,17 @@ function validatePackagingVariants(packagingVariants: unknown, requireWeightComp
             !isPositiveNumber(item.density_factor);
         if (invalidMeasurements) return true;
 
-        try {
-            resolveProductWeightBreakdown(item, { requireComplete: requireWeightComponents });
-            return requireWeightComponents && !isPositiveNumber(item.weight_unit_id);
-        } catch {
-            return true;
-        }
+        weightValidationError = validateProductWeightForProductType(item, productType);
+        return Boolean(weightValidationError);
     });
 
     return hasInvalidVariant
-        ? requireWeightComponents
+        ? !requireWeightComponents && weightValidationError
+            ? `Variant weight: ${weightValidationError}`
+            : requireWeightComponents
             ? "Packaging variants require valid UOM, conversion count, density, net weight, outer carton weight, pallet weight, and weight unit values."
             : "Variants require valid UOM, conversion count, and any supplied weight components must be complete."
-        : null;
+            : null;
 }
 
 type ResolvedPackagingVariant = {
@@ -319,8 +288,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const isPackagingMaterial = Number(productDetails.product_type) === 390;
-        const variantsError = validatePackagingVariants(classifiedVariants, isPackagingMaterial);
+        const isPackagingMaterial = isPackagingMaterialProductType(productDetails.product_type);
+        const variantsError = validatePackagingVariants(classifiedVariants, productDetails.product_type);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
@@ -381,6 +350,10 @@ export async function POST(request: Request) {
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
+            item_group_id: productDetails.item_group_id !== undefined ? productDetails.item_group_id : null,
+            tax_rate_id: productDetails.tax_rate_id !== undefined ? productDetails.tax_rate_id : null,
+            regulatory_code: productDetails.regulatory_code !== undefined ? productDetails.regulatory_code : null,
+            regulatory_notes: productDetails.regulatory_notes !== undefined ? productDetails.regulatory_notes : null,
             isActive: normalizeActiveFlag(productDetails.isActive),
             status: "Approved",
             item_type: "regular", // Must be regular due to DB enum constraint
@@ -440,6 +413,10 @@ export async function POST(request: Request) {
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
                         product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
                         product_section: variant.product_section !== undefined ? variant.product_section : null,
+                        item_group_id: variant.item_group_id !== undefined ? variant.item_group_id : null,
+                        tax_rate_id: variant.tax_rate_id !== undefined ? variant.tax_rate_id : null,
+                        regulatory_code: variant.regulatory_code !== undefined ? variant.regulatory_code : null,
+                        regulatory_notes: variant.regulatory_notes !== undefined ? variant.regulatory_notes : null,
                         parent_id: productId,
                         isActive: normalizeActiveFlag(variant.isActive),
                         status: "Approved",
@@ -584,8 +561,8 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: measurementError }, { status: 400 });
         }
 
-        const isPackagingMaterial = Number(effectiveWeightDetails.product_type) === 390;
-        const variantsError = validatePackagingVariants(classifiedVariants, isPackagingMaterial);
+        const isPackagingMaterial = isPackagingMaterialProductType(effectiveWeightDetails.product_type);
+        const variantsError = validatePackagingVariants(classifiedVariants, effectiveWeightDetails.product_type);
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
@@ -651,6 +628,10 @@ export async function PATCH(request: Request) {
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
             product_segment: productDetails.product_segment !== undefined ? productDetails.product_segment : null,
             product_section: productDetails.product_section !== undefined ? productDetails.product_section : null,
+            item_group_id: productDetails.item_group_id !== undefined ? productDetails.item_group_id : null,
+            tax_rate_id: productDetails.tax_rate_id !== undefined ? productDetails.tax_rate_id : null,
+            regulatory_code: productDetails.regulatory_code !== undefined ? productDetails.regulatory_code : null,
+            regulatory_notes: productDetails.regulatory_notes !== undefined ? productDetails.regulatory_notes : null,
             ...(hasProvidedActiveFlag(productDetails.isActive) ? { isActive: normalizeActiveFlag(productDetails.isActive) } : {}),
             ...auditFields,
         };
@@ -668,7 +649,8 @@ export async function PATCH(request: Request) {
 
         await syncProductQaSpecifications(Number(productId), purchaseQa);
 
-        // If cascadeToChildren option is selected, sync category, brand, and density down to existing family children
+        // If cascadeToChildren option is selected, sync shared parent metadata only.
+        // Child UOM, density, weights, and weight units remain child-specific.
         if (productDetails.cascadeToChildren) {
             try {
                 const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
@@ -677,7 +659,13 @@ export async function PATCH(request: Request) {
                     const cascadeFields: Record<string, unknown> = {};
                     if (productDetails.product_brand !== undefined) cascadeFields.product_brand = productDetails.product_brand;
                     if (productDetails.product_category !== undefined) cascadeFields.product_category = productDetails.product_category;
-                    if (productDetails.density_factor !== undefined) cascadeFields.density_factor = productDetails.density_factor;
+                    if (productDetails.product_class !== undefined) cascadeFields.product_class = productDetails.product_class;
+                    if (productDetails.product_segment !== undefined) cascadeFields.product_segment = productDetails.product_segment;
+                    if (productDetails.product_section !== undefined) cascadeFields.product_section = productDetails.product_section;
+                    if (productDetails.item_group_id !== undefined) cascadeFields.item_group_id = productDetails.item_group_id;
+                    if (productDetails.tax_rate_id !== undefined) cascadeFields.tax_rate_id = productDetails.tax_rate_id;
+                    if (productDetails.regulatory_code !== undefined) cascadeFields.regulatory_code = productDetails.regulatory_code;
+                    if (productDetails.regulatory_notes !== undefined) cascadeFields.regulatory_notes = productDetails.regulatory_notes;
 
                     if (Object.keys(cascadeFields).length > 0) {
                         const cascadePayload = { ...cascadeFields, ...auditFields };
@@ -707,11 +695,15 @@ export async function PATCH(request: Request) {
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
                         ...variantWeightPayload,
-                        product_brand: variant.product_brand !== undefined ? variant.product_brand : (productDetails.product_brand !== undefined ? productDetails.product_brand : null),
-                        product_category: variant.product_category !== undefined ? variant.product_category : (productDetails.product_category !== undefined ? productDetails.product_category : null),
+                        product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
+                        product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
                         product_segment: variant.product_segment !== undefined ? variant.product_segment : null,
                         product_section: variant.product_section !== undefined ? variant.product_section : null,
+                        item_group_id: variant.item_group_id !== undefined ? variant.item_group_id : null,
+                        tax_rate_id: variant.tax_rate_id !== undefined ? variant.tax_rate_id : null,
+                        regulatory_code: variant.regulatory_code !== undefined ? variant.regulatory_code : null,
+                        regulatory_notes: variant.regulatory_notes !== undefined ? variant.regulatory_notes : null,
                         parent_id: productId,
                         ...(variantHasActiveFlag ? { isActive: variantActive } : {}),
                         status: "Approved",

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchSuppliers, createSupplier, updateSupplier } from "./suppliers-helper";
+import { fetchSuppliers, createSupplier, SupplierCurrencyValidationError, updateSupplier } from "./suppliers-helper";
 import type { SupplierStatusFilter } from "./suppliers-helper";
 import {
     SupplierCountryValidationError,
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
         const supplier = await createSupplier(body);
         return NextResponse.json({ success: true, supplier });
     } catch (e) {
-        if (e instanceof SupplierCountryValidationError) {
+        if (e instanceof SupplierCountryValidationError || e instanceof SupplierCurrencyValidationError) {
             return NextResponse.json({ error: e.message }, { status: 400 });
         }
         console.error("API Error creating supplier:", e);
@@ -51,7 +51,7 @@ export async function PATCH(request: Request) {
         const supplier = await updateSupplier(id, data);
         return NextResponse.json({ success: true, supplier });
     } catch (e) {
-        if (e instanceof SupplierCountryValidationError) {
+        if (e instanceof SupplierCountryValidationError || e instanceof SupplierCurrencyValidationError) {
             return NextResponse.json({ error: e.message }, { status: 400 });
         }
         console.error("API Error updating supplier:", e);
