@@ -19,6 +19,7 @@ import {
     isSupplierForeign,
     cleanNotes
 } from "../services/supplier.service";
+import { fetchRawMaterials } from "../services/procurement-api";
 import type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
 import PaginationFooter from "./PaginationFooter";
 import { isForeignCountry } from "../supplier-country";
@@ -72,6 +73,8 @@ export default function SuppliersDirectory({
     // Modals state
     const [isEvaluationOpen, setIsEvaluationOpen] = useState(false);
     const [isCatalogMatrixOpen, setIsCatalogMatrixOpen] = useState(false);
+    const [catalogMaterials, setCatalogMaterials] = useState<RawMaterial[] | null>(null);
+    const [loadingCatalogMaterials, setLoadingCatalogMaterials] = useState(false);
 
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
@@ -182,6 +185,23 @@ export default function SuppliersDirectory({
             setLoadingLinkedProducts(false);
         }
     }, []);
+
+    const loadCatalogMaterials = useCallback(async () => {
+        setLoadingCatalogMaterials(true);
+        try {
+            setCatalogMaterials(await fetchRawMaterials(-1));
+        } catch (error) {
+            console.error(error);
+            setCatalogMaterials(rawMaterials);
+        } finally {
+            setLoadingCatalogMaterials(false);
+        }
+    }, [rawMaterials]);
+
+    const handleOpenCatalogMatrix = useCallback(() => {
+        setIsCatalogMatrixOpen(true);
+        void loadCatalogMaterials();
+    }, [loadCatalogMaterials]);
 
     useEffect(() => {
         const requestId = linkedProductRequestId.current + 1;
@@ -561,7 +581,7 @@ export default function SuppliersDirectory({
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => setIsCatalogMatrixOpen(true)}
+                                        onClick={handleOpenCatalogMatrix}
                                         className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
                                     >
                                         <Plus className="h-3.5 w-3.5" /> Manage Catalog Matrix
@@ -604,7 +624,7 @@ export default function SuppliersDirectory({
                                         </p>
                                         <button
                                             type="button"
-                                            onClick={() => setIsCatalogMatrixOpen(true)}
+                                            onClick={handleOpenCatalogMatrix}
                                             className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
                                         >
                                             <Plus className="h-3.5 w-3.5" /> Associate First Product
@@ -641,7 +661,7 @@ export default function SuppliersDirectory({
                                                     </p>
                                                 </div>
                                                 <button
-                                                    onClick={() => setIsCatalogMatrixOpen(true)}
+                                                    onClick={handleOpenCatalogMatrix}
                                                     className="text-[10px] font-bold text-primary hover:text-primary/80 shrink-0"
                                                 >
                                                     Manage
@@ -694,9 +714,9 @@ export default function SuppliersDirectory({
                 isOpen={isCatalogMatrixOpen}
                 onClose={() => setIsCatalogMatrixOpen(false)}
                 supplier={activeSupplier || null}
-                rawMaterials={rawMaterials}
+                rawMaterials={catalogMaterials ?? rawMaterials}
                 linkedProducts={linkedProducts}
-                loadingLinkedProducts={loadingLinkedProducts}
+                loadingLinkedProducts={loadingLinkedProducts || loadingCatalogMaterials}
                 onSaveUpdates={handleSaveCatalogUpdates}
                 savingUpdates={savingCatalogUpdates}
             />

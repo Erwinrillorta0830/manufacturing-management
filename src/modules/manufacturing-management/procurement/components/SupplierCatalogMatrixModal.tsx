@@ -15,14 +15,45 @@ export interface SupplierCatalogMatrixModalProps {
     savingUpdates: boolean;
 }
 
+type CatalogMaterial = {
+    product_id: number;
+    product_code?: string;
+    product_name: string;
+    description?: string;
+    parent_id?: number | null;
+    unit_of_measurement?: {
+        unit_id: number;
+        unit_shortcut?: string;
+        unit_name?: string;
+    };
+    cost_per_unit?: number;
+};
+
 function getLinkedProductId(link: LinkedProduct): number {
-    const relation = link.product_id as unknown;
-    if (typeof relation === "number" || typeof relation === "string") return Number(relation);
-    if (relation && typeof relation === "object") {
-        const product = relation as { product_id?: number | string; id?: number | string };
-        return Number(product.product_id ?? product.id);
-    }
-    return NaN;
+    return normalizeProductRelationId(link.product_id) ?? NaN;
+}
+
+function toCatalogMaterial(link: LinkedProduct): CatalogMaterial | null {
+    const product = link.product_id;
+    if (!product || typeof product !== "object") return null;
+
+    const productId = normalizeProductRelationId(product);
+    if (productId === null) return null;
+
+    const productRecord = product as typeof product & { cost_per_unit?: number | string };
+    const parentId = product.parent_id === null
+        ? null
+        : normalizeProductRelationId(product.parent_id) ?? undefined;
+
+    return {
+        product_id: productId,
+        product_code: product.product_code,
+        product_name: product.product_name || `Product ${productId}`,
+        description: product.description,
+        parent_id: parentId,
+        unit_of_measurement: product.unit_of_measurement,
+        cost_per_unit: Number(productRecord.cost_per_unit) || 0
+    };
 }
 
 function getHierarchyStatus(parentId: unknown): {
@@ -64,7 +95,7 @@ function HierarchyBadge({ parentId }: { parentId: unknown }) {
     );
 }
 
-function toStagedLinkedProduct(supplierId: number, material: RawMaterial): LinkedProduct {
+function toStagedLinkedProduct(supplierId: number, material: CatalogMaterial): LinkedProduct {
     return {
         id: 0,
         supplier_id: supplierId,
@@ -100,8 +131,8 @@ function createCatalogDraft(supplierId: number, linkedProducts: LinkedProduct[])
 function getInitialLinkByProductId(linkedProducts: LinkedProduct[]): Map<number, LinkedProduct> {
     const map = new Map<number, LinkedProduct>();
     linkedProducts.forEach(link => {
-        const productId = getLinkedProductId(link);
-        if (Number.isInteger(productId) && productId > 0) map.set(productId, link);
+        const productId = normalizeProductRelationId(link.product_id);
+        if (productId !== null) map.set(productId, link);
     });
     return map;
 }
@@ -119,6 +150,7 @@ export default function SupplierCatalogMatrixModal({
     const [catalogDraft, setCatalogDraft] = useState<CatalogDraft | null>(null);
     const [linkProductSearch, setLinkProductSearch] = useState("");
     const [linkedFilterSearch, setLinkedFilterSearch] = useState("");
+    const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
 
     const activeDraft = catalogDraft?.supplierId === supplier?.id ? catalogDraft : null;
     const stagedLinkedProducts = activeDraft?.stagedLinkedProducts ?? linkedProducts;
@@ -126,17 +158,41 @@ export default function SupplierCatalogMatrixModal({
     const pendingRemovedLinkIds = activeDraft?.pendingRemovedLinkIds ?? [];
 
     const stagedProductIds = useMemo(
-        () => new Set(stagedLinkedProducts.map(getLinkedProductId).filter(productId => Number.isInteger(productId))),
+        () => new Set(
+            stagedLinkedProducts
+                .map(link => normalizeProductRelationId(link.product_id))
+                .filter((productId): productId is number => productId !== null)
+        ),
         [stagedLinkedProducts]
     );
 
-    const availableRM = useMemo(() => rawMaterials.filter(material => {
+    const catalogCandidates = useMemo(() => {
+        const candidates = new Map<number, CatalogMaterial>();
+        rawMaterials.forEach(material => {
+            const productId = normalizeProductRelationId(material.product_id);
+            if (productId !== null && !candidates.has(productId)) {
+                candidates.set(productId, material);
+            }
+        });
+
+        const initialLinkedProducts = activeDraft?.initialLinkedProducts ?? linkedProducts;
+        initialLinkedProducts.forEach(link => {
+            const material = toCatalogMaterial(link);
+            if (material && !candidates.has(material.product_id)) {
+                candidates.set(material.product_id, material);
+            }
+        });
+
+        return Array.from(candidates.values());
+    }, [activeDraft?.initialLinkedProducts, linkedProducts, rawMaterials]);
+
+    const availableRM = useMemo(() => catalogCandidates.filter(material => {
         if (stagedProductIds.has(Number(material.product_id))) return false;
         const query = linkProductSearch.toLowerCase().trim();
         if (!query) return true;
         return material.product_name.toLowerCase().includes(query)
             || Boolean(material.product_code?.toLowerCase().includes(query));
-    }), [rawMaterials, stagedProductIds, linkProductSearch]);
+    }), [catalogCandidates, stagedProductIds, linkProductSearch]);
 
     const filteredLinkedProducts = useMemo(() => stagedLinkedProducts.filter(link => {
         if (!linkedFilterSearch.trim()) return true;
@@ -149,7 +205,13 @@ export default function SupplierCatalogMatrixModal({
 
     const hasChanges = pendingAddedProductIds.length > 0 || pendingRemovedLinkIds.length > 0;
 
-    const stageProducts = (materials: RawMaterial[]) => {
+    const toggleProductSelection = (productId: number) => {
+        setSelectedProductIds(previous => previous.includes(productId)
+            ? previous.filter(id => id !== productId)
+            : [...previous, productId]);
+    };
+
+    const stageProducts = (materials: CatalogMaterial[]) => {
         if (!supplier || materials.length === 0) return;
 
         setCatalogDraft(previous => {
@@ -158,8 +220,8 @@ export default function SupplierCatalogMatrixModal({
                 : createCatalogDraft(supplier.id, linkedProducts);
             const currentProductIds = new Set(
                 current.stagedLinkedProducts
-                    .map(getLinkedProductId)
-                    .filter(productId => Number.isInteger(productId))
+                    .map(link => normalizeProductRelationId(link.product_id))
+                    .filter((productId): productId is number => productId !== null)
             );
             const newMaterials = materials.filter(material => !currentProductIds.has(Number(material.product_id)));
             if (newMaterials.length === 0) return current;
@@ -185,6 +247,20 @@ export default function SupplierCatalogMatrixModal({
                     : current.pendingRemovedLinkIds
             };
         });
+    };
+
+    const handleAddSelected = () => {
+        const selectedMaterials = catalogCandidates.filter(material =>
+            selectedProductIds.includes(Number(material.product_id))
+                && !stagedProductIds.has(Number(material.product_id))
+        );
+        stageProducts(selectedMaterials);
+        setSelectedProductIds([]);
+    };
+
+    const handleAddAll = () => {
+        stageProducts(availableRM);
+        setSelectedProductIds([]);
     };
 
     const stageUnlink = (link: LinkedProduct) => {
@@ -216,6 +292,7 @@ export default function SupplierCatalogMatrixModal({
         setCatalogDraft(null);
         setLinkProductSearch("");
         setLinkedFilterSearch("");
+        setSelectedProductIds([]);
         onClose();
     };
 
@@ -279,14 +356,26 @@ export default function SupplierCatalogMatrixModal({
                                     <Globe className="h-4 w-4 text-primary shrink-0" />
                                     <span className="text-xs font-extrabold text-foreground">Select Catalog Items to Associate</span>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => stageProducts(availableRM)}
-                                    disabled={availableRM.length === 0 || savingUpdates}
-                                    className="text-[10px] font-bold text-muted-foreground hover:text-foreground border px-2.5 py-1 rounded-xl bg-background hover:bg-muted/50 disabled:opacity-50 transition-all cursor-pointer"
-                                >
-                                    Add All Unlinked
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {selectedProductIds.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleAddSelected}
+                                            disabled={savingUpdates}
+                                            className="text-[10px] font-bold text-primary hover:text-primary/80 border border-primary/30 px-2.5 py-1 rounded-xl bg-primary/5 hover:bg-primary/10 disabled:opacity-50 transition-all cursor-pointer"
+                                        >
+                                            Add Selected Materials
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={handleAddAll}
+                                        disabled={availableRM.length === 0 || savingUpdates}
+                                        className="text-[10px] font-bold text-muted-foreground hover:text-foreground border px-2.5 py-1 rounded-xl bg-background hover:bg-muted/50 disabled:opacity-50 transition-all cursor-pointer"
+                                    >
+                                        Add All Unlinked
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="relative">
@@ -343,17 +432,17 @@ export default function SupplierCatalogMatrixModal({
                                                 return (
                                                     <tr
                                                         key={material.product_id}
-                                                        onClick={() => stageProducts([material])}
-                                                        className="cursor-pointer align-middle text-xs transition-colors hover:bg-muted/40"
+                                                        onClick={() => toggleProductSelection(material.product_id)}
+                                                        className={`cursor-pointer align-middle text-xs transition-colors hover:bg-muted/40 ${selectedProductIds.includes(material.product_id) ? "bg-primary/5" : ""}`}
                                                     >
                                                         <td className="px-3 py-2">
                                                             <input
                                                                 id={`catalog-product-${material.product_id}`}
                                                                 type="checkbox"
-                                                                checked={false}
-                                                                onChange={() => stageProducts([material])}
+                                                                checked={selectedProductIds.includes(material.product_id)}
+                                                                onChange={() => toggleProductSelection(material.product_id)}
                                                                 onClick={event => event.stopPropagation()}
-                                                                aria-label={`Add ${material.product_name}`}
+                                                                aria-label={`Select ${material.product_name}`}
                                                                 className="rounded text-primary focus:ring-0 h-4 w-4"
                                                             />
                                                         </td>
@@ -368,7 +457,7 @@ export default function SupplierCatalogMatrixModal({
                                                         </td>
                                                         <td className="px-3 py-2 text-[10px] font-semibold text-primary">{uomName || "—"}</td>
                                                         <td className="px-3 py-2 text-right font-mono text-[10px] text-foreground">
-                                                            {material.cost_per_unit > 0
+                                                            {(material.cost_per_unit ?? 0) > 0
                                                                 ? `₱${Number(material.cost_per_unit).toLocaleString("en-US", { minimumFractionDigits: 2 })}`
                                                                 : "—"}
                                                         </td>

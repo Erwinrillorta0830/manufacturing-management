@@ -199,7 +199,12 @@ export async function PATCH(request: Request) {
         });
 
         const requestedAdditions = new Set(addProductIds);
-        const removalRows = supplierLinks.filter(row => removeLinkIds.includes(Number(row.id)));
+        // Use the ID-validated rows for removals. The supplier-wide catalog query
+        // is used for addition deduplication, but it can be stale or incomplete
+        // while a removal is being submitted.
+        const removalRows = requestedRemovalRows.filter(row =>
+            Number(row.supplier_id) === supplierId && removeLinkIds.includes(Number(row.id))
+        );
         const effectiveRemoveLinkIds = removalRows
             .filter(row => !requestedAdditions.has(productIdFromLink(row)))
             .map(row => Number(row.id));

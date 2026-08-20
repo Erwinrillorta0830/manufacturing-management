@@ -199,8 +199,12 @@ export async function deleteLandedCostAttachment(purchaseOrderId: number, attach
     if (!res.ok) await handleResponse(res, "Failed to delete landed-cost document");
 }
 
-export async function fetchRawMaterials(): Promise<RawMaterial[]> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/finished-goods/products?limit=250&excludeRollup=true");
+export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+    const params = new URLSearchParams({
+        limit: String(limit),
+        excludeRollup: "true"
+    });
+    const res = await fetchWithSessionRetry(`/api/manufacturing/finished-goods/products?${params.toString()}`);
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
     // Filter to exclude finished goods while retaining variants that inherit their
