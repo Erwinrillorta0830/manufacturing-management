@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,10 +35,10 @@ export async function PATCH(
             console.error("Error parsing user token in PATCH lot route:", err);
         }
 
-        const manilaIsoString = await getISOStringInConfiguredTimezone();
+        const utcIsoString = new Date().toISOString();
 
         const updatePayload: Record<string, unknown> = {
-            updated_at: manilaIsoString
+            updated_at: utcIsoString
         };
         if (userId) {
             updatePayload.updated_by = Number(userId);
@@ -95,13 +95,33 @@ export async function PATCH(
             updatePayload.max_batch_capacity = max_batch_capacity;
         }
 
-        const res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
+        const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
+        if (rawUnitId !== undefined) {
+            updatePayload.unit_id = rawUnitId === null || rawUnitId === "" ? null : Number(rawUnitId);
+        }
+
+        let res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify(updatePayload)
         });
 
-        if (!res.ok) {
+        // If Directus fails because unit_id is named uom_id in schema, retry with uom_id
+        if (!res.ok && updatePayload.unit_id !== undefined) {
+            const errTxt = await res.text();
+            if (errTxt.includes("unit_id")) {
+                updatePayload.uom_id = updatePayload.unit_id;
+                delete updatePayload.unit_id;
+                res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify(updatePayload)
+                });
+            }
+            if (!res.ok) {
+                throw new Error(`Directus failed to update lot ${id}: ${res.status} - ${errTxt}`);
+            }
+        } else if (!res.ok) {
             const errTxt = await res.text();
             throw new Error(`Directus failed to update lot ${id}: ${res.status} - ${errTxt}`);
         }

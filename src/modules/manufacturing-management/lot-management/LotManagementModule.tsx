@@ -15,6 +15,7 @@ export default function LotManagementModule() {
         filterType,
         setFilterType,
         inventoryTypes,
+        uoms,
         isFormOpen,
         editingLot,
         formData,
@@ -56,6 +57,7 @@ export default function LotManagementModule() {
                 isDuplicateLotName={isDuplicateLotName}
                 onFormChange={handleFormChange}
                 inventoryTypes={inventoryTypes}
+                uoms={uoms}
                 saving={saving}
             />
         </div>
