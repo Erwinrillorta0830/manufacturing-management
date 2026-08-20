@@ -1,6 +1,7 @@
 import { Supplier } from "../types";
 import {
     fetchSuppliers,
+    fetchActiveSupplierCurrencies,
     createSupplier,
     updateSupplier,
     fetchLinkedProducts,
@@ -14,6 +15,7 @@ import { isForeignCountry } from "../supplier-country";
 
 export {
     fetchSuppliers,
+    fetchActiveSupplierCurrencies,
     createSupplier,
     updateSupplier,
     fetchLinkedProducts,
@@ -32,7 +34,7 @@ export const isSupplierForeign = (s: Supplier | null | undefined): boolean => {
     if (!s) return false;
     if (Number(s.is_foreign) === 1 || (s.is_foreign as unknown) === true) return true;
     const curr = String(s.currency || s.default_currency || "").toUpperCase();
-    if (curr === "USD") return true;
+    if (curr && curr !== "PHP") return true;
     return isForeignCountry(s.country);
 };
 

@@ -36,6 +36,14 @@ export interface Supplier {
     representatives?: SupplierRepresentative[];
 }
 
+export interface SupplierCurrencyOption {
+    forex_id: number;
+    currency_code: string;
+    currency_name: string;
+    symbol?: string;
+    is_active?: number | boolean;
+}
+
 export interface SupplierFormState {
     supplier_name: string;
     supplier_shortcut: string;

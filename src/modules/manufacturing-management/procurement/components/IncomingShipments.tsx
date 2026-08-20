@@ -193,10 +193,10 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         return suppliers.map(s => {
             const foreign = isSupplierForeign(s);
             const supCurr = s.currency || s.default_currency;
-            const curr = (supCurr && supCurr.toUpperCase()) || (foreign ? "USD" : "PHP");
+            const curr = supCurr?.toUpperCase();
             return {
                 value: String(s.id),
-                label: `${s.supplier_name} - ${foreign ? `Foreign (${curr})` : `Local (${curr})`}`,
+                label: `${s.supplier_name} - ${foreign ? `Foreign${curr ? ` (${curr})` : ""}` : `Local (${curr || "PHP"})`}`,
                 labelNode: (
                     <div className="flex items-center justify-between w-full gap-2 py-0.5">
                         <span className="font-semibold text-xs truncate flex items-center gap-1.5">
@@ -209,7 +209,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                         </span>
                         {foreign ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase tracking-wider shrink-0">
-                                <Globe className="h-2.5 w-2.5" /> Foreign ({curr})
+                                <Globe className="h-2.5 w-2.5" /> Foreign{curr ? ` (${curr})` : ""}
                             </span>
                         ) : (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 uppercase tracking-wider shrink-0">

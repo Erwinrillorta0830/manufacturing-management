@@ -1,4 +1,4 @@
-import { Supplier, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse } from "../types";
+import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
@@ -72,6 +72,12 @@ async function handleResponse(res: Response, fallbackMessage: string) {
 export async function fetchSuppliers(status: SupplierStatusFilter = "active"): Promise<Supplier[]> {
     const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers?status=${status}`);
     return handleResponse(res, "Failed to fetch suppliers");
+}
+
+export async function fetchActiveSupplierCurrencies(): Promise<SupplierCurrencyOption[]> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/supplier-currencies");
+    const body = await handleResponse(res, "Failed to fetch active supplier currencies");
+    return Array.isArray(body?.currencies) ? body.currencies : [];
 }
 
 export async function createSupplier(supplierData: Partial<Supplier>): Promise<unknown> {
