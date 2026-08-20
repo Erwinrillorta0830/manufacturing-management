@@ -9,6 +9,7 @@ import {
     normalizeSupplierCountry
 } from "@/modules/manufacturing-management/procurement/supplier-country";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getConfiguredActiveForexRates } from "../forex/_rates";
 
 
 interface DirectusRepresentative {
@@ -32,6 +33,13 @@ interface InputRepresentative {
 }
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
+
+export class SupplierCurrencyValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "SupplierCurrencyValidationError";
+    }
+}
 
 function toBoolean(value: unknown): boolean {
     if (typeof value === "boolean") return value;
@@ -58,20 +66,48 @@ function cleanNotesText(notes: unknown): string {
         .trim();
 }
 
+interface ResolvedSupplierCurrency {
+    currency: string;
+    isForeign: 0 | 1;
+}
+
+async function resolveSupplierCurrency(
+    details: Record<string, unknown>,
+    country: string
+): Promise<ResolvedSupplierCurrency> {
+    const rawCurrency = String(details.currency || details.default_currency || "").trim().toUpperCase();
+    const isForeignRequested = toBoolean(details.is_foreign) || isForeignCountry(country) || (rawCurrency !== "" && rawCurrency !== "PHP");
+    const currency = rawCurrency || (isForeignRequested ? "" : "PHP");
+
+    if (isForeignRequested && (!currency || currency === "PHP")) {
+        throw new SupplierCurrencyValidationError("A foreign supplier requires an active non-PHP currency.");
+    }
+
+    if (currency !== "PHP") {
+        const activeRates = await getConfiguredActiveForexRates();
+        const activeCurrencyCodes = new Set(
+            activeRates.map(rate => rate.currency_code.trim().toUpperCase())
+        );
+
+        if (!activeCurrencyCodes.has(currency)) {
+            throw new SupplierCurrencyValidationError(`${currency} is not an active currency in forex_configurations.`);
+        }
+    }
+
+    return {
+        currency,
+        isForeign: currency === "PHP" ? 0 : 1
+    };
+}
+
 export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown> {
     const isForeignBool = toBoolean(supplier.is_foreign ?? supplier.isForeign);
     const rawCountry = typeof supplier.country === "string" ? supplier.country : "";
     const country = normalizeSupplierCountry(rawCountry) || (rawCountry.trim() ? rawCountry : PHILIPPINES_COUNTRY);
     const isNonPH = isForeignCountry(country);
-    const isUSD = String(supplier.default_currency || supplier.currency || "").toUpperCase() === "USD";
-
-    const isForeignNum = (isForeignBool || isUSD || isNonPH || Number(supplier.is_foreign) === 1) ? 1 : 0;
-
-    const resolvedCurrency = typeof supplier.currency === "string" && supplier.currency
-        ? supplier.currency
-        : (typeof supplier.default_currency === "string" && supplier.default_currency
-            ? supplier.default_currency
-            : (isForeignNum === 1 ? "USD" : "PHP"));
+    const rawCurrency = String(supplier.currency || supplier.default_currency || "").trim().toUpperCase();
+    const isForeignNum = (isForeignBool || isNonPH || rawCurrency !== "" && rawCurrency !== "PHP" || Number(supplier.is_foreign) === 1) ? 1 : 0;
+    const resolvedCurrency = rawCurrency || (isForeignNum === 1 ? "" : "PHP");
 
     return {
         ...supplier,
@@ -79,8 +115,8 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
         nonBuy: toBoolean(supplier.nonBuy),
         country,
         is_foreign: isForeignNum,
-        currency: resolvedCurrency,
-        default_currency: resolvedCurrency,
+        currency: resolvedCurrency || undefined,
+        default_currency: resolvedCurrency || undefined,
         notes_or_comments: cleanNotesText(supplier.notes_or_comments)
     };
 }
@@ -119,14 +155,10 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
         const hasIsActive = Object.prototype.hasOwnProperty.call(details, "isActive");
         const country = canonicalizeSupplierCountry(details.country);
         details.country = country;
-        const isForeignBool = toBoolean(details.is_foreign);
-        const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
-        const isNonPH = isForeignCountry(country);
-        const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
-        const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
+        const resolved = await resolveSupplierCurrency(details, country);
 
-        details.is_foreign = finalIsForeign;
-        details.currency = finalCurrency;
+        details.is_foreign = resolved.isForeign;
+        details.currency = resolved.currency;
         delete details.default_currency;
         details.nonBuy = toBoolean(details.nonBuy) ? 1 : 0;
         details.notes_or_comments = cleanNotesText(details.notes_or_comments);
@@ -195,14 +227,21 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
         if (hasCountry) details.country = country;
 
         if (hasCountry || hasForeign || hasCurrency || hasDefaultCurrency) {
-            const isForeignBool = toBoolean(details.is_foreign);
-            const isUSD = String(details.default_currency || details.currency || "").toUpperCase() === "USD";
-            const isNonPH = hasCountry && isForeignCountry(country);
-            const finalIsForeign = (isForeignBool || isUSD || isNonPH) ? 1 : 0;
-            const finalCurrency = String(details.currency || details.default_currency || (finalIsForeign === 1 ? "USD" : "PHP"));
+            if (!hasCurrency && !hasDefaultCurrency) {
+                const existingRes = await fetch(`${url}?fields=country,is_foreign,currency`, { headers, cache: "no-store" });
+                if (existingRes.ok) {
+                    const existing = (await existingRes.json()).data as Record<string, unknown> | undefined;
+                    if (existing) {
+                        if (!hasCountry && existing.country !== undefined) details.country = existing.country;
+                        if (!hasForeign && existing.is_foreign !== undefined) details.is_foreign = existing.is_foreign;
+                        if (existing.currency !== undefined) details.currency = existing.currency;
+                    }
+                }
+            }
 
-            details.is_foreign = finalIsForeign;
-            details.currency = finalCurrency;
+            const resolved = await resolveSupplierCurrency(details, String(details.country || PHILIPPINES_COUNTRY));
+            details.is_foreign = resolved.isForeign;
+            details.currency = resolved.currency;
             delete details.default_currency;
         }
 

@@ -193,7 +193,12 @@ export function useRawMaterialForm(
             : [],
         [editingItem, rawMaterials]
     );
+    const activeFamilyChildren = useMemo(
+        () => existingFamilyChildren.filter(rm => rm.isActive != null && Number(rm.isActive) !== 0),
+        [existingFamilyChildren]
+    );
     const isEditingChild = Boolean(editingItem?.parent_id);
+    const parentSelectionLocked = Boolean(editingItem && activeFamilyChildren.length > 0);
     const classificationLocked = Boolean(formParentId || isEditingChild || existingFamilyChildren.length > 0);
     const inheritedProductType = selectedParent?.product_type
         ?? (isEditingChild
@@ -205,6 +210,7 @@ export function useRawMaterialForm(
         : existingFamilyChildren.length > 0
             ? "Classification is locked while child variants exist in this family."
             : "Classification is inherited from the parent material.";
+    const parentSelectionLockMessage = "Parent selection is locked while active child variants exist in this family.";
 
     const handleProductTypeChange = (value: number) => {
         if (!classificationLocked) setFormProductType(value);
@@ -508,6 +514,8 @@ export function useRawMaterialForm(
     };
 
     const handleParentChange = (val: string) => {
+        if (parentSelectionLocked) return;
+
         setFormParentId(val);
         const parentItem = val
             ? rawMaterials.find(rm => String(rm.product_id) === String(val))
@@ -850,6 +858,8 @@ export function useRawMaterialForm(
         classificationLocked,
         inheritedProductType,
         classificationLockMessage,
+        parentSelectionLocked,
+        parentSelectionLockMessage,
         formIsActive,
         setFormIsActive,
         formParentId,

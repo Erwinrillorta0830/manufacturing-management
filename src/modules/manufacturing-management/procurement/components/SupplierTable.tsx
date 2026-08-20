@@ -80,7 +80,7 @@ export default function SupplierTable({
                     >
                         <option value="all">All Origins</option>
                         <option value="local">Local (PHP)</option>
-                        <option value="foreign">Foreign (USD)</option>
+                        <option value="foreign">Foreign</option>
                     </select>
                 </div>
                 <div className="relative">

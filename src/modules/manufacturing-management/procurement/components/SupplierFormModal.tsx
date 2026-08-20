@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { SupplierFormState, PSGCItem } from "../types";
+import { SupplierCurrencyOption, SupplierFormState, PSGCItem } from "../types";
 import { Building2, AlertCircle, UserSquare2, Plus, Trash2, Globe } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/supplier.service";
+import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "../services/supplier.service";
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-country";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
@@ -16,6 +16,14 @@ export interface SupplierFormModalProps {
     isEditingSupplier?: boolean;
     onCreateSupplier: (e: React.FormEvent) => void;
 }
+
+const LOCAL_CURRENCY_OPTION: SupplierCurrencyOption = {
+    forex_id: 0,
+    currency_code: "PHP",
+    currency_name: "Philippine Peso",
+    symbol: "₱",
+    is_active: 1
+};
 
 export default function SupplierFormModal({
     isOpen,
@@ -40,10 +48,43 @@ export default function SupplierFormModal({
     const [loadingProvinces, setLoadingProvinces] = useState(false);
     const [loadingCities, setLoadingCities] = useState(false);
     const [loadingBarangays, setLoadingBarangays] = useState(false);
+    const [supplierCurrencies, setSupplierCurrencies] = useState<SupplierCurrencyOption[]>([]);
+    const [loadingSupplierCurrencies, setLoadingSupplierCurrencies] = useState(false);
+    const [currencyError, setCurrencyError] = useState<string | null>(null);
 
     const isPH = isPhilippinesCountry(supplierForm.country);
+    const activeForeignCurrencies = supplierCurrencies.filter(option => {
+        const code = option.currency_code.trim().toUpperCase();
+        return code !== "PHP" && option.is_active !== false && Number(option.is_active ?? 1) !== 0;
+    });
+    const selectedCurrency = String(supplierForm.default_currency || supplierForm.currency || "").trim().toUpperCase();
+    const preferredForeignCurrency = activeForeignCurrencies.find(option => option.currency_code.toUpperCase() === selectedCurrency)
+        || activeForeignCurrencies[0];
+    const foreignLabelCode = selectedCurrency && selectedCurrency !== "PHP"
+        ? selectedCurrency
+        : preferredForeignCurrency?.currency_code.toUpperCase();
+    const currencyOptions = [
+        LOCAL_CURRENCY_OPTION,
+        ...(selectedCurrency && selectedCurrency !== "PHP" && !activeForeignCurrencies.some(option => option.currency_code.toUpperCase() === selectedCurrency)
+            ? [{
+                forex_id: -1,
+                currency_code: selectedCurrency,
+                currency_name: "Inactive or unavailable currency",
+                is_active: 0
+            }]
+            : []),
+        ...activeForeignCurrencies
+    ];
 
     const handleSupplierSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        const isForeignRequested = Number(supplierForm.is_foreign) === 1 || (selectedCurrency !== "" && selectedCurrency !== "PHP");
+        const isActiveForeignCurrency = activeForeignCurrencies.some(option => option.currency_code.toUpperCase() === selectedCurrency);
+        if (isForeignRequested && (!isActiveForeignCurrency || !foreignLabelCode)) {
+            event.preventDefault();
+            setCurrencyError("Select an active foreign currency from forex_configurations before saving this supplier.");
+            return;
+        }
+
         if (supplierSubmitLock.current) {
             event.preventDefault();
             return;
@@ -77,6 +118,7 @@ export default function SupplierFormModal({
 
         setSupplierForm(prev => {
             const previousIsPH = isPhilippinesCountry(prev.country);
+            const nextCurrency = nextIsPH ? "PHP" : preferredForeignCurrency?.currency_code.toUpperCase() || "";
             return {
                 ...prev,
                 country,
@@ -84,10 +126,15 @@ export default function SupplierFormModal({
                 city: nextIsPH || previousIsPH ? "" : prev.city,
                 brgy: "",
                 is_foreign: nextIsPH ? 0 : 1,
-                default_currency: nextIsPH ? "PHP" : "USD",
-                currency: nextIsPH ? "PHP" : "USD"
+                default_currency: nextCurrency,
+                currency: nextCurrency
             };
         });
+        if (nextIsPH || preferredForeignCurrency) {
+            setCurrencyError(null);
+        } else {
+            setCurrencyError("No active foreign currencies are configured. Foreign suppliers cannot be saved until forex_configurations has an active currency.");
+        }
     };
 
     useEffect(() => {
@@ -95,6 +142,32 @@ export default function SupplierFormModal({
             loadProvinces();
         }
     }, [isOpen, isPH]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+
+        let cancelled = false;
+        setLoadingSupplierCurrencies(true);
+        setCurrencyError(null);
+
+        fetchActiveSupplierCurrencies()
+            .then(options => {
+                if (!cancelled) setSupplierCurrencies(options);
+            })
+            .catch(error => {
+                if (!cancelled) {
+                    setSupplierCurrencies([]);
+                    setCurrencyError(error instanceof Error ? error.message : "Active supplier currencies could not be loaded.");
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingSupplierCurrencies(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) {
@@ -280,22 +353,20 @@ export default function SupplierFormModal({
                                     />
                                 </div>
 
-                                {!isEditingSupplier && (
-                                    <div className="space-y-1.5">
-                                        <label htmlFor="supplier-initial-status" className="text-[11px] font-semibold text-muted-foreground">
-                                            Initial Supplier Status <span className="text-red-500">*</span>
-                                        </label>
-                                        <select
-                                            id="supplier-initial-status"
-                                            value={supplierForm.isActive ? "active" : "inactive"}
-                                            onChange={e => setSupplierForm({ ...supplierForm, isActive: e.target.value === "active" })}
-                                            className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold"
-                                        >
-                                            <option value="active">Active</option>
-                                            <option value="inactive">Inactive</option>
-                                        </select>
-                                    </div>
-                                )}
+                                <div className="space-y-1.5">
+                                    <label htmlFor="supplier-status" className="text-[11px] font-semibold text-muted-foreground">
+                                        {isEditingSupplier ? "Supplier Status" : "Initial Supplier Status"} <span className="text-red-500">*</span>
+                                    </label>
+                                    <select
+                                        id="supplier-status"
+                                        value={supplierForm.isActive ? "active" : "inactive"}
+                                        onChange={e => setSupplierForm({ ...supplierForm, isActive: e.target.value === "active" })}
+                                        className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold"
+                                    >
+                                        <option value="active">Active</option>
+                                        <option value="inactive">Inactive</option>
+                                    </select>
+                                </div>
 
                                 {/* Representatives List (One-to-Many) */}
                                 <div className="col-span-2 border-t pt-4 mt-2 space-y-3">
@@ -590,41 +661,61 @@ export default function SupplierFormModal({
                                                 </button>
                                                 <button
                                                     type="button"
+                                                    disabled={!preferredForeignCurrency}
                                                     onClick={() => setSupplierForm(prev => ({
                                                         ...prev,
                                                         is_foreign: 1,
-                                                        default_currency: "USD",
-                                                        currency: "USD"
+                                                        default_currency: preferredForeignCurrency?.currency_code.toUpperCase() || "",
+                                                        currency: preferredForeignCurrency?.currency_code.toUpperCase() || ""
                                                     }))}
-                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
                                                         Number(supplierForm.is_foreign) === 1
                                                             ? "bg-amber-500/15 text-amber-700 border-amber-500/40 shadow-sm"
                                                             : "bg-background text-muted-foreground border-input hover:text-foreground"
                                                     }`}
                                                 >
-                                                    <Globe className="h-3 w-3" /> Foreign Import (USD)
+                                                    <Globe className="h-3 w-3" /> {foreignLabelCode ? `Foreign Import (${foreignLabelCode})` : "Foreign Import (Unavailable)"}
                                                 </button>
                                             </div>
                                         </div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-semibold text-muted-foreground">Default Currency</label>
                                             <select
-                                                value={supplierForm.default_currency || supplierForm.currency || "PHP"}
+                                                value={selectedCurrency}
                                                 onChange={e => {
-                                                    const curr = e.target.value;
-                                                    const isFor = curr === "USD" ? 1 : 0;
+                                                    const curr = e.target.value.toUpperCase();
+                                                    const isFor = curr !== "PHP" ? 1 : 0;
                                                     setSupplierForm(prev => ({
                                                         ...prev,
                                                         default_currency: curr,
                                                         currency: curr,
                                                         is_foreign: isFor
                                                     }));
+                                                    setCurrencyError(null);
                                                 }}
                                                 className="w-full rounded-lg border bg-background px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-primary text-foreground h-[31px]"
                                             >
-                                                <option value="PHP">PHP (Philippine Peso)</option>
-                                                <option value="USD">USD (US Dollar)</option>
+                                                {!selectedCurrency && (
+                                                    <option value="" disabled>
+                                                        Select an active currency
+                                                    </option>
+                                                )}
+                                                {currencyOptions.map(option => (
+                                                    <option key={`${option.forex_id}-${option.currency_code}`} value={option.currency_code} disabled={option.is_active === 0}>
+                                                        {option.currency_code} ({option.currency_name})
+                                                    </option>
+                                                ))}
                                             </select>
+                                            <p className="text-[10px] text-muted-foreground">
+                                                {loadingSupplierCurrencies
+                                                    ? "Loading active currencies..."
+                                                    : activeForeignCurrencies.length > 0
+                                                        ? "Foreign currencies are sourced from forex_configurations."
+                                                        : "PHP only: no active foreign currencies are configured."}
+                                            </p>
+                                            {currencyError && (
+                                                <p className="text-[10px] text-red-600" role="alert">{currencyError}</p>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

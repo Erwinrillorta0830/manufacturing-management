@@ -58,8 +58,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         handleAllocateExpenses,
         handleUpdateShipmentStatus,
         handleRegisterRawMaterial,
-        handleUpdateRawMaterial,
-        handleToggleSupplierActive
+        handleUpdateRawMaterial
     } = useProcurement(initialTab);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -132,7 +131,6 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         isEditingSupplier={isEditingSupplier}
                         onStartEditSupplier={handleStartEditSupplier}
                         onCreateSupplier={handleCreateSupplier}
-                        onToggleSupplierActive={handleToggleSupplierActive}
                         rawMaterials={rawMaterials}
                     />
                 )}

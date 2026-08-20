@@ -393,8 +393,17 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
         try {
             const country = canonicalizeSupplierCountry(supplierForm.country);
-            const isForeignVal = (Number(supplierForm.is_foreign) === 1 || (supplierForm.is_foreign as unknown) === true || String(supplierForm.currency || supplierForm.default_currency).toUpperCase() === "USD" || isForeignCountry(country)) ? 1 : 0;
-            const currVal = supplierForm.currency || supplierForm.default_currency || (isForeignVal === 1 ? "USD" : "PHP");
+            const currVal = String(supplierForm.currency || supplierForm.default_currency || "PHP").trim().toUpperCase();
+            const foreignClassificationRequested = Number(supplierForm.is_foreign) === 1
+                || (supplierForm.is_foreign as unknown) === true
+                || isForeignCountry(country);
+            if (foreignClassificationRequested && currVal === "PHP") {
+                const message = "A foreign supplier requires an active non-PHP currency.";
+                setSupplierError(message);
+                toast.error(message);
+                return;
+            }
+            const isForeignVal = currVal === "PHP" ? 0 : 1;
 
             const payload = {
                 ...supplierForm,
@@ -450,11 +459,12 @@ export function useProcurement(defaultTab: string = "suppliers") {
 
     const handleStartEditSupplier = (supplier: Supplier) => {
         const country = normalizeSupplierCountry(supplier.country) || supplier.country || PHILIPPINES_COUNTRY;
+        const supplierCurrency = String(supplier.currency || supplier.default_currency || "").trim().toUpperCase();
         const isForeign = Number(supplier.is_foreign) === 1 || 
             (supplier.is_foreign as unknown) === true || 
-            String(supplier.default_currency).toUpperCase() === "USD" || 
+            (supplierCurrency !== "" && supplierCurrency !== "PHP") ||
             isForeignCountry(country);
-        const defaultCurrency = supplier.default_currency || (isForeign ? "USD" : "PHP");
+        const defaultCurrency = supplierCurrency || (isForeign ? "" : "PHP");
         const cleanNotes = (supplier.notes_or_comments || "")
             .replace(/\[Currency:\s*\w+\]/gi, "")
             .replace(/\[Foreign:\s*\d+\]/gi, "")
@@ -747,21 +757,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
     };
 
-    const handleToggleSupplierActive = async (supplier: Supplier) => {
-        setLoading(true);
-        try {
-            const newActive = Number(supplier.isActive) === 0 ? 1 : 0;
-            await updateSupplier(supplier.id, { isActive: newActive });
-            toast.success(`Supplier "${supplier.supplier_name}" ${newActive ? "activated" : "deactivated"} successfully`);
-            await loadSuppliers();
-        } catch (e) {
-            console.error(e);
-            toast.error((e as Error).message || "Failed to update supplier active status");
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const handleEditShipment = async (
         shipmentId: number,
         shipmentData: ShipmentData,
@@ -837,7 +832,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
         handleUpdateShipmentStatus,
         handleRegisterRawMaterial,
         handleUpdateRawMaterial,
-        handleToggleSupplierActive,
         loadShipments
     };
 }
