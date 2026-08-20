@@ -256,8 +256,12 @@ export async function enforceClassificationIntegrity({
         return { ...variant, product_type: authoritativeProductType };
     });
 
+    const normalizedProductDetails = hasParentField
+        ? { ...productDetails, parent_id: requestedParentId }
+        : { ...productDetails };
+
     return {
-        productDetails: { ...productDetails, product_type: authoritativeProductType },
+        productDetails: { ...normalizedProductDetails, product_type: authoritativeProductType },
         packagingVariants: normalizedVariants
     };
 }

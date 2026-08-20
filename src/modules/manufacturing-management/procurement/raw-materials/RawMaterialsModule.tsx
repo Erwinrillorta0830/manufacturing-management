@@ -114,10 +114,12 @@ export default function RawMaterialsModule({
                 classificationLockMessage={formHook.classificationLockMessage}
                 parentSelectionLocked={formHook.parentSelectionLocked}
                 parentSelectionLockMessage={formHook.parentSelectionLockMessage}
+                parentRelationshipError={formHook.parentRelationshipError}
                 formIsActive={formHook.formIsActive}
                 setFormIsActive={formHook.setFormIsActive}
                 formParentId={formHook.formParentId}
                 setFormParentId={formHook.setFormParentId}
+                clearParentSelection={formHook.clearParentSelection}
                 formUomCount={formHook.formUomCount}
                 setFormUomCount={formHook.setFormUomCount}
                 selectedSupplierIds={formHook.selectedSupplierIds}
