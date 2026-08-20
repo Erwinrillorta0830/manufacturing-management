@@ -196,6 +196,13 @@ export function ShipmentDetailView({
                                 </span>
                                 <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
                                 <span>
+                                    Delivery Terms:{" "}
+                                    <strong className="text-foreground font-bold">
+                                        {activeShipment.delivery_terms || "N/A"}
+                                    </strong>
+                                </span>
+                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                <span>
                                     Price Type:{" "}
                                     <strong className="text-foreground font-bold">
                                         {(activeShipment as IncomingShipment & { price_type?: string | null }).price_type || "Standard"}

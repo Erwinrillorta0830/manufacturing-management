@@ -37,7 +37,15 @@ export interface PurchaseOrderListQuery {
 }
 
 export interface PurchaseOrderCatalog {
-    suppliers: Array<{ id: number; supplier_name: string }>;
+    suppliers: Array<{
+        id: number;
+        supplier_name: string;
+        payment_terms?: string;
+        delivery_terms?: string;
+        is_foreign?: number;
+        currency?: string;
+        country?: string;
+    }>;
     branches: Array<{ id: number; branch_name: string; branch_code?: string }>;
     paymentTypes: Array<{ id: number; payment_name?: string; name?: string }>;
     paymentModes: PurchaseOrderPaymentMode[];
@@ -59,6 +67,7 @@ export interface PurchaseOrderDraftPayload {
     paymentArrangementId: number;
     paymentModeId: number;
     paymentTermsId: number;
+    deliveryTerms: string;
     currencyCode: "PHP" | "USD";
     exchangeRate: number;
     expectedTotals: {
@@ -85,13 +94,6 @@ export interface PurchaseOrderDraftPayload {
     }>;
 }
 
-export interface PurchaseOrderPriceControlWarning {
-    code: "PRICE_MATRIX_NOT_CONFIGURED";
-    priceTypeId: number;
-    missingProductIds: number[];
-    usingEnteredPrices: true;
-}
-
 export interface PurchaseOrderDraftResponse {
     success: true;
     purchaseOrderId: number;
@@ -101,7 +103,6 @@ export interface PurchaseOrderDraftResponse {
     exchangeRate: number | string;
     priceType: string;
     priceTypeId: number;
-    priceControlWarning: PurchaseOrderPriceControlWarning | null;
     totals: {
         grossPhp: number | string;
         discountPhp: number | string;
@@ -117,7 +118,6 @@ export interface PurchaseOrderRevisionResponse {
     purchaseOrderId: number;
     status: string;
     workflowRevision: number;
-    priceControlWarning: PurchaseOrderPriceControlWarning | null;
 }
 
 export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected";
@@ -148,6 +148,7 @@ export interface PurchaseOrderApprovalDetail {
         branch_id?: number | null;
         payment_type?: number | null;
         payment_mode?: number | null;
+        delivery_terms?: string | null;
         price_type?: string | null;
         remark?: string | null;
         inventory_status: number;

@@ -90,6 +90,7 @@ interface DirectusPO {
     payment_type?: number | null;
     payment_mode?: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     exchange_rate?: number | string | null;
     total_foreign_currency?: number | string | null;
@@ -122,6 +123,8 @@ interface DirectusSupplier {
     currency?: string;
     default_currency?: string;
     country?: string;
+    payment_terms?: string | null;
+    delivery_terms?: string | null;
     notes_or_comments?: string;
 }
 
@@ -369,6 +372,7 @@ function mapPurchaseOrder(
         payment_mode: po.payment_mode || null,
         payment_mode_name: po.payment_mode ? paymentModes.get(Number(po.payment_mode))?.mode_name || null : null,
         payment_terms: po.payment_terms || null,
+        delivery_terms: po.delivery_terms || null,
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
         workflow_revision: Number(po.workflow_revision || 0),
@@ -411,7 +415,7 @@ async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, Dir
     const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
     if (uniqueIds.length === 0) return new Map();
     const params = new URLSearchParams({
-        fields: "id,supplier_name,is_foreign,currency,country,notes_or_comments",
+        fields: "id,supplier_name,is_foreign,currency,country,payment_terms,delivery_terms,notes_or_comments",
         limit: String(uniqueIds.length),
         filter: JSON.stringify({ id: { _in: uniqueIds } })
     });
@@ -545,7 +549,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -947,6 +951,7 @@ export async function createIncomingShipment(
             receiving_type: 1,
             payment_type: extendedData.payment_type || null,
             payment_mode: extendedData.payment_mode,
+            delivery_terms: extendedData.delivery_terms || null,
             price_type: "Internal",
             date_encoded: new Date().toISOString(),
             date: await getTodayDateString(),

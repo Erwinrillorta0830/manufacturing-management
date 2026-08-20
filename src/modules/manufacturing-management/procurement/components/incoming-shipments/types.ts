@@ -87,6 +87,7 @@ export interface ShipmentFormState {
     payment_type: number | null;
     payment_mode: number | null;
     payment_terms?: number | null;
+    delivery_terms: string;
     price_type: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
