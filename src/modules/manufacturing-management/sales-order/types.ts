@@ -34,6 +34,9 @@ export interface SalesOrderDetail {
     };
     unit_price: number;
     ordered_quantity: number;
+    gross_amount?: number;
+    discount_amount?: number;
+    discount_type?: number | null;
     net_amount: number;
     bom_version_id?: number | null;
     bom_version_name?: string | null;
@@ -44,6 +47,9 @@ export interface DirectOrderItemPayload {
     product_id: number;
     quantity: number;
     unit_price: number;
+    discount_type?: number | null;
+    discount_amount?: number;
+    bom_version_id?: number | null;
 }
 
 export interface CreateSalesOrderPayload {
@@ -54,7 +60,6 @@ export interface CreateSalesOrderPayload {
     deliveryDate: string;
     dueDate: string;
     salesmanId?: number;
-    discountAmount?: number;
     remarks?: string;
     items: DirectOrderItemPayload[];
 }

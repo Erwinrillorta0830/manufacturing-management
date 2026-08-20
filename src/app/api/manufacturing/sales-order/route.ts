@@ -452,14 +452,13 @@ export async function GET(request: Request) {
                     sort: "customer_name"
                 })),
                 read("products", new URLSearchParams({
-                    "filter[product_type][_eq]": "388",
                     fields: "product_id,product_name,product_code,product_type,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count",
                     limit: "-1",
                     sort: "product_name"
                 }))
             ]);
 
-            const [branchResult, paymentTermResult, salesmanResult, supplierResult] = await Promise.all([
+            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult] = await Promise.all([
                 optionalRead("branches", new URLSearchParams({
                     "filter[isActive][_eq]": "1",
                     fields: "id,branch_name",
@@ -482,6 +481,10 @@ export async function GET(request: Request) {
                     fields: "id,supplier_name",
                     limit: "-1",
                     sort: "supplier_name"
+                })),
+                optionalRead("product_type", new URLSearchParams({
+                    fields: "id,name",
+                    limit: "-1"
                 }))
             ]);
 
@@ -533,7 +536,8 @@ export async function GET(request: Request) {
                 branches: branchResult.data || [],
                 paymentTerms: paymentTermResult.data || [],
                 salesmen: salesmanResult.data || [],
-                suppliers: supplierResult.data || []
+                suppliers: supplierResult.data || [],
+                productTypes: productTypeResult.data || []
             });
         }
 
@@ -742,13 +746,11 @@ export async function POST(request: Request) {
             const productMap = new Map<number, any>(productsData.map((p: any) => [Number(p.product_id), p]));
 
             const validProductIds = new Set(
-                productsData
-                    .filter((product: any) => Number(product.product_type) === 388)
-                    .map((product: any) => Number(product.product_id))
+                productsData.map((product: any) => Number(product.product_id))
             );
             const invalidProductIds = productIds.filter((id) => !validProductIds.has(id));
             if (invalidProductIds.length > 0) {
-                throw new ApiError(400, `Unknown or non-finished-good product IDs: ${invalidProductIds.join(", ")}`);
+                throw new ApiError(400, `Unknown product IDs: ${invalidProductIds.join(", ")}`);
             }
 
             // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
@@ -757,13 +759,14 @@ export async function POST(request: Request) {
 
             const missingVersionProductNames: string[] = [];
             for (const productId of productIds) {
-                if (!versionMap.has(productId)) {
-                    const p = productMap.get(productId);
+                const p = productMap.get(productId);
+                const isFinishedGood = p && Number(p.product_type) === 388;
+                if (isFinishedGood && !versionMap.has(productId)) {
                     missingVersionProductNames.push(p ? p.product_name : `Product #${productId}`);
                 }
             }
             if (missingVersionProductNames.length > 0) {
-                throw new ApiError(400, `No active BOM version is available for: ${missingVersionProductNames.join(", ")}. Configure Standard BOM Version 1 or another active version before ordering.`);
+                throw new ApiError(400, `No active BOM version is available for finished goods: ${missingVersionProductNames.join(", ")}. Configure Standard BOM Version 1 or another active version before ordering.`);
             }
 
             // 2. Reserve a collision-safe number using the allocator's auto-increment key.
@@ -797,6 +800,7 @@ export async function POST(request: Request) {
             // Calculate total amount
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             const totalAmount = directItems.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
+            const totalDiscount = directItems.reduce((sum, item) => sum + (item.discount_amount || 0), 0);
 
             // 3. Create the header and all details as one compensated business action.
             const salesOrderPayload = {
@@ -805,8 +809,8 @@ export async function POST(request: Request) {
                 customer_code: customerCode,
                 order_status: "Draft",
                 total_amount: totalAmount,
-                discount_amount: discountAmount,
-                net_amount: totalAmount - discountAmount,
+                discount_amount: 0,
+                net_amount: totalAmount - totalDiscount,
                 remarks: remarks || `Directly Created Sales Order.`,
                 created_date: systemTimestamp,
                 created_by: encoderId,
@@ -818,14 +822,16 @@ export async function POST(request: Request) {
             };
             const detailPayloads = directItems.map((item) => ({
                 product_id: item.product_id,
-                bom_version_id: versionMap.get(item.product_id),
+                bom_version_id: item.bom_version_id || versionMap.get(item.product_id),
                 unit_price: item.unit_price,
                 ordered_quantity: item.quantity,
                 allocated_quantity: 0,
                 served_quantity: 0,
                 allocated_amount: 0,
-                net_amount: item.unit_price * item.quantity,
+                net_amount: (item.unit_price * item.quantity) - (item.discount_amount || 0),
                 gross_amount: item.unit_price * item.quantity,
+                discount_type: item.discount_type || null,
+                discount_amount: item.discount_amount || 0,
                 created_date: systemTimestamp
             }));
             const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);

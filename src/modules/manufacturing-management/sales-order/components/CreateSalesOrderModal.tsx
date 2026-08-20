@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Loader2, DollarSign, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, AlertTriangle, Search } from "lucide-react";
 import { toast } from "sonner";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import {
@@ -38,6 +38,10 @@ interface DirectOrderItem {
     product_id: number;
     quantity: number;
     unit_price: number;
+    discount_type?: number | null;
+    discount_amount?: number;
+    discount_percent?: number;
+    bom_version_id?: number;
 }
 
 interface LineErrors {
@@ -45,6 +49,7 @@ interface LineErrors {
     uom?: string;
     quantity?: string;
     unit_price?: string;
+    bom_version_id?: string;
 }
 
 interface FormErrors {
@@ -61,6 +66,8 @@ interface FormErrors {
 interface VersionState {
     status: "loading" | "resolved" | "unavailable";
     label?: string;
+    versions?: any[];
+    defaultVersionId?: number;
 }
 
 function isStandardBOMVersion(version: any) {
@@ -118,6 +125,8 @@ export function CreateSalesOrderModal({
     const [paymentTerms, setPaymentTerms] = useState<any[]>([]);
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
     const [salesmen, setSalesmen] = useState<any[]>([]);
+    // disabled-lint-next-line @typescript-eslint/no-explicit-any
+    const [productTypes, setProductTypes] = useState<any[]>([]);
 
     const [loadingLookups, setLoadingLookups] = useState(false);
     const [lookupError, setLookupError] = useState("");
@@ -130,12 +139,12 @@ export function CreateSalesOrderModal({
     const [salesmanId, setSalesmanId] = useState("");
     const [deliveryDate, setDeliveryDate] = useState("");
     const [dueDate, setDueDate] = useState("");
-    const [discountAmount, setDiscountAmount] = useState(0);
     const [remarks, setRemarks] = useState("");
     const [overrideLeadTime, setOverrideLeadTime] = useState(false);
 
     // Detail Items
     const [items, setItems] = useState<DirectOrderItem[]>([]);
+    const [productSearch, setProductSearch] = useState("");
     const [formErrors, setFormErrors] = useState<FormErrors>({});
     const [discardOpen, setDiscardOpen] = useState(false);
 
@@ -227,7 +236,9 @@ export function CreateSalesOrderModal({
                 const suffix = overrideVersion ? "Override" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
                 return [productId, {
                     status: "resolved",
-                    label: `${matchedVersion.version_name} (${suffix})`
+                    label: `${matchedVersion.version_name} (${suffix})`,
+                    versions,
+                    defaultVersionId: Number(matchedVersion.version_id)
                 }] as const;
             } catch (error) {
                 if ((error as Error)?.name === "AbortError") return null;
@@ -267,6 +278,7 @@ export function CreateSalesOrderModal({
                 setBranches(Array.isArray(data.branches) ? data.branches : []);
                 setPaymentTerms(Array.isArray(data.paymentTerms) ? data.paymentTerms : []);
                 setSalesmen(Array.isArray(data.salesmen) ? data.salesmen : []);
+                setProductTypes(Array.isArray(data.productTypes) ? data.productTypes : []);
             } catch (err) {
                 console.error("Failed to load lookups:", err);
                 const message = err instanceof Error ? err.message : "Failed to load required setup directories.";
@@ -288,7 +300,6 @@ export function CreateSalesOrderModal({
         setSalesmanId("");
         setDeliveryDate("");
         setDueDate("");
-        setDiscountAmount(0);
         setRemarks("");
         setOverrideLeadTime(false);
         setItems([]);
@@ -296,16 +307,42 @@ export function CreateSalesOrderModal({
         setDiscardOpen(false);
         setCustomerOverrides({});
         setVersionStates({});
+        setProductSearch("");
         nextLineIdRef.current = 1;
 
     }, [isOpen]);
+
+    const fetchLineDiscount = async (cId: string, pId: number, basePrice: number) => {
+        if (!cId || !pId) return { discountType: null, discountAmount: 0 };
+        try {
+            const customer = customers.find(c => String(c.id) === cId);
+            const customerCode = customer?.customer_code;
+            if (!customerCode) return { discountType: null, discountAmount: 0 };
+
+            const res = await fetch(`/api/manufacturing/financial-management/discount-management/customer-discounting/pricing?customerCode=${customerCode}&productId=${pId}&basePrice=${basePrice}`);
+            if (res.ok) {
+                const data = await res.json();
+                const discountAmount = typeof data.finalPrice === 'number' && typeof basePrice === 'number'
+                    ? basePrice - data.finalPrice
+                    : 0;
+                return { 
+                    discountType: data.discount?.id || null, 
+                    discountAmount: discountAmount,
+                    discountPercent: data.discount?.totalPercent || 0
+                };
+            }
+        } catch (e) {
+            console.error("Failed to fetch discount", e);
+        }
+        return { discountType: null, discountAmount: 0, discountPercent: 0 };
+    };
 
     useEffect(() => {
         if (!isOpen || loadingLookups) return;
         poInputRef.current?.focus();
     }, [isOpen, loadingLookups]);
 
-    const handleCustomerChange = (value: string) => {
+    const handleCustomerChange = async (value: string) => {
         setCustomerId(value);
         setFormErrors(previous => ({ ...previous, customerId: undefined }));
         const customer = customers.find(item => String(item.id) === value);
@@ -314,6 +351,23 @@ export function CreateSalesOrderModal({
             && defaultPaymentTermId > 0
             && paymentTerms.some(term => Number(term.id) === defaultPaymentTermId);
         setPaymentTermId(hasConfiguredTerm ? String(defaultPaymentTermId) : "");
+
+        // Refetch discounts for existing items if they have product selected
+        setItems(prev => {
+            const newItems = [...prev];
+            Promise.all(newItems.map(async (item, i) => {
+                if (item.product_id) {
+                    const { discountType, discountAmount, discountPercent } = await fetchLineDiscount(value, item.product_id, item.unit_price);
+                    setItems(current => current.map((curr, idx) => idx === i ? {
+                        ...curr,
+                        discount_type: discountType,
+                        discount_amount: discountAmount,
+                        discount_percent: discountPercent
+                    } : curr));
+                }
+            }));
+            return newItems;
+        });
     };
 
     // Dynamically calculate Due Date whenever paymentTermId or deliveryDate changes
@@ -370,59 +424,72 @@ export function CreateSalesOrderModal({
         }));
     };
 
-    const handleParentProductChange = (index: number, parentProductId: number) => {
+    const handleParentProductChange = async (index: number, parentProductId: number) => {
         const lineId = items[index]?.line_id;
         if (lineId) {
             clearLineError(lineId, "product");
             clearLineError(lineId, "uom");
         }
+        
+        const usedVariantIds = new Set(items
+            .filter((_, otherIndex) => otherIndex !== index)
+            .map(otherItem => Number(otherItem.product_id))
+            .filter(Boolean));
+        const variants = products
+            .filter(product => Number(product.parent_product_id) === parentProductId)
+            .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count));
+        const defaultVariant = variants.find(variant => !usedVariantIds.has(Number(variant.product_id)));
+        
+        const newProductId = defaultVariant ? Number(defaultVariant.product_id) : 0;
+        const newUnitPrice = defaultVariant ? Number(defaultVariant.price_per_unit || defaultVariant.cost_per_unit || 0) : 0;
+
+        const { discountType, discountAmount, discountPercent } = await fetchLineDiscount(customerId, newProductId, newUnitPrice);
+
         setItems(prev => prev.map((item, idx) => {
             if (idx !== index) return item;
-            const usedVariantIds = new Set(prev
-                .filter((_, otherIndex) => otherIndex !== index)
-                .map(otherItem => Number(otherItem.product_id))
-                .filter(Boolean));
-            const variants = products
-                .filter(product => Number(product.parent_product_id) === parentProductId)
-                .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count));
-            const defaultVariant = variants.find(variant => !usedVariantIds.has(Number(variant.product_id)));
             return {
                 ...item,
                 parent_product_id: parentProductId,
-                product_id: defaultVariant ? Number(defaultVariant.product_id) : 0,
-                unit_price: defaultVariant
-                    ? Number(defaultVariant.price_per_unit || defaultVariant.cost_per_unit || 0)
-                    : 0
+                product_id: newProductId,
+                unit_price: newUnitPrice,
+                discount_type: discountType,
+                discount_amount: discountAmount,
+                discount_percent: discountPercent
             };
         }));
     };
 
-    const handleUomChange = (index: number, productId: number) => {
+    const handleUomChange = async (index: number, productId: number) => {
         const variant = products.find(product => Number(product.product_id) === productId);
         const lineId = items[index]?.line_id;
         if (lineId) clearLineError(lineId, "uom");
+        
+        const unitPrice = variant ? Number(variant.price_per_unit || variant.cost_per_unit || 0) : 0;
+        const { discountType, discountAmount, discountPercent } = await fetchLineDiscount(customerId, productId, unitPrice);
+
         setItems(prev => prev.map((item, idx) => idx === index ? {
                 ...item,
                 product_id: productId,
-                unit_price: variant ? Number(variant.price_per_unit || variant.cost_per_unit || 0) : 0
+                unit_price: unitPrice,
+                discount_type: discountType,
+                discount_amount: discountAmount,
+                discount_percent: discountPercent
             } : item));
     };
 
-    const handleItemChange = (index: number, field: "quantity" | "unit_price", value: number) => {
+    const handleItemChange = (index: number, field: "quantity" | "unit_price" | "bom_version_id", value: number) => {
         const lineId = items[index]?.line_id;
-        if (lineId) clearLineError(lineId, field);
+        if (lineId) clearLineError(lineId, field as keyof LineErrors);
         setItems(prev => prev.map((item, idx) => idx === index ? { ...item, [field]: value } : item));
     };
 
     const subTotal = items.reduce((sum, item) => sum + Number(item.unit_price || 0) * Number(item.quantity || 0), 0);
-    const grandTotal = subTotal - discountAmount;
-    const discountInvalid = !Number.isFinite(discountAmount) || discountAmount < 0 || discountAmount > subTotal;
-    const discountErrorMessage = discountAmount < 0
-        ? "Discount cannot be negative."
-        : "Discount cannot exceed the order subtotal.";
+    const totalDiscountAmount = items.reduce((sum, item) => sum + (item.discount_amount || 0) * (item.quantity || 0), 0);
+    const grandTotal = subTotal - totalDiscountAmount;
+
     const isDirty = Boolean(
         customerId || poNo || branchId || paymentTermId || salesmanId
-        || deliveryDate || dueDate || discountAmount || remarks || items.length
+        || deliveryDate || dueDate || remarks || items.length
     );
 
     const requestClose = () => {
@@ -442,7 +509,6 @@ export function CreateSalesOrderModal({
         if (!paymentTermId) errors.paymentTermId = "Select payment terms.";
         if (!deliveryDate) errors.deliveryDate = "Select a delivery date.";
         if (!dueDate) errors.dueDate = "Due date must be calculated.";
-        if (discountInvalid) errors.discountAmount = discountErrorMessage;
 
         const leadTime = getLeadTimeStatus();
         if (!leadTime.feasible && !overrideLeadTime) {
@@ -457,20 +523,27 @@ export function CreateSalesOrderModal({
             if (item.product_id && seenProductIds.has(item.product_id)) lineErrors.uom = "This product and UOM are already selected.";
             if (item.product_id) {
                 seenProductIds.add(item.product_id);
-                const versionState = versionStates[item.product_id];
-                if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
-                if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
+                
+                const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
+                const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
+
+                if (isFinishedGood) {
+                    const versionState = versionStates[item.product_id];
+                    if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
+                    if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
+                }
             }
             if (!Number.isFinite(item.quantity) || item.quantity <= 0) lineErrors.quantity = "Quantity must be greater than zero.";
             if (!Number.isFinite(item.unit_price) || item.unit_price <= 0) lineErrors.unit_price = "Unit price must be explicitly greater than ₱0.00.";
             if (Object.keys(lineErrors).length > 0) errors.items![item.line_id] = lineErrors;
         });
         if (items.length === 0) errors.items = { 0: { product: "Add at least one product." } };
-        if (grandTotal <= 0 && items.length > 0) errors.discountAmount = "Total net amount must be greater than ₱0.00.";
+        if (grandTotal <= 0 && items.length > 0) errors.dueDate = "Total net amount must be greater than ₱0.00.";
 
         const hasErrors = Boolean(
             errors.customerId || errors.poNo || errors.branchId || errors.paymentTermId
-            || errors.deliveryDate || errors.dueDate || errors.discountAmount || Object.keys(errors.items || {}).length
+            || errors.deliveryDate || errors.dueDate || Object.keys(errors.items || {}).length
         );
         setFormErrors(errors);
         if (hasErrors) {
@@ -504,13 +577,16 @@ export function CreateSalesOrderModal({
                 salesmanId: salesmanId ? Number(salesmanId) : undefined,
                 deliveryDate,
                 dueDate,
-                discountAmount,
                 remarks: finalRemarks,
                 items: items.map(item => ({
                     parent_product_id: item.parent_product_id,
                     product_id: item.product_id,
                     quantity: item.quantity,
-                    unit_price: item.unit_price
+                    unit_price: item.unit_price,
+                    discount_type: item.discount_type,
+                    discount_amount: item.discount_amount,
+                    discount_percent: item.discount_percent,
+                    bom_version_id: item.bom_version_id
                 }))
             });
             onClose();
@@ -564,7 +640,7 @@ export function CreateSalesOrderModal({
                         onKeyDown={handleFormKeyDown}
                         className="flex min-h-0 flex-1 flex-col"
                     >
-                        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+                        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 pb-40">
                         {lookupError && (
                             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
                                 {lookupError}
@@ -687,17 +763,8 @@ export function CreateSalesOrderModal({
                                 {formErrors.dueDate && <p className="text-xs text-destructive">{formErrors.dueDate}</p>}
                             </div>
 
-                            <div className="space-y-1.5">
-                                <label htmlFor="direct-so-discount" className={fieldLabelClassName}>Discount Amount (PHP)</label>
-                                <input
-                                    id="direct-so-discount"
-                                    type="number"
-                                    min={0}
-                                    value={discountAmount}
-                                    disabled
-                                    className="w-full bg-muted border rounded-lg px-3 py-2 text-xs text-muted-foreground outline-none cursor-not-allowed font-semibold"
-                                />
-                                <p className="text-[10px] text-muted-foreground mt-0.5">Manual flat discounts are disabled.</p>
+                            <div className="space-y-1.5 hidden">
+                                {/* Disabled global discount section, removed */}
                             </div>
 
                             {/* Lead time feasibility warning alert */}
@@ -745,19 +812,18 @@ export function CreateSalesOrderModal({
 
                         {/* Order Items Section */}
                         <div className="space-y-3 border-t pt-4">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between mb-3">
                                 <h5 className="text-sm font-semibold text-foreground">Order Products</h5>
-                                <button
-                                    id="direct-so-add-product"
-                                    type="button"
-                                    onClick={handleAddItem}
-                                    disabled={!lookupsReady}
-                                    aria-invalid={Boolean(formErrors.items?.[0]?.product)}
-                                    aria-describedby={formErrors.items?.[0]?.product ? "direct-so-items-error" : undefined}
-                                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border-none px-3 py-1.5 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <Plus className="h-3.5 w-3.5" /> Add Product
-                                </button>
+                                <div className="relative w-64">
+                                    <Search className="absolute left-2.5 top-1.5 h-4 w-4 text-muted-foreground" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search inserted products..."
+                                        value={productSearch}
+                                        onChange={(e) => setProductSearch(e.target.value)}
+                                        className="w-full bg-background border rounded-lg pl-9 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
+                                    />
+                                </div>
                             </div>
                             {formErrors.items?.[0]?.product && <p id="direct-so-items-error" className="text-xs text-destructive">{formErrors.items[0].product}</p>}
 
@@ -765,10 +831,13 @@ export function CreateSalesOrderModal({
                                 <table className="block w-full text-left text-xs md:table">
                                     <thead className="hidden md:table-header-group">
                                         <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                            <th className="py-2.5 px-4 w-1/3">Parent product</th>
-                                            <th className="py-2.5 px-4 w-44">UOM</th>
-                                            <th className="py-2.5 px-4 text-right">Unit Price (PHP)</th>
-                                            <th className="py-2.5 px-4 text-right">Quantity</th>
+                                            <th className="py-2.5 px-4 w-[22%]">Parent product</th>
+                                            <th className="py-2.5 px-4 w-[15%]">Version</th>
+                                            <th className="py-2.5 px-4 w-28">UOM</th>
+                                            <th className="py-2.5 px-4 text-right w-24">Unit Price (PHP)</th>
+                                            <th className="py-2.5 px-4 text-right w-20">Discount (%)</th>
+                                            <th className="py-2.5 px-4 text-right w-24">Discount (PHP)</th>
+                                            <th className="py-2.5 px-4 text-right w-20">Quantity</th>
                                             <th className="py-2.5 px-4 text-right">Total Net</th>
                                             <th className="py-2.5 px-4 text-center">Action</th>
                                         </tr>
@@ -776,18 +845,45 @@ export function CreateSalesOrderModal({
                                     <tbody className="block divide-y md:table-row-group">
                                         {items.length === 0 ? (
                                             <tr className="block md:table-row">
-                                                <td colSpan={6} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                <td colSpan={8} className="py-8 text-center text-muted-foreground italic font-semibold">
                                                     No products added.
                                                 </td>
                                             </tr>
                                         ) : (
-                                            items.map((item, index) => {
+                                            (() => {
+                                                const filteredItems = items.filter(item => {
+                                                    if (!productSearch.trim()) return true;
+                                                    const query = productSearch.toLowerCase();
+                                                    const parentProd = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                                                    const uomProd = products.find(p => Number(p.product_id) === Number(item.product_id));
+                                                    const parentLabel = parentProd ? `${parentProd.product_name} ${parentProd.product_code || ""}`.toLowerCase() : "";
+                                                    const uomLabel = uomProd ? formatUomLabel(uomProd, products).toLowerCase() : "";
+                                                    return parentLabel.includes(query) || uomLabel.includes(query);
+                                                });
+                                                
+                                                if (filteredItems.length === 0) {
+                                                    return (
+                                                        <tr className="block md:table-row">
+                                                            <td colSpan={8} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                                No products match your search.
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                }
+
+                                                return filteredItems.map((item) => {
+                                                    const trueIndex = items.findIndex(it => it.line_id === item.line_id);
                                                 const totalNet = Number(item.unit_price || 0) * Number(item.quantity || 0);
                                                 const otherSelectedVariantIds = items
-                                                    .map((it, idx) => idx !== index ? it.product_id : 0)
+                                                    .map((it, idx) => idx !== trueIndex ? it.product_id : 0)
                                                     .filter(id => id > 0);
                                                 const parentOptions = products
                                                     .filter(product => product.is_parent)
+                                                    .filter(p => {
+                                                        const totalVariants = products.filter(child => Number(child.parent_product_id) === Number(p.product_id)).length || 1;
+                                                        const usedVariantsCount = items.filter((it, idx) => idx !== trueIndex && Number(it.parent_product_id) === Number(p.product_id) && it.product_id > 0).length;
+                                                        return usedVariantsCount < totalVariants;
+                                                    })
                                                     .map(p => ({
                                                         value: String(p.product_id),
                                                         label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})`
@@ -808,24 +904,50 @@ export function CreateSalesOrderModal({
                                                             <CreatableSelect
                                                                 options={parentOptions}
                                                                 value={item.parent_product_id ? String(item.parent_product_id) : ""}
-                                                                onValueChange={val => handleParentProductChange(index, Number(val))}
+                                                                onValueChange={val => handleParentProductChange(trueIndex, Number(val))}
                                                                 placeholder="Choose Parent Product..."
                                                                 className="h-8 text-xs font-semibold"
                                                                 disabled={!lookupsReady}
-                                                                aria-label={`Parent product for line ${index + 1}`}
+                                                                aria-label={`Parent product for line ${trueIndex + 1}`}
                                                                 aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product)}
                                                                 aria-describedby={formErrors.items?.[item.line_id]?.product ? `line-${item.line_id}-product-error` : undefined}
                                                             />
                                                             {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
-                                                            {Number(item.product_id) > 0 && (
-                                                                <div className="mt-1 flex items-center gap-1.5">
-                                                                    <span className="text-xs text-muted-foreground">Version:</span>
-                                                                    {versionStates[item.product_id]?.status === "loading" ? (
-                                                                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                                    ) : versionStates[item.product_id]?.status === "resolved" ? (
-                                                                        <span className="text-xs font-semibold text-primary">{versionStates[item.product_id].label}</span>
-                                                                    ) : <span className="text-xs text-muted-foreground">Unavailable</span>}
-                                                                </div>
+                                                            {(() => {
+                                                                if (!item.parent_product_id) return null;
+                                                                const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                                                                if (!prod || !prod.product_type) return null;
+                                                                const typeObj = productTypes.find(t => String(t.id) === String(prod.product_type));
+                                                                if (!typeObj) return null;
+                                                                return (
+                                                                    <div className="mt-1.5 flex items-center">
+                                                                        <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                                                            {typeObj.name}
+                                                                        </span>
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
+                                                            {Number(item.product_id) > 0 && versionStates[item.product_id]?.versions && versionStates[item.product_id]!.versions!.length > 0 ? (
+                                                                versionStates[item.product_id]?.status === "loading" ? (
+                                                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                                ) : versionStates[item.product_id]?.status === "resolved" ? (
+                                                                    <select
+                                                                        value={item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || ""}
+                                                                        onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
+                                                                        className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
+                                                                    >
+                                                                        {versionStates[item.product_id]?.versions?.map((v: any) => (
+                                                                            <option key={v.version_id} value={v.version_id}>
+                                                                                {v.version_name} {Number(v.version_id) === versionStates[item.product_id]?.defaultVersionId ? "(Default)" : ""}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                            ) : (
+                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
                                                             )}
                                                         </td>
                                                         <td className="block overflow-visible p-0 md:table-cell md:w-44 md:min-w-44 md:p-3">
@@ -833,31 +955,34 @@ export function CreateSalesOrderModal({
                                                             <CreatableSelect
                                                                 options={uomOptions}
                                                                 value={item.product_id ? String(item.product_id) : ""}
-                                                                onValueChange={val => handleUomChange(index, Number(val))}
+                                                                onValueChange={val => handleUomChange(trueIndex, Number(val))}
                                                                 placeholder="Choose UOM..."
                                                                 className="h-8 text-xs font-semibold"
                                                                 disabled={!item.parent_product_id || uomOptions.length === 0}
-                                                                aria-label={`Unit of measure for line ${index + 1}`}
+                                                                aria-label={`Unit of measure for line ${trueIndex + 1}`}
                                                                 aria-invalid={Boolean(formErrors.items?.[item.line_id]?.uom)}
                                                                 aria-describedby={formErrors.items?.[item.line_id]?.uom ? `line-${item.line_id}-uom-error` : undefined}
                                                             />
                                                             {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
                                                             {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-32 md:p-3 md:text-right">
-                                                            <label htmlFor={`line-${item.line_id}-price`} className="mb-1 block text-xs font-semibold md:sr-only">Unit Price</label>
-                                                            <input
-                                                                id={`line-${item.line_id}-price`}
-                                                                type="number"
-                                                                min={0}
-                                                                step="any"
-                                                                value={item.unit_price}
-                                                                onChange={e => handleItemChange(index, "unit_price", Number(e.target.value))}
-                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.unit_price)}
-                                                                aria-describedby={formErrors.items?.[item.line_id]?.unit_price ? `line-${item.line_id}-price-error` : undefined}
-                                                                className="w-full bg-background border rounded-lg px-2 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
-                                                            />
-                                                            {formErrors.items?.[item.line_id]?.unit_price && <p id={`line-${item.line_id}-price-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].unit_price}</p>}
+                                                        <td className="block p-0 md:table-cell md:w-28 md:p-3 md:text-right">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
+                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-muted-foreground bg-muted/50 border rounded-lg">
+                                                                {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </div>
+                                                        </td>
+                                                        <td className="block p-0 md:table-cell md:w-20 md:p-3 md:text-right">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount (%)</span>
+                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
+                                                                {item.discount_percent ? `${item.discount_percent}%` : "-"}
+                                                            </div>
+                                                        </td>
+                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount (PHP)</span>
+                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
+                                                                {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
+                                                            </div>
                                                         </td>
                                                         <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
                                                             <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Quantity</label>
@@ -866,7 +991,7 @@ export function CreateSalesOrderModal({
                                                                 type="number"
                                                                 min={1}
                                                                 value={item.quantity}
-                                                                onChange={e => handleItemChange(index, "quantity", Number(e.target.value))}
+                                                                onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))}
                                                                 aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)}
                                                                 aria-describedby={formErrors.items?.[item.line_id]?.quantity ? `line-${item.line_id}-quantity-error` : undefined}
                                                                 className="w-full bg-background border rounded-lg px-2 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
@@ -875,14 +1000,14 @@ export function CreateSalesOrderModal({
                                                         </td>
                                                         <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:p-3">
                                                             <span className="text-xs md:hidden">Total</span>
-                                                            ₱{totalNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                         </td>
                                                         <td className="block p-0 text-right md:table-cell md:p-3 md:text-center">
                                                             <button
                                                                 type="button"
-                                                                onClick={() => handleRemoveItem(index)}
-                                                                aria-label={`Remove line ${index + 1}`}
-                                                                title={`Remove line ${index + 1}`}
+                                                                onClick={() => handleRemoveItem(trueIndex)}
+                                                                aria-label={`Remove line ${trueIndex + 1}`}
+                                                                title={`Remove line ${trueIndex + 1}`}
                                                                 className="p-1 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-lg border-none bg-transparent cursor-pointer transition-colors"
                                                             >
                                                                 <Trash2 className="h-4 w-4" />
@@ -890,10 +1015,24 @@ export function CreateSalesOrderModal({
                                                         </td>
                                                     </tr>
                                                 );
-                                            })
+                                                });
+                                            })()
                                         )}
                                     </tbody>
                                 </table>
+                                <div className="p-3 border-t bg-muted/10">
+                                    <button
+                                        id="direct-so-add-product"
+                                        type="button"
+                                        onClick={handleAddItem}
+                                        disabled={!lookupsReady}
+                                        aria-invalid={Boolean(formErrors.items?.[0]?.product)}
+                                        aria-describedby={formErrors.items?.[0]?.product ? "direct-so-items-error" : undefined}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border-none px-3 py-1.5 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" /> Add Product
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -906,12 +1045,12 @@ export function CreateSalesOrderModal({
                                     <span>₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-rose-500 font-bold">
-                                    <span>Discount:</span>
-                                    <span>-₱{discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span>Total Discount:</span>
+                                    <span>-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-foreground font-black">
                                     <span>Grand Total:</span>
-                                    <span className={discountInvalid ? "text-destructive" : "text-primary"}>₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="text-primary">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                             </div>
 
@@ -925,7 +1064,7 @@ export function CreateSalesOrderModal({
                             </button>
                              <button
                                 type="submit"
-                                disabled={submitting || !lookupsReady || discountInvalid || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)}
+                                disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)}
                                 className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {submitting ? (

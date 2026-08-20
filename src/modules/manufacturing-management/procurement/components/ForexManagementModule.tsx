@@ -19,6 +19,7 @@ import {
     Loader2
 } from "lucide-react";
 import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { ForexConfig, ForexRateHistory } from "@/app/api/manufacturing/procurement/forex/route";
 
 export default function ForexManagementModule() {
@@ -38,6 +39,7 @@ export default function ForexManagementModule() {
     const [reasonError, setReasonError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [fetchingCloudRate, setFetchingCloudRate] = useState(false);
+    const [isCloudSourcedRate, setIsCloudSourcedRate] = useState(false);
 
     // History filter & search state
     const [historySearch, setHistorySearch] = useState("");
@@ -80,6 +82,7 @@ export default function ForexManagementModule() {
         setEffectiveDate(new Date().toISOString().split("T")[0]);
         setChangeReason("");
         setReasonError(null);
+        setIsCloudSourcedRate(false);
         setIsUpdateModalOpen(true);
     };
 
@@ -87,6 +90,7 @@ export default function ForexManagementModule() {
         setIsUpdateModalOpen(false);
         setSelectedConfig(null);
         setReasonError(null);
+        setIsCloudSourcedRate(false);
     };
 
     const handleFetchCloudRate = async () => {
@@ -101,6 +105,7 @@ export default function ForexManagementModule() {
             if (data && data.rates && typeof data.rates.PHP === "number") {
                 const cloudPhpRate = Number(data.rates.PHP).toFixed(4);
                 setNewRate(cloudPhpRate);
+                setIsCloudSourcedRate(true);
                 if (!changeReason.trim()) {
                     setChangeReason(`Live market sync via Open Exchange Rates Cloud API (${new Date().toLocaleDateString()})`);
                 }
@@ -146,7 +151,7 @@ export default function ForexManagementModule() {
                     new_rate: parsedRate,
                     effective_date: effectiveDate,
                     change_reason: changeReason.trim(),
-                    changed_by_user_id: 1
+                    changed_by_user_id: isCloudSourcedRate ? null : 1
                 })
             });
 
@@ -220,6 +225,85 @@ export default function ForexManagementModule() {
             return matchesCurrency && matchesSearch;
         });
     }, [rateHistory, currencyFilter, historySearch]);
+
+    if (loading) {
+        return (
+            <div className="space-y-6 flex flex-col h-full min-h-0 pr-1">
+                {/* Header Banner Skeleton */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-5 border rounded-xl shadow-sm shrink-0">
+                    <div className="space-y-2">
+                        <Skeleton className="h-6 w-80" />
+                        <Skeleton className="h-4 w-[28rem]" />
+                    </div>
+                    <Skeleton className="h-9 w-32 self-end sm:self-auto" />
+                </div>
+
+                {/* Active Rates Grid Skeleton */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 shrink-0">
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="bg-card border rounded-xl p-5 shadow-sm space-y-4">
+                            <div className="flex justify-between items-center">
+                                <Skeleton className="h-5 w-24" />
+                                <Skeleton className="h-6 w-16 rounded-full" />
+                            </div>
+                            <Skeleton className="h-10 w-48" />
+                            <div className="flex justify-between items-center pt-2">
+                                <Skeleton className="h-4 w-28" />
+                                <Skeleton className="h-8 w-24 rounded-lg" />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Converter & Simulator Skeleton */}
+                <div className="bg-card border rounded-xl p-5 shadow-sm space-y-4 shrink-0">
+                    <div className="space-y-1 mb-6">
+                        <Skeleton className="h-5 w-72" />
+                        <Skeleton className="h-4 w-96" />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+                        <div className="space-y-4">
+                            <Skeleton className="h-4 w-40" />
+                            <Skeleton className="h-10 w-full rounded-lg" />
+                            <Skeleton className="h-4 w-full mt-6" />
+                        </div>
+                        <div className="space-y-4 lg:border-l lg:pl-8">
+                            <Skeleton className="h-4 w-48" />
+                            <Skeleton className="h-8 w-40 mt-4" />
+                            <Skeleton className="h-4 w-32 mt-6" />
+                        </div>
+                        <div className="space-y-4 lg:border-l lg:pl-8">
+                            <Skeleton className="h-4 w-32" />
+                            <Skeleton className="h-8 w-40 mt-4" />
+                            <Skeleton className="h-4 w-24 mt-6" />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Table Skeleton */}
+                <div className="bg-card border rounded-xl shadow-sm flex flex-col flex-1 min-h-0">
+                    <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div className="space-y-1">
+                            <Skeleton className="h-5 w-64" />
+                            <Skeleton className="h-4 w-80" />
+                        </div>
+                        <div className="flex gap-2 self-end sm:self-auto">
+                            <Skeleton className="h-9 w-32 rounded-lg" />
+                            <Skeleton className="h-9 w-48 rounded-lg" />
+                        </div>
+                    </div>
+                    <div className="p-4 space-y-3">
+                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-12 w-full" />
+                        <Skeleton className="h-12 w-full" />
+                        <Skeleton className="h-12 w-full" />
+                        <Skeleton className="h-12 w-full" />
+                        <Skeleton className="h-12 w-full" />
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 flex flex-col h-full min-h-0 overflow-y-auto pr-1">
@@ -559,7 +643,15 @@ export default function ForexManagementModule() {
                                                 )}
                                             </td>
                                             <td className="p-3 text-muted-foreground">
-                                                User #{log.changed_by_user_id || 1}
+                                                {log.changed_by_user_name ? (
+                                                    <span className={!log.changed_by_user_id ? "px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-semibold text-[10px]" : ""}>
+                                                        {!log.changed_by_user_id ? "System (Cloud API)" : log.changed_by_user_name}
+                                                    </span>
+                                                ) : (
+                                                    <span className={!log.changed_by_user_id ? "px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-semibold text-[10px]" : ""}>
+                                                        {!log.changed_by_user_id ? "System (Cloud API)" : `User #${log.changed_by_user_id || 1}`}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="p-3 text-foreground font-normal max-w-xs truncate" title={log.change_reason}>
                                                 {log.change_reason}
@@ -632,7 +724,13 @@ export default function ForexManagementModule() {
                                         min="0.0001"
                                         required
                                         value={newRate}
-                                        onChange={(e) => setNewRate(e.target.value)}
+                                        onChange={(e) => {
+                                            setNewRate(e.target.value);
+                                            if (isCloudSourcedRate) {
+                                                setIsCloudSourcedRate(false);
+                                                setChangeReason("");
+                                            }
+                                        }}
                                         placeholder="58.5000"
                                         className="w-full bg-background border rounded-lg pl-7 pr-3 py-2 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
                                     />
