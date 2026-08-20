@@ -107,11 +107,12 @@ export async function GET(request: Request) {
         if (pageParam !== null || pageSizeParam !== null) {
             const page = pageParam === null ? 1 : Number(pageParam);
             const pageSize = pageSizeParam === null ? 10 : Number(pageSizeParam);
+            const search = searchParams.get("search") ?? "";
             if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
                 return NextResponse.json({ error: "page and pageSize must be positive integers" }, { status: 400 });
             }
 
-            const result = await fetchProductsBySupplierPage(Number(supplierId), page, pageSize);
+            const result = await fetchProductsBySupplierPage(Number(supplierId), page, pageSize, search);
             return NextResponse.json(result);
         }
 
