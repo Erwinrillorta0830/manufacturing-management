@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { AssetListTable } from "./components/AssetListTable";
 import { MaintenanceWorkOrderModal } from "./components/MaintenanceWorkOrderModal";
 import { AssetDowntimeLogger } from "./components/AssetDowntimeLogger";
+import { getAssetUrl } from "@/lib/assets";
 
 export interface CatalogItem {
     id: number;
@@ -412,8 +413,7 @@ export default function AssetsModule() {
             const fileData = await uploadRes.json();
             const fileId = fileData?.data?.id;
             if (fileId) {
-                const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-                setItemImage(`${baseUrl}/assets/${fileId}`);
+                setItemImage(getAssetUrl(fileId) || "");
                 setImageFilename(file.name);
                 toast.success("Image uploaded successfully");
             }

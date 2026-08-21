@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import {
     Search,
     Edit,
@@ -174,16 +175,21 @@ export function AssetListTable({
                                     >
                                         <td className="p-4 pl-6 align-middle">
                                             {asset.item_image ? (
-                                                // eslint-disable-next-line @next/next/no-img-element
-                                                <img
-                                                    src={asset.item_image}
-                                                    alt={itemName}
+                                                <div 
+                                                    className="w-10 h-10 rounded-md border border-border overflow-hidden shrink-0 relative cursor-zoom-in hover:scale-105 transition-transform"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         setPreviewImage(asset.item_image || null);
                                                     }}
-                                                    className="w-10 h-10 object-cover rounded-md border border-border cursor-zoom-in hover:scale-105 transition-transform"
-                                                />
+                                                >
+                                                    <Image
+                                                        src={asset.item_image}
+                                                        alt={itemName}
+                                                        fill
+                                                        unoptimized
+                                                        className="object-cover"
+                                                    />
+                                                </div>
                                             ) : (
                                                 <div className="w-10 h-10 bg-muted/20 border border-dashed rounded-md flex items-center justify-center text-muted-foreground/40">
                                                     <ImageIcon className="h-4 w-4" />
