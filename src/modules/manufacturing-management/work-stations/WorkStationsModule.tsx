@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import Image from "next/image";
 import { Plus, Search, Edit, DollarSign, Activity, Settings, Check, LayoutGrid, Image as ImageIcon, ChevronsLeft, ChevronsRight, RefreshCw, Info, Calendar, User, X, ChevronDown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { WorkCenter, AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
@@ -585,16 +586,21 @@ export default function WorkStationsModule() {
                                             return (
                                                 <div className="flex items-center gap-3">
                                                     {itemImage ? (
-                                                        // eslint-disable-next-line @next/next/no-img-element
-                                                        <img 
-                                                            src={itemImage} 
-                                                            alt={assetName || "Asset"} 
+                                                        <div 
+                                                            className="w-10 h-10 rounded border border-border shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-105 transition-transform"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 setPreviewImage(itemImage);
                                                             }}
-                                                            className="w-10 h-10 object-cover rounded border border-border shrink-0 cursor-zoom-in hover:scale-105 transition-transform"
-                                                        />
+                                                        >
+                                                            <Image 
+                                                                src={itemImage} 
+                                                                alt={assetName || "Asset"} 
+                                                                fill
+                                                                unoptimized
+                                                                className="object-cover"
+                                                            />
+                                                        </div>
                                                     ) : (
                                                         <div className="w-10 h-10 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0">
                                                             <ImageIcon className="h-4.5 w-4.5" />
@@ -909,12 +915,15 @@ export default function WorkStationsModule() {
                                                         >
                                                             <div className="flex items-center gap-2">
                                                                 {asset.item_image ? (
-                                                                    // eslint-disable-next-line @next/next/no-img-element
-                                                                    <img 
-                                                                        src={asset.item_image} 
-                                                                        alt={label} 
-                                                                        className="w-7 h-7 object-cover rounded border border-border shrink-0"
-                                                                    />
+                                                                    <div className="w-7 h-7 rounded border border-border shrink-0 overflow-hidden relative">
+                                                                        <Image 
+                                                                            src={asset.item_image} 
+                                                                            alt={label} 
+                                                                            fill
+                                                                            unoptimized
+                                                                            className="object-cover"
+                                                                        />
+                                                                    </div>
                                                                 ) : (
                                                                     <div className="w-7 h-7 bg-muted/20 border border-dashed rounded flex items-center justify-center text-muted-foreground/30 shrink-0">
                                                                         <ImageIcon className="h-3.5 w-3.5" />
@@ -1120,13 +1129,18 @@ export default function WorkStationsModule() {
                                             {/* Left: Image Container */}
                                             <div className="w-full md:w-1/3 shrink-0">
                                                 {itemImage ? (
-                                                    // eslint-disable-next-line @next/next/no-img-element
-                                                    <img 
-                                                        src={itemImage} 
-                                                        alt={assetName || "Asset image"} 
+                                                    <div 
+                                                        className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
                                                         onClick={() => setPreviewImage(itemImage)}
-                                                        className="w-full h-24 object-cover rounded-lg border border-border bg-muted/5 shrink-0 cursor-zoom-in hover:scale-102 transition-transform"
-                                                    />
+                                                    >
+                                                        <Image 
+                                                            src={itemImage} 
+                                                            alt={assetName || "Asset image"} 
+                                                            fill
+                                                            unoptimized
+                                                            className="object-cover"
+                                                        />
+                                                    </div>
                                                 ) : (
                                                     <div className="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0">
                                                         <ImageIcon className="h-6 w-6" />
@@ -1225,11 +1239,14 @@ export default function WorkStationsModule() {
                         </button>
                         
                         {/* Image */}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
+                        <Image
                             src={previewImage}
                             alt="Asset Preview Large"
+                            width={900}
+                            height={700}
+                            unoptimized
                             className="max-w-full max-h-[85vh] object-contain rounded-xl animate-in zoom-in-95 duration-200"
+                            style={{ width: "auto", height: "auto" }}
                         />
                     </div>
                 </div>
