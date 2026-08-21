@@ -18,7 +18,7 @@ import {
     cancelQuarantineDisposition
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
-import { validateReceivingMetadata, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
+import { getTodayReceiptDate, validateReceivingMetadata, validateReceivingReceiptDate, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
 import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery, OVER_DELIVERY_EPSILON } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
 
@@ -89,6 +89,7 @@ export function useQAReceiving() {
 
     // Inspection form state
     const [receivingTicketNumber, setReceivingTicketNumber] = useState<string>("");
+    const [receiptDate, setReceiptDate] = useState<string>(() => getTodayReceiptDate());
     const [receiptMode, setReceiptMode] = useState<"full" | "partial">("full");
     const [processOverDelivery, setProcessOverDeliveryState] = useState(false);
     const [selectedBranchId, setSelectedBranchId] = useState<string>("");
@@ -134,6 +135,18 @@ export function useQAReceiving() {
         setValidatingInspection(false);
     }, []);
 
+    const handleReceiptDateChange = useCallback((value: string) => {
+        previewController.current?.abort();
+        setReceiptDate(value);
+        setQaEvaluationResults({});
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewOpen(false);
+        setPreviewAcknowledged(false);
+        setPreviewError(null);
+        setValidatingInspection(false);
+    }, []);
+
     const handleProcessOverDeliveryChange = useCallback((value: boolean) => {
         previewController.current?.abort();
         setProcessOverDeliveryState(value);
@@ -167,6 +180,7 @@ export function useQAReceiving() {
         setLoadingLines(false);
         setInspectionRows({});
         setReceivingTicketNumber("");
+        setReceiptDate(getTodayReceiptDate());
         setReceiptMode("full");
         setProcessOverDeliveryState(false);
         setSelectedBranchId("");
@@ -359,6 +373,7 @@ export function useQAReceiving() {
         setSelectedShipment(shipment);
         setReplacementDisposition(replacementContext);
         setReceivingTicketNumber("");
+        setReceiptDate(getTodayReceiptDate());
         setReceiptMode(isReplacement || isPartiallyReceived ? "partial" : "full");
         setProcessOverDeliveryState(false);
         setQaSpecificationStates({});
@@ -447,6 +462,10 @@ export function useQAReceiving() {
                 })
                 .find(Boolean) || "";
             setReceivingTicketNumber(!isReplacement && isReceived ? storedReceivingTicketNumber : "");
+            const storedReceiptDate = lines
+                .map(line => line.latest_receipt?.receipt_date || "")
+                .find(Boolean) || "";
+            setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             // Reuse the last partial receipt branch when available; otherwise use the PO branch.
             const latestReceiptBranchId = isPartiallyReceived
@@ -718,6 +737,7 @@ export function useQAReceiving() {
         if (isLockedReceivingShipment(selectedShipment, replacementDisposition)) return [];
 
         const issues = [
+            ...validateReceivingReceiptDate(receiptDate),
             ...validateReceivingReceiptNumber(receivingTicketNumber),
             ...validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
             const row = inspectionRows[line.line_id];
@@ -832,7 +852,7 @@ export function useQAReceiving() {
         }
 
         return issues;
-    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptMode, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receiptMode, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment]);
 
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -944,6 +964,7 @@ export function useQAReceiving() {
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
                 receiptNumber: normalizedReceiptNumber,
+                receiptDate,
                 receiptMode,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
@@ -957,6 +978,7 @@ export function useQAReceiving() {
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
                 receiptNumber: normalizedReceiptNumber,
+                receiptDate,
                 receiptMode,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
@@ -1192,6 +1214,8 @@ export function useQAReceiving() {
         setSelectedBranchId: handleDestinationBranchChange,
         receivingTicketNumber,
         handleReceiptNumberChange,
+        receiptDate,
+        handleReceiptDateChange,
         receiptMode,
         setReceiptMode,
         processOverDelivery,

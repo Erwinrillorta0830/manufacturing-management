@@ -74,6 +74,17 @@ export const receivingSubmissionSchema = z.object({
     shipmentId: positiveId,
     replacementDispositionId: positiveId.nullable().optional(),
     referenceNumber: z.string().trim().min(1),
+    receiptDate: z.string()
+        .trim()
+        .min(1, "Date of Receipt is required.")
+        .refine(value => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+            const [year, month, day] = value.split("-").map(Number);
+            const date = new Date(Date.UTC(year, month - 1, day));
+            return date.getUTCFullYear() === year
+                && date.getUTCMonth() === month - 1
+                && date.getUTCDate() === day;
+        }, "Date of Receipt must be a valid date."),
     receiptMode: z.enum(["full", "partial"]).default("full"),
     processOverDelivery: z.boolean().default(false),
     branchId: positiveId,

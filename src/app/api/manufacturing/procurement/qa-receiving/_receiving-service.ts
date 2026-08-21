@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
-import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, todayInManila } from "../_domain";
+import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, receiptDateAtManilaMidnight } from "../_domain";
 import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
@@ -315,6 +315,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             shipmentId,
             replacementDispositionId: submittedReplacementDispositionId,
             referenceNumber,
+            receiptDate,
             receiptMode,
             processOverDelivery,
             branchId,
@@ -545,7 +546,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
             if (declaredAccepted > 0 && categoryType !== "PACKAGING" && !item.expiration_date) {
                 const shelfLifeDays = Number(product.product_shelf_life || 365);
-                const mfgDateStr = item.manufacturing_date || todayInManila();
+                const mfgDateStr = item.manufacturing_date || receiptDate;
                 const mfgTime = new Date(mfgDateStr).getTime();
                 if (!isNaN(mfgTime)) {
                     const calculatedExp = new Date(mfgTime + shelfLifeDays * 24 * 60 * 60 * 1000);
@@ -554,7 +555,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     throw new ReceivingError(`Expiration date is required for product ${productId}.`, 400);
                 }
             }
-            if (item.expiration_date && !evaluateShelfLife(todayInManila(), item.expiration_date, Number(product.product_shelf_life || 0)).valid) {
+            if (item.expiration_date && !evaluateShelfLife(receiptDate, item.expiration_date, Number(product.product_shelf_life || 0)).valid) {
                 throw new ReceivingError(`Expiry date must be after the receipt date for product ${productId}.`, 400);
             }
 
@@ -687,7 +688,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
-                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: new Date().toISOString(),
+                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
                     quarantine_disposition_id: replacementDispositionId || null,
                     is_replacement: Boolean(replacementDispositionId),
@@ -830,7 +831,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     ...(nextInventoryStatus === INVENTORY_STATUS.RECEIVED
                         ? { payment_status: PAYMENT_STATUS.AWAITING_PAYMENT }
                         : {}),
-                    ...(receivingStatus.status !== "Partially Received" ? { date_received: todayInManila() } : {})
+                    ...(receivingStatus.status !== "Partially Received" ? { date_received: receiptDate } : {})
                 });
                 if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
             }

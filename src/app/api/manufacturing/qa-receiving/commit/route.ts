@@ -157,7 +157,8 @@ async function persistedResult(
     input: ReceivingCommitRequest,
     receivingTicketNumber: string,
     idempotentReplay: boolean,
-    expectedAllocationLineIds: Set<number> = new Set()
+    expectedAllocationLineIds: Set<number> = new Set(),
+    receiptDate: string = input.receiptDate
 ): Promise<ReceivingCommitResult | null> {
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
@@ -410,6 +411,7 @@ async function persistedResult(
         mode: "compatibility",
         commitReference: receivingTicketNumber,
         receivingTicketNumber,
+        receiptDate,
         idempotentReplay,
         shipmentId: input.shipmentId,
         status: statusLabel(status),
@@ -461,7 +463,7 @@ export async function POST(request: Request) {
         await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
         const existingTicket = await fetchReceivingTicketByIdempotencyKey(idempotencyKey);
         if (existingTicket?.posting_status === "Posted" && existingTicket.receiving_ticket_no) {
-            const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true);
+            const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true, new Set(), existingTicket.receipt_date || parsed.data.receiptDate);
             if (completed) {
                 await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
                 return NextResponse.json({ data: completed });
@@ -480,6 +482,7 @@ export async function POST(request: Request) {
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
                 receiptNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
@@ -534,6 +537,7 @@ export async function POST(request: Request) {
             purchaseOrderId: parsed.data.shipmentId,
             branchId: parsed.data.destinationBranchId,
             receiptNumber: parsed.data.receiptNumber,
+            receiptDate: parsed.data.receiptDate,
             receiptMode: parsed.data.receiptMode,
             workflowRevision: parsed.data.workflowRevision,
             idempotencyKey,
@@ -545,7 +549,7 @@ export async function POST(request: Request) {
         }
         if (receivingTicket.posting_status === "Posted") {
             ticketPosted = true;
-            const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)));
+            const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)), receivingTicket.receipt_date || parsed.data.receiptDate);
             if (completed) {
                 await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
                 return NextResponse.json({ data: completed });
@@ -559,6 +563,7 @@ export async function POST(request: Request) {
                 shipmentId: parsed.data.shipmentId,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
                 referenceNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
                 branchId: parsed.data.destinationBranchId,
@@ -608,7 +613,8 @@ export async function POST(request: Request) {
             parsed.data,
             receivingTicket.receiving_ticket_no,
             legacyBody.idempotent === true,
-            new Set(mrpAllocationDrafts.map(draft => draft.line_id))
+            new Set(mrpAllocationDrafts.map(draft => draft.line_id)),
+            receivingTicket.receipt_date || parsed.data.receiptDate
         );
         if (!committed) {
             throw new CommitError(500, "Receiving completed but persisted records could not be fully verified. Reconciliation is required.");

@@ -12,6 +12,7 @@ export class ReceivingTicketError extends Error {
 export interface ReceivingTicketRow {
     id: number;
     receiving_ticket_no: string | null;
+    receipt_date: string | null;
     purchase_order_id: number;
     branch_id: number;
     receipt_mode: "full" | "partial" | string;
@@ -30,6 +31,12 @@ function relationId(value: unknown, key: string): number {
     return Number(value && typeof value === "object" ? (value as Record<string, unknown>)[key] : value);
 }
 
+function dateOnly(value: unknown): string | null {
+    if (value == null || value === "") return null;
+    const normalized = String(value).trim();
+    return normalized ? normalized.slice(0, 10) : null;
+}
+
 function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow | null {
     if (!row) return null;
     const id = Number(row.id);
@@ -39,6 +46,7 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
         receiving_ticket_no: row.receiving_ticket_no == null || row.receiving_ticket_no === ""
             ? null
             : String(row.receiving_ticket_no),
+        receipt_date: dateOnly(row.receipt_date),
         purchase_order_id: relationId(row.purchase_order_id, "purchase_order_id"),
         branch_id: relationId(row.branch_id, "id"),
         receipt_mode: String(row.receipt_mode || "full"),
@@ -49,7 +57,7 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
 }
 
 function ticketFields() {
-    return "id,receiving_ticket_no,purchase_order_id,branch_id,receipt_mode,workflow_revision,idempotency_key,posting_status";
+    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,receipt_mode,workflow_revision,idempotency_key,posting_status";
 }
 
 async function directusJson(path: string, init?: RequestInit) {
@@ -129,6 +137,7 @@ export async function allocateReceivingTicket(input: {
     purchaseOrderId: number;
     branchId: number;
     receiptNumber: string;
+    receiptDate: string;
     receiptMode: "full" | "partial";
     workflowRevision: number;
     idempotencyKey: string;
@@ -163,6 +172,7 @@ export async function allocateReceivingTicket(input: {
                     purchase_order_id: input.purchaseOrderId,
                     branch_id: input.branchId,
                     receiving_ticket_no: receiptNumber,
+                    receipt_date: input.receiptDate,
                     receipt_mode: input.receiptMode,
                     workflow_revision: input.workflowRevision,
                     idempotency_key: input.idempotencyKey,
@@ -180,9 +190,9 @@ export async function allocateReceivingTicket(input: {
 
             const created = mapTicket((create.body as { data?: Record<string, unknown> })?.data);
             if (!created) throw new ReceivingTicketError("Directus did not return the receiving ticket header ID.");
-            if (created.receiving_ticket_no !== receiptNumber) {
+            if (created.receiving_ticket_no !== receiptNumber || created.receipt_date !== input.receiptDate) {
                 await markReceivingTicketFailed(created.id).catch(() => false);
-                throw new ReceivingTicketError("Unable to persist the submitted Receipt Number.");
+                throw new ReceivingTicketError("Unable to persist the submitted receipt metadata.");
             }
             return created;
         }

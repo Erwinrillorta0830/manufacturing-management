@@ -1,6 +1,6 @@
 import React from "react";
 import Image from "next/image";
-import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText } from "lucide-react";
+import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText, CalendarDays } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
@@ -18,6 +18,8 @@ interface ShipmentInspectionFormProps {
     storageLots: StorageLot[];
     receivingTicketNumber: string;
     onReceiptNumberChange: (value: string) => void;
+    receiptDate: string;
+    onReceiptDateChange: (value: string) => void;
     receiptMode?: "full" | "partial";
     setReceiptMode?: (val: "full" | "partial") => void;
     processOverDelivery: boolean;
@@ -184,6 +186,8 @@ export default function ShipmentInspectionForm({
     storageLots,
     receivingTicketNumber,
     onReceiptNumberChange,
+    receiptDate,
+    onReceiptDateChange,
     receiptMode,
     setReceiptMode,
     selectedBranchId,
@@ -481,7 +485,7 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 border-b bg-background shrink-0">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-4 border-b bg-background shrink-0">
                 <div className="space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Receipt Number {!readOnly && <span className="text-red-500">*</span>}
@@ -505,6 +509,29 @@ export default function ShipmentInspectionForm({
                     </div>
                     {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
                     <p className="text-[9px] text-muted-foreground">Enter the physical receiving ticket or delivery receipt number.</p>
+                </div>
+
+                <div className="space-y-1">
+                    <label htmlFor="receiving-receipt-date" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Date of Receipt <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
+                        <input
+                            id="receiving-receipt-date"
+                            name="receiptDate"
+                            type="date"
+                            required={!readOnly}
+                            value={receiptDate}
+                            onChange={event => onReceiptDateChange(event.target.value)}
+                            readOnly={readOnly}
+                            aria-invalid={Boolean(issueFor(undefined, "receiptDate"))}
+                            aria-describedby={issueFor(undefined, "receiptDate") ? "receiving-receipt-date-error" : undefined}
+                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptDate") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
+                        />
+                    </div>
+                    {issueFor(undefined, "receiptDate") && <p id="receiving-receipt-date-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptDate")?.message}</p>}
+                    <p className="text-[9px] text-muted-foreground">Enter the date shown on the physical delivery receipt.</p>
                 </div>
 
                 <div className="space-y-1">

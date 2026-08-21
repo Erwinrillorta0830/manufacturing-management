@@ -161,7 +161,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptNumber, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -560,6 +560,7 @@ export async function POST(request: Request) {
             data: {
                 shipmentId,
                 receivingTicketNumber: receiptNumber,
+                receiptDate,
                 receiptMode,
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,
