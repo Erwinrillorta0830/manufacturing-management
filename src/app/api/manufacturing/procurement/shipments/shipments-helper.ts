@@ -411,6 +411,21 @@ async function fetchPaymentModeMap(ids: readonly number[]): Promise<Map<number, 
     }
 }
 
+async function fetchItemsWithDeliveryTermsFallback(collection: string, params: URLSearchParams): Promise<Response> {
+    const url = `${DIRECTUS_URL}/items/${collection}?${params.toString()}`;
+    const response = await fetch(url, { headers, cache: "no-store" });
+    if (response.ok || response.status !== 403) return response;
+
+    const requestedFields = (params.get("fields") || "").split(",").filter(Boolean);
+    const fallbackFields = requestedFields.filter(field => field !== "delivery_terms");
+    if (fallbackFields.length === requestedFields.length) return response;
+
+    console.warn(`[Manufacturing Directus API] ${collection} denied delivery_terms; retrying without the optional field.`);
+    const fallbackParams = new URLSearchParams(params);
+    fallbackParams.set("fields", fallbackFields.join(","));
+    return fetch(`${DIRECTUS_URL}/items/${collection}?${fallbackParams.toString()}`, { headers, cache: "no-store" });
+}
+
 async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, DirectusSupplier>> {
     const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
     if (uniqueIds.length === 0) return new Map();
@@ -419,7 +434,7 @@ async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, Dir
         limit: String(uniqueIds.length),
         filter: JSON.stringify({ id: { _in: uniqueIds } })
     });
-    const response = await fetch(`${DIRECTUS_URL}/items/suppliers?${params.toString()}`, { headers, cache: "no-store" });
+    const response = await fetchItemsWithDeliveryTermsFallback("suppliers", params);
     if (!response.ok) throw new Error(`Failed to load purchase-order suppliers (${response.status}).`);
     const rows = ((await response.json()).data || []) as DirectusSupplier[];
     return new Map(rows.map(row => [Number(row.id), row]));
@@ -557,7 +572,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     });
     if (Object.keys(filter).length > 0) params.set("filter", JSON.stringify(filter));
 
-    const res = await fetch(`${DIRECTUS_URL}/items/purchase_order?${params.toString()}`, { headers, cache: "no-store" });
+    const res = await fetchItemsWithDeliveryTermsFallback("purchase_order", params);
     if (!res.ok) throw new Error(`Failed to load purchase orders (${res.status}).`);
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
