@@ -187,7 +187,8 @@ export function BOMMaterialSelect({
     const displayLabel = React.useMemo(() => {
         if (selectedProduct) {
             const uom = selectedProduct.unit_of_measurement?.unit_shortcut || "N/A";
-            return `${selectedProduct.product_name} (${selectedProduct.product_code || `ID-${selectedProduct.product_id}`}) [${uom}]`;
+            const name = selectedProduct.description || selectedProduct.product_name;
+            return `${name} (${selectedProduct.product_code || `ID-${selectedProduct.product_id}`}) [${uom}]`;
         }
         if (productName) {
             return productCode ? `${productName} (${productCode})` : productName;
@@ -243,11 +244,11 @@ export function BOMMaterialSelect({
                                 >
                                     <Check
                                         className={cn(
-                                            "mr-2 h-4 w-4",
+                                             "mr-2 h-4 w-4",
                                             value === opt.product_id ? "opacity-100" : "opacity-0"
                                         )}
                                     />
-                                    {opt.product_name} ({opt.product_code || `ID-${opt.product_id}`}) [{opt.unit_of_measurement?.unit_shortcut || "N/A"}]
+                                    {opt.description || opt.product_name} ({opt.product_code || `ID-${opt.product_id}`}) [{opt.unit_of_measurement?.unit_shortcut || "N/A"}]
                                 </CommandItem>
                             ))}
                         </CommandGroup>

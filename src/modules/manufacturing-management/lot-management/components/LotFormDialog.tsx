@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
-import { Lot, InventoryType, UnitOfMeasure } from "../types";
+import { Lot, UnitOfMeasure } from "../types";
 import {
     Dialog,
     DialogContent,
@@ -11,13 +11,6 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select";
 import { SearchableUomSelect } from "./SearchableUomSelect";
 import { Button } from "@/components/ui/button";
 
@@ -28,19 +21,16 @@ interface LotFormDialogProps {
     editingLot: Lot | null;
     formData: {
         lotName: string;
-        inventoryTypeId: number | "";
         uomId: number | "";
         maxBatchCapacity: string;
     };
     formErrors?: {
         lotName?: boolean;
-        inventoryTypeId?: boolean;
         uomId?: boolean;
         maxBatchCapacity?: boolean;
     };
     isDuplicateLotName?: boolean;
     onFormChange: (field: string, value: string | number) => void;
-    inventoryTypes: InventoryType[];
     uoms: UnitOfMeasure[];
     saving: boolean;
 }
@@ -54,17 +44,9 @@ export default function LotFormDialog({
     formErrors = {},
     isDuplicateLotName = false,
     onFormChange,
-    inventoryTypes,
     uoms,
     saving
 }: LotFormDialogProps) {
-    const typeOptions = React.useMemo(() => {
-        return inventoryTypes.map((type) => ({
-            value: String(type.inventoryTypeId),
-            label: type.typeName
-        }));
-    }, [inventoryTypes]);
-
     const selectedUom = React.useMemo(() => {
         if (formData.uomId === "") return null;
         return uoms.find((u) => u.unitId === Number(formData.uomId));
@@ -108,32 +90,6 @@ export default function LotFormDialog({
                                     A lot with the name &quot;{formData.lotName.trim()}&quot; already exists.
                                 </p>
                             )}
-                        </div>
-
-                        {/* Inventory Type */}
-                        <div className="space-y-1">
-                            <Label htmlFor="inventoryType">
-                                Inventory Type <span className="text-destructive">*</span>
-                            </Label>
-                            <Select
-                                value={formData.inventoryTypeId === "" ? undefined : String(formData.inventoryTypeId)}
-                                onValueChange={(val) => onFormChange("inventoryTypeId", Number(val))}
-                                disabled={saving}
-                            >
-                                <SelectTrigger
-                                    id="inventoryType"
-                                    className={`w-full justify-between font-normal ${formErrors.inventoryTypeId ? "border-destructive focus-visible:ring-destructive" : ""}`}
-                                >
-                                    <SelectValue placeholder="Select type..." />
-                                </SelectTrigger>
-                                <SelectContent position="popper" className="w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)] max-h-60 overflow-y-auto">
-                                    {typeOptions.map((type) => (
-                                        <SelectItem key={type.value} value={type.value}>
-                                            {type.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
                         </div>
 
                         {/* Unit of Measure (UOM) with Searchbar & Smooth Scroll */}
@@ -207,4 +163,3 @@ export default function LotFormDialog({
         </Dialog>
     );
 }
-

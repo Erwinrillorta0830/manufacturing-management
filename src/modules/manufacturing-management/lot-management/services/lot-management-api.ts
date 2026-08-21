@@ -1,4 +1,4 @@
-import { Lot, CreateLotPayload, UpdateLotPayload, InventoryType, UnitOfMeasure } from "../types";
+import { Lot, CreateLotPayload, UpdateLotPayload, UnitOfMeasure } from "../types";
 
 export async function fetchLots(): Promise<Lot[]> {
     const res = await fetch(`/api/manufacturing/lots?_t=${Date.now()}`, { cache: "no-store" });
@@ -53,14 +53,6 @@ export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
     return await res.json();
 }
 
-export async function fetchInventoryTypes(): Promise<InventoryType[]> {
-    const res = await fetch("/api/manufacturing/lots/inventory-types", { cache: "no-store" });
-    if (!res.ok) {
-        throw new Error("Failed to fetch inventory types lookup from BFF");
-    }
-    return await res.json();
-}
-
 export async function fetchUoms(): Promise<UnitOfMeasure[]> {
     const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
     if (!res.ok) {
@@ -68,4 +60,3 @@ export async function fetchUoms(): Promise<UnitOfMeasure[]> {
     }
     return await res.json();
 }
-

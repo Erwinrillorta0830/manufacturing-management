@@ -188,6 +188,8 @@ export interface LandedCostComputationRecord {
     status: "DRAFT" | "FINALIZING" | "FINALIZED" | "FAILED";
     total_landed_fee?: number | null;
     rounding_variance?: number | null;
+    fg_value_share?: number | string | null;
+    fg_fee_pool?: number | string | null;
 }
 
 export interface LandedCostDraftResponse {
@@ -250,6 +252,8 @@ export interface LandedCostAuditResponse {
         status: LandedCostComputationRecord["status"];
         totalLandedFee: number;
         roundingVariance: number;
+        fgValueShare: number;
+        fgFeePool: number;
         finalizationKey: string | null;
         finalizedAt: string | null;
     } | null;

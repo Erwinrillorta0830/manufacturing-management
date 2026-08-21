@@ -148,7 +148,7 @@ export async function resolveProductIdentity(input: ProductIdentityInput): Promi
         productName,
         parentId,
         unitId,
-        descriptionKey: `${productName} - ${unitLabel}`
+        descriptionKey: parentId ? `${productName} - ${unitLabel}` : productName
     };
 }
 

@@ -13,8 +13,16 @@ import {
     Lock,
     Star,
     Clock,
-    Send
+    Send,
+    GitCompare,
+    Activity,
+    CheckCircle2,
+    FileText,
+    Sliders,
+    Shield,
+    XCircle
 } from "lucide-react";
+
 import { toast } from "sonner";
 import { ProductDetailsTab } from "./components/ProductDetailsTab";
 import { QualityImportationTab } from "./components/QualityImportationTab";
@@ -27,6 +35,21 @@ import { fetchHistoricalYield, applyHistoricalYield } from "./services/historica
 import { useFinishedGoods } from "./hooks/useFinishedGoods";
 import { Product, BOMItem, RoutingStep } from "./types";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
+import {
+    SidebarVersionListSkeleton,
+    DetailsTabSkeleton,
+    VersionRecipeSkeleton,
+    CostingTabSkeleton,
+    QualityTabSkeleton
+} from "./components/FinishedGoodsSkeleton";
+import { ConfirmActionModal, ConfirmActionModalProps } from "./components/ConfirmActionModal";
+
+const tabs = [
+    { id: "details", label: "Product Details", icon: FileText },
+    { id: "version_management", label: "Version Recipe & Routings", icon: Layers },
+    { id: "costing", label: "Live Costing & Simulator", icon: Sliders },
+    { id: "quality_importation", label: "Quality & Importation", icon: Shield }
+];
 
 export default function FinishedGoodsModule() {
     const searchParams = useSearchParams();
@@ -38,6 +61,13 @@ export default function FinishedGoodsModule() {
         : "details";
     const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
     const [isSyncingYield, setIsSyncingYield] = useState(false);
+    const [confirmModal, setConfirmModal] = useState<ConfirmActionModalProps>({
+        isOpen: false,
+        title: "",
+        description: "",
+        onConfirm: () => {},
+        onCancel: () => {}
+    });
 
     const {
         handleCreateBrand,
@@ -226,9 +256,15 @@ export default function FinishedGoodsModule() {
     const [versionSearchQuery, setVersionSearchQuery] = useState("");
 
     const displayedVersions = useMemo(() => {
-        if (!versionSearchQuery.trim()) return versions;
+        const sorted = [...versions].sort((a, b) => {
+            const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+            const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+            return b.version_id - a.version_id;
+        });
+        if (!versionSearchQuery.trim()) return sorted;
         const q = versionSearchQuery.trim().toLowerCase();
-        return versions.filter(v =>
+        return sorted.filter(v =>
             (v.version_name && v.version_name.toLowerCase().includes(q)) ||
             (v.status && v.status.toLowerCase().includes(q))
         );
@@ -241,13 +277,13 @@ export default function FinishedGoodsModule() {
             setActiveTab(tab);
         } else if (tab) {
             setActiveTab("details");
-            router.replace("/mm/finished-goods?tab=details");
+            router.replace("/mm/inventory-warehousing/finished-goods-master?tab=details");
         }
     }, [searchParams, setActiveTab, router]);
 
     const handleTabChange = (tab: string) => {
         setActiveTab(tab);
-        router.replace(`/mm/finished-goods?tab=${tab}`);
+        router.replace(`/mm/inventory-warehousing/finished-goods-master?tab=${tab}`);
     };
 
     const handleOpenVersionModal = () => {
@@ -548,10 +584,13 @@ export default function FinishedGoodsModule() {
     const parentOptions = useMemo(() => {
         return products
             .filter(p => !p.parent_id)
-            .map(p => ({
-                value: String(p.id),
-                label: `${p.title} (${p.sku}) - ${p.baseUom}`
-            }));
+            .map(p => {
+                const displayName = p.identityKey || p.title;
+                return {
+                    value: String(p.id),
+                    label: `${displayName} (${p.sku}) - ${p.baseUom}`
+                };
+            });
     }, [products]);
 
     const brandOptions = useMemo(() => {
@@ -654,15 +693,6 @@ export default function FinishedGoodsModule() {
                 if (c.baseUom) used.add(c.baseUom.trim().toUpperCase());
             });
 
-            // Find first available packaging UOM (order > 1 or non-base)
-            const availableUom = uomOptions.find(u => {
-                const shortcut = (u.value || "").trim().toUpperCase();
-                const isPackaging = ["BOX", "CASE", "CS", "BX", "TIE", "BNDL", "BUNDLE", "PACK", "PK", "CRATE", "PALLET", "DRUM", "BAG", "MBAG"].includes(shortcut) || !["PCS", "PC", "PIECE", "POUCH", "BOT", "BOTTLE", "CAN", "KG", "L", "G", "ML", "UNIT"].includes(shortcut);
-                return isPackaging && !used.has(shortcut);
-            });
-            const chosenUom = availableUom?.value || "Box";
-            const count = 20;
-
             const extractRelId = (val: unknown): number | undefined => {
                 if (val === null || val === undefined || val === "") return undefined;
                 if (typeof val === "number") return Number.isFinite(val) ? val : undefined;
@@ -686,29 +716,24 @@ export default function FinishedGoodsModule() {
             const parentSegmentId = extractRelId(targetParent.product_segment);
             const parentSectionId = extractRelId(targetParent.product_section);
 
-            const uomObj = uomOptions.find(o => o.value === chosenUom);
-            const uomName = uomObj ? uomObj.label.split("(")[0].trim() : chosenUom;
-            const dynamicTitle = `${targetParent.title} (${uomName} of ${count})`;
-            const cleanParentSku = (targetParent.sku || "").trim();
-            const cleanUomUpper = chosenUom.trim().toUpperCase();
-            const dynamicSku = cleanParentSku ? (cleanParentSku.toUpperCase().endsWith(`-${cleanUomUpper}`) ? cleanParentSku : `${cleanParentSku}-${cleanUomUpper}`) : "";
-            const dynamicVersion = dynamicSku ? `${dynamicSku} - v1.0` : "v1.0";
+            const initialSku = (targetParent.sku || "").trim();
+            const initialVersion = initialSku ? `${initialSku} - v1.0` : "v1.0";
 
             setRegisterForm({
                 parentId: targetParentIdStr,
-                title: dynamicTitle,
-                sku: dynamicSku,
-                baseUom: chosenUom,
-                targetSellingPrice: targetParent.targetSellingPrice ? String(targetParent.targetSellingPrice * count) : "",
+                title: targetParent.title || "",
+                sku: initialSku,
+                baseUom: "",
+                targetSellingPrice: "",
                 barcode: "",
                 densityFactor: targetParent.densityFactor !== undefined ? String(targetParent.densityFactor) : "1.0",
                 expectedYield: "100",
-                versionName: dynamicVersion,
+                versionName: initialVersion,
                 brandId: parentBrandId ? String(parentBrandId) : "",
                 categoryId: parentCatId ? String(parentCatId) : "",
                 description: targetParent.description || "",
-                costPerUnit: targetParent.cost_per_unit ? String(targetParent.cost_per_unit * count) : "",
-                uomCount: String(count),
+                costPerUnit: "",
+                uomCount: "",
                 classId: parentClassId ? String(parentClassId) : "",
                 segmentId: parentSegmentId ? String(parentSegmentId) : "",
                 sectionId: parentSectionId ? String(parentSectionId) : "",
@@ -744,6 +769,70 @@ export default function FinishedGoodsModule() {
         setIsRegisterModalOpen(true);
     };
 
+    const handleRequestSwitchProduct = (newProductId: string) => {
+        if (newProductId === selectedProductId) return;
+        if (hasUnsavedChanges) {
+            const nextProd = products.find(p => p.id === newProductId);
+            setConfirmModal({
+                isOpen: true,
+                title: "Unsaved Recipe Changes",
+                description: `You have unsaved changes in the current product recipe. Switching to "${nextProd?.title || "another product"}" will discard your unsaved edits. Are you sure you want to proceed?`,
+                confirmText: "Discard & Switch",
+                cancelText: "Keep Editing",
+                variant: "warning",
+                icon: "warning",
+                onConfirm: () => {
+                    setHasUnsavedChanges(false);
+                    setSelectedProductId(newProductId);
+                    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                },
+                onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
+            });
+            return;
+        }
+        setSelectedProductId(newProductId);
+    };
+
+    const handlePromptSetPrimary = (versionId: number, versionName?: string) => {
+        const targetVer = versions.find(v => v.version_id === versionId) || selectedVersion;
+        const name = versionName || targetVer?.version_name || `Version #${versionId}`;
+        setConfirmModal({
+            isOpen: true,
+            title: "Set Primary Version",
+            description: `Set version "${name}" as the primary active recipe for this product? Other active versions will remain active.`,
+            confirmText: "Set as Primary",
+            cancelText: "Cancel",
+            variant: "success",
+            icon: "star",
+            onConfirm: () => {
+                handleActivateVersion(versionId, "set_primary");
+                setConfirmModal(prev => ({ ...prev, isOpen: false }));
+            },
+            onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
+        });
+    };
+
+    const handlePromptSubmitForApproval = (versionId?: number) => {
+        const targetId = versionId ?? selectedVersionId;
+        const targetVer = versions.find(v => v.version_id === targetId) || selectedVersion;
+        const versionName = targetVer?.version_name || editedVersionDetails?.version_name || "this version";
+
+        setConfirmModal({
+            isOpen: true,
+            title: "Submit Version for QA Approval",
+            description: `Are you sure you want to submit "${versionName}" for QA approval? Once submitted, all BOM ingredients and workstation routings will be locked in read-only mode pending authorization.`,
+            confirmText: "Submit for Approval",
+            cancelText: "Keep Editing",
+            variant: "primary",
+            icon: "help",
+            onConfirm: async () => {
+                setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                await handleSubmitVersionForApproval(targetId !== null && targetId !== undefined ? Number(targetId) : undefined);
+            },
+            onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
+        });
+    };
+
     return (
         <div className="flex h-full min-h-[calc(100vh-120px)] flex-1 flex-col overflow-hidden bg-background">
             {/* Header Bar & Tab Controls */}
@@ -751,6 +840,7 @@ export default function FinishedGoodsModule() {
                 isSidebarCollapsed={isSidebarCollapsed}
                 setIsSidebarCollapsed={setIsSidebarCollapsed}
                 loadingBOM={loadingBOM}
+                loadingProducts={loadingProducts}
                 savingBOM={savingBOM}
                 onOpenRegisterParent={handleOpenRegisterParent}
                 onOpenRegisterChild={handleOpenRegisterChild}
@@ -759,15 +849,7 @@ export default function FinishedGoodsModule() {
                 selectedProductId={selectedProductId}
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
-                versions={versions}
-                selectedVersionId={selectedVersionId}
-                hasUnsavedChanges={hasUnsavedChanges}
-                setHasUnsavedChanges={setHasUnsavedChanges}
-                setIsCompareModalOpen={setIsCompareModalOpen}
-                isSyncingYield={isSyncingYield}
-                handleSyncHistoricalYield={handleSyncHistoricalYield}
-                activeTab={activeTab}
-                handleTabChange={handleTabChange}
+                onRequestSwitchProduct={handleRequestSwitchProduct}
             />
 
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
@@ -796,6 +878,36 @@ export default function FinishedGoodsModule() {
                             </button>
                         </div>
 
+                        {/* Compare Matrix + Sync Yield Toolbar */}
+                        {selectedProduct && (
+                            <div className="px-3 py-2 border-b bg-muted/10 flex items-center gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCompareModalOpen(true)}
+                                    disabled={versions.length < 2}
+                                    className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold hover:bg-muted transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                    title="Compare version matrices side-by-side"
+                                >
+                                    <GitCompare className="h-3 w-3 text-indigo-500" />
+                                    Compare
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSyncHistoricalYield}
+                                    disabled={isSyncingYield || !selectedVersionId}
+                                    className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold hover:bg-muted transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                    title="Sync expected yield from Job Orders"
+                                >
+                                    {isSyncingYield ? (
+                                        <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+                                    ) : (
+                                        <Activity className="h-3 w-3 text-amber-500" />
+                                    )}
+                                    Sync Yield
+                                </button>
+                            </div>
+                        )}
+
                         {/* Version Search / Filter Box */}
                         {versions.length > 3 && (
                             <div className="p-2.5 border-b bg-background/50">
@@ -815,10 +927,7 @@ export default function FinishedGoodsModule() {
                         {/* Versions List */}
                         <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
                             {loadingBOM && versions.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center p-8 gap-1.5 text-muted-foreground">
-                                    <Loader2 className="h-5 w-5 animate-spin" />
-                                    <span className="text-xs">Loading versions...</span>
-                                </div>
+                                <SidebarVersionListSkeleton />
                             ) : !selectedProduct ? (
                                 <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground gap-2 h-40">
                                     <Layers className="h-8 w-8 opacity-30" />
@@ -827,141 +936,89 @@ export default function FinishedGoodsModule() {
                             ) : displayedVersions.length > 0 ? (
                                 displayedVersions.map((v) => {
                                     const isSelected = v.version_id === selectedVersionId;
-                                    const isPrimary = !!v.is_primary;
-                                    const isActive = v.is_active || v.status === "Active";
-                                    const isApproved = v.status === "Approved" || v.status === "Active" || !!v.is_active;
-                                    const isSubmitted = v.status === "For Approval" || v.status === "Pending Approval";
+                                    const isPrimary = Boolean(v.is_primary);
+                                    const isActive = v.status === "Active" || (v as any).is_active === true;
+                                    const isPending = v.status === "Pending Approval" || v.status === "For Approval";
                                     const isRejected = v.status === "Rejected";
-                                    const isRevision = v.status === "Revision Required";
-                                    const cost = versionCosts[v.version_id];
+                                    const isDraft = v.status === "Draft" || v.version_id < 0;
 
                                     return (
                                         <div
                                             key={v.version_id}
                                             onClick={() => {
+                                                if (v.version_id === selectedVersionId) return;
                                                 if (hasUnsavedChanges) {
-                                                    if (!confirm("You have unsaved changes. Are you sure you want to switch versions?")) return;
-                                                    setHasUnsavedChanges(false);
+                                                    setConfirmModal({
+                                                        isOpen: true,
+                                                        title: "Unsaved Recipe Changes",
+                                                        description: `You have unsaved changes in the current version. Switching to "${v.version_name}" will discard your unsaved edits. Are you sure you want to proceed?`,
+                                                        confirmText: "Discard & Switch",
+                                                        cancelText: "Keep Editing",
+                                                        variant: "warning",
+                                                        icon: "warning",
+                                                        onConfirm: () => {
+                                                            setHasUnsavedChanges(false);
+                                                            setSelectedVersionId(v.version_id);
+                                                            setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                                                        },
+                                                        onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
+                                                    });
+                                                    return;
                                                 }
                                                 setSelectedVersionId(v.version_id);
                                             }}
                                             className={`p-3 rounded-xl border transition-all cursor-pointer relative flex flex-col gap-2 ${
                                                 isSelected
-                                                    ? "bg-card border-primary shadow-sm ring-1 ring-primary/20"
+                                                    ? "bg-card border-primary shadow-xs ring-1 ring-primary/25"
                                                     : "bg-background/80 border-border hover:bg-muted/70 hover:border-muted-foreground/30"
                                             }`}
                                         >
-                                            {/* Top Row: Version Name + Status Badge */}
+                                            {/* Row 1: Full Version Name + Primary Badge */}
                                             <div className="flex items-start justify-between gap-2">
-                                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                                    <span className={`text-xs font-bold truncate ${isSelected ? "text-primary font-extrabold" : "text-foreground"}`}>
+                                                <div className="min-w-0 flex-1">
+                                                    <span
+                                                        className={`text-xs font-bold break-all leading-snug ${
+                                                            isSelected ? "text-primary font-extrabold" : "text-foreground"
+                                                        }`}
+                                                        title={v.version_name}
+                                                    >
                                                         {v.version_name}
                                                     </span>
                                                 </div>
-                                                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
-                                                    {isPrimary && (
-                                                        <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
-                                                            <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" /> Primary
-                                                        </span>
-                                                    )}
+                                                {isPrimary && (
+                                                    <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0 shadow-2xs">
+                                                        <Star className="h-2 w-2 fill-emerald-500 text-emerald-500" /> Primary
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {/* Row 2: Status Badges & Yield/Base Info */}
+                                            <div className="flex items-center justify-between gap-2 flex-wrap text-[11px] text-muted-foreground pt-0.5">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
                                                     {isActive ? (
-                                                        <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase shrink-0">
-                                                            Active
+                                                        <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                                                            <CheckCircle2 className="h-2.5 w-2.5" /> Active
                                                         </span>
-                                                    ) : isApproved ? (
-                                                        <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase shrink-0">
-                                                            Approved
-                                                        </span>
-                                                    ) : isSubmitted ? (
+                                                    ) : isPending ? (
                                                         <span className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0">
-                                                            <Clock className="h-2.5 w-2.5" /> Pending
+                                                            <Clock className="h-2.5 w-2.5" /> Pending Approval
                                                         </span>
                                                     ) : isRejected ? (
-                                                        <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase shrink-0">
-                                                            Rejected
-                                                        </span>
-                                                    ) : isRevision ? (
-                                                        <span className="bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase shrink-0">
-                                                            Revision
+                                                        <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                                                            <XCircle className="h-2.5 w-2.5" /> Rejected
                                                         </span>
                                                     ) : (
-                                                        <span className="bg-muted text-muted-foreground border text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
-                                                            {v.status || "Draft"}
+                                                        <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                            Draft
                                                         </span>
                                                     )}
                                                 </div>
-                                            </div>
 
-                                            {/* Middle Row: Yield, Base Qty */}
-                                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground ml-auto">
                                                     <span>Yield: <strong className="text-foreground">{v.expected_yield_percentage || 100}%</strong></span>
                                                     <span>Base: <strong className="text-foreground">{v.base_quantity || 1} {selectedProduct?.baseUom || ""}</strong></span>
                                                 </div>
                                             </div>
-
-                                            {/* Bottom Row: Quick Actions for active selected version */}
-                                            {isSelected && (
-                                                <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/50 mt-0.5 flex-wrap">
-                                                    {!isPrimary && isApproved && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (confirm(`Set version "${v.version_name}" as Primary Default for master cost rollups and default Job Orders?`)) {
-                                                                    handleActivateVersion(v.version_id, "set_primary");
-                                                                }
-                                                            }}
-                                                            className="inline-flex items-center gap-1 rounded bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
-                                                            title="Designate as Primary Default"
-                                                        >
-                                                            <Star className="h-2.5 w-2.5 fill-white" /> Make Primary
-                                                        </button>
-                                                    )}
-
-                                                    {isApproved && !isActive && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleActivateVersion(v.version_id, "set_active");
-                                                            }}
-                                                            className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
-                                                            title="Activate as alternate BOM"
-                                                        >
-                                                            Activate
-                                                        </button>
-                                                    )}
-
-                                                    {(v.status === "Draft" || !v.status || v.status === "Revision Required") && handleSubmitVersionForApproval && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleSubmitVersionForApproval(v.version_id);
-                                                            }}
-                                                            className="inline-flex items-center gap-1 rounded bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
-                                                            title="Submit for Approval"
-                                                        >
-                                                            <Send className="h-2.5 w-2.5" /> Submit
-                                                        </button>
-                                                    )}
-
-                                                    {isActive && !isPrimary && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleActivateVersion(v.version_id, "deactivate");
-                                                            }}
-                                                            className="inline-flex items-center gap-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 px-2 py-0.5 text-[10px] font-bold transition-all cursor-pointer"
-                                                            title="Deactivate this alternate version"
-                                                        >
-                                                            Deactivate
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
                                         </div>
                                     );
                                 })
@@ -981,8 +1038,36 @@ export default function FinishedGoodsModule() {
                     </div>
                 )}
 
-                {/* Right Side: Product Detail Tabs */}
+                {/* Right Side: Product Detail Tabs (in column with main content) */}
                 <div className="flex-1 overflow-hidden flex flex-col bg-background">
+                    {/* Module Tab Navigation Bar */}
+                    <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-6 pt-2 shrink-0 overflow-x-auto items-center">
+                        {tabs.map((tab) => {
+                            const Icon = tab.icon;
+                            const isActive = activeTab === tab.id;
+                            const isProductDetails = tab.id === "details";
+                            return (
+                                <React.Fragment key={tab.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleTabChange(tab.id)}
+                                        className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer whitespace-nowrap ${
+                                            isActive
+                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-t-lg"
+                                        }`}
+                                    >
+                                        <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                                        <span>{tab.label}</span>
+                                    </button>
+                                    {isProductDetails && (
+                                        <div className="h-5 w-px bg-border/80 mx-2 self-center shrink-0" title="Product Master / Version Boundary" />
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
+                    </div>
+
                     {Object.keys(editFieldErrors).length > 0 && (
                         <div className="mx-6 mt-4 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-700" role="alert">
                             <p className="font-semibold">Please correct the highlighted fields before saving.</p>
@@ -997,11 +1082,7 @@ export default function FinishedGoodsModule() {
                     {/* Tab Contents */}
                     <div className="flex-1 overflow-y-auto p-6 min-h-0 relative">
                         {loadingProducts && !selectedProduct ? (
-                            <div className="flex flex-col items-center justify-center p-20 text-muted-foreground h-full">
-                                <Loader2 className="h-10 w-10 animate-spin text-primary mb-3" />
-                                <span className="text-sm font-semibold">Loading product database...</span>
-                                <span className="text-xs text-muted-foreground mt-1">Please wait while we retrieve finished goods and configuration options.</span>
-                            </div>
+                            <DetailsTabSkeleton />
                         ) : !selectedProduct ? (
                             <div className="flex flex-col items-center justify-center p-16 text-center max-w-lg mx-auto my-auto h-full space-y-4">
                                 <div className="h-16 w-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
@@ -1032,6 +1113,16 @@ export default function FinishedGoodsModule() {
                                     </button>
                                 </div>
                             </div>
+                        ) : loadingBOM ? (
+                            activeTab === "details" ? (
+                                <DetailsTabSkeleton />
+                            ) : activeTab === "version_management" || activeTab === "routes_bom" ? (
+                                <VersionRecipeSkeleton />
+                            ) : activeTab === "costing" ? (
+                                <CostingTabSkeleton />
+                            ) : (
+                                <QualityTabSkeleton />
+                            )
                         ) : (
                             <>
                                 {activeTab === "details" && (
@@ -1076,7 +1167,6 @@ export default function FinishedGoodsModule() {
                                         {(activeTab === "version_management" || activeTab === "routes_bom") && (
                                             <VersionManagementTab
                                                 activeTab={activeTab}
-                                                selectedProductId={selectedProductId}
                                                 selectedVersionId={selectedVersionId}
                                                 selectedVersion={selectedVersion}
                                                 editedVersionDetails={editedVersionDetails}
@@ -1091,8 +1181,9 @@ export default function FinishedGoodsModule() {
                                                 qaTemplates={qaTemplates}
                                                 units={units}
                                                 setHasUnsavedChanges={setHasUnsavedChanges}
-                                                isSyncingYield={isSyncingYield}
-                                                handleSyncHistoricalYield={handleSyncHistoricalYield}
+                                                isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
+                                                onSetPrimary={handlePromptSetPrimary}
+                                                onSubmitForApproval={handlePromptSubmitForApproval}
                                             />
                                         )}
 
@@ -1179,16 +1270,6 @@ export default function FinishedGoodsModule() {
                     </div>
                 </div>
             </div>
-
-            {loadingBOM && (
-                <div className="fixed inset-0 z-[95] bg-background/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-150">
-                    <div className="bg-card border rounded-xl shadow-lg p-5 flex flex-col items-center gap-2 max-w-xs text-center border-primary/20">
-                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        <h4 className="text-xs font-bold text-foreground">Loading Version Recipe...</h4>
-                        <p className="text-[10px] text-muted-foreground">Fetching bill of materials, routing sequences, and overhead variables from database.</p>
-                    </div>
-                </div>
-            )}
 
             {savingBOM && (
                 <div
@@ -1375,6 +1456,9 @@ export default function FinishedGoodsModule() {
                 versions={versions}
                 currentVersionId={selectedVersionId}
             />
+
+            {/* Custom Confirmation Modal */}
+            <ConfirmActionModal {...confirmModal} />
         </div>
     );
 }

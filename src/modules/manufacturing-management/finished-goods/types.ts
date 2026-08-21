@@ -233,6 +233,11 @@ export interface ProductVersion {
     valid_to?: string | null;
     is_active?: boolean; // legacy/compatibility
     is_primary?: boolean; // Primary Default for Master Standard Cost Rollup & JO Defaults
+    is_draft?: boolean;
+    rejection_reason?: string | null;
+    approval_remarks?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
     routes?: RouteStep[];
     overheads?: ProductOverhead[];
     overhead_items?: VersionOverheadItem[];

@@ -18,10 +18,7 @@ import {
     isLandedCostPostingEligible,
     isPurchaseOrderPosted
 } from "../landed-cost-eligibility";
-import {
-    calculatePackagingWeightShares,
-    resolveProductWeightBreakdown
-} from "../packaging-weight";
+import { resolveProductWeightBreakdown } from "../packaging-weight";
 import { calculateLandedCost } from "../landed-cost-calculation";
 import type { LandedCostAllocationRule } from "../types";
 
@@ -194,157 +191,74 @@ export function usePurchaseAmountPosting(
             .finally(() => setLoading(false));
     }, [selectedShipment]);
 
-    // Hybrid Allocation Calculation Engine Preview
+    // Shared landed-cost allocation engine preview
     const calculationResult = useMemo<HybridCalculationResult>(() => {
         const totalLandedFee = landedExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-        if (lineItems.length === 0 || totalLandedFee === 0 || !allocationRule) {
+        const calculationInputs = lineItems.map(item => {
+            const product = typeof item.product_id === "object" && item.product_id !== null
+                ? item.product_id
+                : null;
             return {
-                lineCalculations: lineItems.map(item => {
-                    const price = Number(item.unit_price) || 0;
-                    const basePhp = isForeignPO ? price * exchangeRate : price;
-                    return {
-                        ...item,
-                        allocated_amount: 0,
-                        variance_adjustment: 0,
-                        allocated_expense_php: 0,
-                        final_landed_unit_cost: basePhp
-                    };
-                }),
-                rmSubPool: 0,
-                pkgSubPool: 0,
-                totalLandedFee: 0,
-                roundingVariance: 0,
-                hasMissingWeight: false,
-                missingWeightItems: []
+                key: item.purchase_order_product_id,
+                category_type: item.category_type || "RAW_MATERIAL",
+                quantity: Number(item.received_quantity) || 0,
+                baseUnitCostPhp: (Number(item.unit_price) || 0) * (isForeignPO ? exchangeRate : 1),
+                lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
+                volume: Number(product?.cbm_height || 0)
+                    * Number(product?.cbm_width || 0)
+                    * Number(product?.cbm_length || 0)
             };
-        }
-
-        if (allocationRule !== "Hybrid") {
-            const calculated = calculateLandedCost(
-                lineItems.map(item => {
-                    const product = typeof item.product_id === "object" && item.product_id !== null
-                        ? item.product_id
-                        : null;
-                    const volume = Number(product?.cbm_height || 0)
-                        * Number(product?.cbm_width || 0)
-                        * Number(product?.cbm_length || 0);
-
-                    return {
-                        key: item.purchase_order_product_id,
-                        category_type: item.category_type || "RAW_MATERIAL",
-                        quantity: Number(item.received_quantity) || 0,
-                        baseUnitCostPhp: (Number(item.unit_price) || 0) * (isForeignPO ? exchangeRate : 1),
-                        lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
-                        volume
-                    };
-                }),
-                totalLandedFee,
-                allocationRule
-            );
-            return {
-                lineCalculations: lineItems.map(item => {
-                    const result = calculated.lines.find(line => line.key === item.purchase_order_product_id);
-                    return {
-                        ...item,
-                        allocated_amount: result?.allocatedExpense || 0,
-                        variance_adjustment: result?.roundingVariance || 0,
-                        allocated_expense_php: result?.addedUnitCost || 0,
-                        final_landed_unit_cost: result?.finalLandedUnitCost || 0
-                    };
-                }),
-                rmSubPool: 0,
-                pkgSubPool: 0,
-                totalLandedFee: calculated.totalLandedFee,
-                roundingVariance: calculated.roundingVariance,
-                hasMissingWeight: false,
-                missingWeightItems: []
-            };
-        }
-
-        const rmItems = lineItems.filter(i => i.category_type === "RAW_MATERIAL" || i.category_type === "FINISHED_GOODS");
-        const pkgItems = lineItems.filter(i => i.category_type === "PACKAGING");
-
-        const totalRMCommercialVal = rmItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);
-        const totalPKGCommercialVal = pkgItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);
-        const totalPOCommercialVal = totalRMCommercialVal + totalPKGCommercialVal;
-
-        const rmRatio = totalPOCommercialVal > 0 ? totalRMCommercialVal / totalPOCommercialVal : 0;
-        const pkgRatio = totalPOCommercialVal > 0 ? totalPKGCommercialVal / totalPOCommercialVal : 0;
-
-        const rmSubPool = totalLandedFee * rmRatio;
-        const pkgSubPool = totalLandedFee * pkgRatio;
-
-        const totalRMQty = rmItems.reduce((sum, i) => sum + (i.received_quantity || 0), 0);
-        const missingWeightItems = pkgItems
-            .filter(i => !Number.isFinite(Number(i.line_gross_weight_kg)) || Number(i.line_gross_weight_kg) <= 0)
-            .map(i => i.product_name || `Product #${i.product_id}`);
-        const packageWeightShares = calculatePackagingWeightShares(pkgItems.map(item => ({
-            key: item.purchase_order_product_id,
-            lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0
-        })));
-
-        const rawAllocations = new Map<number, number>();
-
-        for (const item of rmItems) {
-            const fee = totalRMQty > 0 ? rmSubPool * ((item.received_quantity || 0) / totalRMQty) : rmSubPool / (rmItems.length || 1);
-            rawAllocations.set(item.purchase_order_product_id, fee);
-        }
-
-        for (const item of pkgItems) {
-            const weightShare = packageWeightShares.get(item.purchase_order_product_id) || 0;
-            const fee = weightShare > 0 ? pkgSubPool * weightShare : pkgSubPool / (pkgItems.length || 1);
-            rawAllocations.set(item.purchase_order_product_id, fee);
-        }
-
-        let sumRounded = 0;
-        let maxCommValue = -1;
-        let maxValId = -1;
-
-        const roundMoney = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
-
-        const lineCalcs = lineItems.map(item => {
-            const commVal = (item.received_quantity || 0) * (item.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0);
-            if (commVal > maxCommValue) {
-                maxCommValue = commVal;
-                maxValId = item.purchase_order_product_id;
-            }
-            const raw = rawAllocations.get(item.purchase_order_product_id) || 0;
-            const rounded = roundMoney(raw);
-            sumRounded += rounded;
-
+        });
+        const missingWeightItems = allocationRule === "Hybrid"
+            ? lineItems
+                .filter(item => item.category_type === "PACKAGING")
+                .filter(item => !Number.isFinite(Number(item.line_gross_weight_kg)) || Number(item.line_gross_weight_kg) <= 0)
+                .map(item => item.product_name || `Product #${item.product_id}`)
+            : [];
+        const baseLineCalculations = lineItems.map(item => {
+            const price = Number(item.unit_price) || 0;
+            const basePhp = isForeignPO ? price * exchangeRate : price;
             return {
                 ...item,
-                allocated_amount: rounded,
+                allocated_amount: 0,
                 variance_adjustment: 0,
                 allocated_expense_php: 0,
-                final_landed_unit_cost: 0
+                final_landed_unit_cost: basePhp
             };
         });
 
-        const diff = roundMoney(totalLandedFee - sumRounded);
-        if (diff !== 0 && maxValId !== -1) {
-            const target = lineCalcs.find(i => i.purchase_order_product_id === maxValId);
-            if (target) {
-                target.variance_adjustment = diff;
-                target.allocated_amount = roundMoney(target.allocated_amount + diff);
-            }
+        if (lineItems.length === 0 || totalLandedFee === 0 || !allocationRule || missingWeightItems.length > 0) {
+            return {
+                lineCalculations: baseLineCalculations,
+                rmSubPool: 0,
+                pkgSubPool: 0,
+                fgSubPool: 0,
+                totalLandedFee: totalLandedFee > 0 && allocationRule ? totalLandedFee : 0,
+                roundingVariance: 0,
+                hasMissingWeight: missingWeightItems.length > 0,
+                missingWeightItems
+            };
         }
 
-        for (const item of lineCalcs) {
-            const qty = item.received_quantity || 1;
-            item.allocated_expense_php = roundMoney(item.allocated_amount / qty);
-            const basePhp = (item.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0);
-            item.final_landed_unit_cost = roundMoney(basePhp + item.allocated_expense_php);
-        }
-
+        const calculated = calculateLandedCost(calculationInputs, totalLandedFee, allocationRule);
         return {
-            lineCalculations: lineCalcs,
-            rmSubPool: roundMoney(rmSubPool),
-            pkgSubPool: roundMoney(pkgSubPool),
-            totalLandedFee: roundMoney(totalLandedFee),
-            roundingVariance: diff,
-            hasMissingWeight: missingWeightItems.length > 0,
-            missingWeightItems
+            lineCalculations: lineItems.map(item => {
+                const result = calculated.lines.find(line => line.key === item.purchase_order_product_id);
+                return {
+                    ...item,
+                    allocated_amount: result?.allocatedExpense || 0,
+                    variance_adjustment: result?.roundingVariance || 0,
+                    allocated_expense_php: result?.addedUnitCost || 0,
+                    final_landed_unit_cost: result?.finalLandedUnitCost || 0
+                };
+            }),
+            rmSubPool: allocationRule === "Hybrid" ? calculated.rmFeePool : 0,
+            pkgSubPool: allocationRule === "Hybrid" ? calculated.pkgFeePool : 0,
+            fgSubPool: allocationRule === "Hybrid" ? calculated.fgFeePool : 0,
+            totalLandedFee: calculated.totalLandedFee,
+            roundingVariance: calculated.roundingVariance,
+            hasMissingWeight: false,
+            missingWeightItems: []
         };
     }, [lineItems, landedExpenses, exchangeRate, isForeignPO, allocationRule]);
 

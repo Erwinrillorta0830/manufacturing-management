@@ -32,6 +32,7 @@ import {
     saveBOMDetails,
     registerProduct,
     registerNewVersion,
+    submitFullVersion,
     createBrand,
     createCategory,
     fetchClasses,
@@ -315,10 +316,16 @@ export function useFinishedGoods(initialTab: string = "details") {
             try {
                 const list = await fetchVersions(numericId);
                 if (cancelled) return;
-                setVersions(list);
-                if (list && list.length > 0) {
-                    const activeVer = list.find((v: any) => v.is_active || v.status === "Active");
-                    setSelectedVersionId(activeVer ? activeVer.version_id : list[0].version_id);
+                const sortedList = (list || []).sort((a: any, b: any) => {
+                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                    return b.version_id - a.version_id;
+                });
+                setVersions(sortedList);
+                if (sortedList && sortedList.length > 0) {
+                    const activeVer = sortedList.find((v: any) => v.is_active || v.status === "Active");
+                    setSelectedVersionId(activeVer ? activeVer.version_id : sortedList[0].version_id);
                 } else {
                     setSelectedVersionId(null);
                 }
@@ -409,6 +416,15 @@ export function useFinishedGoods(initialTab: string = "details") {
             setEditedRoutings([]);
             setEditedOverheads([]);
             setHasUnsavedChanges(false);
+            return;
+        }
+
+        // If this is a local draft version (< 0), keep in-memory UI draft and skip backend fetch
+        if (selectedVersionId < 0) {
+            const draftVer = versions.find((v) => v.version_id === selectedVersionId);
+            if (draftVer) {
+                setSelectedVersion(draftVer);
+            }
             return;
         }
 
@@ -778,57 +794,63 @@ export function useFinishedGoods(initialTab: string = "details") {
             return;
         }
 
+        const trimmedName = form.versionName.trim();
+        const exists = versions.some(v => v.version_name.trim().toLowerCase() === trimmedName.toLowerCase());
+        if (exists) {
+            toast.error(`A version with name "${trimmedName}" already exists. Please choose a unique name.`);
+            return;
+        }
+
         setSavingBOM(true);
-        setSaveProgress(10);
-        setSaveStatus("Cloning base version template...");
-        
-        let progress = 10;
-        const interval = setInterval(() => {
-            if (progress < 90) {
-                if (progress < 40) {
-                    progress += 5;
-                    setSaveStatus("Creating new version record...");
-                } else {
-                    progress += 3;
-                    setSaveStatus("Copying operations and ingredients BOM...");
-                }
-                setSaveProgress(Math.min(progress, 90));
-            }
-        }, 150);
+        setSaveProgress(20);
+        setSaveStatus("Registering draft version in database...");
 
         try {
             const baseVerId = form.baseVersionId ? Number(form.baseVersionId) : null;
+            const yieldNum = Number(form.expectedYield) || 100;
+            const baseQtyNum = Number(form.baseQuantity) || 1;
+            const uomIdNum = form.uomId ? Number(form.uomId) : undefined;
+
+            setSaveStatus("Saving version to database...");
             const res = await registerNewVersion(
                 numericId,
                 baseVerId,
-                Number(form.expectedYield) || 100,
-                form.versionName.trim(),
-                Number(form.baseQuantity) || 1,
-                Number(form.uomId) || undefined
+                yieldNum,
+                trimmedName,
+                baseQtyNum,
+                uomIdNum
             );
 
-            if (res.success && res.version) {
-                clearInterval(interval);
-                setSaveProgress(100);
-                setSaveStatus("Version created successfully!");
-                await new Promise(resolve => setTimeout(resolve, 650));
-
-                toast.success(`Successfully registered version "${form.versionName}"!`);
-                const list = await fetchVersions(numericId);
-                setVersions(list);
-                setSelectedVersionId(res.version.version_id);
-                setIsVersionModalOpen(false);
+            if (!res || !res.version || !res.version.version_id) {
+                throw new Error("Failed to register version in database");
             }
+
+            const createdVer = res.version;
+            const newVersionId = createdVer.version_id;
+
+            setSaveStatus("Loading version details...");
+            const list = await fetchVersions(numericId);
+            const sortedList = (list || []).sort((a: any, b: any) => {
+                const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                return b.version_id - a.version_id;
+            });
+            setVersions(sortedList);
+            setSelectedVersionId(newVersionId);
+            setActiveBOMId(newVersionId);
+            setHasUnsavedChanges(false);
+            setIsVersionModalOpen(false);
+
+            toast.success(`Draft version "${trimmedName}" created! Configure recipes below and click "Submit for Approval" when ready.`);
         } catch (e) {
-            clearInterval(interval);
+            console.error("Draft version creation error:", e);
+            const error = e instanceof Error ? e : new Error(String(e));
+            toast.error(error.message || "Failed to create draft version");
+        } finally {
+            setSavingBOM(false);
             setSaveProgress(0);
             setSaveStatus("");
-            console.error("Version registration error:", e);
-            const error = e instanceof Error ? e : new Error(String(e));
-            toast.error(error.message || "Failed to register new version");
-        } finally {
-            clearInterval(interval);
-            setSavingBOM(false);
         }
     };
 
@@ -995,15 +1017,71 @@ export function useFinishedGoods(initialTab: string = "details") {
                 status: (editedDetails as unknown as { status?: string }).status || (selectedProduct as unknown as { status?: string })?.status || "Active"
             };
 
-            const res = await saveBOMDetails(
-                numericProductId,
-                activeBOMId,
-                detailsPayload,
-                routesPayload,
-                editedOverheads
-            );
+            let saveSucceeded = false;
 
-            if (res.success) {
+            if (selectedVersionId !== null && selectedVersionId < 0) {
+                // Local UI draft version: submit as Draft to MySQL database
+                const draftPayload = {
+                    productId: numericProductId,
+                    versionName: (editedVersionDetails?.version_name || selectedVersion?.version_name || "v1.0").trim(),
+                    baseQuantity: Number(editedVersionDetails?.base_quantity ?? selectedVersion?.base_quantity ?? 1),
+                    uomId: Number(editedVersionDetails?.uom_id ?? selectedVersion?.uom_id) || undefined,
+                    expectedYield: Number(editedVersionDetails?.expected_yield_percentage ?? selectedVersion?.expected_yield_percentage ?? 100),
+                    status: "Draft",
+                    routes: routesPayload,
+                    labor_positions: editedVersionDetails?.labor_positions || [],
+                    overhead_items: editedVersionDetails?.overhead_items || [],
+                    custom_overhead: Number(editedVersionDetails?.custom_overhead || 0)
+                };
+                const vRes = await submitFullVersion(draftPayload);
+                if (!vRes.success || !vRes.version) {
+                    throw new Error(vRes.error || "Failed to persist draft version to database");
+                }
+                const newVersionId = vRes.version.version_id;
+                // Also update product details
+                await saveBOMDetails(
+                    numericProductId,
+                    newVersionId,
+                    detailsPayload,
+                    routesPayload,
+                    editedOverheads
+                );
+                const list = await fetchVersions(numericProductId);
+                setVersions(list);
+                setSelectedVersionId(newVersionId);
+                setActiveBOMId(newVersionId);
+                saveSucceeded = true;
+            } else {
+                const targetVersionId = (selectedVersionId && selectedVersionId > 0)
+                    ? selectedVersionId
+                    : (activeBOMId && activeBOMId > 0
+                        ? activeBOMId
+                        : (versions.find(v => v.version_id > 0)?.version_id || null));
+
+                if (!targetVersionId) {
+                    throw new Error("No version selected or found for this product. Please select or register a version first.");
+                }
+
+                const res = await saveBOMDetails(
+                    numericProductId,
+                    targetVersionId,
+                    detailsPayload,
+                    routesPayload,
+                    editedOverheads
+                );
+                saveSucceeded = res.success;
+                setActiveBOMId(targetVersionId);
+                const list = await fetchVersions(numericProductId);
+                const sortedList = (list || []).sort((a: any, b: any) => {
+                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                    return b.version_id - a.version_id;
+                });
+                setVersions(sortedList);
+            }
+
+            if (saveSucceeded) {
                 clearInterval(interval);
                 setSaveProgress(100);
                 setSaveStatus("Saved successfully!");
@@ -1015,13 +1093,14 @@ export function useFinishedGoods(initialTab: string = "details") {
                         const identityParent = updatedParentId ? products.find(parent => parent.id === String(updatedParentId)) : null;
                         const identityName = identityParent?.title || editedDetails.title || p.title;
                         const identityUom = matchedUnit?.unit_shortcut || editedDetails.baseUom || p.baseUom;
+                        const resolvedIdentityKey = updatedParentId ? `${identityName} - ${identityUom.trim().toUpperCase()}` : identityName;
                         const updatedStatus = (editedDetails as unknown as { status?: string }).status || (p as unknown as { status?: string }).status || "Active";
                         return {
                             ...p,
                             sku: editedDetails.sku || p.sku,
                             title: editedDetails.title || p.title,
-                            description: editedDetails.description || p.description,
-                            identityKey: `${identityName} - ${identityUom.trim().toUpperCase()}`,
+                            description: editedDetails.description !== undefined ? editedDetails.description : p.description,
+                            identityKey: resolvedIdentityKey || p.identityKey || null,
                             barcode: editedDetails.barcode || p.barcode,
                             baseUom: editedDetails.baseUom || p.baseUom,
                             targetSellingPrice: editedDetails.targetSellingPrice || p.targetSellingPrice,
@@ -1119,9 +1198,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         setSaveStatus(
             isDeactivate
                 ? "Deactivating product versions..."
-                : action === "set_primary"
-                ? "Setting primary default version..."
-                : "Activating selected version..."
+                : "Activating version..."
         );
         
         let progress = 10;
@@ -1143,10 +1220,12 @@ export function useFinishedGoods(initialTab: string = "details") {
 
                 const msg = isDeactivate
                     ? "Version deactivated successfully!"
-                    : action === "set_primary"
-                    ? "Version set as Primary Default!"
-                    : "BOM version activated as Alternate!";
+                    : "Version set as Active!";
                 toast.success(msg);
+                if (!isDeactivate) {
+                    setProducts(prev => prev.map(p => p.id === String(numericProductId) ? { ...p, status: "Active", isActive: true } : p));
+                    setEditedDetails(prev => ({ ...prev, status: "Active", isActive: true }));
+                }
                 const list = await fetchVersions(numericProductId);
                 setVersions(list);
             }
@@ -1169,16 +1248,62 @@ export function useFinishedGoods(initialTab: string = "details") {
         const numericProductId = Number(selectedProductId);
         const currentVer = versions.find(v => v.version_id === vId);
 
+        // Validate routes and BOM ingredients before submitting
+        const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
+            routeId: route.route_id,
+            rowNumber: index + 1,
+            item,
+            materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
+        }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
+
+        if (invalidBomRow) {
+            const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
+            toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before submitting.`);
+            return;
+        }
+
         setSavingBOM(true);
         setSaveProgress(20);
         setSaveStatus("Submitting version for approval...");
         try {
-            const res = await activateVersion(numericProductId, vId, "submit_for_approval");
-            if (res.success) {
-                setSaveProgress(100);
-                toast.success(`Version '${currentVer?.version_name || vId}' submitted for approval!`);
-                const list = await fetchVersions(numericProductId);
-                setVersions(list);
+            if (vId < 0) {
+                // Local UI draft version: POST entire package to MySQL database with status: "Pending Approval"
+                const payload = {
+                    productId: numericProductId,
+                    versionName: (editedVersionDetails?.version_name || currentVer?.version_name || "").trim(),
+                    baseQuantity: Number(editedVersionDetails?.base_quantity ?? currentVer?.base_quantity ?? 1),
+                    uomId: Number(editedVersionDetails?.uom_id ?? currentVer?.uom_id) || undefined,
+                    expectedYield: Number(editedVersionDetails?.expected_yield_percentage ?? currentVer?.expected_yield_percentage ?? 100),
+                    status: "Pending Approval",
+                    routes: editedRoutes,
+                    labor_positions: editedVersionDetails?.labor_positions || [],
+                    overhead_items: editedVersionDetails?.overhead_items || [],
+                    custom_overhead: Number(editedVersionDetails?.custom_overhead || 0)
+                };
+
+                const res = await submitFullVersion(payload);
+                if (res.success && res.version) {
+                    setSaveProgress(100);
+                    toast.success(`Version '${res.version.version_name}' submitted for approval!`);
+                    const list = await fetchVersions(numericProductId);
+                    setVersions(list);
+                    setSelectedVersionId(res.version.version_id);
+                    setHasUnsavedChanges(false);
+                }
+            } else {
+                // Existing DB version in Inactive status: save current edits & set status to "For Approval"
+                if (hasUnsavedChanges) {
+                    await handleSave();
+                }
+                const res = await activateVersion(numericProductId, vId, "submit_for_approval");
+                if (res.success) {
+                    setSaveProgress(100);
+                    toast.success(`Version '${currentVer?.version_name || vId}' submitted for approval!`);
+                    const list = await fetchVersions(numericProductId);
+                    setVersions(list);
+                    setSelectedVersionId(vId);
+                    setHasUnsavedChanges(false);
+                }
             }
         } catch (e) {
             console.error("Failed to submit version for approval:", e);

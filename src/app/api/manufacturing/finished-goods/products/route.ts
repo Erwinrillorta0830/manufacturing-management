@@ -277,7 +277,8 @@ export async function POST(request: Request) {
             item_type: "regular",
             product_type: 388,
             date_added: productDetails.date_added || todayStr,
-            created_by: userId ? Number(userId) : null
+            created_by: userId ? Number(userId) : null,
+            updated_by: userId ? Number(userId) : null
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -298,16 +299,18 @@ export async function POST(request: Request) {
         const prodJson = await prodRes.json();
         const productId = prodJson.data?.product_id;
 
-        // 2. Create Product Version (For Approval status by default for first version)
+        // 2. Create Product Version (Draft status by default)
         const versionPayload = {
             product_id: productId,
             version_name: validatedDetails.versionName,
             base_quantity: 1.0,
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
-            status: "For Approval",
+            status: "Draft",
+            is_primary: 0,
             valid_from: todayStr,
-            created_by: userId ? Number(userId) : null
+            created_by: userId ? Number(userId) : null,
+            updated_by: userId ? Number(userId) : null
         };
 
 
