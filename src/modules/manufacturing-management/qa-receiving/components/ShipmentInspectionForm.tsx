@@ -20,13 +20,12 @@ interface ShipmentInspectionFormProps {
     onReceiptNumberChange: (value: string) => void;
     receiptDate: string;
     onReceiptDateChange: (value: string) => void;
-    receiptMode?: "full" | "partial";
-    setReceiptMode?: (val: "full" | "partial") => void;
+    receiptType?: "full" | "partial";
+    setReceiptType?: (val: "full" | "partial") => void;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
     selectedBranchId: string;
-    setSelectedBranchId: (val: string) => void;
     inspectionRows: Record<number, InspectionRow>;
     qaSpecificationStates: Record<number, QaSpecificationLoadState>;
     qaReadings: QaSpecificationReadings;
@@ -188,10 +187,9 @@ export default function ShipmentInspectionForm({
     onReceiptNumberChange,
     receiptDate,
     onReceiptDateChange,
-    receiptMode,
-    setReceiptMode,
+    receiptType,
+    setReceiptType,
     selectedBranchId,
-    setSelectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
     overDeliveryLines,
@@ -356,7 +354,7 @@ export default function ShipmentInspectionForm({
 
     // Filter out Bihon Bad Branch and quarantine branches from main selector
     const filteredBranches = React.useMemo(() => {
-        return branches.filter(b => {
+        const eligibleBranches = branches.filter(b => {
             if (b.isBadStock === true || Number(b.isBadStock) === 1) return false;
             const name = (b.branch_name || "").toLowerCase();
             return !name.includes("bad branch") &&
@@ -365,7 +363,10 @@ export default function ShipmentInspectionForm({
                 !name.includes("holding") &&
                 !name.includes("bad order");
         });
-    }, [branches]);
+        return selectedBranchId
+            ? eligibleBranches.filter(branch => Number(branch.id) === Number(selectedBranchId))
+            : eligibleBranches;
+    }, [branches, selectedBranchId]);
 
     const originalBranchName = React.useMemo(() => {
         if (!selectedShipment.branch_id) return "N/A";
@@ -536,19 +537,19 @@ export default function ShipmentInspectionForm({
 
                 <div className="space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                         Receiving Branch {!readOnly && <span className="text-red-500">*</span>}
+                        Receiving Branch <span className="text-muted-foreground">(from PO)</span>
                     </label>
                     <div className="relative">
                         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
                         <select
                             id="receiving-branch"
-                            required={!readOnly}
+                            required={false}
                             value={selectedBranchId}
-                            onChange={(event) => setSelectedBranchId(event.target.value)}
-                            disabled={readOnly}
+                            disabled={true}
+                            aria-readonly="true"
                             aria-invalid={Boolean(issueFor(undefined, "branchId"))}
                             aria-describedby={issueFor(undefined, "branchId") ? "receiving-branch-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
+                            className={`w-full h-10 rounded-xl border bg-muted/40 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-not-allowed disabled:opacity-100 ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
                         >
                             <option value="">Select receiving branch...</option>
                             {filteredBranches.map(branch => (
@@ -557,17 +558,18 @@ export default function ShipmentInspectionForm({
                         </select>
                     </div>
                     {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
+                    {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
                 </div>
 
                 <div className="space-y-1">
-                    <label htmlFor="receiving-mode" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Receipt Mode {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
+                    <label htmlFor="receiving-type" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Receipt Type {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
                     </label>
                     <select
-                        id="receiving-mode"
-                        value={receiptMode || "full"}
-                        onChange={event => setReceiptMode?.(event.target.value as "full" | "partial")}
-                        disabled={readOnly || isReplacement || !setReceiptMode}
+                        id="receiving-type"
+                        value={receiptType || "full"}
+                        onChange={event => setReceiptType?.(event.target.value as "full" | "partial")}
+                        disabled={readOnly || isReplacement || !setReceiptType}
                         className="w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold px-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer disabled:cursor-not-allowed disabled:bg-muted/40"
                     >
                         <option value="full">Full Receipt</option>

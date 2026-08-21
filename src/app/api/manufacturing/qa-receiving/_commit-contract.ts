@@ -81,7 +81,7 @@ const receivingRequestSchema = z.object({
     supplierDocumentNumber: serverOwnedNumber,
     referenceNumber: serverOwnedNumber,
     grnNumber: serverOwnedNumber,
-    receiptMode: z.enum(["full", "partial"]).default("full"),
+    receiptType: z.enum(["full", "partial"]),
     processOverDelivery: z.boolean().default(false),
     destinationBranchId: z.number().int().positive(),
     lines: z.array(receivingCommitLineSchema).min(1)

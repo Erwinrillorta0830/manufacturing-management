@@ -164,7 +164,7 @@ export interface ReceivingPreview {
     replacementDispositionId?: number | null;
     receivingTicketNumber: string | null;
     receiptDate: string;
-    receiptMode: "full" | "partial";
+    receiptType: "full" | "partial";
     processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;
@@ -180,7 +180,7 @@ export interface ReceivingCommitPayload {
     replacementDispositionId?: number | null;
     receiptNumber: string;
     receiptDate: string;
-    receiptMode: "full" | "partial";
+    receiptType: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{

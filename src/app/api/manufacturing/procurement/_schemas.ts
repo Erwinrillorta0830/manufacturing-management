@@ -85,7 +85,7 @@ export const receivingSubmissionSchema = z.object({
                 && date.getUTCMonth() === month - 1
                 && date.getUTCDate() === day;
         }, "Date of Receipt must be a valid date."),
-    receiptMode: z.enum(["full", "partial"]).default("full"),
+    receiptType: z.enum(["full", "partial"]),
     processOverDelivery: z.boolean().default(false),
     branchId: positiveId,
     branchName: z.string().trim().min(1),
