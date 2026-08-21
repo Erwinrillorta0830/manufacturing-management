@@ -12,12 +12,15 @@ interface DirectLaborStandardsTabProps {
     editedVersionDetails: any;
     setEditedVersionDetails: React.Dispatch<React.SetStateAction<any>>;
     setHasUnsavedChanges: (val: boolean) => void;
+    /** When true, all fields are read-only. */
+    isVersionLocked?: boolean;
 }
 
 export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = ({
     editedVersionDetails,
     setEditedVersionDetails,
-    setHasUnsavedChanges
+    setHasUnsavedChanges,
+    isVersionLocked = false
 }) => {
     const [productionPositions, setProductionPositions] = React.useState<any[]>([]);
 
@@ -159,17 +162,19 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                         Configure version-level headcount, daily wages, overtime, and statutory benefit allowances (SSS 9.54%, PHIC, Pag-IBIG) for batch output ({baseQuantity.toLocaleString()} units).
                     </p>
                 </div>
-                <Button
-                    id="add-version-labor-pos-btn"
-                    aria-label="Add Direct Labor Standard Position"
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddVersionLaborPosition}
-                    className="h-8 text-xs border-primary/30 text-primary hover:bg-primary/10 shadow-2xs font-semibold cursor-pointer shrink-0"
-                >
-                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Position
-                </Button>
+                {!isVersionLocked && (
+                    <Button
+                        id="add-version-labor-pos-btn"
+                        aria-label="Add Direct Labor Standard Position"
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAddVersionLaborPosition}
+                        className="h-8 text-xs border-primary/30 text-primary hover:bg-primary/10 shadow-2xs font-semibold cursor-pointer shrink-0"
+                    >
+                        <Plus className="h-3.5 w-3.5 mr-1" /> Add Position
+                    </Button>
+                )}
             </div>
 
             {/* KPI Cards Banner */}
@@ -200,21 +205,29 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
             {versionLaborPositions.length === 0 ? (
                 <div className="text-center py-10 border border-dashed rounded-xl border-border/70 bg-muted/5 text-muted-foreground space-y-2">
                     <Users className="h-9 w-9 text-muted-foreground/40 mx-auto mb-1" />
-                    <p className="text-xs font-semibold text-foreground">No labor positions configured for this version yet.</p>
-                    <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
-                        Add staff positions to allocate production labor, overtime, and statutory government benefit allowances.
+                    <p className="text-xs font-semibold text-foreground">
+                        {isVersionLocked
+                            ? "No labor positions configured for this version."
+                            : "No labor positions configured for this version yet."}
                     </p>
-                    <Button
-                        id="add-first-version-labor-pos-btn"
-                        aria-label="Add First Direct Labor Standard"
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleAddVersionLaborPosition}
-                        className="mt-2 h-7 text-xs text-primary hover:bg-primary/10 font-semibold"
-                    >
-                        + Add First Labor Position
-                    </Button>
+                    <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                        {isVersionLocked
+                            ? "This version is locked in read-only mode. Labor allocations and staff positions cannot be modified."
+                            : "Add staff positions to allocate production labor, overtime, and statutory government benefit allowances."}
+                    </p>
+                    {!isVersionLocked && (
+                        <Button
+                            id="add-first-version-labor-pos-btn"
+                            aria-label="Add First Direct Labor Standard"
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleAddVersionLaborPosition}
+                            className="mt-2 h-7 text-xs text-primary hover:bg-primary/10 font-semibold cursor-pointer"
+                        >
+                            + Add First Labor Position
+                        </Button>
+                    )}
                 </div>
             ) : (
                 <div className="overflow-x-auto rounded-xl border border-border/80 bg-card shadow-2xs">
@@ -228,7 +241,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                 <th className="py-2.5 px-2 text-center w-16">OT (Hrs)</th>
                                 <th className="py-2.5 px-3 text-center w-36">Gov Benefits</th>
                                 <th className="py-2.5 px-3 text-right w-32">Position Cost</th>
-                                <th className="py-2.5 px-2 text-center w-12">Action</th>
+                                {!isVersionLocked && <th className="py-2.5 px-2 text-center w-12">Action</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/50">
@@ -251,6 +264,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                 <CreatableSelect
                                                     options={positionOptions}
                                                     value={pos.position_name}
+                                                    disabled={isVersionLocked}
                                                     onValueChange={(val) => handleUpdateVersionLaborPosition(pIdx, "position_name", val)}
                                                     onCreateOption={(newVal) => handleUpdateVersionLaborPosition(pIdx, "position_name", newVal)}
                                                     placeholder="Position title..."
@@ -264,8 +278,9 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                             <select
                                                 aria-label={`Category for position ${pIdx + 1}`}
                                                 value={pos.category || "direct_labor"}
+                                                disabled={isVersionLocked}
                                                 onChange={(e) => handleUpdateVersionLaborPosition(pIdx, "category", e.target.value)}
-                                                className={`h-7 rounded border px-1.5 py-0.5 text-[11px] font-semibold outline-none transition-colors ${
+                                                className={`h-7 rounded border px-1.5 py-0.5 text-[11px] font-semibold outline-none transition-colors disabled:opacity-50 ${
                                                     pos.category === "maintenance"
                                                         ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
                                                         : "bg-primary/10 border-primary/20 text-primary"
@@ -283,6 +298,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                 aria-label={`Headcount for position ${pIdx + 1}`}
                                                 type="number"
                                                 min="1"
+                                                disabled={isVersionLocked}
                                                 value={pos.manpower_count === "" || pos.manpower_count === null || pos.manpower_count === undefined ? "" : pos.manpower_count}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
@@ -299,7 +315,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                         handleUpdateVersionLaborPosition(pIdx, "manpower_count", 1);
                                                     }
                                                 }}
-                                                className="w-12 h-7 text-center rounded border border-input bg-background text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                                                className="w-12 h-7 text-center rounded border border-input bg-background text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                             />
                                         </td>
 
@@ -313,9 +329,10 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                     type="number"
                                                     step="0.01"
                                                     min="0"
+                                                    disabled={isVersionLocked}
                                                     value={pos.daily_rate === "" || pos.daily_rate === null || pos.daily_rate === undefined ? "" : pos.daily_rate}
                                                     onChange={(e) => handleUpdateVersionLaborPosition(pIdx, "daily_rate", e.target.value)}
-                                                    className="w-20 h-7 pl-3 text-right font-mono rounded border border-input bg-background px-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                                                    className="w-20 h-7 pl-3 text-right font-mono rounded border border-input bg-background px-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                 />
                                             </div>
                                         </td>
@@ -328,9 +345,10 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                 type="number"
                                                 step="0.5"
                                                 min="0"
+                                                disabled={isVersionLocked}
                                                 value={pos.ot_hours === "" || pos.ot_hours === null || pos.ot_hours === undefined ? "" : pos.ot_hours}
                                                 onChange={(e) => handleUpdateVersionLaborPosition(pIdx, "ot_hours", e.target.value)}
-                                                className="w-12 h-7 text-center font-mono rounded border border-input bg-background px-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                                                className="w-12 h-7 text-center font-mono rounded border border-input bg-background px-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                             />
                                         </td>
 
@@ -341,9 +359,10 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                                     id={`version-labor-mandates-check-${pIdx}`}
                                                     aria-label={`Include government mandates for position ${pIdx + 1}`}
                                                     type="checkbox"
+                                                    disabled={isVersionLocked}
                                                     checked={pos.include_mandates !== false}
                                                     onChange={(e) => handleUpdateVersionLaborPosition(pIdx, "include_mandates", e.target.checked)}
-                                                    className="rounded border-input text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer"
+                                                    className="rounded border-input text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer disabled:opacity-50"
                                                 />
                                                 {pos.include_mandates !== false ? (
                                                     <span 
@@ -364,19 +383,21 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                                         </td>
 
                                         {/* Action Button */}
-                                        <td className="py-2 px-2 text-center">
-                                            <Button
-                                                id={`delete-version-labor-pos-btn-${pIdx}`}
-                                                aria-label={`Delete position ${pos.position_name}`}
-                                                type="button"
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => handleDeleteVersionLaborPosition(pIdx)}
-                                                className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer rounded-md transition-colors"
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </Button>
-                                        </td>
+                                        {!isVersionLocked && (
+                                            <td className="py-2 px-2 text-center">
+                                                <Button
+                                                    id={`delete-version-labor-pos-btn-${pIdx}`}
+                                                    aria-label={`Delete position ${pos.position_name}`}
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => handleDeleteVersionLaborPosition(pIdx)}
+                                                    className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer rounded-md transition-colors"
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                            </td>
+                                        )}
                                     </tr>
                                 );
                             })}

@@ -319,6 +319,47 @@ export async function registerNewVersion(
     return res.json();
 }
 
+export async function submitFullVersion(payload: {
+    productId: number;
+    versionName: string;
+    baseQuantity: number;
+    uomId?: number;
+    expectedYield: number;
+    status?: string;
+    routes?: RouteStep[];
+    labor_positions?: any[];
+    overhead_items?: any[];
+    custom_overhead?: number;
+}): Promise<{ success: boolean; version: ProductVersion; error?: string }> {
+    const res = await fetch("/api/manufacturing/finished-goods/versions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+        let msg = "Failed to submit version via BFF";
+        let code: string | undefined;
+        let fields: Record<string, string> | undefined;
+        try {
+            const errJson = await res.json();
+            if (errJson && errJson.error) msg = errJson.error;
+            if (errJson && errJson.code) code = errJson.code;
+            if (errJson && errJson.fields) fields = errJson.fields;
+        } catch { }
+        const error = new Error(msg) as Error & {
+            status?: number;
+            code?: string;
+            fields?: Record<string, string>;
+        };
+        error.status = res.status;
+        error.code = code;
+        error.fields = fields;
+        throw error;
+    }
+    return res.json();
+}
+
+
 export async function createBrand(brandName: string): Promise<{ success: boolean; brand: Brand }> {
     const res = await fetch("/api/manufacturing/finished-goods/brands", {
         method: "POST",

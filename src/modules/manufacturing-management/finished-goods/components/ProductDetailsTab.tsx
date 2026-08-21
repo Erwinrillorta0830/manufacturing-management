@@ -1,4 +1,5 @@
 import React from "react";
+import Image from "next/image";
 import { toast } from "sonner";
 import { Product, Brand, Category, Unit, ProductClass, ProductSegment, ProductSection } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
@@ -20,6 +21,7 @@ import {
     Sliders,
     AlertTriangle
 } from "lucide-react";
+import { getAssetUrl } from "@/lib/assets";
 
 interface ProductDetailsTabProps {
     editedDetails: Partial<Product>;
@@ -420,35 +422,21 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                             <div className="flex items-center gap-4 border border-dashed border-border rounded-xl p-4 bg-muted/5 hover:bg-muted/10 transition-all">
                                 {editedDetails.product_image ? (
                                     <div className="relative group w-20 h-20 rounded-lg overflow-hidden border bg-background flex items-center justify-center">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img 
-                                            src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${editedDetails.product_image}`} 
+                                        <Image 
+                                            src={getAssetUrl(editedDetails.product_image) || "/placeholder-image.png"} 
                                             alt="Preview" 
-                                            className="w-full h-full object-cover"
-                                            onError={(e) => {
-                                                const target = e.target as HTMLImageElement;
-                                                if (target.src.includes("/assets/")) {
-                                                    // Fallback if not a UUID
-                                                    target.src = "/placeholder-image.png";
-                                                }
-                                            }}
+                                            fill
+                                            unoptimized
+                                            className="object-cover"
                                         />
                                         <button
                                             type="button"
-                                            onClick={async () => {
-                                                const oldId = editedDetails.product_image;
-                                                handleDetailChange("product_image", undefined);
+                                            onClick={() => {
+                                                handleDetailChange("product_image", null);
                                                 setImagePreview(null);
                                                 setImageUploadError(null);
-                                                if (oldId && oldId.length > 10) {
-                                                    try {
-                                                        await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
-                                                    } catch (err) {
-                                                        console.error("Failed to delete file", err);
-                                                    }
-                                                }
                                             }}
-                                            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all uppercase"
+                                            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all uppercase cursor-pointer"
                                         >
                                             Remove
                                         </button>
@@ -652,8 +640,8 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                                     }}
                                     className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all font-semibold"
                                 >
-                                    <option value="Active">Active (Live inventory & manufacturing)</option>
-                                    <option value="Inactive">Inactive (Deactivated / Draft)</option>
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
                                 </select>
                             </div>
 

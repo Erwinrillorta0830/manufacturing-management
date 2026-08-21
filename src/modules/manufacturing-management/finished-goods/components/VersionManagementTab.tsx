@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { GitFork, Briefcase, Calculator, Activity } from "lucide-react";
+import { GitFork, Briefcase, Calculator, Lock, Sparkles, XCircle, Clock, CheckCircle2, Star, Send } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
@@ -27,6 +27,10 @@ export interface VersionManagementTabProps {
     setHasUnsavedChanges: (val: boolean) => void;
     isSyncingYield: boolean;
     handleSyncHistoricalYield: () => Promise<void>;
+    /** When true, all BOM/routing/labor/overhead fields are locked (read-only). Triggered by Active, Pending Approval, or Rejected status. */
+    isVersionLocked?: boolean;
+    onSetPrimary?: (versionId: number, versionName?: string) => void;
+    onSubmitForApproval?: (versionId?: number) => void;
 }
 
 export function VersionManagementTab({
@@ -48,45 +52,112 @@ export function VersionManagementTab({
     allCatalogProducts,
     setHasUnsavedChanges,
     isSyncingYield,
-    handleSyncHistoricalYield
+    handleSyncHistoricalYield,
+    isVersionLocked = false,
+    onSetPrimary,
+    onSubmitForApproval
 }: VersionManagementTabProps) {
     const [userSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
     const versionSubTab = activeTab === "routes_bom" ? "routes_bom" : userSubTab;
 
+    const isPrimary = Boolean(selectedVersion?.is_primary);
+    const isActive = selectedVersion?.status === "Active" || (selectedVersion as any)?.is_active === true;
+
     return (
         <div className="space-y-6">
-            {/* Historical Yield Sync & Version Controls Card */}
-            <div className="bg-card border rounded-xl p-4 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
-                        <Activity className="h-5 w-5" />
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h4 className="text-xs font-bold text-foreground">Historical Yield Sync &amp; Version Specifications</h4>
-                            {selectedVersion?.version_name && (
-                                <span className="bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold px-2 py-0.5 rounded">
-                                    {selectedVersion.version_name}
-                                </span>
-                            )}
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Target Yield: <strong className="text-foreground">{editedVersionDetails.expected_yield_percentage ?? 100}%</strong>.
-                            Sync with completed Job Orders to automatically update expected yield from actual shop floor performance.
+            {/* 1. Rejected Version Banner (Immutable Record) */}
+            {selectedVersion?.status === "Rejected" && (
+                <div className="flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+                    <XCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                        <p className="text-xs font-bold text-rose-700 dark:text-rose-300">
+                            Version Rejected (Immutable History) — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                        </p>
+                        <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1 font-medium">
+                            <strong>Reason:</strong> {selectedVersion.rejection_reason || selectedVersion.approval_remarks || "No rejection reason provided."}
+                        </p>
+                        <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 mt-1">
+                            This version is an immutable historical record and cannot be edited. To revise this recipe, create a new version on the sidebar and select this version as the base template.
                         </p>
                     </div>
                 </div>
-                <button
-                    type="button"
-                    disabled={isSyncingYield || !selectedProductId || !selectedVersionId}
-                    onClick={handleSyncHistoricalYield}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 transition-all disabled:opacity-50 cursor-pointer shrink-0"
-                    title="Sync expected yield from completed Job Order production records"
-                >
-                    <Activity className={`h-3.5 w-3.5 ${isSyncingYield ? "animate-spin" : ""}`} />
-                    {isSyncingYield ? "Syncing Historical Yield..." : "Sync Yield from Job Orders"}
-                </button>
-            </div>
+            )}
+
+            {/* 2. Pending Approval Review Banner */}
+            {(selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval") && (
+                <div className="flex items-center gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3">
+                    <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <div className="flex-1">
+                        <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                            Pending Approval Review — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                        </p>
+                        <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
+                            This version has been submitted for QA and engineering review. All recipe parameters and routings are locked in read-only mode pending authorization.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* 3. Active Version Banner */}
+            {isActive && selectedVersion && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                                    Active Production Version — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                                </p>
+                                {isPrimary ? (
+                                    <span className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase flex items-center gap-1">
+                                        <Star className="h-2.5 w-2.5 fill-emerald-500 text-emerald-500" /> Primary Recipe
+                                    </span>
+                                ) : null}
+                            </div>
+                            <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 mt-0.5">
+                                This version is active and approved for manufacturing job orders. Inputs are locked to protect production integrity.
+                            </p>
+                        </div>
+                    </div>
+                    {!isPrimary && selectedVersion.version_id > 0 && onSetPrimary && (
+                        <button
+                            type="button"
+                            onClick={() => onSetPrimary(selectedVersion.version_id, selectedVersion.version_name)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
+                            title="Set as the Primary active recipe for production job orders"
+                        >
+                            <Star className="h-3.5 w-3.5 fill-white" /> Make Primary
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {/* 4. In-Memory Draft Info Banner */}
+            {!isVersionLocked && selectedVersionId !== null && (selectedVersionId < 0 || selectedVersion?.status === "Draft") && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                                Draft Version (In Editor) — <span className="font-extrabold">{selectedVersion?.version_name || "New Version"}</span>
+                            </p>
+                            <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
+                                Configure your routing steps, BOM ingredients, direct labor standards, and overheads below. When finished, click <strong>"Submit for Approval"</strong> to save to the database and submit for QA review.
+                            </p>
+                        </div>
+                    </div>
+                    {onSubmitForApproval && (
+                        <button
+                            type="button"
+                            onClick={() => onSubmitForApproval(selectedVersionId)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
+                            title="Submit for QA Approval"
+                        >
+                            <Send className="h-3.5 w-3.5" /> Submit for Approval
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Inner Sub-tab Navigation under Version Management */}
             <div className="flex border-b border-border/60 gap-2 bg-muted/20 px-3 pt-2 rounded-t-xl shrink-0">
@@ -141,12 +212,14 @@ export function VersionManagementTab({
                     setOperationTypes={setOperationTypes}
                     editedVersionDetails={editedVersionDetails}
                     setEditedVersionDetails={setEditedVersionDetails}
+                    isVersionLocked={isVersionLocked}
                 />
             ) : versionSubTab === "direct_labor" ? (
                 <DirectLaborStandardsTab
                     editedVersionDetails={editedVersionDetails}
                     setEditedVersionDetails={setEditedVersionDetails}
                     setHasUnsavedChanges={setHasUnsavedChanges}
+                    isVersionLocked={isVersionLocked}
                 />
             ) : (
                 <OverheadManagementTab
@@ -155,6 +228,7 @@ export function VersionManagementTab({
                     editedVersionDetails={editedVersionDetails}
                     setEditedVersionDetails={setEditedVersionDetails}
                     setHasUnsavedChanges={setHasUnsavedChanges}
+                    isVersionLocked={isVersionLocked}
                 />
             )}
         </div>
