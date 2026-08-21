@@ -1,14 +1,14 @@
 "use client";
 
 import React, { useState } from "react";
-import { GitFork, Briefcase, Calculator, Lock, Sparkles, XCircle, Clock, CheckCircle2, Star, Send } from "lucide-react";
+import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
 import { ProductVersion, RouteStep, OperationType, OverheadType, WorkCenter, QATemplate, Unit, BFFCatalogProduct } from "../types";
 
 export interface VersionManagementTabProps {
-    selectedProductId: string;
+    selectedProductId?: string;
     selectedVersionId: number | null;
     selectedVersion: ProductVersion | null;
     editedVersionDetails: Partial<ProductVersion>;
@@ -25,8 +25,8 @@ export interface VersionManagementTabProps {
     allCatalogProducts?: BFFCatalogProduct[];
     activeTab?: string;
     setHasUnsavedChanges: (val: boolean) => void;
-    isSyncingYield: boolean;
-    handleSyncHistoricalYield: () => Promise<void>;
+    isSyncingYield?: boolean;
+    handleSyncHistoricalYield?: () => Promise<void>;
     /** When true, all BOM/routing/labor/overhead fields are locked (read-only). Triggered by Active, Pending Approval, or Rejected status. */
     isVersionLocked?: boolean;
     onSetPrimary?: (versionId: number, versionName?: string) => void;
@@ -35,7 +35,6 @@ export interface VersionManagementTabProps {
 
 export function VersionManagementTab({
     activeTab,
-    selectedProductId,
     selectedVersionId,
     selectedVersion,
     editedVersionDetails,
@@ -51,8 +50,6 @@ export function VersionManagementTab({
     units,
     allCatalogProducts,
     setHasUnsavedChanges,
-    isSyncingYield,
-    handleSyncHistoricalYield,
     isVersionLocked = false,
     onSetPrimary,
     onSubmitForApproval
@@ -61,7 +58,7 @@ export function VersionManagementTab({
     const versionSubTab = activeTab === "routes_bom" ? "routes_bom" : userSubTab;
 
     const isPrimary = Boolean(selectedVersion?.is_primary);
-    const isActive = selectedVersion?.status === "Active" || (selectedVersion as any)?.is_active === true;
+    const isActive = selectedVersion?.status === "Active" || selectedVersion?.is_active === true;
 
     return (
         <div className="space-y-6">
@@ -142,7 +139,7 @@ export function VersionManagementTab({
                                 Draft Version (In Editor) — <span className="font-extrabold">{selectedVersion?.version_name || "New Version"}</span>
                             </p>
                             <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
-                                Configure your routing steps, BOM ingredients, direct labor standards, and overheads below. When finished, click <strong>"Submit for Approval"</strong> to save to the database and submit for QA review.
+                                Configure your routing steps, BOM ingredients, direct labor standards, and overheads below. When finished, click <strong>&quot;Submit for Approval&quot;</strong> to save to the database and submit for QA review.
                             </p>
                         </div>
                     </div>

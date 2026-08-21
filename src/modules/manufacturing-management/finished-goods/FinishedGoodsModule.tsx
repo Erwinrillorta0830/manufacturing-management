@@ -849,27 +849,6 @@ export default function FinishedGoodsModule() {
                 selectedProductId={selectedProductId}
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
-                versions={versions}
-                selectedVersionId={selectedVersionId}
-                selectedVersion={selectedVersion}
-                setSelectedVersionId={setSelectedVersionId}
-                versionCosts={versionCosts}
-                handleSubmitVersionForApproval={handlePromptSubmitForApproval}
-                handleActivateVersion={(vId, action) => {
-                    if (action === "set_primary") {
-                        handlePromptSetPrimary(vId);
-                    } else {
-                        handleActivateVersion(vId, action);
-                    }
-                }}
-                handleOpenVersionModal={handleOpenVersionModal}
-                hasUnsavedChanges={hasUnsavedChanges}
-                setHasUnsavedChanges={setHasUnsavedChanges}
-                setIsCompareModalOpen={setIsCompareModalOpen}
-                isSyncingYield={isSyncingYield}
-                handleSyncHistoricalYield={handleSyncHistoricalYield}
-                activeTab={activeTab}
-                handleTabChange={handleTabChange}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
             />
 
@@ -1188,7 +1167,6 @@ export default function FinishedGoodsModule() {
                                         {(activeTab === "version_management" || activeTab === "routes_bom") && (
                                             <VersionManagementTab
                                                 activeTab={activeTab}
-                                                selectedProductId={selectedProductId}
                                                 selectedVersionId={selectedVersionId}
                                                 selectedVersion={selectedVersion}
                                                 editedVersionDetails={editedVersionDetails}
@@ -1203,8 +1181,6 @@ export default function FinishedGoodsModule() {
                                                 qaTemplates={qaTemplates}
                                                 units={units}
                                                 setHasUnsavedChanges={setHasUnsavedChanges}
-                                                isSyncingYield={isSyncingYield}
-                                                handleSyncHistoricalYield={handleSyncHistoricalYield}
                                                 isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
                                                 onSetPrimary={handlePromptSetPrimary}
                                                 onSubmitForApproval={handlePromptSubmitForApproval}

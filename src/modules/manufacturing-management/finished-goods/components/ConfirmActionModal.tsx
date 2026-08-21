@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { AlertTriangle, HelpCircle, Check, X, Star } from "lucide-react";
+import { AlertTriangle, HelpCircle, Star } from "lucide-react";
 
 export interface ConfirmActionModalProps {
     isOpen: boolean;
