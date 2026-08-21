@@ -2,15 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { GitCompareArrows } from "lucide-react";
-import type { IncomingShipment, ShipmentLineItem, Supplier } from "../../procurement/types";
-import type { PurchaseOrderApprovalDetail, PurchaseOrderApprovalHistory } from "../../purchase-order/types";
+import type { IncomingShipment, ShipmentLineItem } from "../../procurement/types";
+import type { PurchaseOrderApprovalDetail, PurchaseOrderApprovalHistory, PurchaseOrderApprovalReferenceLabel } from "../../purchase-order/types";
 import { parsePurchaseOrderRevisionSnapshot, type RevisionSnapshotRecord } from "../../purchase-order/revision-snapshot";
 
 interface RevisionSnapshotComparisonProps {
     detail: PurchaseOrderApprovalDetail;
     selectedShipment: IncomingShipment;
     currentLines: ShipmentLineItem[];
-    suppliers: Supplier[];
 }
 
 type ComparisonLine = {
@@ -43,7 +42,6 @@ const HEADER_FIELDS = [
     { key: "supplier_name", label: "Supplier" },
     { key: "branch_id", label: "Branch" },
     { key: "payment_type", label: "Payment Arrangement" },
-    { key: "payment_mode", label: "Payment Type" },
     { key: "payment_terms", label: "Payment Terms" },
     { key: "delivery_terms", label: "Delivery Terms" },
     { key: "price_type", label: "Price Type" },
@@ -88,6 +86,34 @@ function numeric(value: unknown): string {
     return Number.isFinite(parsed) ? parsed.toFixed(4) : String(value);
 }
 
+function referenceId(value: unknown): number | null {
+    const candidate = value && typeof value === "object"
+        ? (value as Record<string, unknown>).id
+            ?? (value as Record<string, unknown>).supplier_id
+            ?? (value as Record<string, unknown>).branch_id
+            ?? (value as Record<string, unknown>).payment_terms_id
+        : value;
+    const id = Number(candidate);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function referenceLabel(
+    value: unknown,
+    labels: PurchaseOrderApprovalReferenceLabel[],
+    fallback: string
+): string {
+    const id = referenceId(value);
+    const match = id ? labels.find(option => option.id === id) : null;
+    if (match) return match.label;
+    if (typeof value === "string" && value.trim() && Number.isNaN(Number(value))) return value.trim();
+    return value === null || value === undefined || value === "" ? "Not specified" : fallback;
+}
+
+function comparableReferenceValue(value: unknown): string {
+    const id = referenceId(value);
+    return id ? String(id) : String(value ?? "").trim();
+}
+
 function money(value: unknown, currency: string): string {
     if (value === null || value === undefined || value === "") return "Not specified";
     const parsed = Number(value);
@@ -127,12 +153,12 @@ function formatHeaderValue(
     key: string,
     value: unknown,
     currency: string,
-    suppliers: Supplier[]
+    referenceLabels: PurchaseOrderApprovalDetail["referenceLabels"]
 ): string {
-    if (key === "supplier_name") {
-        const id = Number(relationId(value));
-        return suppliers.find(supplier => supplier.id === id)?.supplier_name || (id > 0 ? `Supplier #${id}` : "Not specified");
-    }
+    if (key === "supplier_name") return referenceLabel(value, referenceLabels.suppliers, "Unknown supplier");
+    if (key === "branch_id") return referenceLabel(value, referenceLabels.branches, "Unknown branch");
+    if (key === "payment_type") return referenceLabel(value, referenceLabels.paymentArrangements, "Unknown payment arrangement");
+    if (key === "payment_terms") return referenceLabel(value, referenceLabels.paymentTerms, "Unknown payment terms");
     if (["gross_amount", "total_amount"].includes(key)) return money(value, "PHP");
     if (key === "total_foreign_currency") return money(value, currency);
     if (key === "exchange_rate") return numeric(value);
@@ -209,7 +235,7 @@ function SnapshotStatus({ entry }: { entry: PurchaseOrderApprovalHistory }) {
         : <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">Legacy revision</span>;
 }
 
-export default function RevisionSnapshotComparison({ detail, selectedShipment, currentLines, suppliers }: RevisionSnapshotComparisonProps) {
+export default function RevisionSnapshotComparison({ detail, selectedShipment, currentLines }: RevisionSnapshotComparisonProps) {
     const resubmissions = useMemo(
         () => detail.history.filter(entry => entry.action === "Resubmitted"),
         [detail.history]
@@ -247,7 +273,7 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                         >
                             {snapshotEntries.map(entry => (
                                 <option key={entry.history_id} value={entry.history_id}>
-                                    Revision {entry.revision_before} to {entry.revision_after}
+                                    Workflow version {entry.revision_before} to {entry.revision_after}
                                 </option>
                             ))}
                         </select>
@@ -260,7 +286,7 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                     <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                         <SnapshotStatus entry={selectedEntry} />
                         <span>Captured {new Date(snapshot.capturedAt).toLocaleString("en-PH")}</span>
-                        <span>Revision {snapshot.revisionBefore} to current revision {detail.order.workflow_revision || 0}</span>
+                        <span>Workflow version {snapshot.revisionBefore} to current version {detail.order.workflow_revision || 0}</span>
                     </div>
 
                     <div className="overflow-x-auto rounded-md border bg-background">
@@ -270,9 +296,14 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                             </thead>
                             <tbody className="divide-y">
                                 {HEADER_FIELDS.map(field => {
-                                    const priorValue = formatHeaderValue(field.key, snapshot.header[field.key], currency, suppliers);
-                                    const currentValue = formatHeaderValue(field.key, latestHeader[field.key], currency, suppliers);
-                                    const changed = priorValue !== currentValue;
+                                    const priorRawValue = snapshot.header[field.key];
+                                    const currentRawValue = latestHeader[field.key];
+                                    const priorValue = formatHeaderValue(field.key, priorRawValue, currency, detail.referenceLabels);
+                                    const currentValue = formatHeaderValue(field.key, currentRawValue, currency, detail.referenceLabels);
+                                    const isReferenceField = ["supplier_name", "branch_id", "payment_type", "payment_terms"].includes(field.key);
+                                    const changed = isReferenceField
+                                        ? comparableReferenceValue(priorRawValue) !== comparableReferenceValue(currentRawValue)
+                                        : priorValue !== currentValue;
                                     return (
                                         <tr key={field.key} className={changed ? "bg-amber-50/60" : ""}>
                                             <th className="p-2 text-left font-semibold text-muted-foreground">{field.label}</th>

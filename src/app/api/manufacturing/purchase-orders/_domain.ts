@@ -6,6 +6,11 @@ export type ApprovalStage = typeof APPROVAL_STAGES[number];
 
 export const APPROVAL_ACTIONS = ["Submitted", "FinanceApproved", "Rejected", "Resubmitted", "Cancelled"] as const;
 export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
+export const PURCHASE_ORDER_REVISION_ACTION: ApprovalAction = "Resubmitted";
+
+export function countPurchaseOrderRevisionCycles(history: ReadonlyArray<{ action?: unknown }>): number {
+    return history.reduce((count, entry) => count + (entry.action === PURCHASE_ORDER_REVISION_ACTION ? 1 : 0), 0);
+}
 
 export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
 export type QaParameterType = typeof QA_PARAMETER_TYPES[number];

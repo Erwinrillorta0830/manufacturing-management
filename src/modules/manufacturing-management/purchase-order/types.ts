@@ -139,6 +139,18 @@ export interface PurchaseOrderApprovalHistory {
     created_at: string;
 }
 
+export interface PurchaseOrderApprovalReferenceLabel {
+    id: number;
+    label: string;
+}
+
+export interface PurchaseOrderApprovalReferenceLabels {
+    suppliers: PurchaseOrderApprovalReferenceLabel[];
+    branches: PurchaseOrderApprovalReferenceLabel[];
+    paymentArrangements: PurchaseOrderApprovalReferenceLabel[];
+    paymentTerms: PurchaseOrderApprovalReferenceLabel[];
+}
+
 export interface PurchaseOrderApprovalDetail {
     order: {
         purchase_order_id: number;
@@ -166,6 +178,8 @@ export interface PurchaseOrderApprovalDetail {
         date_approved?: string | null;
         date_financed?: string | null;
     };
+    revisionCount: number;
+    referenceLabels: PurchaseOrderApprovalReferenceLabels;
     stage: PurchaseOrderApprovalStage;
     pendingStages?: PurchaseOrderDecisionStage[];
     matchedRule: {
