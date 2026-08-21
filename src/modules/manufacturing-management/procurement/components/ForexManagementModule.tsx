@@ -44,6 +44,12 @@ export default function ForexManagementModule() {
     // History filter & search state
     const [historySearch, setHistorySearch] = useState("");
     const [currencyFilter, setCurrencyFilter] = useState("ALL");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
+
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
 
     // Interactive Converter & Simulator State
     const [convertCurrency, setConvertCurrency] = useState("USD");
@@ -151,7 +157,7 @@ export default function ForexManagementModule() {
                     new_rate: parsedRate,
                     effective_date: effectiveDate,
                     change_reason: changeReason.trim(),
-                    changed_by_user_id: isCloudSourcedRate ? null : 1
+                    changed_by_user_id: 1
                 })
             });
 
@@ -218,13 +224,38 @@ export default function ForexManagementModule() {
         return rateHistory.filter(item => {
             const matchesCurrency = currencyFilter === "ALL" || item.currency_code === currencyFilter;
             const searchLower = historySearch.toLowerCase();
+            const userName = item.changed_by_user_name ? item.changed_by_user_name.toLowerCase() : (item.changed_by_user_id ? `user #${item.changed_by_user_id}` : "system (cloud api)");
             const matchesSearch = !historySearch ||
                 item.currency_code.toLowerCase().includes(searchLower) ||
                 item.change_reason.toLowerCase().includes(searchLower) ||
-                item.effective_date.includes(searchLower);
-            return matchesCurrency && matchesSearch;
+                item.effective_date.includes(searchLower) ||
+                userName.includes(searchLower);
+                
+            let logDate: Date;
+            if (item.created_at) {
+                // Remove time portion if any, or just parse to compare with dateFrom/To
+                logDate = new Date(item.created_at.split(' ')[0] + 'T00:00:00');
+            } else {
+                logDate = new Date(item.effective_date);
+            }
+            
+            const isAfterFrom = !dateFrom || logDate >= new Date(dateFrom);
+            const isBeforeTo = !dateTo || logDate <= new Date(dateTo);
+
+            return matchesCurrency && matchesSearch && isAfterFrom && isBeforeTo;
         });
-    }, [rateHistory, currencyFilter, historySearch]);
+    }, [rateHistory, currencyFilter, historySearch, dateFrom, dateTo]);
+
+    // Pagination slice
+    const paginatedHistory = useMemo(() => {
+        const start = (currentPage - 1) * rowsPerPage;
+        return filteredHistory.slice(start, start + rowsPerPage);
+    }, [filteredHistory, currentPage, rowsPerPage]);
+
+    // Reset pagination when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [currencyFilter, historySearch, dateFrom, dateTo, rowsPerPage]);
 
     if (loading) {
         return (
@@ -558,6 +589,25 @@ export default function ForexManagementModule() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                        {/* Date Range filters */}
+                        <div className="relative flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="bg-background border rounded-lg px-3 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary w-32"
+                                title="Date From"
+                            />
+                            <span className="text-muted-foreground text-xs font-semibold">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="bg-background border rounded-lg px-3 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary w-32"
+                                title="Date To"
+                            />
+                        </div>
+
                         {/* Currency filter */}
                         <div className="relative">
                             <select
@@ -600,14 +650,14 @@ export default function ForexManagementModule() {
                             </tr>
                         </thead>
                         <tbody className="divide-y font-medium">
-                            {filteredHistory.length === 0 ? (
+                            {paginatedHistory.length === 0 ? (
                                 <tr>
                                     <td colSpan={7} className="p-8 text-center text-muted-foreground text-xs">
                                         No historical audit logs match your search filter.
                                     </td>
                                 </tr>
                             ) : (
-                                filteredHistory.map((log) => {
+                                paginatedHistory.map((log) => {
                                     const diff = log.new_rate - log.previous_rate;
                                     const percent = log.previous_rate > 0 ? (diff / log.previous_rate) * 100 : 0;
 
@@ -643,13 +693,13 @@ export default function ForexManagementModule() {
                                                 )}
                                             </td>
                                             <td className="p-3 text-muted-foreground">
-                                                {log.changed_by_user_name ? (
-                                                    <span className={!log.changed_by_user_id ? "px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-semibold text-[10px]" : ""}>
-                                                        {!log.changed_by_user_id ? "System (Cloud API)" : log.changed_by_user_name}
+                                                {!log.changed_by_user_id ? (
+                                                    <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-semibold text-[10px]">
+                                                        System (Cloud API)
                                                     </span>
                                                 ) : (
-                                                    <span className={!log.changed_by_user_id ? "px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-semibold text-[10px]" : ""}>
-                                                        {!log.changed_by_user_id ? "System (Cloud API)" : `User #${log.changed_by_user_id || 1}`}
+                                                    <span>
+                                                        {log.changed_by_user_name || `User #${log.changed_by_user_id}`}
                                                     </span>
                                                 )}
                                             </td>
@@ -662,6 +712,47 @@ export default function ForexManagementModule() {
                             )}
                         </tbody>
                     </table>
+                </div>
+
+                {/* Pagination Controls */}
+                <div className="flex items-center justify-between pt-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Rows per page:</span>
+                        <select
+                            value={rowsPerPage}
+                            onChange={(e) => {
+                                setRowsPerPage(Number(e.target.value));
+                                setCurrentPage(1);
+                            }}
+                            className="bg-background border rounded-lg px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
+                        >
+                            <option value={10}>10</option>
+                            <option value={25}>25</option>
+                            <option value={50}>50</option>
+                            <option value={100}>100</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <span className="text-xs text-muted-foreground">
+                            Page {currentPage} of {Math.max(1, Math.ceil(filteredHistory.length / rowsPerPage))} ({filteredHistory.length} total)
+                        </span>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                                className="px-3 py-1 border rounded-lg text-xs font-semibold hover:bg-muted disabled:opacity-50"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredHistory.length / rowsPerPage), p + 1))}
+                                disabled={currentPage >= Math.ceil(filteredHistory.length / rowsPerPage)}
+                                className="px-3 py-1 border rounded-lg text-xs font-semibold hover:bg-muted disabled:opacity-50"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -20,6 +20,7 @@ interface ActiveSalesOrdersTableProps {
     totalCount: number;
     totalPages: number;
     limit: number;
+    setLimit: (limit: number) => void;
     customerCodeFilter?: string;
     setCustomerCodeFilter?: (code: string) => void;
     dateFromFilter?: string;
@@ -43,8 +44,8 @@ export function ActiveSalesOrdersTable({
     setStatusFilter,
     totalCount,
     totalPages,
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
     limit,
+    setLimit,
     customerCodeFilter,
     setCustomerCodeFilter,
     dateFromFilter,
@@ -307,10 +308,29 @@ export function ActiveSalesOrdersTable({
 
                     {/* Pagination Footer */}
                     {totalCount > 0 && (
-                        <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 rounded-b-xl gap-2.5">
-                            <span className="text-[11px] text-muted-foreground font-medium text-center sm:text-left">
-                                Showing page <span className="font-bold text-foreground">{currentPage}</span> of <span className="font-bold text-foreground">{totalPages || 1}</span> ({totalCount} total results)
-                            </span>
+                        <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 rounded-b-xl gap-4">
+                            <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-start">
+                                <span className="text-[11px] text-muted-foreground font-medium">
+                                    Showing page <span className="font-bold text-foreground">{currentPage}</span> of <span className="font-bold text-foreground">{totalPages || 1}</span> ({totalCount} total results)
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <label htmlFor="per-page-select" className="text-[11px] text-muted-foreground font-medium">Rows per page:</label>
+                                    <select
+                                        id="per-page-select"
+                                        value={limit}
+                                        onChange={(e) => {
+                                            setLimit(Number(e.target.value));
+                                            setCurrentPage(1);
+                                        }}
+                                        className="h-7 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
+                                    >
+                                        <option value={10}>10</option>
+                                        <option value={25}>25</option>
+                                        <option value={50}>50</option>
+                                        <option value={100}>100</option>
+                                    </select>
+                                </div>
+                            </div>
                             {totalPages > 1 && (
                                 <div className="flex items-center gap-1.5">
                                     <button
