@@ -12,6 +12,7 @@ import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
+import { calculatePercentageDiscount } from "../../discount-calculation";
 
 export interface UOMOption {
     product_id: number;
@@ -566,9 +567,15 @@ export function ShipmentFormModal({
                                                 const unitPrice = Number(line.base_unit_cost_php || 0);
                                                 const grossForeign = qty * unitPrice;
                                                 const discountMode = line.discount_mode || "Percentage";
-                                                const discount = discountMode === "Fixed Amount"
+                                                const isHistoricalFixedDiscount = discountMode === "Fixed Amount";
+                                                const calculatedDiscount = calculatePercentageDiscount(
+                                                    line.quantity_ordered || 0,
+                                                    line.base_unit_cost_php || 0,
+                                                    line.discount_percent || 0
+                                                );
+                                                const discount = isHistoricalFixedDiscount
                                                     ? Number(line.discount_amount || 0)
-                                                    : (grossForeign * Number(line.discount_percent || 0)) / 100;
+                                                    : Number(calculatedDiscount.discountAmount);
                                                 const subtotal = grossForeign - discount;
                                                 const materialType = line.material_type || "";
                                                 const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
@@ -801,23 +808,17 @@ export function ShipmentFormModal({
                                                             <div className="space-y-1">
                                                                 <select
                                                                     aria-label={`Discount Type for purchase order line ${idx + 1}`}
-                                                                    value={line.discount_mode || "Percentage"}
-                                                                    onChange={event => {
-                                                                        const mode = event.target.value as ManifestLineFormItem["discount_mode"];
-                                                                        handleLineFormChange(idx, mode === "Fixed Amount"
-                                                                            ? { discount_mode: mode, discount_type_id: "", discount_percent: "0", discount_amount: "0" }
-                                                                            : { discount_mode: "Percentage", discount_amount: "0", discount_percent: line.discount_percent || "0" });
-                                                                    }}
-                                                                    disabled={!isRowEditing}
-                                                                    className="w-full rounded-md border bg-background px-2 py-1 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
+                                                                    value={isHistoricalFixedDiscount ? "Fixed Amount" : "Percentage"}
+                                                                    disabled
+                                                                    className="w-full rounded-md border bg-muted px-2 py-1 text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-70"
                                                                 >
                                                                     <option value="Percentage">Percentage</option>
-                                                                    <option value="Fixed Amount">Fixed Amount</option>
+                                                                    {isHistoricalFixedDiscount && <option value="Fixed Amount">Legacy Fixed Amount</option>}
                                                                 </select>
                                                                 <select
                                                                     aria-label={`Discount Preset for purchase order line ${idx + 1}`}
                                                                     value={line.discount_type_id !== undefined && line.discount_type_id !== null ? String(line.discount_type_id) : ""}
-                                                                    disabled={!isRowEditing || discountMode !== "Percentage"}
+                                                                    disabled={!isRowEditing}
                                                                     onChange={event => {
                                                                         const dtId = event.target.value;
                                                                         const selectedDt = discountTypes?.find(dt => String(dt.id) === String(dtId));
@@ -830,7 +831,7 @@ export function ShipmentFormModal({
                                                                     }}
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
-                                                                    <option value="">No Preset / Custom %</option>
+                                                                    <option value="">No Discount (0%)</option>
                                                                     {discountTypes?.map(dt => (
                                                                         <option key={dt.id} value={String(dt.id)}>
                                                                             {dt.discount_type} ({Number(dt.total_percent).toFixed(1)}%)
@@ -842,17 +843,22 @@ export function ShipmentFormModal({
 
                                                         {/* Discount Value */}
                                                         <td className="p-1.5 border-r align-middle">
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={discountMode === "Fixed Amount" ? Math.max(0, grossForeign) : 100}
-                                                                step="0.01"
-                                                                aria-label={`${discountMode === "Fixed Amount" ? "Discount Amount" : "Discount Percentage"} for purchase order line ${idx + 1}`}
-                                                                value={discountMode === "Fixed Amount" ? (line.discount_amount ?? "0") : (line.discount_percent ?? "0")}
-                                                                onChange={event => handleLineFormChange(idx, discountMode === "Fixed Amount" ? "discount_amount" : "discount_percent", event.target.value)}
-                                                                disabled={!isRowEditing || canonicalDrafting}
-                                                                className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-primary"
-                                                            />
+                                                            <output
+                                                                aria-label={`Discount Amount for purchase order line ${idx + 1}`}
+                                                                className="block w-full rounded-md border bg-muted px-2 py-1 text-right text-xs font-mono font-medium text-foreground"
+                                                            >
+                                                                {formatMoney(discount, currencyCode)}
+                                                            </output>
+                                                            {!isHistoricalFixedDiscount && (
+                                                                <p className="mt-1 text-right text-[9px] text-muted-foreground">
+                                                                    {Number(line.discount_percent || 0).toFixed(2)}% of gross
+                                                                </p>
+                                                            )}
+                                                            {isHistoricalFixedDiscount && (
+                                                                <p className="mt-1 text-left text-[9px] font-semibold leading-tight text-amber-600">
+                                                                    Legacy fixed discount. Select a percentage preset to convert it before saving.
+                                                                </p>
+                                                            )}
                                                             {hasSubmitted && lineErrors.filter(error => error.toLowerCase().includes("discount")).map(error => (
                                                                 <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
                                                             ))}

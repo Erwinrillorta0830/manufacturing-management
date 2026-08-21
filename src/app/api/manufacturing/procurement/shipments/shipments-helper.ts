@@ -949,9 +949,9 @@ export async function createIncomingShipment(
         const calculatedTotals = calculatePurchaseOrderTotals(lineItems.map(item => ({
             quantity: Number(item.quantity_ordered || 0),
             unitPrice: item.base_unit_cost_php || 0,
-            discountMode: item.discount_mode || "Percentage",
+            discountMode: "Percentage",
             discountPercent: Number(item.discount_percent || 0),
-            discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
+            discountAmount: 0,
             vatPercent: Number(item.vat_percent || 0),
             withholdingPercent: Number(item.withholding_percent || 0)
         })), 1);
@@ -1021,9 +1021,9 @@ export async function createIncomingShipment(
                     categoryType: item.category_type!,
                     quantity: qty,
                     unitPrice: price,
-                    discountMode: item.discount_mode || "Percentage",
+                    discountMode: "Percentage",
                     discountPercent: Number(item.discount_percent || 0),
-                    discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
+                    discountAmount: 0,
                     vatPercent: Number(item.vat_percent || 0),
                     withholdingPercent: Number(item.withholding_percent || 0),
                     exchangeRate: 1,

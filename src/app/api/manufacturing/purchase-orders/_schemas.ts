@@ -21,7 +21,7 @@ const nonNegativeMoney = decimalValue
     .refine(value => isWithinDecimalCapacity(value), "Amount exceeds the supported 65-digit currency range.");
 const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).compare(0) > 0, "Must be greater than zero.");
 const percentage = z.coerce.number().finite().min(0).max(100);
-const discountMode = z.enum(["Percentage", "Fixed Amount"]);
+const discountMode = z.literal("Percentage");
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"]);
 
