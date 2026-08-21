@@ -12,13 +12,26 @@ export interface StorageLot {
     lot_name: string;
     lot_code?: string;
     inventory_type_id?: number | null;
-    max_batch_capacity: number;
+    product_type_id?: number | null;
+    product_category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
+    unit_id?: number | null;
+    max_batch_capacity: number | null;
     occupiedQuantity?: number;
     availableQuantity?: number | null;
+    remainingCapacity?: number | null;
+}
+
+export interface StorageLotBatch {
+    batchNumber: string;
+    manufacturingDate: string | null;
+    expirationDate: string | null;
 }
 
 export interface ReceivingLotAllocationInput {
     storageLotId: string;
+    batchNumber: string;
+    manufacturingDate: string;
+    expirationDate: string;
     quantity: number | string;
 }
 
@@ -80,8 +93,20 @@ export interface ShipmentLineItem {
         rejected_quantity: number;
         supplier_batch_number: string;
         storage_lot_id: number | null;
-        accepted_lot_allocations: Array<{ storage_lot_id: number; quantity: number }>;
-        rejected_lot_allocations: Array<{ storage_lot_id: number; quantity: number }>;
+        accepted_lot_allocations: Array<{
+            storage_lot_id: number;
+            batch_number?: string;
+            manufacturing_date?: string | null;
+            expiration_date?: string | null;
+            quantity: number;
+        }>;
+        rejected_lot_allocations: Array<{
+            storage_lot_id: number;
+            batch_number?: string;
+            manufacturing_date?: string | null;
+            expiration_date?: string | null;
+            quantity: number;
+        }>;
         manufacturing_date: string | null;
         expiration_date: string | null;
         rejection_reason: string;
@@ -190,8 +215,20 @@ export interface ReceivingCommitPayload {
         acceptedQuantity: number;
         rejectedQuantity: number;
         storageLotId: number | null;
-        acceptedLotAllocations: Array<{ storageLotId: number; quantity: number }>;
-        rejectedLotAllocations: Array<{ storageLotId: number; quantity: number }>;
+        acceptedLotAllocations: Array<{
+            storageLotId: number;
+            batchNumber: string;
+            manufacturingDate: string | null;
+            expirationDate: string | null;
+            quantity: number;
+        }>;
+        rejectedLotAllocations: Array<{
+            storageLotId: number;
+            batchNumber: string;
+            manufacturingDate: string | null;
+            expirationDate: string | null;
+            quantity: number;
+        }>;
         supplierBatchNumber: string;
         manufacturingDate: string | null;
         expiryDate: string | null;
@@ -255,6 +292,9 @@ export interface FinalReceivingMovement {
     transactionTypeId: number;
     sourceDocumentNo: string;
     quantity: number;
+    batchNumber?: string;
+    manufacturingDate?: string | null;
+    expirationDate?: string | null;
 }
 
 export interface FinalReceivingAllocation {

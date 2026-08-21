@@ -6,11 +6,19 @@ const positiveId = z.coerce.number().int().positive();
 const nonNegativeNumber = z.coerce.number().finite().nonnegative();
 const acceptedLotAllocationSchema = z.object({
     storage_lot_id: positiveId,
-    quantity: nonNegativeNumber
+    quantity: nonNegativeNumber,
+    // These fields are optional only for compatibility with older receiving
+    // submissions. New QA Receiving requests populate them per allocation.
+    batch_no: z.string().trim().max(50).optional(),
+    manufacturing_date: z.string().date().nullable().optional(),
+    expiration_date: z.string().date().nullable().optional()
 });
 const rejectedLotAllocationSchema = z.object({
     storage_lot_id: positiveId,
-    quantity: nonNegativeNumber
+    quantity: nonNegativeNumber,
+    batch_no: z.string().trim().max(50).optional(),
+    manufacturing_date: z.string().date().nullable().optional(),
+    expiration_date: z.string().date().nullable().optional()
 });
 const qaResultSchema = z.object({
     spec_id: positiveId,
@@ -51,18 +59,34 @@ export const receivingLineSchema = z.object({
         line.quantity_accepted,
         line.accepted_lot_allocations.map(allocation => ({
             storageLotId: allocation.storage_lot_id,
-            quantity: allocation.quantity
+            quantity: allocation.quantity,
+            batchNumber: allocation.batch_no,
+            manufacturingDate: allocation.manufacturing_date,
+            expirationDate: allocation.expiration_date
         })),
-        line.lot_id
+        line.lot_id,
+        {
+            batchNumber: line.batch_no,
+            manufacturingDate: line.manufacturing_date,
+            expirationDate: line.expiration_date
+        }
     );
     if (allocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["accepted_lot_allocations"], message: allocationMessage });
     const rejectedAllocationMessage = rejectedLotAllocationError(
         line.quantity_rejected,
         line.rejected_lot_allocations.map(allocation => ({
             storageLotId: allocation.storage_lot_id,
-            quantity: allocation.quantity
+            quantity: allocation.quantity,
+            batchNumber: allocation.batch_no,
+            manufacturingDate: allocation.manufacturing_date,
+            expirationDate: allocation.expiration_date
         })),
-        line.lot_id
+        line.lot_id,
+        {
+            batchNumber: line.batch_no,
+            manufacturingDate: line.manufacturing_date,
+            expirationDate: line.expiration_date
+        }
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejected_lot_allocations"], message: rejectedAllocationMessage });
 }).transform(line => ({

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock } from "../types";
+import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock } from "../types";
 import {
     fetchActiveShipments, 
     fetchBranches, 
@@ -11,6 +11,7 @@ import {
     forceReceivePurchaseOrder,
     fetchFifoInventory,
     fetchStorageLots,
+    fetchStorageLotBatches,
     fetchProductQaSpecifications,
     fetchQuarantineDispositions,
     createQuarantineDisposition,
@@ -31,7 +32,12 @@ interface ReceivingCommitContext {
 function resizeLotAllocations(
     allocations: ReceivingLotAllocationInput[],
     targetQuantity: number,
-    fallbackLotId?: string
+    fallbackLotId?: string,
+    fallbackMetadata: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate"> = {
+        batchNumber: "",
+        manufacturingDate: "",
+        expirationDate: ""
+    }
 ): ReceivingLotAllocationInput[] {
     const target = Math.max(0, Number(targetQuantity) || 0);
     if (target <= 0) return [];
@@ -53,9 +59,35 @@ function resizeLotAllocations(
         remaining = 0;
     }
     if (remaining > 0 && fallbackLotId) {
-        resized.push({ storageLotId: fallbackLotId, quantity: remaining });
+        resized.push({ storageLotId: fallbackLotId, ...fallbackMetadata, quantity: remaining });
     }
     return resized;
+}
+
+function hydrateStoredAllocations(
+    allocations: Array<{
+        storage_lot_id: number;
+        batch_number?: string;
+        manufacturing_date?: string | null;
+        expiration_date?: string | null;
+        quantity: number;
+    }> | undefined,
+    fallbackLotId: number | null,
+    fallbackQuantity: number,
+    fallback: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate">
+): ReceivingLotAllocationInput[] {
+    if (allocations?.length) {
+        return allocations.map(allocation => ({
+            storageLotId: String(allocation.storage_lot_id),
+            batchNumber: allocation.batch_number || fallback.batchNumber,
+            manufacturingDate: allocation.manufacturing_date || fallback.manufacturingDate,
+            expirationDate: allocation.expiration_date || fallback.expirationDate,
+            quantity: Number(allocation.quantity) || 0
+        }));
+    }
+    return fallbackLotId && fallbackQuantity > 0
+        ? [{ storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
+        : [];
 }
 
 function isLockedReceivingShipment(shipment: Shipment | null, replacementDisposition: QuarantineDisposition | null = null): boolean {
@@ -78,7 +110,9 @@ export function useQAReceiving() {
     // Core data lists
     const [shipments, setShipments] = useState<Shipment[]>([]);
     const [branches, setBranches] = useState<Branch[]>([]);
-    const [storageLots, setStorageLots] = useState<StorageLot[]>([]);
+    const [storageLotsByProductId, setStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
+    const storageLotBatchCache = useRef<Record<string, StorageLotBatch[]>>({});
+    const storageLotBatchRequestCache = useRef<Record<string, Promise<StorageLotBatch[]>>>({});
     const [loadingShipments, setLoadingShipments] = useState(false);
     const [loadingBranches, setLoadingBranches] = useState(false);
 
@@ -163,6 +197,9 @@ export function useQAReceiving() {
         previewController.current?.abort();
         setSelectedShipment(null);
         setLineItems([]);
+        setStorageLotsByProductId({});
+        storageLotBatchCache.current = {};
+        storageLotBatchRequestCache.current = {};
         setLoadingLines(false);
         setInspectionRows({});
         setReceivingTicketNumber("");
@@ -292,7 +329,6 @@ export function useQAReceiving() {
     // Load base data
     useEffect(() => {
         loadBranches();
-        loadStorageLots();
         return () => {
             listController.current?.abort();
             detailController.current?.abort();
@@ -334,14 +370,23 @@ export function useQAReceiving() {
         }
     };
 
-    const loadStorageLots = async () => {
-        try {
-            setStorageLots(await fetchStorageLots());
-        } catch (e) {
-            console.error(e);
-            toast.error("Failed to load storage lots");
-        }
-    };
+    const loadStorageLotBatches = useCallback(async (productId: number, lotId: number): Promise<StorageLotBatch[]> => {
+        const cacheKey = `${productId}:${lotId}`;
+        const cached = storageLotBatchCache.current[cacheKey];
+        if (cached) return cached;
+        const pending = storageLotBatchRequestCache.current[cacheKey];
+        if (pending) return pending;
+        const request = fetchStorageLotBatches(productId, lotId)
+            .then(batches => {
+                storageLotBatchCache.current[cacheKey] = batches;
+                return batches;
+            })
+            .finally(() => {
+                delete storageLotBatchRequestCache.current[cacheKey];
+            });
+        storageLotBatchRequestCache.current[cacheKey] = request;
+        return request;
+    }, []);
 
     const handleSelectShipment = async (shipment: Shipment, replacementContext: QuarantineDisposition | null = null) => {
         const isReplacement = Boolean(replacementContext);
@@ -376,6 +421,9 @@ export function useQAReceiving() {
         setPreviewAcknowledged(false);
         setPreviewError(null);
         setLoadingLines(true);
+        setStorageLotsByProductId({});
+        storageLotBatchCache.current = {};
+        storageLotBatchRequestCache.current = {};
         try {
             const fetchedLines = await fetchShipmentDetails(shipment.shipment_id, controller.signal);
             const lines = isReplacement
@@ -402,6 +450,13 @@ export function useQAReceiving() {
                 const existingAcceptedQuantity = Math.max(0, existingReceivedQuantity - existingRejectedQuantity);
                 const remainingAcceptedForLine = Math.max(0, Number(l.remaining_accepted_quantity ?? (orderedQuantity - existingAcceptedQuantity)));
                 const initialRejectedQuantity = deriveRejectedQuantity(existingReceivedQuantity, existingAcceptedQuantity);
+                const fallbackBatchNumber = isReplacement ? "" : latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "";
+                const fallbackManufacturingDate = !isReplacement && (isReceived || isPartiallyReceived)
+                    ? latestReceipt?.manufacturing_date || l.manufacturing_date || ""
+                    : "";
+                const fallbackExpirationDate = !isReplacement && (isReceived || isPartiallyReceived)
+                    ? latestReceipt?.expiration_date || l.expiration_date || ""
+                    : "";
                 
                 rowsInit[l.line_id] = {
                     receivedQty: isReplacement
@@ -419,26 +474,22 @@ export function useQAReceiving() {
                             ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
                     rejectedQty: isReceived && !isReplacement ? initialRejectedQuantity : 0,
-                    batchNumber: isReplacement ? "" : isReceived ? (latestReceipt?.supplier_batch_number || l.batch_no || l.lot_number || "") : "",
+                    batchNumber: fallbackBatchNumber,
                     lotId: isReplacement ? "" : latestStorageLotId ? String(latestStorageLotId) : "",
-                    acceptedLotAllocations: isReplacement
-                        ? []
-                        : isReceived
-                        ? l.lot_id && existingAcceptedQuantity > 0
-                            ? [{ storageLotId: String(l.lot_id), quantity: existingAcceptedQuantity }]
-                            : []
-                        : isPartiallyReceived && remainingAcceptedForLine > 0 && latestStorageLotId
-                            ? [{ storageLotId: String(latestStorageLotId), quantity: remainingAcceptedForLine }]
-                            : [],
-                    rejectedLotAllocations: isReplacement
-                        ? []
-                        : isReceived
-                        ? l.lot_id && initialRejectedQuantity > 0
-                            ? [{ storageLotId: String(l.lot_id), quantity: initialRejectedQuantity }]
-                            : []
-                        : [],
-                    manufacturingDate: !isReplacement && (isReceived || isPartiallyReceived) ? (latestReceipt?.manufacturing_date || l.manufacturing_date || "") : "",
-                    expirationDate: !isReplacement && (isReceived || isPartiallyReceived) ? (latestReceipt?.expiration_date || l.expiration_date || "") : "",
+                    acceptedLotAllocations: hydrateStoredAllocations(
+                        latestReceipt?.accepted_lot_allocations,
+                        latestStorageLotId,
+                        isReceived ? existingAcceptedQuantity : isPartiallyReceived ? remainingAcceptedForLine : 0,
+                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate }
+                    ),
+                    rejectedLotAllocations: hydrateStoredAllocations(
+                        latestReceipt?.rejected_lot_allocations,
+                        latestStorageLotId,
+                        isReceived ? initialRejectedQuantity : 0,
+                        { batchNumber: fallbackBatchNumber, manufacturingDate: fallbackManufacturingDate, expirationDate: fallbackExpirationDate }
+                    ),
+                    manufacturingDate: fallbackManufacturingDate,
+                    expirationDate: fallbackExpirationDate,
                     rejectionReason: isReplacement ? "" : latestReceipt?.rejection_reason || l.rejection_reason || "",
                     isPackaging: isPkg
                 };
@@ -459,6 +510,20 @@ export function useQAReceiving() {
             setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
+            void Promise.all(productIds.map(async productId => {
+                try {
+                    const lots = await fetchStorageLots(productId, controller.signal);
+                    return [productId, lots] as const;
+                } catch (error) {
+                    if (controller.signal.aborted || (error as Error).name === "AbortError") return null;
+                    console.error(error);
+                    toast.error(`Failed to load compatible storage lots for product ${productId}.`);
+                    return [productId, [] as StorageLot[]] as const;
+                }
+            })).then(results => {
+                if (controller.signal.aborted) return;
+                setStorageLotsByProductId(Object.fromEntries(results.filter((result): result is readonly [number, StorageLot[]] => Boolean(result))));
+            });
             setQaSpecificationStates(Object.fromEntries(productIds.map(productId => [productId, {
                 status: "loading" as const,
                 specifications: [],
@@ -551,32 +616,6 @@ export function useQAReceiving() {
                     : Math.min(received, Math.max(0, Number(value) || 0));
             }
 
-            if (field === "manufacturingDate" && value && typeof value === "string") {
-                if (!previousRow?.expirationDate) {
-                    const mfg = new Date(value);
-                    if (!isNaN(mfg.getTime())) {
-                        const line = lineItems.find(l => l.line_id === lineId);
-                        const shelfLifeDays = Number((line?.product_id as unknown as Record<string, unknown>)?.product_shelf_life || 365);
-                        const exp = new Date(mfg.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
-                        updatedRow.expirationDate = exp.toISOString().split("T")[0];
-                    }
-                }
-            }
-
-            if ((field === "receivedQty" || field === "acceptedQty") && (Number(value) || 0) > 0) {
-                const todayStr = new Date().toISOString().split("T")[0];
-                if (!updatedRow.manufacturingDate) {
-                    updatedRow.manufacturingDate = todayStr;
-                }
-                if (!updatedRow.expirationDate) {
-                    const line = lineItems.find(l => l.line_id === lineId);
-                    const shelfLifeDays = Number((line?.product_id as unknown as Record<string, unknown>)?.product_shelf_life || 365);
-                    const mfgDate = new Date(updatedRow.manufacturingDate || todayStr);
-                    const expDate = new Date(mfgDate.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000);
-                    updatedRow.expirationDate = expDate.toISOString().split("T")[0];
-                }
-            }
-
             const received = Number(updatedRow.receivedQty || 0);
             const accepted = Number(updatedRow.acceptedQty || 0);
             const rejected = Number.isFinite(received) && Number.isFinite(accepted)
@@ -587,14 +626,24 @@ export function useQAReceiving() {
                 updatedRow.acceptedLotAllocations = resizeLotAllocations(
                     updatedRow.acceptedLotAllocations,
                     accepted,
-                    updatedRow.lotId
+                    updatedRow.lotId,
+                    {
+                        batchNumber: updatedRow.batchNumber,
+                        manufacturingDate: updatedRow.manufacturingDate,
+                        expirationDate: updatedRow.expirationDate
+                    }
                 );
             }
             if (field === "acceptedQty" || field === "receivedQty" || field === "lotId") {
                 updatedRow.rejectedLotAllocations = resizeLotAllocations(
                     updatedRow.rejectedLotAllocations,
                     rejected,
-                    updatedRow.lotId
+                    updatedRow.lotId,
+                    {
+                        batchNumber: updatedRow.batchNumber,
+                        manufacturingDate: updatedRow.manufacturingDate,
+                        expirationDate: updatedRow.expirationDate
+                    }
                 );
             }
             return {
@@ -717,17 +766,18 @@ export function useQAReceiving() {
             ...validateReceivingReceiptDate(receiptDate),
             ...validateReceivingReceiptNumber(receivingTicketNumber),
             ...validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
-            const row = inspectionRows[line.line_id];
-            return {
-                lineId: line.line_id,
-                productName: line.product_id?.product_name || `Item ${line.line_id}`,
-                isPackaging: Boolean(row?.isPackaging),
-                receivedQuantity: Number(row?.receivedQty || 0),
-                batchNumber: row?.batchNumber || "",
-                lotId: row?.lotId || row?.acceptedLotAllocations?.[0]?.storageLotId || row?.rejectedLotAllocations?.[0]?.storageLotId || "",
-                manufacturingDate: row?.manufacturingDate || "",
-                expirationDate: row?.expirationDate || ""
-            };
+                const row = inspectionRows[line.line_id];
+                const firstAllocation = row?.acceptedLotAllocations?.[0] || row?.rejectedLotAllocations?.[0];
+                return {
+                    lineId: line.line_id,
+                    productName: line.product_id?.product_name || `Item ${line.line_id}`,
+                    isPackaging: Boolean(row?.isPackaging),
+                    receivedQuantity: Number(row?.receivedQty || 0),
+                    batchNumber: firstAllocation?.batchNumber || row?.batchNumber || "",
+                    lotId: firstAllocation?.storageLotId || row?.lotId || "",
+                    manufacturingDate: firstAllocation?.manufacturingDate || row?.manufacturingDate || "",
+                    expirationDate: firstAllocation?.expirationDate || row?.expirationDate || ""
+                };
             }))
         ];
         const addIssue = (issue: ReceivingValidationIssue) => {
@@ -767,11 +817,27 @@ export function useQAReceiving() {
             if (accepted > 0 && (acceptedAllocations.length === 0 || Math.abs(acceptedAllocated - accepted) > 1e-9)) {
                 addIssue({ lineId: line.line_id, productName, field: "acceptedStorageLot", message: `${productName}: allocate all accepted quantity to storage lots.` });
             }
+            for (const allocation of acceptedAllocations) {
+                if (!allocation.batchNumber.trim()) {
+                    addIssue({ lineId: line.line_id, productName, field: "acceptedStorageLot", message: `${productName}: every accepted allocation requires a batch number.` });
+                }
+                if (!row?.isPackaging && (!allocation.manufacturingDate || !allocation.expirationDate)) {
+                    addIssue({ lineId: line.line_id, productName, field: "acceptedStorageLot", message: `${productName}: every accepted raw-material allocation requires manufacturing and expiry dates.` });
+                }
+            }
 
             const rejectedAllocations = row?.rejectedLotAllocations || [];
             const rejectedAllocated = rejectedAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
             if (rejected > 0 && (rejectedAllocations.length === 0 || Math.abs(rejectedAllocated - rejected) > 1e-9)) {
                 addIssue({ lineId: line.line_id, productName, field: "rejectedStorageLot", message: `${productName}: allocate all rejected quantity to storage lots.` });
+            }
+            for (const allocation of rejectedAllocations) {
+                if (!allocation.batchNumber.trim()) {
+                    addIssue({ lineId: line.line_id, productName, field: "rejectedStorageLot", message: `${productName}: every rejected allocation requires a batch number.` });
+                }
+                if (!row?.isPackaging && (!allocation.manufacturingDate || !allocation.expirationDate)) {
+                    addIssue({ lineId: line.line_id, productName, field: "rejectedStorageLot", message: `${productName}: every rejected raw-material allocation requires manufacturing and expiry dates.` });
+                }
             }
 
             if ((rejected > 0 || Math.abs(received - remaining) > 1e-9) && !row?.rejectionReason?.trim()) {
@@ -920,13 +986,25 @@ export function useQAReceiving() {
                     storageLotId: row.lotId ? Number(row.lotId) : null,
                     acceptedLotAllocations: row.acceptedLotAllocations
                         .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
-                        .map(allocation => ({ storageLotId: Number(allocation.storageLotId), quantity: Number(allocation.quantity) })),
+                        .map(allocation => ({
+                            storageLotId: Number(allocation.storageLotId),
+                            batchNumber: allocation.batchNumber.trim(),
+                            manufacturingDate: allocation.manufacturingDate || null,
+                            expirationDate: allocation.expirationDate || null,
+                            quantity: Number(allocation.quantity)
+                        })),
                     rejectedLotAllocations: row.rejectedLotAllocations
                         .filter(allocation => Number(allocation.storageLotId) > 0 && Number(allocation.quantity) > 0)
-                        .map(allocation => ({ storageLotId: Number(allocation.storageLotId), quantity: Number(allocation.quantity) })),
-                    supplierBatchNumber: row.batchNumber.trim(),
-                    manufacturingDate: row.manufacturingDate || null,
-                    expiryDate: row.expirationDate || null,
+                        .map(allocation => ({
+                            storageLotId: Number(allocation.storageLotId),
+                            batchNumber: allocation.batchNumber.trim(),
+                            manufacturingDate: allocation.manufacturingDate || null,
+                            expirationDate: allocation.expirationDate || null,
+                            quantity: Number(allocation.quantity)
+                        })),
+                    supplierBatchNumber: (row.acceptedLotAllocations[0]?.batchNumber || row.rejectedLotAllocations[0]?.batchNumber || row.batchNumber).trim(),
+                    manufacturingDate: row.acceptedLotAllocations[0]?.manufacturingDate || row.rejectedLotAllocations[0]?.manufacturingDate || row.manufacturingDate || null,
+                    expiryDate: row.acceptedLotAllocations[0]?.expirationDate || row.rejectedLotAllocations[0]?.expirationDate || row.expirationDate || null,
                     remarks: row.rejectionReason.trim() || null,
                     isPackaging: row.isPackaging,
                     readings: Object.entries(qaReadings[line.line_id] || {}).map(([specId, actualReading]) => ({
@@ -1177,7 +1255,8 @@ export function useQAReceiving() {
         setActiveTab,
         shipments,
         branches,
-        storageLots,
+        storageLotsByProductId,
+        loadStorageLotBatches,
         loadingShipments,
         loadingBranches,
         selectedShipment,

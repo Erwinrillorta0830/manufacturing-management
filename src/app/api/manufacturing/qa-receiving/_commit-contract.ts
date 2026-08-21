@@ -14,11 +14,18 @@ const quantity = z.number().finite().nonnegative();
 const optionalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable();
 const acceptedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
-    quantity
+    quantity,
+    // Optional fields preserve compatibility with line-level legacy payloads.
+    batchNumber: z.string().trim().max(50).optional(),
+    manufacturingDate: optionalDate.optional(),
+    expirationDate: optionalDate.optional()
 });
 const rejectedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
-    quantity
+    quantity,
+    batchNumber: z.string().trim().max(50).optional(),
+    manufacturingDate: optionalDate.optional(),
+    expirationDate: optionalDate.optional()
 });
 
 export const receivingCommitLineSchema = z.object({
@@ -45,13 +52,23 @@ export const receivingCommitLineSchema = z.object({
     const allocationMessage = receivingLotAllocationError(
         line.acceptedQuantity,
         line.acceptedLotAllocations,
-        line.storageLotId
+        line.storageLotId,
+        {
+            batchNumber: line.supplierBatchNumber,
+            manufacturingDate: line.manufacturingDate,
+            expirationDate: line.expiryDate
+        }
     );
     if (allocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["acceptedLotAllocations"], message: allocationMessage });
     const rejectedAllocationMessage = rejectedLotAllocationError(
         line.rejectedQuantity,
         line.rejectedLotAllocations,
-        line.storageLotId
+        line.storageLotId,
+        {
+            batchNumber: line.supplierBatchNumber,
+            manufacturingDate: line.manufacturingDate,
+            expirationDate: line.expiryDate
+        }
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejectedLotAllocations"], message: rejectedAllocationMessage });
 }).transform(line => ({
@@ -117,6 +134,9 @@ export interface FinalReceivingMovement {
     transactionTypeId: number;
     sourceDocumentNo: string;
     quantity: number;
+    batchNumber: string;
+    manufacturingDate: string | null;
+    expirationDate: string | null;
 }
 
 export interface FinalReceivingAllocation {
