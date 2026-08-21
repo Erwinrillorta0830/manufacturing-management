@@ -51,6 +51,7 @@ export interface PurchaseOrderPrintHeader {
     encodedAt: string;
     supplier: string;
     supplierAddress: string;
+    vendorClass: string;
     branch: string;
     paymentTerms: string;
     deliveryTerms: string;

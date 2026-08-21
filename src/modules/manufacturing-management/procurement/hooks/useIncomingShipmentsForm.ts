@@ -64,9 +64,9 @@ export function useIncomingShipmentsForm({
     const [hasSubmitted, setHasSubmitted] = useState(false);
     const [fxRateStatus, setFxRateStatus] = useState<FxRateStatus>("idle");
     const [fxRateError, setFxRateError] = useState<string | null>(null);
-    const [priceMatrixStatus, setPriceMatrixStatus] = useState<"idle" | "loading" | "ready" | "warning" | "error">("idle");
-    const [priceMatrixError, setPriceMatrixError] = useState<string | null>(null);
-    const [priceMatrixMissingProductIds, setPriceMatrixMissingProductIds] = useState<number[]>([]);
+    const [priceControlStatus, setPriceControlStatus] = useState<"idle" | "loading" | "ready" | "warning" | "error">("idle");
+    const [priceControlError, setPriceControlError] = useState<string | null>(null);
+    const [priceControlMissingProductIds, setPriceControlMissingProductIds] = useState<number[]>([]);
     const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
@@ -372,7 +372,7 @@ export function useIncomingShipmentsForm({
             errors.push(`Unit Price must be a non-negative decimal with at most ${UNIT_PRICE_DECIMAL_SCALE} decimal places`);
         } else if (
             canonicalDrafting &&
-            priceMatrixMissingProductIds.includes(Number(line.product_id)) &&
+            priceControlMissingProductIds.includes(Number(line.product_id)) &&
             DecimalValue.from(unitPrice).compare(0) <= 0
         ) {
             errors.push("Unit Price must be greater than zero when Price Control is not configured");
@@ -387,7 +387,7 @@ export function useIncomingShipmentsForm({
             else if (DecimalValue.from(discountAmount).compare(gross) > 0) errors.push("Discount Amount cannot exceed Gross Amount");
         }
         return errors;
-    }, [canonicalDrafting, priceMatrixMissingProductIds, rawMaterials]);
+    }, [canonicalDrafting, priceControlMissingProductIds, rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -398,16 +398,12 @@ export function useIncomingShipmentsForm({
             return;
         }
 
-        if (canonicalDrafting && priceTypeResolution.status !== "resolved") {
-            toast.error(priceTypeResolution.message || "Price Control could not be determined from the selected products.");
-            return;
-        }
         if (
             canonicalDrafting &&
-            priceMatrixStatus !== "ready" &&
-            priceMatrixStatus !== "warning"
+            priceControlStatus !== "ready" &&
+            priceControlStatus !== "warning"
         ) {
-            toast.error(priceMatrixError || "Wait for the Price Control matrix to finish loading before submitting.");
+            toast.error(priceControlError || "Wait for the Price Control cost to finish loading before submitting.");
             return;
         }
         
@@ -461,6 +457,24 @@ export function useIncomingShipmentsForm({
         setLinesForm(copy);
     };
 
+    const selectedProductIdsKey = React.useMemo(() => {
+        const ids = new Set<number>();
+        linesForm.forEach(line => {
+            const productId = Number(line.product_id);
+            if (Number.isSafeInteger(productId) && productId > 0) ids.add(productId);
+
+            const explicitParentId = Number(line.parent_product_id);
+            if (Number.isSafeInteger(explicitParentId) && explicitParentId > 0) ids.add(explicitParentId);
+
+            if (!explicitParentId && line.product_id) {
+                const material = rawMaterials.find(item => String(item.product_id) === String(line.product_id));
+                const parentId = material ? resolveProductParentId(material) : null;
+                if (parentId) ids.add(parentId);
+            }
+        });
+        return [...ids].sort((left, right) => left - right).join(",");
+    }, [linesForm, rawMaterials]);
+
     const [discountTypes, setDiscountTypes] = useState<Array<{ id: number; discount_type: string; total_percent: number | string }>>([]);
     const [productPerSupplierMap, setProductPerSupplierMap] = useState<Record<number, { discount_type_id?: number; total_percent?: number }>>({});
 
@@ -472,22 +486,27 @@ export function useIncomingShipmentsForm({
     }, []);
 
     useEffect(() => {
-        let active = true;
+        const controller = new AbortController();
         if (!shipmentForm.supplier_id) {
-            setTimeout(() => {
-                if (active) setProductPerSupplierMap({});
-            }, 0);
-            return () => { active = false; };
+            queueMicrotask(() => {
+                if (!controller.signal.aborted) setProductPerSupplierMap({});
+            });
+            return () => controller.abort();
         }
-        fetch(`/api/manufacturing/procurement/product-per-supplier?supplierId=${shipmentForm.supplier_id}`)
+
+        const productQuery = selectedProductIdsKey
+            ? `&productIds=${encodeURIComponent(selectedProductIdsKey)}`
+            : "";
+        fetch(`/api/manufacturing/procurement/product-per-supplier?supplierId=${encodeURIComponent(shipmentForm.supplier_id)}${productQuery}`, {
+            signal: controller.signal
+        })
             .then(res => res.ok ? res.json() : [])
             .then(data => {
-                if (!active) return;
                 const map: Record<number, { discount_type_id?: number; total_percent?: number }> = {};
                 if (Array.isArray(data)) {
                     data.forEach(item => {
                         const prodId = typeof item.product_id === "object" && item.product_id ? item.product_id.product_id : item.product_id;
-                        if (prodId && item.discount_type) {
+                        if (prodId && item.discount_type !== null && item.discount_type !== undefined) {
                             const dt = typeof item.discount_type === "object" ? item.discount_type : null;
                             map[Number(prodId)] = {
                                 discount_type_id: dt?.id || item.discount_type,
@@ -517,16 +536,26 @@ export function useIncomingShipmentsForm({
                             discount_percent: pps.total_percent !== undefined ? String(pps.total_percent) : line.discount_percent
                         };
                     }
-                    return line;
+                    return editingShipmentId
+                        ? line
+                        : {
+                            ...line,
+                            discount_mode: "Percentage",
+                            discount_type_id: "",
+                            discount_amount: "0",
+                            discount_percent: "0"
+                        };
                 }));
             })
-            .catch(e => console.error("Error fetching product_per_supplier map:", e));
+            .catch(e => {
+                if (e instanceof Error && e.name === "AbortError") return;
+                console.error("Error fetching product_per_supplier map:", e);
+            });
 
-        return () => { active = false; };
-    }, [shipmentForm.supplier_id, rawMaterials, setLinesForm]);
+        return () => controller.abort();
+    }, [editingShipmentId, selectedProductIdsKey, shipmentForm.supplier_id, rawMaterials, setLinesForm]);
 
-    const [priceTypes, setPriceTypes] = useState<Array<{ price_type_id: number; price_type_name?: string; name?: string }>>([]);
-    const [priceTypeRatesMap, setPriceTypeRatesMap] = useState<Record<number, number>>({});
+    const [priceControlCostsMap, setPriceControlCostsMap] = useState<Record<number, number>>({});
 
     const priceTypeResolution = React.useMemo(() => {
         if (!canonicalDrafting) {
@@ -606,11 +635,6 @@ export function useIncomingShipmentsForm({
         };
     }, [canonicalDrafting, linesForm, priceTypeRules, rawMaterials]);
 
-    const selectedProductIdsKey = React.useMemo(
-        () => linesForm.filter(line => line.product_id).map(line => String(line.product_id)).sort().join(","),
-        [linesForm]
-    );
-
     React.useEffect(() => {
         if (!canonicalDrafting) return;
         setShipmentForm(previous => {
@@ -620,171 +644,80 @@ export function useIncomingShipmentsForm({
     }, [canonicalDrafting, priceTypeResolution.priceTypeName, priceTypeResolution.status, setShipmentForm]);
 
     useEffect(() => {
-        if (canonicalDrafting) return;
-        fetch("/api/manufacturing/finished-goods/price-types")
-            .then(res => res.ok ? res.json() : [])
-            .then(data => {
-                setPriceTypes(Array.isArray(data) ? data : []);
-            })
-            .catch(e => console.error("Error fetching price types:", e));
-    }, [canonicalDrafting]);
+        const controller = new AbortController();
+        const productIds = selectedProductIdsKey
+            .split(",")
+            .map(value => Number(value))
+            .filter(value => Number.isSafeInteger(value) && value > 0);
 
-    useEffect(() => {
-        let active = true;
-        const resolvedPriceTypeId = canonicalDrafting ? priceTypeResolution.priceTypeId : null;
-        if (canonicalDrafting && priceTypeResolution.status !== "resolved") {
-            const reset = window.setTimeout(() => {
-                if (!active) return;
-                setPriceTypeRatesMap({});
-                setPriceMatrixStatus("idle");
-                setPriceMatrixError(null);
-                setPriceMatrixMissingProductIds([]);
-            }, 0);
-            return () => {
-                active = false;
-                window.clearTimeout(reset);
-            };
-        }
-        if (!canonicalDrafting && (!shipmentForm.price_type || priceTypes.length === 0)) {
-            const reset = window.setTimeout(() => {
-                if (!active) return;
-                setPriceTypeRatesMap({});
-                setPriceMatrixStatus("idle");
-                setPriceMatrixError(null);
-                setPriceMatrixMissingProductIds([]);
-            }, 0);
-            return () => {
-                active = false;
-                window.clearTimeout(reset);
-            };
-        }
-
-        const match = canonicalDrafting
-            ? { price_type_id: resolvedPriceTypeId! }
-            : priceTypes.find(pt => {
-                const ptName = String(pt.price_type_name || pt.name || "").toLowerCase();
-                const ptId = String(pt.price_type_id);
-                const formVal = String(shipmentForm.price_type || "").toLowerCase();
-                return ptName === formVal || ptId === formVal;
+        if (productIds.length === 0) {
+            queueMicrotask(() => {
+                if (controller.signal.aborted) return;
+                setPriceControlCostsMap({});
+                setPriceControlStatus("idle");
+                setPriceControlError(null);
+                setPriceControlMissingProductIds([]);
             });
-
-        if (!match) {
-            const reset = window.setTimeout(() => {
-                if (!active) return;
-                setPriceTypeRatesMap({});
-                setPriceMatrixStatus("idle");
-                setPriceMatrixError(null);
-                setPriceMatrixMissingProductIds([]);
-            }, 0);
-            return () => {
-                active = false;
-                window.clearTimeout(reset);
-            };
+            return () => controller.abort();
         }
 
-        const loadingState = window.setTimeout(() => {
-            if (!active) return;
-            setPriceMatrixStatus("loading");
-            setPriceMatrixError(null);
-            setPriceMatrixMissingProductIds([]);
-        }, 0);
-        fetch(`/api/manufacturing/finished-goods/price-types?priceTypeId=${match.price_type_id}`)
+        queueMicrotask(() => {
+            if (controller.signal.aborted) return;
+            setPriceControlStatus("loading");
+            setPriceControlError(null);
+            setPriceControlMissingProductIds([]);
+        });
+
+        fetch(`/api/manufacturing/financial-management/price-control/products?product_ids=${encodeURIComponent(productIds.join(","))}&active_only=1`, {
+            signal: controller.signal
+        })
             .then(async res => {
-                if (!res.ok) throw new Error("Unable to load the Price Control matrix.");
+                if (!res.ok) throw new Error("Unable to load Price Control costs.");
                 return res.json();
             })
             .then((data) => {
-                if (!active) return;
+                const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
                 const map: Record<number, number> = {};
-                (data as { product_id: number | { product_id: number } | null; price: string | number }[]).forEach(item => {
-                    const prodId = typeof item.product_id === "object" && item.product_id !== null ? item.product_id.product_id : item.product_id;
-                    if (prodId) {
-                        map[Number(prodId)] = parseFloat(String(item.price)) || 0;
+                rows.forEach((item: { product_id?: number | string | null; cost_per_unit?: number | string | null }) => {
+                    const productId = Number(item.product_id);
+                    const cost = Number(item.cost_per_unit);
+                    if (Number.isSafeInteger(productId) && productId > 0 && Number.isFinite(cost) && cost > 0) {
+                        map[productId] = cost;
                     }
                 });
-                setPriceTypeRatesMap(map);
 
-                const resolvedLines = linesFormRef.current.map(line => {
+                const missingProductIds = linesFormRef.current
+                    .filter(line => line.product_id)
+                    .map(line => Number(line.product_id))
+                    .filter(productId => !Number.isFinite(map[productId]) || map[productId] <= 0);
+                setPriceControlCostsMap(map);
+                setPriceControlMissingProductIds(missingProductIds);
+                setPriceControlStatus(missingProductIds.length > 0 ? "warning" : "ready");
+
+                setLinesForm(prev => prev.map(line => {
                     if (!line.product_id) return line;
+                    const cost = map[Number(line.product_id)];
+                    if (!Number.isFinite(cost) || cost <= 0) return line;
 
-                    const directRate = map[Number(line.product_id)];
-                    if (directRate !== undefined && directRate > 0) return line;
-
-                    if (!canonicalDrafting || !Array.isArray(line.uom_options)) return line;
-
-                    const configuredUom = line.uom_options.find((option: { product_id?: number }) => {
-                        const rate = map[Number(option.product_id)];
-                        return Number.isFinite(rate) && rate > 0;
-                    }) as { product_id?: number; parent_product_id?: number; unit_shortcut?: string } | undefined;
-
-                    if (!configuredUom?.product_id) return line;
-
-                    return {
-                        ...line,
-                        product_id: String(configuredUom.product_id),
-                        parent_product_id: configuredUom.parent_product_id
-                            ? String(configuredUom.parent_product_id)
-                            : line.parent_product_id,
-                        selected_uom: configuredUom.unit_shortcut || line.selected_uom
-                    };
-                });
-
-                if (canonicalDrafting) {
-                    const missingProductIds = resolvedLines
-                        .filter(line => line.product_id)
-                        .map(line => Number(line.product_id))
-                        .filter(productId => !Number.isFinite(map[productId]) || map[productId] <= 0);
-                    if (missingProductIds.length > 0) {
-                        setPriceMatrixStatus("warning");
-                        setPriceMatrixError(null);
-                        setPriceMatrixMissingProductIds(missingProductIds);
-                    } else {
-                        setPriceMatrixStatus("ready");
-                        setPriceMatrixError(null);
-                        setPriceMatrixMissingProductIds([]);
-                    }
-                } else {
-                    setPriceMatrixStatus("ready");
-                    setPriceMatrixMissingProductIds([]);
-                }
-
-                setLinesForm(prev => prev.map((line, index) => {
-                    const resolvedLine = resolvedLines[index] || line;
-                    const productId = resolvedLine.product_id;
-                    if (!productId) return resolvedLine;
-
-                    const prod = rawMaterials.find(rm => String(rm.product_id) === String(productId));
-                    const defaultCost = Number(prod?.cost_per_unit || prod?.estimated_unit_cost || 0);
-                    const specialPrice = map[Number(productId)];
-                    const resolvedPrice = canonicalDrafting
-                        ? specialPrice
-                        : (specialPrice !== undefined && specialPrice > 0) ? specialPrice : defaultCost;
-                    
-                    if (resolvedPrice !== undefined && resolvedPrice > 0) {
-                        const rate = Number(shipmentForm.exchange_rate) || 1;
-                        const transactionPrice = canonicalDrafting && shipmentForm.currency_code === "USD"
-                            ? resolvedPrice / rate
-                            : resolvedPrice;
-                        return { ...resolvedLine, base_unit_cost_php: String(transactionPrice) };
-                    }
-                    return resolvedLine;
+                    const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
+                    const transactionPrice = shipmentForm.currency_code === "USD"
+                        ? cost / exchangeRate
+                        : cost;
+                    return { ...line, base_unit_cost_php: String(transactionPrice) };
                 }));
             })
             .catch(e => {
-                if (active) {
-                    console.error("Error fetching price type rates:", e);
-                    setPriceMatrixStatus("error");
-                    setPriceMatrixError(e instanceof Error ? e.message : "Unable to load the Price Control matrix.");
-                    setPriceMatrixMissingProductIds([]);
-                    if (canonicalDrafting) setPriceTypeRatesMap({});
-                }
+                if (e instanceof Error && e.name === "AbortError") return;
+                console.error("Error fetching Price Control costs:", e);
+                setPriceControlStatus("error");
+                setPriceControlError(e instanceof Error ? e.message : "Unable to load Price Control costs.");
+                setPriceControlMissingProductIds([]);
             });
 
         return () => {
-            active = false;
-            window.clearTimeout(loadingState);
+            controller.abort();
         };
-    }, [canonicalDrafting, priceTypeResolution.priceTypeId, priceTypeResolution.status, selectedProductIdsKey, shipmentForm.currency_code, shipmentForm.exchange_rate, shipmentForm.price_type, priceTypes, rawMaterials, setLinesForm]);
+    }, [selectedProductIdsKey, shipmentForm.currency_code, shipmentForm.exchange_rate, setLinesForm]);
 
     const isFinanceManager = React.useMemo(() => {
         if (typeof window === "undefined" || !isModalOpen) return false;
@@ -886,8 +819,7 @@ export function useIncomingShipmentsForm({
         handleAddLineForm,
         handleRemoveLineForm,
         handleLineFormChange,
-        priceTypes,
-        priceTypeRatesMap,
+        priceControlCostsMap,
         discountTypes,
         productPerSupplierMap,
         isFinanceManager,
@@ -895,9 +827,9 @@ export function useIncomingShipmentsForm({
         totalUsdValue,
         draftSummary,
         priceTypeResolution,
-        priceMatrixStatus,
-        priceMatrixError,
-        priceMatrixMissingProductIds,
+        priceControlStatus,
+        priceControlError,
+        priceControlMissingProductIds,
         fxRateStatus,
         fxRateError
     };

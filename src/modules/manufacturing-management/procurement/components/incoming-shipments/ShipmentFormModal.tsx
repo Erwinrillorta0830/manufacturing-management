@@ -45,7 +45,7 @@ export interface ShipmentFormModalProps {
     handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
     supplierRawMaterials: RawMaterial[];
-    priceTypeRatesMap: Record<number, number>;
+    priceControlCostsMap: Record<number, number>;
     discountTypes?: Array<{ id: number; discount_type: string; total_percent: number | string }>;
     productPerSupplierMap?: Record<number, { discount_type_id?: number; total_percent?: number }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
@@ -55,12 +55,7 @@ export interface ShipmentFormModalProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
-    priceTypeResolution?: {
-        status: "idle" | "pending" | "resolved" | "error";
-        priceTypeName: string | null;
-        message: string | null;
-    };
-    priceMatrixStatus?: "idle" | "loading" | "ready" | "warning" | "error";
+    priceControlStatus?: "idle" | "loading" | "ready" | "warning" | "error";
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -115,12 +110,11 @@ export function ShipmentFormModal({
     handleLineFormChange,
     getLineErrors,
     supplierRawMaterials,
-    priceTypeRatesMap,
+    priceControlCostsMap,
     discountTypes,
     productPerSupplierMap,
     paymentTerms = [],
-    priceTypeResolution = { status: "idle", priceTypeName: null, message: null },
-    priceMatrixStatus = "idle",
+    priceControlStatus = "idle",
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -656,9 +650,9 @@ export function ShipmentFormModal({
                                                                     if (isDuplicate) return;
                                                                     
                                                                     const finalSelected = { ...selected };
-                                                                    const specialPrice = priceTypeRatesMap[Number(selected.product_id)];
-                                                                    if (specialPrice !== undefined && specialPrice > 0) {
-                                                                        finalSelected.base_unit_cost_php = String(specialPrice);
+                                                                    const priceControlCost = priceControlCostsMap[Number(selected.product_id)];
+                                                                    if (priceControlCost !== undefined && priceControlCost > 0) {
+                                                                        finalSelected.base_unit_cost_php = String(priceControlCost);
                                                                     } else if (canonicalDrafting) {
                                                                         finalSelected.base_unit_cost_php = "";
                                                                     }
@@ -667,6 +661,11 @@ export function ShipmentFormModal({
                                                                             Number(finalSelected.base_unit_cost_php) / (Number(shipmentForm.exchange_rate) || 1)
                                                                         );
                                                                     }
+
+                                                                    (finalSelected as ManifestLineFormItem).discount_type_id = "";
+                                                                    (finalSelected as ManifestLineFormItem).discount_mode = "Percentage";
+                                                                    (finalSelected as ManifestLineFormItem).discount_amount = "0";
+                                                                    (finalSelected as ManifestLineFormItem).discount_percent = "0";
 
                                                                     if (productPerSupplierMap) {
                                                                         const prodId = Number(selected.product_id);
@@ -707,9 +706,9 @@ export function ShipmentFormModal({
                                                                         const opt = line.uom_options?.find((o: UOMOption) => String(o.product_id) === String(selectedId));
                                                                         if (opt) {
                                                                             let costVal: number | undefined = opt.cost_per_unit;
-                                                                            const specialPrice = priceTypeRatesMap[Number(selectedId)];
-                                                                            if (specialPrice !== undefined && specialPrice > 0) {
-                                                                                costVal = specialPrice;
+                                                                            const priceControlCost = priceControlCostsMap[Number(selectedId)];
+                                                                            if (priceControlCost !== undefined && priceControlCost > 0) {
+                                                                                costVal = priceControlCost;
                                                                             } else if (canonicalDrafting) {
                                                                                 costVal = undefined;
                                                                             }
@@ -851,7 +850,7 @@ export function ShipmentFormModal({
                                                                 aria-label={`${discountMode === "Fixed Amount" ? "Discount Amount" : "Discount Percentage"} for purchase order line ${idx + 1}`}
                                                                 value={discountMode === "Fixed Amount" ? (line.discount_amount ?? "0") : (line.discount_percent ?? "0")}
                                                                 onChange={event => handleLineFormChange(idx, discountMode === "Fixed Amount" ? "discount_amount" : "discount_percent", event.target.value)}
-                                                                disabled={!isRowEditing}
+                                                                disabled={!isRowEditing || canonicalDrafting}
                                                                 className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-medium outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                             {hasSubmitted && lineErrors.filter(error => error.toLowerCase().includes("discount")).map(error => (
@@ -1016,8 +1015,7 @@ export function ShipmentFormModal({
                                 id="register-shipment-btn"
                                 type="submit"
                     disabled={loading || listLoading || (canonicalDrafting && (
-                        priceTypeResolution.status !== "resolved"
-                        || (priceMatrixStatus !== "ready" && priceMatrixStatus !== "warning")
+                        (priceControlStatus !== "ready" && priceControlStatus !== "warning")
                         || (!editingShipmentId && shipmentForm.currency_code === "USD" && fxRateStatus !== "ready")
                     ))}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/95 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
