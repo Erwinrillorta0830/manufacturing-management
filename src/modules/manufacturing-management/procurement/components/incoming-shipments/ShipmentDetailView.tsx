@@ -131,18 +131,22 @@ export function ShipmentDetailView({
                                         })()}
                                     </strong>
                                 </span>
-                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
-                                <span>
-                                    Payment Type:{" "}
-                                    <strong className="text-foreground font-bold">
-                                        {(() => {
-                                            const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
-                                            const mode = paymentModes.find(item => item.id === Number(payMode));
-                                            return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
-                                        })()}
-                                    </strong>
-                                </span>
-                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                {!canonicalDrafting && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span>
+                                            Payment Type:{" "}
+                                            <strong className="text-foreground font-bold">
+                                                {(() => {
+                                                    const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
+                                                    const mode = paymentModes.find(item => item.id === Number(payMode));
+                                                    return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
+                                                })()}
+                                            </strong>
+                                        </span>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                    </>
+                                )}
                                 <span>
                                     Payment Status:{" "}
                                     <strong className="text-foreground font-bold">{paymentStatusLabel(activeShipment.payment_status)}</strong>
@@ -201,13 +205,17 @@ export function ShipmentDetailView({
                                         {activeShipment.delivery_terms || "N/A"}
                                     </strong>
                                 </span>
-                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
-                                <span>
-                                    Price Type:{" "}
-                                    <strong className="text-foreground font-bold">
-                                        {(activeShipment as IncomingShipment & { price_type?: string | null }).price_type || "Standard"}
-                                    </strong>
-                                </span>
+                                {!canonicalDrafting && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span>
+                                            Price Type:{" "}
+                                            <strong className="text-foreground font-bold">
+                                                {(activeShipment as IncomingShipment & { price_type?: string | null }).price_type || "Standard"}
+                                            </strong>
+                                        </span>
+                                    </>
+                                )}
                             </div>
                             {/* Status Progress Stepper (Read-Only) */}
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
