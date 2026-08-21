@@ -6,7 +6,9 @@ import {
     SelectOption,
     PackagingVariantFormState,
     PurchaseQaConfig,
-    PurchaseQaParameter
+    PurchaseQaParameter,
+    PriceControlValue,
+    TaxRateOption
 } from "../types/raw-materials.types";
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
@@ -44,6 +46,15 @@ interface RawMaterialModalProps {
     setFormBrand: (v: string) => void;
     formCategory: string;
     setFormCategory: (v: string) => void;
+    formItemGroupId: number | "";
+    setFormItemGroupId: (v: number | "") => void;
+    formTaxRateId: number | "";
+    setFormTaxRateId: (v: number | "") => void;
+    formRegulatoryCode: string;
+    setFormRegulatoryCode: (v: string) => void;
+    formRegulatoryNotes: string;
+    setFormRegulatoryNotes: (v: string) => void;
+    formPriceControl: PriceControlValue | null;
     formBarcode: string;
     setFormBarcode: (v: string) => void;
     formMaintainingQuantity: string;
@@ -87,6 +98,8 @@ interface RawMaterialModalProps {
     parentProductOptions: SelectOption[];
     brandsList: SelectOption[];
     categoriesList: SelectOption[];
+    itemGroupsList: SelectOption[];
+    taxRatesList: TaxRateOption[];
     handleCreateBrand: (name: string) => void;
     handleCreateCategory: (name: string) => void;
     onSubmit: (e: React.FormEvent) => void;
@@ -123,6 +136,15 @@ export function RawMaterialModal({
     setFormBrand,
     formCategory,
     setFormCategory,
+    formItemGroupId,
+    setFormItemGroupId,
+    formTaxRateId,
+    setFormTaxRateId,
+    formRegulatoryCode,
+    setFormRegulatoryCode,
+    formRegulatoryNotes,
+    setFormRegulatoryNotes,
+    formPriceControl,
     formBarcode,
     setFormBarcode,
     formMaintainingQuantity,
@@ -166,6 +188,8 @@ export function RawMaterialModal({
     parentProductOptions,
     brandsList,
     categoriesList,
+    itemGroupsList,
+    taxRatesList,
     handleCreateBrand,
     handleCreateCategory,
     onSubmit
@@ -177,6 +201,7 @@ export function RawMaterialModal({
         s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
     );
     const isPackagingMaterial = Number(formProductType) === 390;
+    const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
     const hasNetWeightValue = formNetWeight.trim() !== "";
     const hasOuterCartonWeightValue = formOuterCartonWeight.trim() !== "";
@@ -315,7 +340,7 @@ export function RawMaterialModal({
 
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Category <span className="text-red-500">*</span>
+                                Category <span className="text-red-500">*</span>{sharedAttributesLocked && <span className="text-muted-foreground normal-case font-medium"> (Inherited)</span>}
                             </label>
                             <CreatableSelect
                                 options={categoriesList}
@@ -324,6 +349,86 @@ export function RawMaterialModal({
                                 onCreateOption={handleCreateCategory}
                                 placeholder="Category..."
                                 className="h-8.5 text-xs"
+                                disabled={sharedAttributesLocked}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Shared Parent Master Attributes */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-primary/5 p-3 rounded-xl border border-primary/20">
+                        <div className="sm:col-span-4 flex items-center justify-between">
+                            <div>
+                                <p className="text-[10px] font-black text-primary uppercase tracking-wider">Shared Master Attributes</p>
+                                <p className="text-[10px] text-muted-foreground">Inherited by child SKUs; maintain physical measurements separately per variant.</p>
+                            </div>
+                            {sharedAttributesLocked && <span className="text-[10px] font-bold text-primary">Inherited from parent</span>}
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Price Control / Valuation
+                            </label>
+                            <div
+                                data-testid="raw-material-price-control"
+                                className="min-h-8 p-1.5 border rounded-lg text-xs font-bold bg-muted/40 flex items-center"
+                            >
+                                {formPriceControl?.priceTypeName || <span className="text-amber-600">Not configured</span>}
+                            </div>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Item Group {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <CreatableSelect
+                                options={itemGroupsList}
+                                value={String(formItemGroupId)}
+                                onValueChange={(val: string) => setFormItemGroupId(Number(val))}
+                                placeholder="Item Group..."
+                                className="h-8 text-xs"
+                                disabled={sharedAttributesLocked}
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Tax Profile {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <CreatableSelect
+                                options={taxRatesList}
+                                value={String(formTaxRateId)}
+                                onValueChange={(val: string) => setFormTaxRateId(Number(val))}
+                                placeholder="Tax Profile..."
+                                className="h-8 text-xs"
+                                disabled={sharedAttributesLocked}
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Regulatory Code {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <input
+                                type="text"
+                                value={formRegulatoryCode}
+                                onChange={event => setFormRegulatoryCode(event.target.value)}
+                                placeholder="Optional code"
+                                disabled={sharedAttributesLocked}
+                                className="w-full p-1.5 border rounded-lg text-xs font-mono bg-background outline-none focus:ring-1 focus:ring-primary disabled:opacity-60 disabled:cursor-not-allowed"
+                            />
+                        </div>
+
+                        <div className="sm:col-span-4 space-y-1">
+                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Regulatory Notes {sharedAttributesLocked && <span className="normal-case font-medium">(Inherited)</span>}
+                            </label>
+                            <textarea
+                                rows={2}
+                                value={formRegulatoryNotes}
+                                onChange={event => setFormRegulatoryNotes(event.target.value)}
+                                placeholder="Optional handling, compliance, or regulatory notes"
+                                disabled={sharedAttributesLocked}
+                                className="w-full p-1.5 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary resize-y disabled:opacity-60 disabled:cursor-not-allowed"
                             />
                         </div>
                     </div>
@@ -370,6 +475,11 @@ export function RawMaterialModal({
 
                     {/* Measurements & Properties 6-Column Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-muted/10 p-3 rounded-xl border">
+                        {sharedAttributesLocked && (
+                            <p className="col-span-2 sm:col-span-6 text-[10px] font-semibold text-muted-foreground">
+                                Parent metadata is inherited. Enter UOM, UOM Ratio, Density, Weight, and Weight Unit for this child SKU.
+                            </p>
+                        )}
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                                 Primary UOM <span className="text-red-500">*</span>
@@ -488,7 +598,7 @@ export function RawMaterialModal({
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Brand
+                                Brand {sharedAttributesLocked && <span className="text-muted-foreground normal-case font-medium">(Inherited)</span>}
                             </label>
                             <CreatableSelect
                                 options={brandsList}
@@ -497,6 +607,7 @@ export function RawMaterialModal({
                                 onCreateOption={handleCreateBrand}
                                 placeholder="Brand..."
                                 className="h-8 text-xs"
+                                disabled={sharedAttributesLocked}
                             />
                         </div>
                     </div>
@@ -695,7 +806,7 @@ export function RawMaterialModal({
                                         const calculatedWeight = variantComponentsComplete
                                             ? (Number(v.netWeight) + Number(v.outerCartonWeight) + Number(v.palletWeight)).toFixed(3)
                                             : null;
-                                        const weightUnitName = weightUnitOptions.find(w => w.value === String(formWeightUnitId))?.label.split("(")[0]?.trim() || "";
+                                        const weightUnitName = weightUnitOptions.find(w => w.value === String(v.weightUnitId))?.label.split("(")[0]?.trim() || "";
 
                                         return (
                                             <div key={vIdx} className="p-3 rounded-xl border border-border bg-background space-y-2 shadow-2xs">
@@ -729,7 +840,7 @@ export function RawMaterialModal({
                                                     </label>
                                                 </div>
 
-                                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                                                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Outer Package UOM *</label>
                                                         <CreatableSelect
@@ -754,6 +865,18 @@ export function RawMaterialModal({
                                                     </div>
 
                                                     <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Density (g/mL) *</label>
+                                                        <input
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. 1.00"
+                                                            value={v.density}
+                                                            onChange={e => handleUpdateVariant(vIdx, "density", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+
+                                                    <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">SKU Suffix *</label>
                                                         <input
                                                             type="text"
@@ -773,7 +896,7 @@ export function RawMaterialModal({
                                                     </div>
                                                 </div>
 
-                                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 border-t pt-2">
+                                                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 border-t pt-2">
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
                                                             Net Weight {isPackagingMaterial ? <span className="text-red-500">*</span> : ""}
@@ -816,11 +939,32 @@ export function RawMaterialModal({
                                                             className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
                                                         />
                                                     </div>
-                                                    <div className="bg-muted/30 p-1.5 rounded-lg border text-[10px] flex flex-col justify-center">
-                                                        <span className="text-muted-foreground font-bold uppercase block text-[9px]">Calculated Gross Weight:</span>
-                                                        <span className="font-mono font-extrabold text-foreground">
-                                                            {calculatedWeight ? `${calculatedWeight} ${weightUnitName}` : "Complete components"}
-                                                        </span>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                            Gross Weight {calculatedWeight ? <span className="text-muted-foreground normal-case font-medium">(Calculated)</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                                        </label>
+                                                        <input
+                                                            type={calculatedWeight ? "text" : "number"}
+                                                            min="0"
+                                                            step="any"
+                                                            placeholder="0.00"
+                                                            readOnly={Boolean(calculatedWeight)}
+                                                            value={calculatedWeight || v.weight}
+                                                            onChange={e => handleUpdateVariant(vIdx, "weight", e.target.value)}
+                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                                                            Weight Unit {isPackagingMaterial ? <span className="text-red-500">*</span> : <span className="text-muted-foreground normal-case font-medium">(Optional)</span>}
+                                                        </label>
+                                                        <CreatableSelect
+                                                            options={weightUnitOptions}
+                                                            value={String(v.weightUnitId)}
+                                                            onValueChange={(val: string) => handleUpdateVariant(vIdx, "weightUnitId", Number(val))}
+                                                            placeholder="Unit..."
+                                                            className="h-8 text-xs"
+                                                        />
                                                     </div>
                                                 </div>
 
