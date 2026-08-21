@@ -1,7 +1,8 @@
-/* eslint-disable */
+ 
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Image from "next/image";
 import {
     Plus,
     FileText,
@@ -17,6 +18,7 @@ import { uploadProductImage } from "../services/product-image";
 import { extractId } from "../services/finished-goods-api";
 import { Product, Supplier } from "../types";
 import { type RegisterFormField, type RegisterFormErrors, type useFinishedGoods } from "../hooks/useFinishedGoods";
+import { getAssetUrl } from "@/lib/assets";
 
 export interface RegisterProductModalProps {
     isOpen: boolean;
@@ -85,15 +87,14 @@ const formatChildVariantSku = (parentSku: string, uomValue: string): string => {
 const formatChildVariantTitle = (
     parentTitle: string,
     uomValue: string,
-    count: number | string,
+    _count: number | string,
     uomOptionsList: { value: string; label: string }[]
 ): string => {
-    const countNum = Number(count) || 0;
+    const rawTitle = (parentTitle || "").trim();
+    if (!uomValue) return rawTitle;
     const uomName = getUomDisplayName(uomValue, uomOptionsList);
-    if (countNum > 0) {
-        return `${parentTitle} (${uomName} of ${countNum})`;
-    }
-    return `${parentTitle} (${uomName})`;
+    if (!uomName) return rawTitle;
+    return `${rawTitle} ${uomName}`.trim();
 };
 
 export function RegisterProductModal({
@@ -413,6 +414,7 @@ export function RegisterProductModal({
                                         id="register-parent"
                                         options={parentOptions}
                                         value={registerForm.parentId}
+                                        isLoading={products.length === 0}
                                         onValueChange={(val) => {
                                             const selectedId = val;
                                             clearRegisterFormError("parentId");
@@ -421,34 +423,21 @@ export function RegisterProductModal({
                                             const parentProd = products.find(p => p.id === selectedId);
                                             setRegisterForm(prev => {
                                                 if (parentProd) {
-                                                    const count = Number(prev.uomCount) || 20;
                                                     const parentCatId = extractId(parentProd.product_category);
                                                     const parentBrandId = extractId(parentProd.product_brand);
                                                     const parentClassId = extractId(parentProd.product_class);
                                                     const parentSegmentId = extractId(parentProd.product_segment);
                                                     const parentSectionId = extractId(parentProd.product_section);
 
-                                                    const childVariants = products.filter(p => {
-                                                        const pParentId = extractId(p.parent_id);
-                                                        return String(pParentId) === String(selectedId) && p.isActive !== false;
-                                                    });
-                                                    const used = new Set<string>();
-                                                    if (parentProd.baseUom) used.add(parentProd.baseUom.trim().toUpperCase());
-                                                    childVariants.forEach(c => {
-                                                        if (c.baseUom) used.add(c.baseUom.trim().toUpperCase());
-                                                    });
+                                                    const userUom = prev.baseUom || "";
+                                                    const userCount = Number(prev.uomCount) || 0;
 
-                                                    const availableUom = uomOptions.find(u => {
-                                                        const order = getUnitOrderValue(u);
-                                                        return order > 1 && !used.has((u.value || "").trim().toUpperCase());
-                                                    });
-
-                                                    const chosenUom = (prev.baseUom && !used.has(prev.baseUom.trim().toUpperCase()))
-                                                        ? prev.baseUom
-                                                        : (availableUom?.value || "Box");
-
-                                                    const dynamicTitle = formatChildVariantTitle(parentProd.title, chosenUom, count, uomOptions);
-                                                    const dynamicSku = formatChildVariantSku(parentProd.sku, chosenUom);
+                                                    const dynamicTitle = userUom
+                                                        ? formatChildVariantTitle(parentProd.title, userUom, userCount, uomOptions)
+                                                        : parentProd.title;
+                                                    const dynamicSku = userUom
+                                                        ? formatChildVariantSku(parentProd.sku, userUom)
+                                                        : parentProd.sku || "";
                                                     const dynamicVersion = dynamicSku ? `${dynamicSku} - v1.0` : "v1.0";
 
                                                     return {
@@ -456,10 +445,10 @@ export function RegisterProductModal({
                                                         parentId: selectedId,
                                                         title: dynamicTitle,
                                                         sku: dynamicSku,
-                                                        baseUom: chosenUom,
-                                                        targetSellingPrice: parentProd.targetSellingPrice ? String(parentProd.targetSellingPrice * count) : prev.targetSellingPrice,
-                                                        costPerUnit: parentProd.cost_per_unit ? String(parentProd.cost_per_unit * count) : prev.costPerUnit,
-                                                        uomCount: String(count),
+                                                        baseUom: userUom,
+                                                        targetSellingPrice: parentProd.targetSellingPrice && userCount > 0 ? String(parentProd.targetSellingPrice * userCount) : prev.targetSellingPrice,
+                                                        costPerUnit: parentProd.cost_per_unit && userCount > 0 ? String(parentProd.cost_per_unit * userCount) : prev.costPerUnit,
+                                                        uomCount: prev.uomCount || "",
                                                         expectedYield: "100",
                                                         description: parentProd.description || prev.description,
                                                         brandId: parentBrandId ? String(parentBrandId) : prev.brandId,
@@ -514,7 +503,7 @@ export function RegisterProductModal({
                                         if (registrationType === "child" && registerForm.parentId) {
                                             const parentProd = products.find(p => p.id === registerForm.parentId);
                                             if (parentProd) {
-                                                const count = Number(registerForm.uomCount) || 20;
+                                                const count = Number(registerForm.uomCount) || 0;
                                                 const newTitle = formatChildVariantTitle(parentProd.title, val, count, uomOptions);
                                                 const newSku = formatChildVariantSku(parentProd.sku, val);
                                                 const newVersion = newSku ? `${newSku} - v1.0` : "v1.0";
@@ -523,8 +512,7 @@ export function RegisterProductModal({
                                                     baseUom: val,
                                                     title: newTitle,
                                                     sku: newSku,
-                                                    versionName: newVersion,
-                                                    uomCount: prev.uomCount || "20"
+                                                    versionName: newVersion
                                                 }));
                                             }
                                         }
@@ -538,12 +526,12 @@ export function RegisterProductModal({
                             </div>
                             <div>
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
-                                    {registrationType === "child" ? "Pieces per Box / Case *" : "Pack Multiplier *"}
+                                    {registrationType === "child" ? "Pack Multiplier (UOM Count) *" : "Pack Multiplier *"}
                                 </label>
                                 <input
                                     id="register-uomCount"
                                     type="number"
-                                    placeholder={registrationType === "child" ? "e.g. 20" : "1"}
+                                    placeholder={registrationType === "child" ? "e.g. 24" : "1"}
                                     value={registerForm.uomCount}
                                     onChange={e => {
                                         const val = e.target.value;
@@ -552,8 +540,10 @@ export function RegisterProductModal({
                                         setRegisterForm(prev => {
                                             const parent = products.find(p => p.id === prev.parentId);
                                             if (parent) {
-                                                const chosenUom = prev.baseUom || "Box";
-                                                const newTitle = formatChildVariantTitle(parent.title, chosenUom, count, uomOptions);
+                                                const chosenUom = prev.baseUom || "";
+                                                const newTitle = chosenUom
+                                                    ? formatChildVariantTitle(parent.title, chosenUom, count, uomOptions)
+                                                    : parent.title;
                                                 const targetSellingPrice = parent.targetSellingPrice && count > 0 ? String(parent.targetSellingPrice * count) : prev.targetSellingPrice;
                                                 const costPerUnit = parent.cost_per_unit && count > 0 ? String(parent.cost_per_unit * count) : prev.costPerUnit;
                                                 return {
@@ -661,33 +651,21 @@ export function RegisterProductModal({
                                 <div className="flex items-center gap-4 border border-dashed border-border rounded-xl p-4 bg-muted/5 hover:bg-muted/10 transition-all">
                                     {registerForm.productImage ? (
                                         <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-background flex items-center justify-center shrink-0">
-                                            <img
-                                                src={`${process.env.NEXT_PUBLIC_DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || ""}/assets/${registerForm.productImage}`}
+                                            <Image
+                                                src={getAssetUrl(registerForm.productImage) || "/placeholder-image.png"}
                                                 alt="Preview"
-                                                className="w-full h-full object-cover"
-                                                onError={(e) => {
-                                                    const target = e.target as HTMLImageElement;
-                                                    if (target.src.includes("/assets/")) {
-                                                        target.src = "/placeholder-image.png";
-                                                    }
-                                                }}
+                                                fill
+                                                unoptimized
+                                                className="object-cover"
                                             />
                                             <button
                                                 type="button"
-                                                onClick={async () => {
-                                                    const oldId = registerForm.productImage;
+                                                onClick={() => {
                                                     setRegisterForm(prev => ({ ...prev, productImage: "" }));
                                                     setRegisterImagePreview(null);
                                                     setRegisterImageError(null);
-                                                    if (oldId && oldId.length > 10) {
-                                                        try {
-                                                            await fetch(`/api/manufacturing/files?id=${oldId}`, { method: "DELETE" });
-                                                        } catch (err) {
-                                                            console.error("Failed to delete file", err);
-                                                        }
-                                                    }
                                                 }}
-                                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all uppercase"
+                                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all uppercase cursor-pointer"
                                             >
                                                 Remove
                                             </button>

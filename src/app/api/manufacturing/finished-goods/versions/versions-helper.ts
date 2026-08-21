@@ -39,10 +39,10 @@ export function selectPreferredActiveVersion<T extends VersionSelectionCandidate
     const activeVersions = versions.filter(version => {
         const s = String(version.status ?? "").toLowerCase();
         const verRecord = version as Record<string, unknown>;
-        return s === "active" || s === "approved" || verRecord.is_active === true || verRecord.is_active === 1;
+        return s === "active" || verRecord.is_active === true || verRecord.is_active === 1;
     });
-    const pool = activeVersions.length > 0 ? activeVersions : versions;
-    return pool.find(isStandardBOMVersion) || pool[0] || null;
+    if (activeVersions.length > 0) return activeVersions[0];
+    return versions.find(isStandardBOMVersion) || versions[0] || null;
 }
 
 export async function getBOMDetailsForVersion(

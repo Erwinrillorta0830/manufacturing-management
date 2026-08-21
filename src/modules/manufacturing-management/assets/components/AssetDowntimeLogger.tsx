@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { X } from "lucide-react";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 
@@ -135,11 +136,14 @@ export function AssetDowntimeLogger({
                         </button>
 
                         {/* Image */}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
+                        <Image
                             src={previewImage}
                             alt="Asset Preview Large"
+                            width={900}
+                            height={700}
+                            unoptimized
                             className="max-w-full max-h-[85vh] object-contain rounded-xl animate-in zoom-in-95 duration-200"
+                            style={{ width: "auto", height: "auto" }}
                         />
                     </div>
                 </div>

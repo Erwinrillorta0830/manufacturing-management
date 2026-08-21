@@ -3,7 +3,6 @@
 export interface DirectusLot {
     lot_id: number;
     lot_name: string;
-    inventory_type_id: number | { id: number; name: string } | null;
     unit_id?: number | { unit_id: number; unit_name: string; unit_shortcut?: string } | null;
     uom_id?: number | { unit_id: number; unit_name: string; unit_shortcut?: string } | null;
     max_batch_capacity: number;
@@ -11,11 +10,6 @@ export interface DirectusLot {
     updated_at: string;
     created_by: number | { user_id: number; username: string } | null;
     updated_by: number | { user_id: number; username: string } | null;
-}
-
-export interface DirectusInventoryType {
-    id: number;
-    name: string;
 }
 
 export interface DirectusUnit {
@@ -31,8 +25,6 @@ export interface DirectusUnit {
 export interface Lot {
     lotId: number;
     lotName: string;
-    inventoryTypeId: number;
-    inventoryTypeName: string;
     uomId: number | null;
     uomName: string;
     uomShortcut: string;
@@ -42,11 +34,6 @@ export interface Lot {
     createdBy: string;
     updatedBy: string;
     displayNumber?: number;
-}
-
-export interface InventoryType {
-    inventoryTypeId: number;
-    typeName: string;
 }
 
 export interface UnitOfMeasure {
@@ -59,7 +46,6 @@ export interface UnitOfMeasure {
 
 export interface CreateLotPayload {
     lot_name: string;
-    inventory_type_id: number;
     unit_id?: number | null;
     uom_id?: number | null;
     max_batch_capacity: number;
@@ -67,9 +53,13 @@ export interface CreateLotPayload {
 
 export interface UpdateLotPayload {
     lot_name?: string;
-    inventory_type_id?: number;
     unit_id?: number | null;
     uom_id?: number | null;
     max_batch_capacity?: number;
+}
+
+export interface InventoryType {
+    inventoryTypeId: number;
+    typeName: string;
 }
 

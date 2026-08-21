@@ -1,6 +1,6 @@
 import React from "react";
 import { Search, RefreshCw, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
-import { Lot, InventoryType } from "../types";
+import { Lot } from "../types";
 import {
     Table,
     TableHeader,
@@ -17,30 +17,13 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Button } from "@/components/ui/button";
-
-const getInventoryTypeBadgeStyles = (typeName?: string) => {
-    switch (typeName) {
-        case "Finished Goods":
-            return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 dark:border-emerald-500/30";
-        case "Raw Materials":
-            return "bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20 dark:border-blue-500/30";
-        case "Packaging Items":
-            return "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 dark:border-amber-500/30";
-        default:
-            return "bg-muted text-muted-foreground border border-transparent";
-    }
-};
 
 interface LotTableProps {
     filteredLots: Lot[];
     loading: boolean;
     searchQuery: string;
     onSearchChange: (value: string) => void;
-    filterType: number | "all";
-    onFilterTypeChange: (value: number | "all") => void;
-    inventoryTypes: InventoryType[];
     onEdit: (lot: Lot) => void;
     onRefresh: () => void;
     onAddClick?: () => void;
@@ -51,9 +34,6 @@ export default function LotTable({
     loading,
     searchQuery,
     onSearchChange,
-    filterType,
-    onFilterTypeChange,
-    inventoryTypes,
     onEdit,
     onRefresh,
     onAddClick
@@ -61,7 +41,7 @@ export default function LotTable({
     const [currentPage, setCurrentPage] = React.useState(1);
     const [pageSize, setPageSize] = React.useState(10);
 
-    // Reset page to 1 when search query, filter type, or page size changes
+    // Reset page to 1 when search query or page size changes
     React.useEffect(() => {
         setCurrentPage(1);
     }, [filteredLots.length, pageSize]);
@@ -72,21 +52,11 @@ export default function LotTable({
         return filteredLots.slice(startIndex, startIndex + pageSize);
     }, [filteredLots, startIndex, pageSize]);
 
-    const filterOptions = React.useMemo(() => {
-        return [
-            { value: "all", label: "All Inventory Types" },
-            ...inventoryTypes.map((type) => ({
-                value: String(type.inventoryTypeId),
-                label: type.typeName
-            }))
-        ];
-    }, [inventoryTypes]);
-
     return (
         <div className="space-y-4">
-            {/* Header / Filter Bar */}
+            {/* Header / Search Bar */}
             <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto flex-1 max-w-xl">
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto flex-1 max-w-md">
                     <div className="relative flex-1 w-full">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -96,16 +66,6 @@ export default function LotTable({
                             className="pl-9 h-9"
                         />
                     </div>
-                    <SearchableSelect
-                        options={filterOptions}
-                        value={String(filterType)}
-                        onValueChange={(val) => {
-                            const parsed = val === "all" ? "all" : Number(val);
-                            onFilterTypeChange(parsed);
-                        }}
-                        placeholder="All Inventory Types"
-                        className="w-[180px] h-9 shrink-0 text-left font-normal text-xs"
-                    />
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
                     <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
@@ -135,7 +95,7 @@ export default function LotTable({
                         <Boxes className="h-12 w-12 text-muted-foreground/30 mb-2" />
                         <span className="text-sm font-semibold">No storage lots found</span>
                         <p className="text-xs max-w-xs mt-1">
-                            Adjust your filters or add a new lot to register a storage location.
+                            Adjust your search or add a new lot to register a storage location.
                         </p>
                     </div>
                 ) : (
@@ -144,7 +104,6 @@ export default function LotTable({
                             <TableRow>
                                 <TableHead className="w-[80px]">No.</TableHead>
                                 <TableHead>Storage Location</TableHead>
-                                <TableHead>Inventory Type</TableHead>
                                 <TableHead>UOM</TableHead>
                                 <TableHead>Max Capacity</TableHead>
                                 <TableHead>Created By</TableHead>
@@ -159,11 +118,6 @@ export default function LotTable({
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
                                         <TableCell className="font-semibold text-foreground">
                                             {lot.lotName}
-                                        </TableCell>
-                                        <TableCell>
-                                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${getInventoryTypeBadgeStyles(lot.inventoryTypeName)}`}>
-                                                {lot.inventoryTypeName}
-                                            </span>
                                         </TableCell>
                                         <TableCell>
                                             {unitLabel ? (

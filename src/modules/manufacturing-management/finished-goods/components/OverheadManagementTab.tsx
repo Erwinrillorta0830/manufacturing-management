@@ -23,6 +23,8 @@ interface OverheadManagementTabProps {
     editedVersionDetails: any;
     setEditedVersionDetails: React.Dispatch<React.SetStateAction<any>>;
     setHasUnsavedChanges: (val: boolean) => void;
+    /** When true, all fields are read-only. */
+    isVersionLocked?: boolean;
 }
 
 export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
@@ -31,6 +33,7 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
     editedVersionDetails,
     setEditedVersionDetails,
     setHasUnsavedChanges,
+    isVersionLocked = false,
 }) => {
     // Local list of db overhead types fetched if not passed from parent
     const [fetchedOverheadTypes, setFetchedOverheadTypes] = useState<OverheadType[]>([]);
@@ -277,21 +280,23 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                         Manage factory and indirect manufacturing overhead costs allocated per unit to this version.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        onClick={() => setIsRegisterModalOpen(true)}
-                        className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg shadow-sm border-primary/30 text-primary hover:bg-primary/10"
-                    >
-                        <BookOpen className="h-3.5 w-3.5" /> Register Overhead Type to COA
-                    </Button>
-                    <Button
-                        onClick={() => setIsAdding(true)}
-                        className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg shadow-sm"
-                    >
-                        <Plus className="h-3.5 w-3.5" /> Add Overhead Item
-                    </Button>
-                </div>
+                {!isVersionLocked && (
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => setIsRegisterModalOpen(true)}
+                            className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg shadow-sm border-primary/30 text-primary hover:bg-primary/10"
+                        >
+                            <BookOpen className="h-3.5 w-3.5" /> Register Overhead Type to COA
+                        </Button>
+                        <Button
+                            onClick={() => setIsAdding(true)}
+                            className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg shadow-sm"
+                        >
+                            <Plus className="h-3.5 w-3.5" /> Add Overhead Item
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* System Basis & Total Active Overhead Card */}
@@ -416,12 +421,27 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                 </div>
 
                 {overheadItems.length === 0 ? (
-                    <div className="p-12 text-center text-muted-foreground">
-                        <Info className="h-8 w-8 mx-auto mb-2 opacity-40 text-primary" />
-                        <p className="text-xs font-bold text-foreground">No overhead items allocated to this version yet.</p>
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                            Click <strong>"Add Overhead Item"</strong> above to select overhead types from the database catalog.
+                    <div className="p-12 text-center text-muted-foreground space-y-2">
+                        <Info className="h-8 w-8 mx-auto mb-1 opacity-40 text-primary" />
+                        <p className="text-xs font-bold text-foreground">
+                            {isVersionLocked
+                                ? "No overhead items allocated to this version."
+                                : "No overhead items allocated to this version yet."}
                         </p>
+                        <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                            {isVersionLocked
+                                ? "This version is locked in read-only mode. Overhead items and allocation rates cannot be modified."
+                                : "Click \"Add Overhead Item\" to select overhead types from the database catalog."}
+                        </p>
+                        {!isVersionLocked && (
+                            <button
+                                type="button"
+                                onClick={() => setIsAdding(true)}
+                                className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                            >
+                                <Plus className="h-3.5 w-3.5" /> Add Overhead Item
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -433,7 +453,7 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                     <th className="py-2.5 px-4 text-right">Cost per Unit (₱)</th>
                                     <th className="py-2.5 px-4">Allocation Basis</th>
                                     <th className="py-2.5 px-4">Remarks</th>
-                                    <th className="py-2.5 px-4 text-center">Action</th>
+                                    {!isVersionLocked && <th className="py-2.5 px-4 text-center">Action</th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -447,8 +467,9 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                         <td className="py-2.5 px-4">
                                             <button
                                                 type="button"
+                                                disabled={isVersionLocked}
                                                 onClick={() => handleToggleActive(item.id)}
-                                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${
+                                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                                                     item.is_active
                                                         ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                                         : "bg-muted text-muted-foreground border-border"
@@ -466,9 +487,10 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                         <td className="py-2.5 px-4 font-semibold text-foreground">
                                             <input
                                                 type="text"
+                                                disabled={isVersionLocked}
                                                 value={item.overhead_name}
                                                 onChange={(e) => handleUpdateItem(item.id, "overhead_name", e.target.value)}
-                                                className="w-full bg-transparent border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 outline-none font-semibold text-foreground"
+                                                className="w-full bg-transparent border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 outline-none font-semibold text-foreground disabled:opacity-70"
                                             />
                                         </td>
                                         <td className="py-2.5 px-4 text-right font-mono font-bold">
@@ -476,6 +498,7 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                                 type="number"
                                                 step="0.0001"
                                                 min="0"
+                                                disabled={isVersionLocked}
                                                 value={item.cost_per_unit}
                                                 onChange={(e) =>
                                                     handleUpdateItem(
@@ -484,7 +507,7 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                                         parseFloat(e.target.value) || 0
                                                     )
                                                 }
-                                                className="w-28 text-right bg-background border border-border rounded px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
+                                                className="w-28 text-right bg-background border border-border rounded px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                             />
                                         </td>
                                         <td className="py-2.5 px-4">
@@ -495,22 +518,25 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                         <td className="py-2.5 px-4 text-muted-foreground text-[11px]">
                                             <input
                                                 type="text"
+                                                disabled={isVersionLocked}
                                                 value={item.remarks || ""}
                                                 placeholder="Add remarks..."
                                                 onChange={(e) => handleUpdateItem(item.id, "remarks", e.target.value)}
-                                                className="w-full bg-transparent border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 outline-none text-xs"
+                                                className="w-full bg-transparent border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 outline-none text-xs disabled:opacity-70"
                                             />
                                         </td>
-                                        <td className="py-2.5 px-4 text-center">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleDeleteItem(item.id)}
-                                                className="text-muted-foreground hover:text-red-600 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
-                                                title="Delete item"
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </button>
-                                        </td>
+                                        {!isVersionLocked && (
+                                            <td className="py-2.5 px-4 text-center">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteItem(item.id)}
+                                                    className="text-muted-foreground hover:text-red-600 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
+                                                    title="Delete item"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            </td>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>

@@ -73,10 +73,31 @@ export async function POST(request: Request) {
         const numericProductId = parseInt(productId);
         const numericVersionId = parseInt(versionId);
 
-        const versionRes = await fetch(
-            `${DIRECTUS_URL}/items/product_manufacturing_version/${numericVersionId}?fields=version_id,product_id`,
+        let targetVersionId = numericVersionId;
+        let versionRes = await fetch(
+            `${DIRECTUS_URL}/items/product_manufacturing_version/${targetVersionId}?fields=version_id,product_id`,
             { headers, cache: "no-store" }
         );
+
+        if (!versionRes.ok) {
+            // Attempt fallback to find the active or latest version for this product
+            const fallbackRes = await fetch(
+                `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${numericProductId}&sort=-version_id&limit=1&fields=version_id,product_id`,
+                { headers, cache: "no-store" }
+            );
+            if (fallbackRes.ok) {
+                const fallbackJson = await fallbackRes.json();
+                const firstVer = fallbackJson.data?.[0];
+                if (firstVer && firstVer.version_id) {
+                    targetVersionId = Number(firstVer.version_id);
+                    versionRes = await fetch(
+                        `${DIRECTUS_URL}/items/product_manufacturing_version/${targetVersionId}?fields=version_id,product_id`,
+                        { headers, cache: "no-store" }
+                    );
+                }
+            }
+        }
+
         if (!versionRes.ok) {
             return NextResponse.json({ error: "Selected version was not found." }, { status: 404 });
         }
@@ -170,7 +191,7 @@ export async function POST(request: Request) {
             product_segment: extractRelationId(details.productSegment),
             product_section: extractRelationId(details.productSection),
             product_shelf_life: validatedDetails.productShelfLife,
-            product_image: details.productImage,
+            product_image: details.productImage ? details.productImage : null,
 
             unit_of_measurement: identity.unitId,
             parent_id: identity.parentId,

@@ -47,6 +47,8 @@ interface RoutesBOMTabProps {
     setOperationTypes?: React.Dispatch<React.SetStateAction<OperationType[]>>;
     editedVersionDetails?: any;
     setEditedVersionDetails?: any;
+    /** When true, all fields are read-only. */
+    isVersionLocked?: boolean;
 }
 
 export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
@@ -60,7 +62,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     setHasUnsavedChanges,
     setOperationTypes,
     editedVersionDetails,
-    setEditedVersionDetails
+    setEditedVersionDetails,
+    isVersionLocked = false
 }) => {
     const operationOptions = React.useMemo(() => {
         return operationTypes.map(op => ({
@@ -350,7 +353,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                     id="add-route-step-top-btn"
                     aria-label="Add Route Step"
                     onClick={handleAddRoute}
-                    className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg cursor-pointer"
+                    disabled={isVersionLocked}
+                    className="inline-flex items-center gap-1.5 h-9 text-xs rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                     <Plus className="h-3.5 w-3.5" /> Add Route Step
                 </Button>
@@ -369,12 +373,13 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                 <input
                                     id="version-name-input"
                                     type="text"
+                                    disabled={isVersionLocked}
                                     value={editedVersionDetails.version_name || ""}
                                     onChange={e => {
                                         setEditedVersionDetails((prev: any) => ({ ...prev, version_name: e.target.value }));
                                         setHasUnsavedChanges(true);
                                     }}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all disabled:opacity-60 disabled:bg-muted/30"
                                 />
                             </div>
                             <div className="space-y-1">
@@ -384,12 +389,13 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                         id="version-base-qty-input"
                                         type="number"
                                         step="0.0001"
+                                        disabled={isVersionLocked}
                                         value={editedVersionDetails.base_quantity !== undefined ? editedVersionDetails.base_quantity : 1}
                                         onChange={e => {
                                             setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parseFloat(e.target.value) || 0 }));
                                             setHasUnsavedChanges(true);
                                         }}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all pr-12"
+                                        className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all pr-12 disabled:opacity-60 disabled:bg-muted/30"
                                     />
                                     <span className="absolute right-3 top-2.5 text-xs font-semibold text-muted-foreground">
                                         {unitShortcut}
@@ -404,12 +410,13 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     step="0.01"
                                     min="1"
                                     max="100"
+                                    disabled={isVersionLocked}
                                     value={editedVersionDetails.expected_yield_percentage !== undefined ? editedVersionDetails.expected_yield_percentage : 100}
                                     onChange={e => {
                                         setEditedVersionDetails((prev: any) => ({ ...prev, expected_yield_percentage: parseFloat(e.target.value) || 0 }));
                                         setHasUnsavedChanges(true);
                                     }}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all disabled:opacity-60 disabled:bg-muted/30"
                                 />
                             </div>
                         </div>
@@ -447,13 +454,21 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
             )}
 
             {editedRoutes.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-12 rounded-xl border border-dashed bg-muted/5 border-muted text-center">
-                    <Layers className="h-10 w-10 text-muted-foreground opacity-40 mb-3" />
-                    <h4 className="text-sm font-medium text-foreground">No route steps added yet</h4>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-xs">Route steps outline the physical workstations and operations required to produce this version.</p>
-                    <Button id="create-first-step-btn" aria-label="Create First Step" onClick={handleAddRoute} variant="outline" size="sm" className="mt-4 text-xs cursor-pointer">
-                        Create First Step
-                    </Button>
+                <div className="flex flex-col items-center justify-center p-12 rounded-xl border border-dashed bg-muted/5 border-muted text-center space-y-2">
+                    <Layers className="h-10 w-10 text-muted-foreground opacity-40 mb-1" />
+                    <h4 className="text-sm font-medium text-foreground">
+                        {isVersionLocked ? "No route steps configured for this version" : "No route steps added yet"}
+                    </h4>
+                    <p className="text-xs text-muted-foreground max-w-sm">
+                        {isVersionLocked
+                            ? "This version is locked in read-only mode. Workstation routings and BOM components cannot be modified."
+                            : "Route steps outline the physical workstations and operations required to produce this version."}
+                    </p>
+                    {!isVersionLocked && (
+                        <Button id="create-first-step-btn" aria-label="Create First Step" onClick={handleAddRoute} variant="outline" size="sm" className="mt-3 text-xs cursor-pointer">
+                            Create First Step
+                        </Button>
+                    )}
                 </div>
             ) : (
                 <div className="space-y-6">
@@ -479,34 +494,38 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 id={`route-seq-input-${r.route_id}`}
                                                 aria-label={`Sequence order for step ${stepNum}`}
                                                 type="number"
+                                                disabled={isVersionLocked}
                                                 value={r.sequence_order}
                                                 onChange={(e) => handleUpdateRoute(r.route_id, "sequence_order", parseInt(e.target.value) || 0)}
-                                                className="w-12 h-7 px-1.5 rounded border border-muted bg-background text-foreground text-xs text-center focus:outline-none focus:ring-1 focus:ring-primary"
+                                                className="w-12 h-7 px-1.5 rounded border border-muted bg-background text-foreground text-xs text-center focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                                             />
                                         </div>
-                                        <Button
-                                            id={`delete-route-btn-${r.route_id}`}
-                                            aria-label={`Delete Route Step ${stepNum}`}
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => handleDeleteRoute(r.route_id)}
-                                            className="h-7 w-7 text-destructive hover:bg-destructive/15 rounded-md cursor-pointer"
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        {!isVersionLocked && (
+                                            <Button
+                                                id={`delete-route-btn-${r.route_id}`}
+                                                aria-label={`Delete Route Step ${stepNum}`}
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => handleDeleteRoute(r.route_id)}
+                                                className="h-7 w-7 text-destructive hover:bg-destructive/15 rounded-md cursor-pointer"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
 
-                                {/* Step Form Fields */}
-                                <div className="p-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                                {/* Step Form Fields - clean aligned grid */}
+                                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 items-start">
                                     {/* Operation */}
-                                    <div className="space-y-1 flex flex-col justify-end">
-                                        <label htmlFor={`route-op-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
+                                    <div className="space-y-1.5">
+                                        <label htmlFor={`route-op-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Settings className="h-3 w-3" /> Operation
                                         </label>
                                         <CreatableSelect
                                             options={operationOptions}
                                             value={r.operation_id ? String(r.operation_id) : ""}
+                                            disabled={isVersionLocked}
                                             onValueChange={(val) => {
                                                 handleUpdateRoute(r.route_id, "operation_id", val ? parseInt(val) : null);
                                             }}
@@ -517,13 +536,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     </div>
 
                                     {/* Work Center */}
-                                    <div className="space-y-1 flex flex-col justify-end">
-                                        <label htmlFor={`route-wc-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1 mb-1">
+                                    <div className="space-y-1.5">
+                                        <label htmlFor={`route-wc-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Layers className="h-3 w-3" /> Work Station / Center
                                         </label>
                                         <CreatableSelect
                                             options={workCenterOptions}
                                             value={r.work_center_id ? String(r.work_center_id) : ""}
+                                            disabled={isVersionLocked}
                                             onValueChange={(val) => {
                                                 handleUpdateRoute(r.route_id, "work_center_id", val ? parseInt(val) : null);
                                                 const selectedWorkCenter = workCenters.find(wc => wc.work_center_id === (val ? parseInt(val) : null));
@@ -535,21 +555,21 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             className={`h-9 text-xs ${!r.work_center_id ? "border-red-500 focus:ring-red-500" : ""}`}
                                         />
                                         {!r.work_center_id ? (
-                                            <span className="text-[10px] font-semibold text-red-600 block">
-                                                Work Center is required for this route step.
+                                            <span className="text-[10px] font-semibold text-red-600 block leading-tight">
+                                                Work Center required
                                             </span>
                                         ) : (() => {
                                             const selectedWorkCenter = workCenters.find(wc => wc.work_center_id === r.work_center_id);
                                             return selectedWorkCenter ? (
-                                                <span className="text-[10px] text-muted-foreground">
-                                                    Machine rate: ₱{Number(selectedWorkCenter.overhead_cost_per_hour || 0).toFixed(2)}/hr | Cap: {Number(selectedWorkCenter.capacity_per_hour || 1).toFixed(2)}/hr
+                                                <span className="text-[10px] text-muted-foreground block truncate leading-tight" title={`Machine rate: ₱${Number(selectedWorkCenter.overhead_cost_per_hour || 0).toFixed(2)}/hr | Cap: ${Number(selectedWorkCenter.capacity_per_hour || 1).toFixed(2)}/hr`}>
+                                                    ₱{Number(selectedWorkCenter.overhead_cost_per_hour || 0).toFixed(2)}/hr • Cap: {Number(selectedWorkCenter.capacity_per_hour || 1).toFixed(2)}/hr
                                                 </span>
                                             ) : null;
                                         })()}
                                     </div>
 
                                     {/* Setup Time */}
-                                    <div className="space-y-1">
+                                    <div className="space-y-1.5">
                                         <label htmlFor={`setup-time-h-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Clock className="h-3 w-3" /> Setup Time (hh&quot;mm&quot;ss)
                                         </label>
@@ -560,6 +580,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 aria-label={`Setup time hours for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
+                                                disabled={isVersionLocked}
                                                 value={Math.floor(Math.round((r.setup_time_hours || 0) * 3600) / 3600) || ""}
                                                 onChange={(e) => {
                                                     const h = parseInt(e.target.value) || 0;
@@ -568,7 +589,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentSecs = totalS % 60;
                                                     handleUpdateRoute(r.route_id, "setup_time_hours", h + (currentMins / 60) + (currentSecs / 3600));
                                                 }}
-                                                className="w-10 bg-transparent border-0 outline-hidden p-0 text-xs text-right text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-10 bg-transparent border-0 outline-hidden p-0 text-xs text-right text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="0"
                                             />
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
@@ -579,6 +600,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 type="number"
                                                 min="0"
                                                 max="59"
+                                                disabled={isVersionLocked}
                                                 value={Math.floor((Math.round((r.setup_time_hours || 0) * 3600) % 3600) / 60) || ""}
                                                 onChange={(e) => {
                                                     const m = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
@@ -587,7 +609,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentSecs = totalS % 60;
                                                     handleUpdateRoute(r.route_id, "setup_time_hours", currentHrs + (m / 60) + (currentSecs / 3600));
                                                 }}
-                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-center text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-center text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="00"
                                             />
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
@@ -598,6 +620,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 type="number"
                                                 min="0"
                                                 max="59"
+                                                disabled={isVersionLocked}
                                                 value={Math.round((r.setup_time_hours || 0) * 3600) % 60 || ""}
                                                 onChange={(e) => {
                                                     const s = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
@@ -606,14 +629,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentMins = Math.floor((totalS % 3600) / 60);
                                                     handleUpdateRoute(r.route_id, "setup_time_hours", currentHrs + (currentMins / 60) + (s / 3600));
                                                 }}
-                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-left text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-left text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="00"
                                             />
                                         </div>
                                     </div>
 
                                     {/* Run Time */}
-                                    <div className="space-y-1">
+                                    <div className="space-y-1.5">
                                         <label htmlFor={`run-time-h-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Clock className="h-3 w-3" /> Run Time (hh&quot;mm&quot;ss)
                                         </label>
@@ -624,6 +647,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 aria-label={`Run time hours for step ${stepNum}`}
                                                 type="number"
                                                 min="0"
+                                                disabled={isVersionLocked}
                                                 value={Math.floor(Math.round((r.run_time_hours || 0) * 3600) / 3600) || ""}
                                                 onChange={(e) => {
                                                     const h = parseInt(e.target.value) || 0;
@@ -632,7 +656,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentSecs = totalS % 60;
                                                     handleUpdateRoute(r.route_id, "run_time_hours", h + (currentMins / 60) + (currentSecs / 3600));
                                                 }}
-                                                className="w-10 bg-transparent border-0 outline-hidden p-0 text-xs text-right text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-10 bg-transparent border-0 outline-hidden p-0 text-xs text-right text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="0"
                                             />
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
@@ -643,6 +667,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 type="number"
                                                 min="0"
                                                 max="59"
+                                                disabled={isVersionLocked}
                                                 value={Math.floor((Math.round((r.run_time_hours || 0) * 3600) % 3600) / 60) || ""}
                                                 onChange={(e) => {
                                                     const m = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
@@ -651,7 +676,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentSecs = totalS % 60;
                                                     handleUpdateRoute(r.route_id, "run_time_hours", currentHrs + (m / 60) + (currentSecs / 3600));
                                                 }}
-                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-center text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-center text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="00"
                                             />
                                             <span className="text-muted-foreground/30 font-bold select-none">&quot;</span>
@@ -662,6 +687,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 type="number"
                                                 min="0"
                                                 max="59"
+                                                disabled={isVersionLocked}
                                                 value={Math.round((r.run_time_hours || 0) * 3600) % 60 || ""}
                                                 onChange={(e) => {
                                                     const s = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
@@ -670,14 +696,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     const currentMins = Math.floor((totalS % 3600) / 60);
                                                     handleUpdateRoute(r.route_id, "run_time_hours", currentHrs + (currentMins / 60) + (s / 3600));
                                                 }}
-                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-left text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                className="w-6 bg-transparent border-0 outline-hidden p-0 text-xs text-left text-foreground focus:ring-0 placeholder:text-muted-foreground/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                                                 placeholder="00"
                                             />
                                         </div>
                                     </div>
 
                                     {/* Step Batch Size */}
-                                    <div className="space-y-1">
+                                    <div className="space-y-1.5">
                                         <label htmlFor={`step-batch-size-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Layers className="h-3 w-3" /> Step Batch Size
                                         </label>
@@ -685,23 +711,25 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             id={`step-batch-size-${r.route_id}`}
                                             aria-label={`Step batch size for step ${stepNum}`}
                                             type="number"
+                                            disabled={isVersionLocked}
                                             value={r.step_batch_size ?? 1}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "step_batch_size", parseFloat(e.target.value) || 1)}
-                                            className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                                            className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                         />
                                     </div>
 
                                     {/* QA Template */}
-                                    <div className="space-y-1">
+                                    <div className="space-y-1.5">
                                         <label htmlFor={`qa-template-select-${r.route_id}`} className="text-[10px] uppercase font-bold text-muted-foreground tracking-wide flex items-center gap-1">
                                             <Shield className="h-3 w-3" /> QA Template (Checklist)
                                         </label>
                                         <select
                                             id={`qa-template-select-${r.route_id}`}
                                             aria-label={`QA Template for step ${stepNum}`}
+                                            disabled={isVersionLocked}
                                             value={r.qa_template_id || ""}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "qa_template_id", e.target.value ? parseInt(e.target.value) : null)}
-                                            className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                                            className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                         >
                                             <option value="">No QA checklist required</option>
                                             {qaTemplates.map(qa => (
@@ -720,16 +748,18 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     {(r.bom_items || []).length === 0 ? (
                                         <div className="text-center py-6 border border-dashed rounded-lg border-muted bg-card">
                                             <p className="text-xs text-muted-foreground">No ingredients linked to this routing step yet.</p>
-                                            <Button
-                                                id={`add-ingredient-empty-btn-${r.route_id}`}
-                                                aria-label={`Add First Ingredient for step ${stepNum}`}
-                                                onClick={() => handleAddIngredient(r.route_id)}
-                                                variant="outline"
-                                                size="sm"
-                                                className="mt-2 h-7 text-[10px] cursor-pointer"
-                                            >
-                                                <Plus className="h-3 w-3 mr-1" /> Add First Ingredient
-                                            </Button>
+                                            {!isVersionLocked && (
+                                                <Button
+                                                    id={`add-ingredient-empty-btn-${r.route_id}`}
+                                                    aria-label={`Add First Ingredient for step ${stepNum}`}
+                                                    onClick={() => handleAddIngredient(r.route_id)}
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="mt-2 h-7 text-[10px] cursor-pointer"
+                                                >
+                                                    <Plus className="h-3 w-3 mr-1" /> Add First Ingredient
+                                                </Button>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="overflow-x-auto rounded-lg border border-muted/60 bg-card">
@@ -743,22 +773,23 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                         <th className="p-2.5 w-[12%]">Wastage %</th>
                                                         <th className="p-2.5 w-[12%]">Landed Cost</th>
                                                         <th className="p-2.5 w-[12%]">Ingredient Cost (pre-yield)</th>
-                                                        <th className="p-2.5 w-[6%] text-center">Action</th>
+                                                        {!isVersionLocked && <th className="p-2.5 w-[6%] text-center">Action</th>}
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {(r.bom_items || []).map((b) => {
                                                         const compCost = calculateMaterialCost({
-                                                            quantity: b.quantity_required,
-                                                            unitCost: b.cost_per_unit || 0,
-                                                            wastagePercent: b.wastage_factor_percentage
-                                                        });
+                                                             quantity: b.quantity_required,
+                                                             unitCost: b.cost_per_unit || 0,
+                                                             wastagePercent: b.wastage_factor_percentage
+                                                         });
                                                         const selectedMaterialType = b.material_type || materialTypeFromProduct(b.product_type, b.has_versions);
                                                         return (
                                                             <tr key={b.id} className="border-b border-muted/50 hover:bg-muted/5">
                                                                 <td className="p-1.5 align-middle min-w-[175px]">
                                                                     <MaterialTypeSelect
                                                                         value={selectedMaterialType || ""}
+                                                                        disabled={isVersionLocked}
                                                                         onChange={(val) => handleChangeMaterialType(
                                                                             r.route_id,
                                                                             b.id,
@@ -772,7 +803,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         productName={b.product_name}
                                                                         productCode={b.product_code}
                                                                         type={selectedMaterialType}
-                                                                        disabled={!selectedMaterialType}
+                                                                        disabled={isVersionLocked || !selectedMaterialType}
                                                                         placeholder={selectedMaterialType ? "Choose Material..." : "Select material type first"}
                                                                         onSelectProduct={(prod) => handleSelectProduct(r.route_id, b.id, prod, selectedMaterialType)}
                                                                     />
@@ -783,9 +814,10 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         aria-label="Quantity Required"
                                                                         type="number"
                                                                         step="0.0001"
+                                                                        disabled={isVersionLocked}
                                                                         value={b.quantity_required}
                                                                         onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "quantity_required", parseFloat(e.target.value) || 0)}
-                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                                     />
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
@@ -798,7 +830,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                             <CreatableSelect
                                                                                 options={categoryOptions}
                                                                                 value={selectValue}
-                                                                                disabled={!isMaterialSelected}
+                                                                                disabled={isVersionLocked || !isMaterialSelected}
                                                                                 onValueChange={(val) => handleUpdateIngredient(r.route_id, b.id, "unit_of_measurement", val)}
                                                                                 placeholder={isMaterialSelected ? "Select UOM..." : "Select material first"}
                                                                                 className="h-8 py-0 px-2 text-xs"
@@ -811,9 +843,10 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         id={`bom-wastage-${b.id}`}
                                                                         aria-label="Wastage Percentage"
                                                                         type="number"
+                                                                        disabled={isVersionLocked}
                                                                         value={b.wastage_factor_percentage}
                                                                         onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "wastage_factor_percentage", parseFloat(e.target.value) || 0)}
-                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                                     />
                                                                 </td>
                                                                 <td className="p-1.5 align-middle">
@@ -822,43 +855,48 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         aria-label="Landed Cost"
                                                                         type="number"
                                                                         step="0.01"
+                                                                        disabled={isVersionLocked}
                                                                         value={b.cost_per_unit || 0}
                                                                         onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "cost_per_unit", parseFloat(e.target.value) || 0)}
-                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                                                        className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                                     />
                                                                 </td>
                                                                 <td className="p-1.5 align-middle text-right font-medium pr-3 text-muted-foreground font-mono">
                                                                     ₱{compCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                 </td>
-                                                                <td className="p-1.5 align-middle text-center">
-                                                                    <Button
-                                                                        id={`delete-ingredient-btn-${b.id}`}
-                                                                        aria-label="Delete Ingredient"
-                                                                        variant="ghost"
-                                                                        size="icon"
-                                                                        onClick={() => handleDeleteIngredient(r.route_id, b.id)}
-                                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md cursor-pointer"
-                                                                    >
-                                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                                    </Button>
-                                                                </td>
+                                                                {!isVersionLocked && (
+                                                                    <td className="p-1.5 align-middle text-center">
+                                                                        <Button
+                                                                            id={`delete-ingredient-btn-${b.id}`}
+                                                                            aria-label="Delete Ingredient"
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            onClick={() => handleDeleteIngredient(r.route_id, b.id)}
+                                                                            className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md cursor-pointer"
+                                                                        >
+                                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                                        </Button>
+                                                                    </td>
+                                                                )}
                                                             </tr>
                                                         );
                                                     })}
                                                 </tbody>
                                             </table>
-                                            <div className="p-2 border-t border-muted/50 bg-muted/5 flex justify-end">
-                                                <Button
-                                                    id={`add-ingredient-bottom-btn-${r.route_id}`}
-                                                    aria-label={`Add Ingredient for step ${stepNum}`}
-                                                    onClick={() => handleAddIngredient(r.route_id)}
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="h-8 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-md inline-flex items-center gap-1 cursor-pointer"
-                                                >
-                                                    <Plus className="h-3.5 w-3.5" /> Add Ingredient
-                                                </Button>
-                                            </div>
+                                            {!isVersionLocked && (
+                                                <div className="p-2 border-t border-muted/50 bg-muted/5 flex justify-end">
+                                                    <Button
+                                                        id={`add-ingredient-bottom-btn-${r.route_id}`}
+                                                        aria-label={`Add Ingredient for step ${stepNum}`}
+                                                        onClick={() => handleAddIngredient(r.route_id)}
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-8 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                                                    >
+                                                        <Plus className="h-3.5 w-3.5" /> Add Ingredient
+                                                    </Button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

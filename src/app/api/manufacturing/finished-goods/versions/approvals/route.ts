@@ -223,64 +223,41 @@ export async function POST(request: Request) {
         let updatePayload: Record<string, unknown> = {};
 
         if (normalizedAction === "approve") {
-            // Validate that the version has at least 1 routing step and 1 BOM component
-            const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes?filter[version_id][_eq]=${numVersionId}&limit=-1`, { headers, cache: "no-store" });
-            const routesJson = routesRes.ok ? await routesRes.json() : { data: [] };
-            const routes = routesJson.data || [];
+            const isSetPrimary = setActive !== undefined ? Boolean(setActive) : true;
 
-            if (routes.length === 0) {
-                return NextResponse.json({
-                    error: "Cannot approve version: Both BOM components and routing operations are required before approval.",
-                    code: "EMPTY_VERSION_VALIDATION"
-                }, { status: 400 });
-            }
-
-            const routeIds = routes.map((r: { route_id: number }) => r.route_id).filter(Boolean);
-            let hasBOM = false;
-            if (routeIds.length > 0) {
-                const bomRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom?filter[route_id][_in]=${routeIds.join(",")}&limit=1`, { headers, cache: "no-store" });
-                if (bomRes.ok) {
-                    const bomJson = await bomRes.json();
-                    hasBOM = (bomJson.data || []).length > 0;
-                }
-            }
-
-            if (!hasBOM) {
-                return NextResponse.json({
-                    error: "Cannot approve version: Both BOM components and routing operations are required before approval.",
-                    code: "EMPTY_VERSION_VALIDATION"
-                }, { status: 400 });
-            }
-
-            const isSetActive = Boolean(setActive);
-            const targetStatus = isSetActive ? "Active" : "Approved";
-
-            if (isSetActive && productId) {
-                // Fetch all other versions including is_primary status
-                const otherVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1&fields=version_id,is_primary`, { headers, cache: "no-store" });
-                if (otherVerRes.ok) {
-                    const otherVerJson = await otherVerRes.json();
-                    const otherVersions = (otherVerJson.data || []).filter((v: { version_id: number }) => Number(v.version_id) !== numVersionId);
-                    for (const ov of otherVersions) {
-                        // Archive and clear primary flag on all sibling versions
-                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${ov.version_id}`, {
-                            method: "PATCH",
-                            headers,
-                            body: JSON.stringify({ status: "Archived", is_primary: false })
-                        });
+            if (productId) {
+                if (isSetPrimary) {
+                    // 1. Clear is_primary on all other versions for this product (guarantees exactly one primary)
+                    const getVersionsUrl = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1&fields=version_id,is_primary`;
+                    const versionsRes = await fetch(getVersionsUrl, { headers, cache: "no-store" });
+                    if (versionsRes.ok) {
+                        const versionsData = (await versionsRes.json()).data || [];
+                        for (const v of versionsData) {
+                            if (v.version_id !== numVersionId && (v.is_primary === true || v.is_primary === 1)) {
+                                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${v.version_id}`, {
+                                    method: "PATCH",
+                                    headers,
+                                    body: JSON.stringify({ is_primary: false })
+                                }).catch(() => {});
+                            }
+                        }
                     }
                 }
+
+                // 2. Automatically ensure product master record is set to Active
+                await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ status: "Active", isActive: true })
+                }).catch(() => {});
             }
 
-            // Determine is_primary: only assign if activating and no other primary exists (or if archiving all others cleared them)
-            const isPrimaryTarget = isSetActive ? true : false;
-
             updatePayload = {
-                status: targetStatus,
+                status: "Active",
+                is_primary: isSetPrimary,
                 approved_by: userId,
                 approved_at: nowIso,
-                approval_remarks: remarks || feedback || null,
-                ...(isSetActive ? { is_primary: isPrimaryTarget } : {})
+                approval_remarks: remarks || feedback || null
             };
         } else if (normalizedAction === "reject") {
             const finalReason = rejectionReason || reason || remarks;
@@ -289,6 +266,7 @@ export async function POST(request: Request) {
             }
             updatePayload = {
                 status: "Rejected",
+                is_primary: false,
                 rejection_reason: finalReason.trim(),
                 approved_by: userId,
                 approved_at: nowIso
@@ -299,7 +277,9 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "Revision instructions / feedback are required." }, { status: 400 });
             }
             updatePayload = {
-                status: "Revision Required",
+                status: "Rejected",
+                is_primary: false,
+                rejection_reason: finalFeedback.trim(),
                 approval_remarks: finalFeedback.trim(),
                 approved_by: userId,
                 approved_at: nowIso

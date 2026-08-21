@@ -13,7 +13,7 @@ export async function PATCH(
     try {
         const { id } = await params;
         const body = await request.json();
-        const { lot_name, inventory_type_id, max_batch_capacity } = body;
+        const { lot_name, max_batch_capacity } = body;
 
         // Get logged in user ID from secure access token cookie
         let userId: number | null = null;
@@ -38,11 +38,9 @@ export async function PATCH(
         const utcIsoString = new Date().toISOString();
 
         const updatePayload: Record<string, unknown> = {
-            updated_at: utcIsoString
+            updated_at: utcIsoString,
+            updated_by: userId ? Number(userId) : 24
         };
-        if (userId) {
-            updatePayload.updated_by = Number(userId);
-        }
         if (lot_name !== undefined) {
             if (typeof lot_name !== "string" || !lot_name.trim()) {
                 return NextResponse.json(
@@ -73,16 +71,6 @@ export async function PATCH(
             }
 
             updatePayload.lot_name = lot_name.trim();
-        }
-
-        if (inventory_type_id !== undefined) {
-            if (typeof inventory_type_id !== "number") {
-                return NextResponse.json(
-                    { error: "inventory_type_id must be a number" },
-                    { status: 400 }
-                );
-            }
-            updatePayload.inventory_type_id = inventory_type_id;
         }
 
         if (max_batch_capacity !== undefined) {

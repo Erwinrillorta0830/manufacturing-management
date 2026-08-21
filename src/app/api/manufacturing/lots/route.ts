@@ -2,49 +2,60 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { Lot } from "@/modules/manufacturing-management/lot-management/types";
- 
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-    // Auto-register "Lot Management" module in Directus sidebar
+    // Check and auto-register "Lot Management" in system_module table if missing
     try {
-        const checkRes = await fetch(
-            `${DIRECTUS_URL}/items/modules?filter[slug][_eq]=lot-management`,
-            { headers }
-        );
+        const checkUrl = `${DIRECTUS_URL}/items/system_module?filter[module_name][_eq]=Lot%20Management&limit=1`;
+        const checkRes = await fetch(checkUrl, { headers, cache: "no-store" });
         if (checkRes.ok) {
-            const checkJson = await checkRes.json();
-            if (!checkJson.data || checkJson.data.length === 0) {
-                await fetch(`${DIRECTUS_URL}/items/modules`, {
+            const checkData = await checkRes.json();
+            if (!checkData.data || checkData.data.length === 0) {
+                const maxOrderRes = await fetch(`${DIRECTUS_URL}/items/system_module?sort=-order&limit=1&fields=order`, { headers, cache: "no-store" });
+                let nextOrder = 1;
+                if (maxOrderRes.ok) {
+                    const maxOrderData = await maxOrderRes.json();
+                    if (maxOrderData.data && maxOrderData.data.length > 0 && maxOrderData.data[0].order) {
+                        nextOrder = maxOrderData.data[0].order + 1;
+                    }
+                }
+
+                await fetch(`${DIRECTUS_URL}/items/system_module`, {
                     method: "POST",
                     headers,
                     body: JSON.stringify({
-                        title: "Lot Management",
-                        slug: "lot-management",
-                        base_path: "/mm/lot-management",
-                        icon_name: "Warehouse",
-                        status: "active",
-                        sort: 7,
-                        subsystem_id: 8
+                        module_name: "Lot Management",
+                        url: "/manufacturing-management/lot-management",
+                        order: nextOrder,
+                        is_active: true
                     })
                 });
-                console.log("[Auto-Registration] Registered Lot Management module in Directus modules collection");
             }
         }
     } catch (err) {
         console.error("[Auto-Registration] Failed to check/register Lot Management module:", err);
     }
 
+    // Sync Directus schema: ensure obsolete inventory_type_id field metadata is removed and cache cleared
+    try {
+        await fetch(`${DIRECTUS_URL}/fields/lots/inventory_type_id`, {
+            method: "DELETE",
+            headers
+        }).catch(() => null);
+        await fetch(`${DIRECTUS_URL}/utils/cache/clear`, {
+            method: "POST",
+            headers
+        }).catch(() => null);
+    } catch {
+        // Ignore if already deleted
+    }
+
     // Main fetch
     try {
-        const fields = [
-            "*",
-            "inventory_type_id.id",
-            "inventory_type_id.name"
-        ].join(",");
-
+        const fields = "*";
         const timestamp = Date.now();
         const [res, usersRes, unitsRes] = await Promise.all([
             fetch(
@@ -89,17 +100,6 @@ export async function GET() {
         }
 
         const mappedLots: Lot[] = rawLots.map((row) => {
-            let inventoryTypeId = 0;
-            let inventoryTypeName = "Unknown";
-
-            const invType = row.inventory_type_id as { id?: number; name?: string } | number | null;
-            if (invType && typeof invType === "object") {
-                inventoryTypeId = Number(invType.id ?? 0);
-                inventoryTypeName = invType.name || "Unknown";
-            } else if (typeof invType === "number") {
-                inventoryTypeId = invType;
-            }
-
             let uomId: number | null = null;
             let uomName = "";
             let uomShortcut = "";
@@ -117,7 +117,7 @@ export async function GET() {
 
             // Always cross-reference with unitsList to guarantee resolved name/shortcut
             if (uomId !== null) {
-                const matchedUnit = unitsList.find((u) => Number(u.unit_id) === Number(uomId));
+                const matchedUnit = unitsList.find((u) => Number((u as { unit_id?: number; id?: number }).unit_id ?? (u as { unit_id?: number; id?: number }).id) === Number(uomId));
                 if (matchedUnit) {
                     uomName = matchedUnit.unit_name || uomName;
                     uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || uomShortcut;
@@ -155,8 +155,6 @@ export async function GET() {
             return {
                 lotId: Number(row.lot_id),
                 lotName: String(row.lot_name || ""),
-                inventoryTypeId,
-                inventoryTypeName,
                 uomId,
                 uomName,
                 uomShortcut,
@@ -181,19 +179,12 @@ export async function GET() {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { lot_name, inventory_type_id, max_batch_capacity } = body;
+        const { lot_name, max_batch_capacity } = body;
         const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
 
         if (!lot_name || typeof lot_name !== "string" || !lot_name.trim()) {
             return NextResponse.json(
                 { error: "lot_name is required and must be a non-empty string" },
-                { status: 400 }
-            );
-        }
-
-        if (typeof inventory_type_id !== "number") {
-            return NextResponse.json(
-                { error: "inventory_type_id is required and must be a number" },
                 { status: 400 }
             );
         }
@@ -249,9 +240,9 @@ export async function POST(request: Request) {
 
         const postBody: Record<string, unknown> = {
             lot_name: lot_name.trim(),
-            inventory_type_id,
             max_batch_capacity,
             created_by: userId ? Number(userId) : 24, // Fallback to seed user ID 24 if no active token
+            updated_by: userId ? Number(userId) : 24,
             created_at: utcIsoString,
             updated_at: utcIsoString
         };
@@ -298,5 +289,3 @@ export async function POST(request: Request) {
         );
     }
 }
-
-
