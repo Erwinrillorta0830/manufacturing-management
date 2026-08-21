@@ -24,6 +24,7 @@ import {
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
+import { PURCHASE_ORDER_REVISION_ACTION } from "../../purchase-orders/_domain";
 import {
     hasLandedCostStatus,
     isLandedCostPostingEligible
@@ -327,7 +328,8 @@ function mapPurchaseOrder(
     suppliers: ReadonlyMap<number, DirectusSupplier>,
     paymentModes: ReadonlyMap<number, DirectusPaymentMode>,
     canonicalStatus = false,
-    rejectionStage: PurchaseOrderRejectionStage | null = null
+    rejectionStage: PurchaseOrderRejectionStage | null = null,
+    revisionCount = 0
 ) {
     const poLabel = `purchase_order/${po.purchase_order_id}`;
     const rate = normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
@@ -376,6 +378,7 @@ function mapPurchaseOrder(
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
         workflow_revision: Number(po.workflow_revision || 0),
+        revision_count: revisionCount,
         approver_id: po.approver_id || null,
         finance_id: po.finance_id || null,
         date_approved: po.date_approved || null,
@@ -390,6 +393,31 @@ function mapPurchaseOrder(
         forceReceivedBy: forceReceivedById(po.force_received_by),
         forceReceivedReason: po.force_received_reason || null
     };
+}
+
+interface DirectusRevisionHistoryRow {
+    purchase_order_id?: number | string | null;
+}
+
+async function fetchPurchaseOrderRevisionCounts(purchaseOrderIds: readonly number[]): Promise<Map<number, number>> {
+    const uniqueIds = [...new Set(purchaseOrderIds.filter(id => Number.isSafeInteger(id) && id > 0))];
+    const counts = new Map(uniqueIds.map(id => [id, 0]));
+    if (uniqueIds.length === 0) return counts;
+
+    const params = new URLSearchParams({
+        fields: "purchase_order_id",
+        limit: "-1",
+        "filter[purchase_order_id][_in]": uniqueIds.join(","),
+        "filter[action][_eq]": PURCHASE_ORDER_REVISION_ACTION
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/purchase_order_approval_history?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) throw new Error(`Failed to load purchase-order revision history (${response.status}).`);
+    const rows = ((await response.json()).data || []) as DirectusRevisionHistoryRow[];
+    for (const row of rows) {
+        const purchaseOrderId = Number(row.purchase_order_id);
+        if (counts.has(purchaseOrderId)) counts.set(purchaseOrderId, (counts.get(purchaseOrderId) || 0) + 1);
+    }
+    return counts;
 }
 
 async function fetchPaymentModeMap(ids: readonly number[]): Promise<Map<number, DirectusPaymentMode>> {
@@ -576,6 +604,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (!res.ok) throw new Error(`Failed to load purchase orders (${res.status}).`);
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
+    const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
     const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
     const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
     const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
@@ -585,7 +614,14 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     })));
     const total = Number(body.meta?.filter_count || 0);
     return {
-        data: rows.map(row => mapPurchaseOrder(row, suppliers, paymentModes, true, rejectionStages.get(Number(row.purchase_order_id)) || null)),
+        data: rows.map(row => mapPurchaseOrder(
+            row,
+            suppliers,
+            paymentModes,
+            true,
+            rejectionStages.get(Number(row.purchase_order_id)) || null,
+            revisionCounts.get(Number(row.purchase_order_id)) || 0
+        )),
         meta: {
             page: query.page,
             limit: query.limit,
@@ -607,6 +643,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
         const poList = options.landedCostOnly
             ? fetchedPOList.filter(row => hasLandedCostStatus(row) && (options.includePosted || isLandedCostPostingEligible(row)))
             : fetchedPOList;
+        const revisionCounts = await fetchPurchaseOrderRevisionCounts(poList.map(row => Number(row.purchase_order_id)));
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
         const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));
         const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(poList.map(row => ({
@@ -615,7 +652,14 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             workflowRevision: Number(row.workflow_revision || 0)
         })));
 
-        return poList.map(row => mapPurchaseOrder(row, suppliers, paymentModes, false, rejectionStages.get(Number(row.purchase_order_id)) || null));
+        return poList.map(row => mapPurchaseOrder(
+            row,
+            suppliers,
+            paymentModes,
+            false,
+            rejectionStages.get(Number(row.purchase_order_id)) || null,
+            revisionCounts.get(Number(row.purchase_order_id)) || 0
+        ));
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch incoming shipments:", e);
         return [];

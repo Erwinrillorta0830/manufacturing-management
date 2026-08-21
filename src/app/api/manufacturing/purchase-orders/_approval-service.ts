@@ -5,6 +5,7 @@ import {
     derivePurchaseOrderWorkflowStage,
     pendingPurchaseOrderApprovalStages,
     selectPurchaseOrderApprovalRule,
+    countPurchaseOrderRevisionCycles,
     type PurchaseOrderApprovalRule
 } from "./_domain";
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "../procurement/_domain";
@@ -80,6 +81,43 @@ interface ApprovalActorRow {
     user_lname?: string | null;
     user_email?: string | null;
 }
+
+interface ApprovalReferenceLabel {
+    id: number;
+    label: string;
+}
+
+interface ApprovalReferenceLabels {
+    suppliers: ApprovalReferenceLabel[];
+    branches: ApprovalReferenceLabel[];
+    paymentArrangements: ApprovalReferenceLabel[];
+    paymentTerms: ApprovalReferenceLabel[];
+}
+
+interface ApprovalSupplierRow {
+    id: number;
+    supplier_name?: string | null;
+}
+
+interface ApprovalBranchRow {
+    id: number;
+    branch_name?: string | null;
+    branch_code?: string | null;
+}
+
+interface ApprovalPaymentTermRow {
+    id: number;
+    payment_name?: string | null;
+    payment_description?: string | null;
+}
+
+const PAYMENT_ARRANGEMENT_LABELS: ApprovalReferenceLabel[] = [
+    { id: 1, label: "Advance Payment" },
+    { id: 2, label: "Partial Payment" },
+    { id: 3, label: "Full Payment" },
+    { id: 4, label: "Refund" },
+    { id: 5, label: "Installment" }
+];
 
 const ORDER_FIELDS = [
     "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
@@ -240,16 +278,99 @@ async function loadHistoryActorNames(history: ApprovalHistoryRow[]): Promise<Map
     ]));
 }
 
+function positiveReferenceId(value: unknown): number | null {
+    const candidates = value && typeof value === "object"
+        ? ["id", "supplier_id", "branch_id", "payment_terms_id"].map(key => (value as Record<string, unknown>)[key])
+        : [value];
+    for (const candidate of candidates) {
+        const id = Number(candidate);
+        if (Number.isSafeInteger(id) && id > 0) return id;
+    }
+    return null;
+}
+
+function referenceHeaders(order: ApprovalOrder, history: ApprovalHistoryRow[]): Record<string, unknown>[] {
+    return [
+        order as unknown as Record<string, unknown>,
+        ...history.flatMap(entry => {
+            const snapshot = parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot);
+            return snapshot ? [snapshot.header] : [];
+        })
+    ];
+}
+
+async function loadReferenceRows<T>(collection: string, ids: Set<number>, fields: string): Promise<T[]> {
+    if (ids.size === 0) return [];
+    const params = new URLSearchParams({ fields, limit: String(ids.size) });
+    params.set("filter[id][_in]", [...ids].join(","));
+    try {
+        const response = await procurementDirectusFetch(`/items/${collection}?${params.toString()}`);
+        if (!response.ok) return [];
+        const body = await response.json();
+        return Array.isArray(body?.data) ? body.data as T[] : [];
+    } catch {
+        return [];
+    }
+}
+
+async function loadReferenceLabels(order: ApprovalOrder, history: ApprovalHistoryRow[]): Promise<ApprovalReferenceLabels> {
+    const supplierIds = new Set<number>();
+    const branchIds = new Set<number>();
+    const paymentTermIds = new Set<number>();
+
+    referenceHeaders(order, history).forEach(header => {
+        const supplierId = positiveReferenceId(header.supplier_name);
+        const branchId = positiveReferenceId(header.branch_id);
+        const paymentTermsId = positiveReferenceId(header.payment_terms);
+        if (supplierId) supplierIds.add(supplierId);
+        if (branchId) branchIds.add(branchId);
+        if (paymentTermsId) paymentTermIds.add(paymentTermsId);
+    });
+
+    const [suppliers, branches, paymentTerms] = await Promise.all([
+        loadReferenceRows<ApprovalSupplierRow>("suppliers", supplierIds, "id,supplier_name"),
+        loadReferenceRows<ApprovalBranchRow>("branches", branchIds, "id,branch_name,branch_code"),
+        loadReferenceRows<ApprovalPaymentTermRow>("payment_terms", paymentTermIds, "id,payment_name,payment_description")
+    ]);
+
+    return {
+        suppliers: suppliers
+            .map(row => ({ id: Number(row.id), label: row.supplier_name?.trim() || "Unknown supplier" }))
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0),
+        branches: branches
+            .map(row => {
+                const name = row.branch_name?.trim() || "Unknown branch";
+                const code = row.branch_code?.trim();
+                return { id: Number(row.id), label: code ? `${name} (${code})` : name };
+            })
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0),
+        paymentArrangements: PAYMENT_ARRANGEMENT_LABELS,
+        paymentTerms: paymentTerms
+            .map(row => ({
+                id: Number(row.id),
+                label: row.payment_name?.trim() || row.payment_description?.trim() || "Unknown payment terms"
+            }))
+            .filter(row => Number.isSafeInteger(row.id) && row.id > 0)
+    };
+}
+
 export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?: ApprovalStage) {
     const [order, categoryIds, history] = await Promise.all([loadOrder(id), loadCategoryIds(id), loadHistory(id)]);
-    const [rule, actorNames] = await Promise.all([
+    const [rule, actorNames, referenceLabels] = await Promise.all([
         resolveRule(order, categoryIds),
-        loadHistoryActorNames(history)
+        loadHistoryActorNames(history),
+        loadReferenceLabels(order, history)
     ]);
     const state = approvalState(order, rule.requiresFinance);
     const pendingStages = pendingPurchaseOrderApprovalStages(state);
+    const parsedHistory = history.map(entry => ({
+        ...entry,
+        revision_snapshot: parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot)
+    }));
     return {
         order,
+        revisionCount: countPurchaseOrderRevisionCycles(history),
+        referenceLabels,
         stage: requestedStage && pendingStages.includes(requestedStage)
             ? requestedStage
             : derivePurchaseOrderWorkflowStage(state),
@@ -262,9 +383,8 @@ export async function getPurchaseOrderApprovalDetail(id: number, requestedStage?
             snapshot: rule.snapshot
         },
         categoryIds,
-        history: history.map(entry => ({
+        history: parsedHistory.map(entry => ({
             ...entry,
-            revision_snapshot: parsePurchaseOrderRevisionSnapshot(entry.revision_snapshot),
             actor_name: actorNames.get(Number(entry.actor_id)) || "Unknown user"
         }))
     };

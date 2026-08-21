@@ -102,6 +102,7 @@ export interface IncomingShipment {
     price_type?: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
+    revision_count?: number;
     approver_id?: number | null;
     finance_id?: number | null;
     date_approved?: string | null;
