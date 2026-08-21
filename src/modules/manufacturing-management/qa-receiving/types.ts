@@ -176,6 +176,7 @@ export interface ReceivingCommitPayload {
     workflowRevision: number;
     shipmentId: number;
     replacementDispositionId?: number | null;
+    receiptNumber: string;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;

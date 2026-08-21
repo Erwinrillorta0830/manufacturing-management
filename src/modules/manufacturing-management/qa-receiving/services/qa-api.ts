@@ -59,6 +59,7 @@ export async function fetchProductQaSpecifications(productId: number, signal?: A
 export async function previewReceivingQa(payload: {
     shipmentId: number;
     replacementDispositionId?: number | null;
+    receiptNumber: string;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;

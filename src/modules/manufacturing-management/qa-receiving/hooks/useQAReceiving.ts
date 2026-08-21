@@ -18,7 +18,7 @@ import {
     cancelQuarantineDisposition
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
-import { validateReceivingMetadata, type ReceivingValidationIssue } from "../receiving-metadata";
+import { validateReceivingMetadata, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
 import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery, OVER_DELIVERY_EPSILON } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
 
@@ -120,6 +120,18 @@ export function useQAReceiving() {
         setPreviewError(null);
         setValidatingInspection(false);
         setForceReceivedSubmitting(false);
+    }, []);
+
+    const handleReceiptNumberChange = useCallback((value: string) => {
+        previewController.current?.abort();
+        setReceivingTicketNumber(value);
+        setQaEvaluationResults({});
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewOpen(false);
+        setPreviewAcknowledged(false);
+        setPreviewError(null);
+        setValidatingInspection(false);
     }, []);
 
     const handleProcessOverDeliveryChange = useCallback((value: boolean) => {
@@ -705,7 +717,9 @@ export function useQAReceiving() {
     const receivingValidationIssues = useMemo<ReceivingValidationIssue[]>(() => {
         if (isLockedReceivingShipment(selectedShipment, replacementDisposition)) return [];
 
-        const issues = validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
+        const issues = [
+            ...validateReceivingReceiptNumber(receivingTicketNumber),
+            ...validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
             const row = inspectionRows[line.line_id];
             return {
                 lineId: line.line_id,
@@ -717,7 +731,8 @@ export function useQAReceiving() {
                 manufacturingDate: row?.manufacturingDate || "",
                 expirationDate: row?.expirationDate || ""
             };
-        }));
+            }))
+        ];
         const addIssue = (issue: ReceivingValidationIssue) => {
             if (!issues.some(existing => existing.field === issue.field && existing.lineId === issue.lineId && existing.message === issue.message)) {
                 issues.push(issue);
@@ -817,7 +832,7 @@ export function useQAReceiving() {
         }
 
         return issues;
-    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptMode, replacementDisposition, selectedBranchId, selectedShipment]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptMode, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment]);
 
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -924,9 +939,11 @@ export function useQAReceiving() {
                 };
             });
 
+            const normalizedReceiptNumber = receivingTicketNumber.trim();
             const preview = await previewReceivingQa({
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
+                receiptNumber: normalizedReceiptNumber,
                 receiptMode,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
@@ -939,6 +956,7 @@ export function useQAReceiving() {
                 workflowRevision: preview.workflowRevision,
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
+                receiptNumber: normalizedReceiptNumber,
                 receiptMode,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
@@ -1173,6 +1191,7 @@ export function useQAReceiving() {
         selectedBranchId,
         setSelectedBranchId: handleDestinationBranchChange,
         receivingTicketNumber,
+        handleReceiptNumberChange,
         receiptMode,
         setReceiptMode,
         processOverDelivery,

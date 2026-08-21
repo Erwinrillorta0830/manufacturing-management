@@ -479,6 +479,7 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/json", cookie: request.headers.get("cookie") || "" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
+                receiptNumber: parsed.data.receiptNumber,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
@@ -532,6 +533,7 @@ export async function POST(request: Request) {
         const receivingTicket = await allocateReceivingTicket({
             purchaseOrderId: parsed.data.shipmentId,
             branchId: parsed.data.destinationBranchId,
+            receiptNumber: parsed.data.receiptNumber,
             receiptMode: parsed.data.receiptMode,
             workflowRevision: parsed.data.workflowRevision,
             idempotencyKey,
@@ -539,7 +541,7 @@ export async function POST(request: Request) {
         });
         allocatedTicketId = receivingTicket.id;
         if (!receivingTicket.receiving_ticket_no) {
-            throw new CommitError(503, "The receiving ticket number was not generated.");
+            throw new CommitError(503, "The submitted Receipt Number was not persisted.");
         }
         if (receivingTicket.posting_status === "Posted") {
             ticketPosted = true;
@@ -556,7 +558,7 @@ export async function POST(request: Request) {
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
-                referenceNumber: receivingTicket.receiving_ticket_no,
+                referenceNumber: parsed.data.receiptNumber,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
                 branchId: parsed.data.destinationBranchId,

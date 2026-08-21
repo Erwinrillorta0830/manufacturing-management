@@ -147,7 +147,7 @@ export default function MovementPayloadModal({
                     <DialogDescription className="text-xs">
                         {committedResult
                             ? `Receipt ${committedResult.commitReference} was posted successfully. Confirm the persisted records below.`
-                            : `Receipt Number will be generated on commit for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
+                            : `Receipt Number ${preview?.receivingTicketNumber ? `“${preview.receivingTicketNumber}” ` : ""}will be posted for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
                     </DialogDescription>
                 </DialogHeader>
 

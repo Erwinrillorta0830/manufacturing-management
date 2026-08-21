@@ -70,7 +70,7 @@ export async function GET(request: Request) {
 
         if (action === "lots") {
             const res = await fetch(
-                `${DIRECTUS_URL}/items/lots?fields=lot_id,lot_name,inventory_type_id,max_batch_capacity&sort=lot_name&limit=-1`,
+                `${DIRECTUS_URL}/items/lots?fields=lot_id,lot_name,max_batch_capacity&sort=lot_name&limit=-1`,
                 { headers, cache: "no-store" }
             );
             if (!res.ok) throw new Error(`Directus error loading storage lots: ${res.status}`);
