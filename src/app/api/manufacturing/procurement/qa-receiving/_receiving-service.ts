@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers } from "../_directus";
+import { DIRECTUS_URL, headers, procurementDirectusFetch } from "../_directus";
 import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, receiptDateAtManilaMidnight } from "../_domain";
 import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
@@ -317,7 +317,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             replacementDispositionId: submittedReplacementDispositionId,
             referenceNumber,
             receiptDate,
-            receiptMode,
+            receiptType,
             processOverDelivery,
             branchId: submittedBranchId,
             lineItemUpdates: submittedLineItemUpdates
@@ -355,7 +355,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at`, { headers, cache: "no-store" }),
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at`),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,max_batch_capacity&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -393,7 +393,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
-        if (!replacementDispositionId && receiptMode === "full" && missingLineIds.length > 0) {
+        if (!replacementDispositionId && receiptType === "full" && missingLineIds.length > 0) {
             throw new ReceivingError(`Full receipt requires every purchase-order line to be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
         if (lineItemUpdates.some(item => item.lot_id && !validLotIds.has(item.lot_id))) throw new ReceivingError("One or more storage lots do not exist.", 400);
@@ -621,10 +621,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 rejectedQuantity: previous.rejected + (current?.rejected || 0)
             };
         }));
-        if (!replacementDispositionId && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+        if (!replacementDispositionId && receiptType === "full" && receivingStatus.status === "Partially Received") {
             throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.", 422);
         }
-        if (!replacementDispositionId && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+        if (!replacementDispositionId && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
             throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.", 422);
         }
         if (!replacementDispositionId && receivingStatus.status === "Received" && !paymentStatusAllowsReceivingHandoff(shipment.payment_status)) {

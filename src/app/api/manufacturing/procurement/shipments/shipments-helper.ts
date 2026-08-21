@@ -12,6 +12,7 @@ import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
+import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
     fetchCurrentPurchaseOrderRejectionStages,
@@ -87,7 +88,7 @@ interface DirectusPO {
     inventory_status?: number | null;
     payment_status?: number | null;
     date_encoded?: string | null;
-    branch_id?: number | null;
+    branch_id?: unknown;
     payment_type?: number | null;
     payment_mode?: number | null;
     payment_terms?: number | null;
@@ -347,6 +348,7 @@ function mapPurchaseOrder(
     ) || DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE);
     const storedSupplierId = supplierId(po.supplier_name);
     const supplier = storedSupplierId ? suppliers.get(storedSupplierId) || storedSupplierId : null;
+    const branchId = resolvePurchaseOrderBranchId(po);
     const status = canonicalStatus
         ? inventoryStatusToPurchaseOrderStatus(po.inventory_status, po.payment_status)
         : inventoryStatusToShipmentStatus(po.inventory_status, po.payment_status);
@@ -370,7 +372,7 @@ function mapPurchaseOrder(
         rejection_stage: rejectionStage,
         remark: po.remark || "",
         created_at: po.date_encoded || "",
-        branch_id: po.branch_id || null,
+        branch_id: branchId,
         payment_type: po.payment_type || null,
         payment_mode: po.payment_mode || null,
         payment_mode_name: po.payment_mode ? paymentModes.get(Number(po.payment_mode))?.mode_name || null : null,

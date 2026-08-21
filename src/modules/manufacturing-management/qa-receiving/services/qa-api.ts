@@ -61,7 +61,7 @@ export async function previewReceivingQa(payload: {
     replacementDispositionId?: number | null;
     receiptNumber: string;
     receiptDate: string;
-    receiptMode: "full" | "partial";
+    receiptType: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{

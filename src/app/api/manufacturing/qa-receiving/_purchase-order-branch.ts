@@ -11,10 +11,5 @@ function relationId(value: unknown): number | null {
 
 export function resolvePurchaseOrderBranchId(purchaseOrder: unknown): number | null {
     const record = asRecord(purchaseOrder);
-    if (!record) return relationId(purchaseOrder);
-
-    return relationId(record.branch_id)
-        ?? relationId(record.branch)
-        ?? relationId(asRecord(record.po_data)?.branch)
-        ?? relationId(asRecord(record.po_data)?.branch_id);
+    return relationId(record ? record.branch_id : purchaseOrder);
 }

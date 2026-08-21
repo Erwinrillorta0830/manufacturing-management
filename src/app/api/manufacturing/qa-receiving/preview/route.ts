@@ -162,7 +162,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptType, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -436,10 +436,10 @@ export async function POST(request: Request) {
                 rejectedQuantity: previous.rejected + (current?.rejectedQuantity || 0)
             };
         }));
-        if (!replacementFlow && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+        if (!replacementFlow && receiptType === "full" && receivingStatus.status === "Partially Received") {
             throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.");
         }
-        if (!replacementFlow && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+        if (!replacementFlow && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
             throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.");
         }
 
@@ -569,7 +569,7 @@ export async function POST(request: Request) {
                 shipmentId,
                 receivingTicketNumber: receiptNumber,
                 receiptDate,
-                receiptMode,
+                receiptType,
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,
                 workflowRevision: Number(header.workflow_revision || 0),

@@ -26,8 +26,8 @@ export default function QAReceivingModule() {
         handleReceiptNumberChange,
         receiptDate,
         handleReceiptDateChange,
-        receiptMode,
-        setReceiptMode,
+        receiptType,
+        setReceiptType,
         processOverDelivery,
         setProcessOverDelivery,
         overDeliveryLines,
@@ -200,8 +200,8 @@ export default function QAReceivingModule() {
                                     onReceiptNumberChange={handleReceiptNumberChange}
                                     receiptDate={receiptDate}
                                     onReceiptDateChange={handleReceiptDateChange}
-                                    receiptMode={receiptMode}
-                                    setReceiptMode={setReceiptMode}
+                                    receiptType={receiptType}
+                                    setReceiptType={setReceiptType}
                                     processOverDelivery={processOverDelivery}
                                     setProcessOverDelivery={setProcessOverDelivery}
                                     overDeliveryLines={overDeliveryLines}
