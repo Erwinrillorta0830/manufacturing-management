@@ -20,7 +20,10 @@ const directItemSchema = z.object({
     parent_product_id: positiveId.optional(),
     product_id: positiveId,
     quantity: z.number().finite().positive(),
-    unit_price: positiveMoney
+    unit_price: positiveMoney,
+    discount_type: positiveId.nullable().optional(),
+    discount_amount: money.default(0),
+    bom_version_id: positiveId.nullable().optional()
 });
 
 export const salesOrderPostSchema = z.object({
@@ -73,6 +76,9 @@ export const salesOrderPostSchema = z.object({
     }
 
     const subtotal = value.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const totalDiscount = value.items.reduce((sum, item) => sum + (item.discount_amount || 0), 0);
+    const netAmount = subtotal - totalDiscount - value.discountAmount;
+
     if (subtotal <= 0) {
         context.addIssue({
             code: "custom",
@@ -80,17 +86,20 @@ export const salesOrderPostSchema = z.object({
             message: "Total subtotal must be greater than zero"
         });
     }
-    if (value.discountAmount > subtotal) {
+    
+    const hasInvalidDiscount = value.items.some(item => (item.discount_amount || 0) > (item.quantity * item.unit_price));
+    if (hasInvalidDiscount) {
         context.addIssue({
             code: "custom",
-            path: ["discountAmount"],
-            message: "Discount cannot exceed the order subtotal"
+            path: ["items"],
+            message: "Discount cannot exceed the line item subtotal"
         });
     }
-    if (subtotal - value.discountAmount <= 0) {
+
+    if (netAmount <= 0) {
         context.addIssue({
             code: "custom",
-            path: ["discountAmount"],
+            path: ["items"],
             message: "Total net amount must be greater than zero"
         });
     }

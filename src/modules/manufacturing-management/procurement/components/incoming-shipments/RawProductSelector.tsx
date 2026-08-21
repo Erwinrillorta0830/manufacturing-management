@@ -134,7 +134,7 @@ export function RawProductSelector({
             options={options}
             value={selectedFamilyId}
             onValueChange={handleValueChange}
-            placeholder={materialType ? "Select raw product..." : "Select type first..."}
+            placeholder={materialType ? "Select product..." : "Select type first..."}
             disabled={disabled || !materialType}
             className="h-8 text-xs font-semibold w-full bg-background"
         />

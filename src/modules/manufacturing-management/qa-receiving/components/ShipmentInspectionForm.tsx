@@ -1,6 +1,6 @@
 import React from "react";
 import Image from "next/image";
-import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText } from "lucide-react";
+import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Loader2, ReceiptText, CalendarDays } from "lucide-react";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
@@ -17,13 +17,15 @@ interface ShipmentInspectionFormProps {
     branches: Branch[];
     storageLots: StorageLot[];
     receivingTicketNumber: string;
-    receiptMode?: "full" | "partial";
-    setReceiptMode?: (val: "full" | "partial") => void;
+    onReceiptNumberChange: (value: string) => void;
+    receiptDate: string;
+    onReceiptDateChange: (value: string) => void;
+    receiptType?: "full" | "partial";
+    setReceiptType?: (val: "full" | "partial") => void;
     processOverDelivery: boolean;
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
     selectedBranchId: string;
-    setSelectedBranchId: (val: string) => void;
     inspectionRows: Record<number, InspectionRow>;
     qaSpecificationStates: Record<number, QaSpecificationLoadState>;
     qaReadings: QaSpecificationReadings;
@@ -182,10 +184,12 @@ export default function ShipmentInspectionForm({
     branches,
     storageLots,
     receivingTicketNumber,
-    receiptMode,
-    setReceiptMode,
+    onReceiptNumberChange,
+    receiptDate,
+    onReceiptDateChange,
+    receiptType,
+    setReceiptType,
     selectedBranchId,
-    setSelectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
     overDeliveryLines,
@@ -350,7 +354,7 @@ export default function ShipmentInspectionForm({
 
     // Filter out Bihon Bad Branch and quarantine branches from main selector
     const filteredBranches = React.useMemo(() => {
-        return branches.filter(b => {
+        const eligibleBranches = branches.filter(b => {
             if (b.isBadStock === true || Number(b.isBadStock) === 1) return false;
             const name = (b.branch_name || "").toLowerCase();
             return !name.includes("bad branch") &&
@@ -359,7 +363,10 @@ export default function ShipmentInspectionForm({
                 !name.includes("holding") &&
                 !name.includes("bad order");
         });
-    }, [branches]);
+        return selectedBranchId
+            ? eligibleBranches.filter(branch => Number(branch.id) === Number(selectedBranchId))
+            : eligibleBranches;
+    }, [branches, selectedBranchId]);
 
     const originalBranchName = React.useMemo(() => {
         if (!selectedShipment.branch_id) return "N/A";
@@ -479,40 +486,70 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 border-b bg-background shrink-0">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-4 border-b bg-background shrink-0">
                 <div className="space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Receipt Number
+                        Receipt Number {!readOnly && <span className="text-red-500">*</span>}
                     </label>
-                    <div
-                        id="receiving-receipt-number"
-                        role="status"
-                        className="w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 flex items-center relative"
-                    >
-                        <ReceiptText className="absolute left-3 h-4 w-4 text-primary" />
-                        <span className={receivingTicketNumber ? "font-mono text-primary" : "text-muted-foreground"}>
-                            {receivingTicketNumber || "Auto-Generated on commit"}
-                        </span>
+                    <div className="relative">
+                        <ReceiptText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
+                        <input
+                            id="receiving-receipt-number"
+                            name="receiptNumber"
+                            type="text"
+                            required={!readOnly}
+                            maxLength={32}
+                            autoComplete="off"
+                            value={receivingTicketNumber}
+                            onChange={event => onReceiptNumberChange(event.target.value)}
+                            readOnly={readOnly}
+                            aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
+                            aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
+                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
+                        />
                     </div>
-                    <p className="text-[9px] text-muted-foreground">Unique delivery receipt document identifier.</p>
+                    {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
+                    <p className="text-[9px] text-muted-foreground">Enter the physical receiving ticket or delivery receipt number.</p>
                 </div>
 
+                <div className="space-y-1">
+                    <label htmlFor="receiving-receipt-date" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Date of Receipt <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
+                        <input
+                            id="receiving-receipt-date"
+                            name="receiptDate"
+                            type="date"
+                            required={!readOnly}
+                            value={receiptDate}
+                            onChange={event => onReceiptDateChange(event.target.value)}
+                            readOnly={readOnly}
+                            aria-invalid={Boolean(issueFor(undefined, "receiptDate"))}
+                            aria-describedby={issueFor(undefined, "receiptDate") ? "receiving-receipt-date-error" : undefined}
+                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptDate") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
+                        />
+                    </div>
+                    {issueFor(undefined, "receiptDate") && <p id="receiving-receipt-date-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptDate")?.message}</p>}
+                    <p className="text-[9px] text-muted-foreground">Enter the date shown on the physical delivery receipt.</p>
+                </div>
 
                 <div className="space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                         Receiving Branch {!readOnly && <span className="text-red-500">*</span>}
+                        Receiving Branch <span className="text-muted-foreground">(from PO)</span>
                     </label>
                     <div className="relative">
                         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
                         <select
                             id="receiving-branch"
-                            required={!readOnly}
+                            required={false}
                             value={selectedBranchId}
-                            onChange={(event) => setSelectedBranchId(event.target.value)}
-                            disabled={readOnly}
+                            disabled={true}
+                            aria-readonly="true"
                             aria-invalid={Boolean(issueFor(undefined, "branchId"))}
                             aria-describedby={issueFor(undefined, "branchId") ? "receiving-branch-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
+                            className={`w-full h-10 rounded-xl border bg-muted/40 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-not-allowed disabled:opacity-100 ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
                         >
                             <option value="">Select receiving branch...</option>
                             {filteredBranches.map(branch => (
@@ -521,17 +558,18 @@ export default function ShipmentInspectionForm({
                         </select>
                     </div>
                     {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
+                    {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
                 </div>
 
                 <div className="space-y-1">
-                    <label htmlFor="receiving-mode" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Receipt Mode {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
+                    <label htmlFor="receiving-type" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Receipt Type {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
                     </label>
                     <select
-                        id="receiving-mode"
-                        value={receiptMode || "full"}
-                        onChange={event => setReceiptMode?.(event.target.value as "full" | "partial")}
-                        disabled={readOnly || isReplacement || !setReceiptMode}
+                        id="receiving-type"
+                        value={receiptType || "full"}
+                        onChange={event => setReceiptType?.(event.target.value as "full" | "partial")}
+                        disabled={readOnly || isReplacement || !setReceiptType}
                         className="w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold px-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer disabled:cursor-not-allowed disabled:bg-muted/40"
                     >
                         <option value="full">Full Receipt</option>

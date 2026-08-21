@@ -6,6 +6,7 @@ import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPH
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-country";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
+import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../purchase-order/commercial-terms";
 
 export interface SupplierFormModalProps {
     isOpen: boolean;
@@ -746,12 +747,9 @@ export default function SupplierFormModal({
                                         className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold font-medium"
                                     >
                                         <option value="">-- Select Delivery Terms --</option>
-                                        <option value="Delivery">Local Delivery</option>
-                                        <option value="FOB (Free on Board)">FOB (Free on Board)</option>
-                                        <option value="EXW (Ex Works)">EXW (Ex Works)</option>
-                                        <option value="CIF (Cost, Insurance & Freight)">CIF (Cost, Insurance & Freight)</option>
-                                        <option value="DDP (Delivered Duty Paid)">DDP (Delivered Duty Paid)</option>
-                                        <option value="FOB / Delivery">FOB / Delivery</option>
+                                        {PURCHASE_ORDER_DELIVERY_TERMS.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
                                     </select>
                                 </div>
 

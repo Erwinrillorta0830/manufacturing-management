@@ -6,6 +6,7 @@ import { useSalesOrder } from "./hooks/useSalesOrder";
 import { ActiveSalesOrdersTable } from "./components/ActiveSalesOrdersTable";
 import { SalesOrderDetailPanel } from "./components/SalesOrderDetailPanel";
 import { CreateSalesOrderModal } from "./components/CreateSalesOrderModal";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export default function SalesOrderModule() {
     const {
@@ -72,53 +73,56 @@ export default function SalesOrderModule() {
             </div>
  
             {/* Main Content Pane */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                <div className="lg:col-span-2 space-y-6">
-                    {loading ? (
-                        <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground">
-                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                            <span className="text-xs">Loading orders...</span>
-                        </div>
-                    ) : (
-                        <ActiveSalesOrdersTable
-                            salesOrders={salesOrders}
-                            updatingStatusId={updatingStatusId}
-                            viewOrderDetails={viewOrderDetails}
-                            handleApproveOrder={handleApproveOrder}
-                            currentPage={currentPage}
-                            setCurrentPage={setCurrentPage}
-                            searchQuery={searchQuery}
-                            setSearchQuery={setSearchQuery}
-                            statusFilter={statusFilter}
-                            setStatusFilter={setStatusFilter}
-                            customerCodeFilter={customerCodeFilter}
-                            setCustomerCodeFilter={setCustomerCodeFilter}
-                            dateFromFilter={dateFromFilter}
-                            setDateFromFilter={setDateFromFilter}
-                            dateToFilter={dateToFilter}
-                            setDateToFilter={setDateToFilter}
-                            totalCount={totalCount}
-                            totalPages={totalPages}
-                            limit={limit}
-                        />
-                    )}
-                </div>
- 
-                {/* Right sidebar - details view */}
-                <div className="space-y-6">
-                    <SalesOrderDetailPanel
-                        selectedOrder={selectedOrder}
-                        setSelectedOrder={setSelectedOrder}
-                        orderDetails={orderDetails}
-                        loadingDetails={loadingDetails}
+            <div className="space-y-6">
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                        <span className="text-xs">Loading orders...</span>
+                    </div>
+                ) : (
+                    <ActiveSalesOrdersTable
+                        salesOrders={salesOrders}
                         updatingStatusId={updatingStatusId}
+                        viewOrderDetails={viewOrderDetails}
                         handleApproveOrder={handleApproveOrder}
-                        handleUpdateQuantities={handleUpdateQuantities}
-                        handleSubmitForApproval={handleSubmitForApproval}
-                        onOrderUpdated={refreshData}
+                        currentPage={currentPage}
+                        setCurrentPage={setCurrentPage}
+                        searchQuery={searchQuery}
+                        setSearchQuery={setSearchQuery}
+                        statusFilter={statusFilter}
+                        setStatusFilter={setStatusFilter}
+                        customerCodeFilter={customerCodeFilter}
+                        setCustomerCodeFilter={setCustomerCodeFilter}
+                        dateFromFilter={dateFromFilter}
+                        setDateFromFilter={setDateFromFilter}
+                        dateToFilter={dateToFilter}
+                        setDateToFilter={setDateToFilter}
+                        totalCount={totalCount}
+                        totalPages={totalPages}
+                        limit={limit}
                     />
-                </div>
+                )}
             </div>
+
+            {/* Modal - details view */}
+            <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+                <DialogContent className="sm:max-w-6xl p-0 overflow-hidden bg-muted/30">
+                    <DialogTitle className="sr-only">Sales Order Details</DialogTitle>
+                    <div className="max-h-[90vh] overflow-y-auto">
+                        <SalesOrderDetailPanel
+                            selectedOrder={selectedOrder}
+                            setSelectedOrder={setSelectedOrder}
+                            orderDetails={orderDetails}
+                            loadingDetails={loadingDetails}
+                            updatingStatusId={updatingStatusId}
+                            handleApproveOrder={handleApproveOrder}
+                            handleUpdateQuantities={handleUpdateQuantities}
+                            handleSubmitForApproval={handleSubmitForApproval}
+                            onOrderUpdated={refreshData}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <CreateSalesOrderModal
                 isOpen={isCreateModalOpen}

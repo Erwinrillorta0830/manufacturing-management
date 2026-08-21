@@ -92,7 +92,7 @@ export default function ShipmentExpenses({
     }, 0);
 
     const rmQuantity = lines.reduce((sum, line) => {
-        if (line.category_type === "RAW_MATERIAL") {
+        if (line.category_type === "RAW_MATERIAL" || line.category_type === "FINISHED_GOODS") {
             return sum + (isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0));
         }
         return sum;
@@ -161,7 +161,7 @@ export default function ShipmentExpenses({
                                 <div className="flex justify-between items-center text-[11px] text-muted-foreground border-t pt-2.5 mt-2.5">
                                     <span>Hybrid Breakdown</span>
                                     <div className="flex gap-1.5">
-                                        <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">RM: {rmQuantity.toLocaleString()}</span>
+                                        <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">Material: {rmQuantity.toLocaleString()}</span>
                                         <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-bold">PKG: {pkgWeight.toLocaleString()}kg</span>
                                     </div>
                                 </div>
@@ -179,7 +179,7 @@ export default function ShipmentExpenses({
                             <br />• <strong>Commercial Value</strong>: Higher value items shoulder more brokerage fees.
                             <br />• <strong>Weight (KG)</strong>: Heavy items (e.g. raw vegetable oil) carry more trucking weight.
                             <br />• <strong>Volume (CBM)</strong>: Bulky items shoulder more sea freight volume.
-                            <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Weight.
+                             <br />• <strong>Hybrid</strong>: Raw Materials and Finished Goods use Quantity, Packaging items use Weight.
                         </p>
                     </div>
                 </div>
@@ -270,7 +270,7 @@ export default function ShipmentExpenses({
                                     return;
                                 }
                                 // Validate all rows have expense type and amount
-                                if (lines.some(line => line.category_type !== "RAW_MATERIAL" && line.category_type !== "PACKAGING")) {
+                                if (lines.some(line => line.category_type !== "RAW_MATERIAL" && line.category_type !== "PACKAGING" && line.category_type !== "FINISHED_GOODS")) {
                                     toast.error("One or more purchase-order lines has no valid Category_Type from the product master.");
                                     return;
                                 }
@@ -320,7 +320,7 @@ export default function ShipmentExpenses({
                                                     : "bg-background border-border hover:bg-muted"
                                                 }`}
                                         >
-                                            {method === "Value" ? "Commercial Value" : method === "Hybrid" ? "Hybrid (RM: Quantity / PKG: Weight)" : method}
+                                             {method === "Value" ? "Commercial Value" : method === "Hybrid" ? "Hybrid (Material: Quantity / PKG: Weight)" : method}
                                         </button>
                                     ))}
                                 </div>

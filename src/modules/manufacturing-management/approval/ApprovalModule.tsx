@@ -20,6 +20,7 @@ import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePu
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
+import { calculatePercentageDiscount } from "../procurement/discount-calculation";
 
 type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
@@ -327,7 +328,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{Number(approvalDetail.order.exchange_rate || 1).toFixed(4)}</div></div>
-                                <div><div className="text-[10px] uppercase text-muted-foreground">Revision</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.workflow_revision || 0}</div></div>
+                                <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
                             </div>
 
                             <div className="grid gap-3 lg:grid-cols-2">
@@ -429,7 +430,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
 
                                                 const discAmount = discountMode === "Fixed Amount"
                                                     ? Number(line.discount_amount_foreign || 0)
-                                                    : (gross * discPercent) / 100;
+                                                    : Number(calculatePercentageDiscount(qty, unitPrice, discPercent).discountAmount);
                                                 if (discountMode === "Fixed Amount") {
                                                     dtLabel = `Fixed Amount (${money(discAmount, currency)})`;
                                                 }
@@ -467,7 +468,6 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                     detail={approvalDetail}
                                     selectedShipment={selectedShipment}
                                     currentLines={selectedShipmentLines}
-                                    suppliers={suppliers}
                                 />
                             )}
 

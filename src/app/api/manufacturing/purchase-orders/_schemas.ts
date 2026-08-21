@@ -21,9 +21,9 @@ const nonNegativeMoney = decimalValue
     .refine(value => isWithinDecimalCapacity(value), "Amount exceeds the supported 65-digit currency range.");
 const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).compare(0) > 0, "Must be greater than zero.");
 const percentage = z.coerce.number().finite().min(0).max(100);
-const discountMode = z.enum(["Percentage", "Fixed Amount"]);
+const discountMode = z.literal("Percentage");
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING"]);
+const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"]);
 
 export const purchaseOrderStatusSchema = z.enum([
     "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
@@ -68,6 +68,7 @@ export const legacyPurchaseOrderCreateSchema = z.object({
         payment_type: positiveId,
         payment_mode: positiveId,
         payment_terms: positiveId.nullable().optional(),
+        delivery_terms: z.string().trim().max(255).nullable().optional(),
         price_type: z.string().trim().min(1).max(50).nullable().optional()
     }).passthrough(),
     lineItems: z.array(purchaseOrderLineSchema).min(1)
@@ -126,6 +127,7 @@ export const purchaseOrderCreateSchema = z.object({
     paymentArrangementId: positiveId,
     paymentModeId: positiveId,
     paymentTermsId: positiveId,
+    deliveryTerms: z.string().trim().min(1).max(255),
     currencyCode: z.enum(["PHP", "USD"]),
     exchangeRate: positiveDecimal,
     expectedTotals: purchaseOrderExpectedTotalsSchema,

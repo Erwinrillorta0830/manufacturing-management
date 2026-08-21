@@ -1,27 +1,30 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { Supplier, RawMaterial, SupplierFormState, LinkedProduct } from "../types";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { Supplier, RawMaterial, SupplierFormState, LinkedProduct, SupplierCatalogUpdatePayload, SupplierPageResponse, LinkedProductPageResponse } from "../types";
 import {
     MapPin, Phone, Mail, Award, FileText, CheckCircle2,
-    AlertCircle, Globe, Building2, UserSquare2, Trash2, Link as LinkIcon, Plus, Loader2
+    AlertCircle, Globe, Building2, UserSquare2, Link as LinkIcon, Plus, Loader2, Search, X
 } from "lucide-react";
 import { toast } from "sonner";
-import SupplierTable, { SupplierStatusFilter, SupplierForeignFilter } from "./SupplierTable";
+import SupplierTable from "./SupplierTable";
 import SupplierFormModal from "./SupplierFormModal";
 import SupplierEvaluationModal from "./SupplierEvaluationModal";
 import SupplierCatalogMatrixModal from "./SupplierCatalogMatrixModal";
 import {
     fetchLinkedProducts,
-    linkProductToSupplier,
-    unlinkProductFromSupplier,
+    fetchLinkedProductsPage,
+    fetchSupplierPage,
+    saveSupplierCatalogUpdates,
     isSupplierActive,
     isSupplierNonBuy,
     isSupplierForeign,
     cleanNotes
 } from "../services/supplier.service";
+import { fetchRawMaterials } from "../services/procurement-api";
+import type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
+import PaginationFooter from "./PaginationFooter";
 import { isForeignCountry } from "../supplier-country";
 
 interface SuppliersDirectoryProps {
-    suppliers: Supplier[];
     isModalOpen: boolean;
     setIsModalOpen: (open: boolean) => void;
     supplierForm: SupplierFormState;
@@ -31,10 +34,21 @@ interface SuppliersDirectoryProps {
     onStartEditSupplier?: (supplier: Supplier) => void;
     onCreateSupplier: (e: React.FormEvent) => void;
     rawMaterials?: RawMaterial[];
+    supplierRefreshKey?: number;
 }
 
+const EMPTY_SUPPLIER_PAGE: SupplierPageResponse = {
+    data: [],
+    pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+    counts: { active: 0, inactive: 0, all: 0 }
+};
+
+const EMPTY_LINKED_PRODUCT_PAGE: LinkedProductPageResponse = {
+    data: [],
+    pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 }
+};
+
 export default function SuppliersDirectory({
-    suppliers,
     isModalOpen,
     setIsModalOpen,
     supplierForm,
@@ -43,41 +57,38 @@ export default function SuppliersDirectory({
     isEditingSupplier = false,
     onStartEditSupplier,
     onCreateSupplier,
-    rawMaterials = []
+    rawMaterials = [],
+    supplierRefreshKey = 0
 }: SuppliersDirectoryProps) {
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("active");
     const [foreignFilter, setForeignFilter] = useState<SupplierForeignFilter>("all");
+    const [supplierPage, setSupplierPage] = useState(1);
+    const [supplierPageSize, setSupplierPageSize] = useState(10);
+    const [supplierPageData, setSupplierPageData] = useState<SupplierPageResponse>(EMPTY_SUPPLIER_PAGE);
+    const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+    const [supplierPageError, setSupplierPageError] = useState<string | null>(null);
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
 
     // Modals state
     const [isEvaluationOpen, setIsEvaluationOpen] = useState(false);
     const [isCatalogMatrixOpen, setIsCatalogMatrixOpen] = useState(false);
+    const [catalogMaterials, setCatalogMaterials] = useState<RawMaterial[] | null>(null);
+    const [loadingCatalogMaterials, setLoadingCatalogMaterials] = useState(false);
 
     // Linked products state
     const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
+    const [linkedProductPage, setLinkedProductPage] = useState(1);
+    const [linkedProductPageSize, setLinkedProductPageSize] = useState(10);
+    const [linkedProductSearch, setLinkedProductSearch] = useState("");
+    const [linkedProductPageData, setLinkedProductPageData] = useState<LinkedProductPageResponse>(EMPTY_LINKED_PRODUCT_PAGE);
+    const [loadingLinkedProductPage, setLoadingLinkedProductPage] = useState(false);
     const [loadingLinkedProducts, setLoadingLinkedProducts] = useState(false);
-    const [unlinkingLinkId, setUnlinkingLinkId] = useState<number | null>(null);
+    const [savingCatalogUpdates, setSavingCatalogUpdates] = useState(false);
+    const linkedProductRequestId = useRef(0);
+    const previousActiveSupplierId = useRef<number | null>(null);
 
-    const checkForeign = useCallback((s: Supplier | null | undefined): boolean => {
-        return isSupplierForeign(s);
-    }, []);
-
-    const filteredSuppliers = useMemo(() => {
-        const normalizedSearch = search.toLowerCase();
-        return suppliers.filter(s => {
-            const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? isSupplierActive(s) : !isSupplierActive(s));
-            if (!matchesStatus) return false;
-
-            const isForeign = checkForeign(s);
-            const matchesForeign = foreignFilter === "all" || (foreignFilter === "foreign" ? isForeign : !isForeign);
-            if (!matchesForeign) return false;
-
-            return s.supplier_name.toLowerCase().includes(normalizedSearch) ||
-                s.supplier_shortcut?.toLowerCase().includes(normalizedSearch) ||
-                s.tin_number?.includes(search);
-        });
-    }, [suppliers, search, statusFilter, foreignFilter, checkForeign]);
+    const filteredSuppliers = supplierPageData.data;
 
     const activeSupplier = useMemo(() => {
         if (selectedSupplierId !== null) {
@@ -87,6 +98,81 @@ export default function SuppliersDirectory({
     }, [selectedSupplierId, filteredSuppliers]);
 
     const activeSupplierId = activeSupplier?.id ?? null;
+
+    const loadSupplierPage = useCallback(async (
+        page: number,
+        pageSize: number,
+        nextSearch: string,
+        nextStatus: SupplierStatusFilter,
+        nextForeign: SupplierForeignFilter
+    ) => {
+        setLoadingSuppliers(true);
+        setSupplierPageError(null);
+        try {
+            const data = await fetchSupplierPage({
+                page,
+                pageSize,
+                search: nextSearch,
+                status: nextStatus,
+                foreign: nextForeign
+            });
+            setSupplierPageData(data);
+            if (data.pagination.totalPages < page) {
+                setSupplierPage(data.pagination.totalPages);
+            }
+            setSelectedSupplierId(previous => data.data.some(supplier => supplier.id === previous)
+                ? previous
+                : (data.data[0]?.id ?? null));
+        } catch (error) {
+            console.error(error);
+            setSupplierPageError((error as Error).message || "Failed to load suppliers");
+            setSupplierPageData(previous => ({ ...previous, data: [] }));
+        } finally {
+            setLoadingSuppliers(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            void loadSupplierPage(supplierPage, supplierPageSize, search, statusFilter, foreignFilter);
+        }, search.trim() ? 250 : 0);
+
+        return () => window.clearTimeout(timer);
+    }, [foreignFilter, loadSupplierPage, search, statusFilter, supplierPage, supplierPageSize, supplierRefreshKey]);
+
+    const loadLinkedProductPage = useCallback(async (
+        supplierId: number | null,
+        page: number,
+        pageSize: number,
+        searchTerm: string,
+        requestId: number,
+        signal: AbortSignal
+    ) => {
+        if (supplierId === null) {
+            if (requestId !== linkedProductRequestId.current) return;
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+            setLoadingLinkedProductPage(false);
+            return;
+        }
+
+        setLoadingLinkedProductPage(true);
+        try {
+            const data = await fetchLinkedProductsPage(supplierId, page, pageSize, searchTerm, signal);
+            if (signal.aborted || requestId !== linkedProductRequestId.current) return;
+            setLinkedProductPageData(data);
+            if (data.pagination.totalPages < page) {
+                setLinkedProductPage(data.pagination.totalPages);
+            }
+        } catch (error) {
+            if (signal.aborted || requestId !== linkedProductRequestId.current) return;
+            console.error(error);
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+        } finally {
+            if (requestId === linkedProductRequestId.current) {
+                setLoadingLinkedProductPage(false);
+            }
+        }
+    }, []);
 
     const loadLinkedProducts = useCallback(async (supplierId: number) => {
         setLoadingLinkedProducts(true);
@@ -100,41 +186,139 @@ export default function SuppliersDirectory({
         }
     }, []);
 
-    useEffect(() => {
-        if (activeSupplierId !== null) {
-            loadLinkedProducts(activeSupplierId);
-        } else {
-            setLinkedProducts([]);
-        }
-    }, [activeSupplierId, loadLinkedProducts]);
-
-    const handleLinkMultipleProducts = async (productIds: string[]) => {
-        if (productIds.length === 0 || activeSupplierId === null) return;
+    const loadCatalogMaterials = useCallback(async () => {
+        setLoadingCatalogMaterials(true);
         try {
-            await Promise.all(
-                productIds.map(id => linkProductToSupplier(activeSupplierId, Number(id)))
-            );
-            toast.success(`Successfully linked ${productIds.length} products`);
-            await loadLinkedProducts(activeSupplierId);
-        } catch (e) {
-            console.error(e);
-            toast.error("Failed to link one or more products");
-            throw e;
+            setCatalogMaterials(await fetchRawMaterials(-1));
+        } catch (error) {
+            console.error(error);
+            setCatalogMaterials(rawMaterials);
+        } finally {
+            setLoadingCatalogMaterials(false);
         }
+    }, [rawMaterials]);
+
+    const handleOpenCatalogMatrix = useCallback(() => {
+        setIsCatalogMatrixOpen(true);
+        void loadCatalogMaterials();
+    }, [loadCatalogMaterials]);
+
+    useEffect(() => {
+        const requestId = linkedProductRequestId.current + 1;
+        linkedProductRequestId.current = requestId;
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => {
+            void loadLinkedProductPage(
+                activeSupplierId,
+                linkedProductPage,
+                linkedProductPageSize,
+                linkedProductSearch,
+                requestId,
+                controller.signal
+            );
+        }, linkedProductSearch.trim() ? 250 : 0);
+
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [activeSupplierId, linkedProductPage, linkedProductPageSize, linkedProductSearch, loadLinkedProductPage]);
+
+    useEffect(() => {
+        if (previousActiveSupplierId.current !== null && previousActiveSupplierId.current !== activeSupplierId) {
+            setLinkedProductSearch("");
+            setLinkedProductPage(1);
+            setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
+        }
+        previousActiveSupplierId.current = activeSupplierId;
+    }, [activeSupplierId]);
+
+    useEffect(() => {
+        if (isCatalogMatrixOpen && activeSupplierId !== null) {
+            void loadLinkedProducts(activeSupplierId);
+        }
+    }, [activeSupplierId, isCatalogMatrixOpen, loadLinkedProducts]);
+
+    const handleSelectSupplier = (supplierId: number) => {
+        setSelectedSupplierId(supplierId);
+        setLinkedProductSearch("");
+        setLinkedProductPage(1);
+        setLinkedProductPageData(EMPTY_LINKED_PRODUCT_PAGE);
     };
 
-    const handleUnlinkProduct = async (linkId: number) => {
-        if (unlinkingLinkId !== null || activeSupplierId === null) return;
-        setUnlinkingLinkId(linkId);
+    const handleSearchChange = (value: string) => {
+        setSearch(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleStatusFilterChange = (value: SupplierStatusFilter) => {
+        setStatusFilter(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleForeignFilterChange = (value: SupplierForeignFilter) => {
+        setForeignFilter(value);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleSupplierPageChange = (page: number) => {
+        setSupplierPage(page);
+        setLinkedProductPage(1);
+    };
+
+    const handleSupplierPageSizeChange = (pageSize: number) => {
+        setSupplierPageSize(pageSize);
+        setSupplierPage(1);
+        setLinkedProductPage(1);
+    };
+
+    const handleLinkedProductPageSizeChange = (pageSize: number) => {
+        setLinkedProductPageSize(pageSize);
+        setLinkedProductPage(1);
+    };
+
+    const handleLinkedProductSearchChange = (value: string) => {
+        setLinkedProductSearch(value);
+        setLinkedProductPage(1);
+    };
+
+    const clearLinkedProductSearch = () => {
+        setLinkedProductSearch("");
+        setLinkedProductPage(1);
+    };
+
+    const handleSaveCatalogUpdates = async (payload: SupplierCatalogUpdatePayload) => {
+        if (activeSupplierId === null || payload.supplierId !== activeSupplierId) {
+            throw new Error("Select a supplier before saving catalog updates.");
+        }
+        setSavingCatalogUpdates(true);
         try {
-            await unlinkProductFromSupplier(linkId);
-            toast.success("Product unlinked successfully");
-            await loadLinkedProducts(activeSupplierId);
+            const result = await saveSupplierCatalogUpdates(payload);
+            const refreshRequestId = linkedProductRequestId.current + 1;
+            linkedProductRequestId.current = refreshRequestId;
+            await Promise.all([
+                loadLinkedProductPage(
+                    activeSupplierId,
+                    linkedProductPage,
+                    linkedProductPageSize,
+                    linkedProductSearch,
+                    refreshRequestId,
+                    new AbortController().signal
+                ),
+                loadLinkedProducts(activeSupplierId)
+            ]);
+            const addedCount = result.added?.length || 0;
+            const removedCount = result.removed?.length || 0;
+            toast.success(`Catalog updates saved (${addedCount} added, ${removedCount} removed)`);
         } catch (e) {
             console.error(e);
-            toast.error((e as Error).message || "Failed to unlink product. Please try again.");
+            toast.error((e as Error).message || "Failed to save catalog updates. Please try again.");
+            throw e;
         } finally {
-            setUnlinkingLinkId(null);
+            setSavingCatalogUpdates(false);
         }
     };
 
@@ -142,18 +326,26 @@ export default function SuppliersDirectory({
         <div className="flex flex-col lg:flex-row gap-6 h-full min-h-0">
             {/* Left side: Directory List & Filter Toolbar */}
             <SupplierTable
-                suppliers={suppliers}
                 filteredSuppliers={filteredSuppliers}
+                totalSuppliers={supplierPageData.pagination.total}
+                statusCounts={supplierPageData.counts}
                 selectedSupplierId={selectedSupplierId}
-                onSelectSupplier={setSelectedSupplierId}
+                onSelectSupplier={handleSelectSupplier}
                 search={search}
-                onSearchChange={setSearch}
+                onSearchChange={handleSearchChange}
                 statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
+                onStatusFilterChange={handleStatusFilterChange}
                 foreignFilter={foreignFilter}
-                onForeignFilterChange={setForeignFilter}
+                onForeignFilterChange={handleForeignFilterChange}
                 onOpenRegisterModal={() => setIsModalOpen(true)}
                 onOpenEvaluationModal={() => setIsEvaluationOpen(true)}
+                page={supplierPage}
+                pageSize={supplierPageSize}
+                totalPages={supplierPageData.pagination.totalPages}
+                onPageChange={handleSupplierPageChange}
+                onPageSizeChange={handleSupplierPageSizeChange}
+                loading={loadingSuppliers}
+                error={supplierPageError}
             />
 
             {/* Right side: Detailed Supplier Profile */}
@@ -356,7 +548,7 @@ export default function SuppliersDirectory({
                                             </h4>
                                             <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full flex items-center gap-1">
                                                 <CheckCircle2 className="h-3 w-3 text-primary" />
-                                                {linkedProducts.length} Linked
+                                                {linkedProductPageData.pagination.total} Linked
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-muted-foreground">
@@ -365,39 +557,83 @@ export default function SuppliersDirectory({
                                     </div>
                                 </div>
 
-                                <button
-                                    onClick={() => setIsCatalogMatrixOpen(true)}
-                                    className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
-                                >
-                                    <Plus className="h-3.5 w-3.5" /> Manage Catalog Matrix
-                                </button>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+                                    <div className="relative w-full sm:w-64">
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                        <input
+                                            type="search"
+                                            value={linkedProductSearch}
+                                            onChange={event => handleLinkedProductSearchChange(event.target.value)}
+                                            placeholder="Search linked items by name or code..."
+                                            aria-label="Search linked items by name or code"
+                                            className="h-8 w-full rounded-lg border bg-background pl-8 pr-8 text-xs outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary focus:ring-1 focus:ring-primary"
+                                        />
+                                        {linkedProductSearch && (
+                                            <button
+                                                type="button"
+                                                onClick={clearLinkedProductSearch}
+                                                aria-label="Clear linked item search"
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenCatalogMatrix}
+                                        className="text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 self-start sm:self-auto"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" /> Manage Catalog Matrix
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Linked Products Preview Grid */}
-                            {loadingLinkedProducts ? (
+                            {loadingLinkedProductPage ? (
                                 <div className="text-center text-xs text-muted-foreground py-6 flex items-center justify-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     <span>Loading associated products...</span>
                                 </div>
-                            ) : linkedProducts.length === 0 ? (
-                                <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
-                                    <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
-                                        <LinkIcon className="h-6 w-6" />
+                            ) : linkedProductPageData.data.length === 0 ? (
+                                linkedProductSearch.trim() ? (
+                                    <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
+                                        <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
+                                            <Search className="h-6 w-6" />
+                                        </div>
+                                        <h5 className="text-xs font-bold text-foreground">No linked items match your search</h5>
+                                        <p className="text-[11px] text-muted-foreground max-w-sm">
+                                            Try another product name or code, or clear the search to view all associated items.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={clearLinkedProductSearch}
+                                            className="mt-2 text-xs text-primary font-bold border border-primary/30 hover:bg-primary/10 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                                        >
+                                            Clear search
+                                        </button>
                                     </div>
-                                    <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
-                                    <p className="text-[11px] text-muted-foreground max-w-sm">
-                                        Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
-                                    </p>
-                                    <button
-                                        onClick={() => setIsCatalogMatrixOpen(true)}
-                                        className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
-                                    >
-                                        <Plus className="h-3.5 w-3.5" /> Associate First Product
-                                    </button>
-                                </div>
+                                ) : (
+                                    <div className="text-center p-8 border border-dashed rounded-2xl bg-muted/5 flex flex-col items-center justify-center gap-2">
+                                        <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-1">
+                                            <LinkIcon className="h-6 w-6" />
+                                        </div>
+                                        <h5 className="text-xs font-bold text-foreground">No Raw Materials Linked</h5>
+                                        <p className="text-[11px] text-muted-foreground max-w-sm">
+                                            Associate raw materials or catalog items to this vendor to streamline purchase orders and landed cost allocation.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={handleOpenCatalogMatrix}
+                                            className="mt-2 text-xs text-primary-foreground font-bold bg-primary hover:bg-primary/95 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" /> Associate First Product
+                                        </button>
+                                    </div>
+                                )
                             ) : (
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    {linkedProducts.map((lp: LinkedProduct) => {
+                                    {linkedProductPageData.data.map((lp: LinkedProduct) => {
                                         const uom = lp.product_id?.unit_of_measurement?.unit_shortcut || lp.product_id?.unit_of_measurement?.unit_name;
                                         return (
                                             <div
@@ -425,18 +661,25 @@ export default function SuppliersDirectory({
                                                     </p>
                                                 </div>
                                                 <button
-                                                    onClick={() => handleUnlinkProduct(lp.id)}
-                                                    disabled={unlinkingLinkId === lp.id}
-                                                    className="text-muted-foreground hover:text-red-600 p-2 rounded-xl hover:bg-red-500/10 transition-all cursor-pointer shrink-0 opacity-80 group-hover:opacity-100"
-                                                    title="Unlink Product"
+                                                    onClick={handleOpenCatalogMatrix}
+                                                    className="text-[10px] font-bold text-primary hover:text-primary/80 shrink-0"
                                                 >
-                                                    {unlinkingLinkId === lp.id ? <Loader2 className="h-4 w-4 animate-spin text-red-500" /> : <Trash2 className="h-4 w-4" />}
+                                                    Manage
                                                 </button>
                                             </div>
                                         );
                                     })}
                                 </div>
                             )}
+                            <PaginationFooter
+                                page={linkedProductPage}
+                                pageSize={linkedProductPageSize}
+                                total={linkedProductPageData.pagination.total}
+                                totalPages={linkedProductPageData.pagination.totalPages}
+                                onPageChange={setLinkedProductPage}
+                                onPageSizeChange={handleLinkedProductPageSizeChange}
+                                itemLabel="linked products"
+                            />
                         </div>
                     </>
                 ) : (
@@ -467,15 +710,15 @@ export default function SuppliersDirectory({
             />
 
             <SupplierCatalogMatrixModal
+                key={`supplier-catalog-${activeSupplierId ?? "none"}-${isCatalogMatrixOpen ? "open" : "closed"}`}
                 isOpen={isCatalogMatrixOpen}
                 onClose={() => setIsCatalogMatrixOpen(false)}
                 supplier={activeSupplier || null}
-                rawMaterials={rawMaterials}
+                rawMaterials={catalogMaterials ?? rawMaterials}
                 linkedProducts={linkedProducts}
-                loadingLinkedProducts={loadingLinkedProducts}
-                onLinkProducts={handleLinkMultipleProducts}
-                onUnlinkProduct={handleUnlinkProduct}
-                unlinkingLinkId={unlinkingLinkId}
+                loadingLinkedProducts={loadingLinkedProducts || loadingCatalogMaterials}
+                onSaveUpdates={handleSaveCatalogUpdates}
+                savingUpdates={savingCatalogUpdates}
             />
         </div>
     );

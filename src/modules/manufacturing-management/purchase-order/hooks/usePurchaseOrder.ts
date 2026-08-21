@@ -23,6 +23,7 @@ import {
 } from "../services/purchase-order-api";
 import { resolveProductParentId } from "../../procurement/product-relation";
 import { purchaseOrderMaterialTypeFromProduct } from "../../procurement/components/incoming-shipments/types";
+import { calculatePercentageDiscount } from "../../procurement/discount-calculation";
 
 const blankLine = (): ManifestLineFormItem => ({
     parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
@@ -30,16 +31,15 @@ const blankLine = (): ManifestLineFormItem => ({
 });
 const blankForm = (): ShipmentFormState => ({
     reference_number: "", remark: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
-    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, price_type: "", currency_code: "PHP"
+    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, delivery_terms: "", price_type: "", currency_code: "PHP"
 });
 
 function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchangeRate: number) {
     const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
     return lines.reduce((totals, line) => {
-        const grossForeign = round(line.quantity * line.unitPrice);
-        const discountForeign = line.discountMode === "Fixed Amount"
-            ? round(line.discountAmount)
-            : round(grossForeign * line.discountPercent / 100);
+        const discountCalculation = calculatePercentageDiscount(line.quantity, line.unitPrice, line.discountPercent);
+        const grossForeign = round(Number(discountCalculation.grossAmount));
+        const discountForeign = round(Number(discountCalculation.discountAmount));
         const subtotalForeign = round(grossForeign - discountForeign);
         const vatForeign = round(subtotalForeign * line.vatPercent / 100);
         const withholdingForeign = round(subtotalForeign * line.withholdingPercent / 100);
@@ -165,8 +165,6 @@ export function usePurchaseOrder() {
             const quantity = Number(line.quantity_ordered);
             const unitPrice = Number(line.base_unit_cost_php);
             const discount = Number(line.discount_percent || 0);
-            const discountMode = line.discount_mode || "Percentage";
-            const discountAmount = Number(line.discount_amount || 0);
             const vat = Number(line.vat_percent || 0);
             const withholding = Number(line.withholding_percent || 0);
             const product = rawMaterials.find(material => Number(material.product_id) === Number(line.product_id));
@@ -177,13 +175,9 @@ export function usePurchaseOrder() {
             if (line.material_type && masterMaterialType !== line.material_type) errors.push("select a Category Type matching the product master");
             if (!Number.isInteger(quantity) || quantity <= 0) errors.push("enter a positive whole quantity");
             if (line.base_unit_cost_php === "" || !Number.isFinite(unitPrice) || unitPrice < 0) errors.push("enter a non-negative unit price");
-            if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") errors.push("select a valid Discount Type");
-            if (discountMode === "Percentage" && (!Number.isFinite(discount) || discount < 0 || discount > 100)) errors.push("set Discount between 0 and 100");
-            if (discountMode === "Fixed Amount") {
-                const gross = Number.isFinite(quantity) && Number.isFinite(unitPrice) ? Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100 : 0;
-                if (!Number.isFinite(discountAmount) || discountAmount < 0) errors.push("enter a non-negative Discount Amount");
-                else if (discountAmount > gross) errors.push("Discount Amount cannot exceed Gross Amount");
-            }
+            if (line.discount_mode === "Fixed Amount") errors.push("convert legacy fixed discounts to Percentage before saving");
+            if (line.discount_mode && line.discount_mode !== "Percentage" && line.discount_mode !== "Fixed Amount") errors.push("select Percentage as the Discount Type");
+            if (!Number.isFinite(discount) || discount < 0 || discount > 100) errors.push("set Discount between 0 and 100");
             if (!Number.isFinite(vat) || vat < 0 || vat > 100) errors.push("set VAT between 0 and 100");
             if (!Number.isFinite(withholding) || withholding < 0 || withholding > 100) errors.push("set Withholding between 0 and 100");
             if (line.purchase_intent === "MRP_Demand" && (!Number.isInteger(Number(line.job_order_id)) || Number(line.job_order_id) <= 0)) {
@@ -219,6 +213,10 @@ export function usePurchaseOrder() {
             toast.error("Payment Terms is required.");
             return;
         }
+        if (!shipmentForm.delivery_terms?.trim()) {
+            toast.error("Delivery Terms is required.");
+            return;
+        }
         if (lines.length === 0) {
             toast.error("Add at least one Purchase Order Line.");
             return;
@@ -244,15 +242,23 @@ export function usePurchaseOrder() {
 
             return {
                 productId,
-                categoryType: line.material_type === "raw_material" ? "RAW_MATERIAL" : "PACKAGING",
+                categoryType: line.material_type === "raw_material"
+                    ? "RAW_MATERIAL"
+                    : line.material_type === "packaging"
+                        ? "PACKAGING"
+                        : "FINISHED_GOODS",
                 parentProductId: canonicalParentId,
                 purchaseIntent: line.purchase_intent || "Buffer_Stock",
                 jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,
                 quantity: Number(line.quantity_ordered),
                 unitPrice: Number(line.base_unit_cost_php),
-                discountMode: line.discount_mode || "Percentage",
+                discountMode: "Percentage",
                 discountPercent: Number(line.discount_percent) || 0,
-                discountAmount: Number(line.discount_amount) || 0,
+                discountAmount: Number(calculatePercentageDiscount(
+                    line.quantity_ordered,
+                    line.base_unit_cost_php,
+                    Number(line.discount_percent) || 0
+                ).discountAmount),
                 vatPercent: Number(line.vat_percent) || 0,
                 withholdingPercent: Number(line.withholding_percent) || 0
             };
@@ -276,17 +282,13 @@ export function usePurchaseOrder() {
                 paymentArrangementId: Number(shipmentForm.payment_type),
                 paymentModeId: Number(shipmentForm.payment_mode),
                 paymentTermsId: Number(shipmentForm.payment_terms),
+                deliveryTerms: shipmentForm.delivery_terms.trim(),
                 currencyCode: shipmentForm.currency_code || "PHP",
                 exchangeRate,
                 expectedTotals: totals,
                 lines: lineItems
             });
             toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in For Approval status.`.trim());
-            if (result.priceControlWarning) {
-                toast.warning(
-                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} selected product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
-                );
-            }
             setIsShipmentModalOpen(false);
             await loadShipments();
         } catch (error) {
@@ -303,13 +305,8 @@ export function usePurchaseOrder() {
         }
         setLoading(true);
         try {
-            const result = await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
+            await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
             toast.success("Finance-rejected purchase order revised and resubmitted for approval.");
-            if (result.priceControlWarning) {
-                toast.warning(
-                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} revised product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
-                );
-            }
             setSelectedShipment(null);
             await loadShipments();
             return true;

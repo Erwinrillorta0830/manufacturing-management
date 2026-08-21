@@ -98,9 +98,11 @@ export interface IncomingShipment {
     branch_id?: number | null;
     payment_type?: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
+    revision_count?: number;
     approver_id?: number | null;
     finance_id?: number | null;
     date_approved?: string | null;
@@ -132,7 +134,7 @@ export interface ShipmentLineItem {
             unit_name: string;
         };
     };
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     quantity_ordered?: number;
     quantity_received?: number | null;
     base_unit_cost_php: number | string;
@@ -339,12 +341,49 @@ export interface LinkedProduct {
         product_code?: string;
         product_name?: string;
         description?: string;
+        parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
             unit_name?: string;
             unit_shortcut?: string;
         };
     };
+}
+
+export interface PaginationMeta {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+export interface SupplierStatusCounts {
+    active: number;
+    inactive: number;
+    all: number;
+}
+
+export interface SupplierPageResponse {
+    data: Supplier[];
+    pagination: PaginationMeta;
+    counts: SupplierStatusCounts;
+}
+
+export interface LinkedProductPageResponse {
+    data: LinkedProduct[];
+    pagination: PaginationMeta;
+}
+
+export interface SupplierCatalogUpdatePayload {
+    supplierId: number;
+    addProductIds: number[];
+    removeLinkIds: number[];
+}
+
+export interface SupplierCatalogUpdateResult {
+    success: boolean;
+    added: number[];
+    removed: number[];
 }
 
 export interface PSGCItem {
@@ -409,6 +448,7 @@ export interface DirectusShipment {
     payment_status?: number | null;
     payment_type?: number | null;
     payment_mode?: number | null;
+    delivery_terms?: string | null;
     created_at?: string;
 }
 
@@ -502,6 +542,7 @@ export interface ShipmentData {
     payment_type: number | null;
     payment_mode: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type: string | null;
 }
 

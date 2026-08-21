@@ -4,7 +4,8 @@ import {
     RAW_MATERIAL_PRODUCT_TYPE
 } from "./raw-materials/_classification-integrity";
 
-export const PURCHASE_ORDER_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING"] as const;
+export const FINISHED_GOODS_PRODUCT_TYPE = 388;
+export const PURCHASE_ORDER_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"] as const;
 export type PurchaseOrderCategoryType = typeof PURCHASE_ORDER_CATEGORY_TYPES[number];
 
 type ProductClassificationRow = {
@@ -50,6 +51,7 @@ export function purchaseOrderCategoryTypeFromProductType(value: unknown): Purcha
     const id = classificationId(value);
     if (id === RAW_MATERIAL_PRODUCT_TYPE) return "RAW_MATERIAL";
     if (id === PACKAGING_MATERIAL_PRODUCT_TYPE) return "PACKAGING";
+    if (id === FINISHED_GOODS_PRODUCT_TYPE) return "FINISHED_GOODS";
     return null;
 }
 
@@ -117,7 +119,7 @@ export async function resolveProductCategoryTypes(
             throw new ProductCategoryTypeValidationError(
                 400,
                 "PRODUCT_CATEGORY_TYPE_UNSUPPORTED",
-                `Product ${productId} has ${productTypeDescription(product?.product_type)}; only RAW_MATERIAL or PACKAGING is allowed.`,
+                `Product ${productId} has ${productTypeDescription(product?.product_type)}; only RAW_MATERIAL, PACKAGING, or FINISHED_GOODS is allowed.`,
                 { productId, productType: product?.product_type }
             );
         }
@@ -125,7 +127,7 @@ export async function resolveProductCategoryTypes(
             throw new ProductCategoryTypeValidationError(
                 400,
                 "PARENT_CATEGORY_TYPE_UNSUPPORTED",
-                `Parent product ${parentId} for product ${productId} is not classified as RAW_MATERIAL or PACKAGING.`,
+                `Parent product ${parentId} for product ${productId} is not classified as RAW_MATERIAL, PACKAGING, or FINISHED_GOODS.`,
                 { productId, parentProductId: parentId, productType: parent?.product_type }
             );
         }
@@ -143,7 +145,7 @@ export async function resolveProductCategoryTypes(
             throw new ProductCategoryTypeValidationError(
                 400,
                 "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                `Product ${productId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                `Product ${productId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
                 { productId, parentProductId: parentId }
             );
         }
@@ -162,7 +164,7 @@ export async function validatePurchaseOrderCategoryTypes(
             throw new ProductCategoryTypeValidationError(
                 400,
                 "CATEGORY_TYPE_REQUIRED",
-                `Line ${lineIndex + 1} must specify Category_Type as RAW_MATERIAL or PACKAGING.`,
+                `Line ${lineIndex + 1} must specify Category_Type as RAW_MATERIAL, PACKAGING, or FINISHED_GOODS.`,
                 { lineIndex, productId: line.productId, categoryType: line.categoryType ?? null }
             );
         }

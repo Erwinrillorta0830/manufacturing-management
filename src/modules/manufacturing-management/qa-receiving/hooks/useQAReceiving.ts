@@ -18,7 +18,7 @@ import {
     cancelQuarantineDisposition
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
-import { validateReceivingMetadata, type ReceivingValidationIssue } from "../receiving-metadata";
+import { getTodayReceiptDate, validateReceivingMetadata, validateReceivingReceiptDate, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
 import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery, OVER_DELIVERY_EPSILON } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
 
@@ -89,7 +89,8 @@ export function useQAReceiving() {
 
     // Inspection form state
     const [receivingTicketNumber, setReceivingTicketNumber] = useState<string>("");
-    const [receiptMode, setReceiptMode] = useState<"full" | "partial">("full");
+    const [receiptDate, setReceiptDate] = useState<string>(() => getTodayReceiptDate());
+    const [receiptType, setReceiptType] = useState<"full" | "partial">("full");
     const [processOverDelivery, setProcessOverDeliveryState] = useState(false);
     const [selectedBranchId, setSelectedBranchId] = useState<string>("");
     const [inspectionRows, setInspectionRows] = useState<Record<number, InspectionRow>>({});
@@ -108,10 +109,9 @@ export function useQAReceiving() {
     const receivingPreview = receivingCommitContext?.preview ?? null;
     const receivingCommitReady = Boolean(receivingCommitContext?.preview.postingEnabled);
 
-    const handleDestinationBranchChange = useCallback((value: string) => {
+    const handleReceiptNumberChange = useCallback((value: string) => {
         previewController.current?.abort();
-        setSelectedBranchId(value);
-        setProcessOverDeliveryState(false);
+        setReceivingTicketNumber(value);
         setQaEvaluationResults({});
         setReceivingCommitContext(null);
         setCommittedResult(null);
@@ -119,7 +119,18 @@ export function useQAReceiving() {
         setPreviewAcknowledged(false);
         setPreviewError(null);
         setValidatingInspection(false);
-        setForceReceivedSubmitting(false);
+    }, []);
+
+    const handleReceiptDateChange = useCallback((value: string) => {
+        previewController.current?.abort();
+        setReceiptDate(value);
+        setQaEvaluationResults({});
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewOpen(false);
+        setPreviewAcknowledged(false);
+        setPreviewError(null);
+        setValidatingInspection(false);
     }, []);
 
     const handleProcessOverDeliveryChange = useCallback((value: boolean) => {
@@ -155,7 +166,8 @@ export function useQAReceiving() {
         setLoadingLines(false);
         setInspectionRows({});
         setReceivingTicketNumber("");
-        setReceiptMode("full");
+        setReceiptDate(getTodayReceiptDate());
+        setReceiptType("full");
         setProcessOverDeliveryState(false);
         setSelectedBranchId("");
         setQaSpecificationStates({});
@@ -336,6 +348,10 @@ export function useQAReceiving() {
         const isReceived = shipment.status === "Received" || Number(shipment.inventory_status) === INVENTORY_STATUS.RECEIVED;
         const isPartiallyReceived = shipment.status === "Partially Received"
             || Number(shipment.inventory_status) === INVENTORY_STATUS.PARTIALLY_RECEIVED;
+        const purchaseOrderBranchId = Number(shipment.branch_id);
+        const normalizedPurchaseOrderBranchId = Number.isSafeInteger(purchaseOrderBranchId) && purchaseOrderBranchId > 0
+            ? String(purchaseOrderBranchId)
+            : "";
         if (!isReplacement && !isReceivingQueueShipmentStatus(shipment.inventory_status ?? shipment.status) && !isReceived) {
             toast.error("The purchase order must be Finance-approved before it can be received.");
             clearInspection();
@@ -346,8 +362,10 @@ export function useQAReceiving() {
         detailController.current = controller;
         setSelectedShipment(shipment);
         setReplacementDisposition(replacementContext);
+        setSelectedBranchId(normalizedPurchaseOrderBranchId);
         setReceivingTicketNumber("");
-        setReceiptMode(isReplacement || isPartiallyReceived ? "partial" : "full");
+        setReceiptDate(getTodayReceiptDate());
+        setReceiptType(isReplacement || isPartiallyReceived ? "partial" : "full");
         setProcessOverDeliveryState(false);
         setQaSpecificationStates({});
         setQaReadings({});
@@ -371,8 +389,8 @@ export function useQAReceiving() {
             // Prepopulate form states
             const rowsInit: Record<number, InspectionRow> = {};
             lines.forEach(l => {
-                if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING") {
-                    throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING" && l.category_type !== "FINISHED_GOODS") {
+                    throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
                 const latestReceipt = !isReplacement && (isReceived || isPartiallyReceived) ? l.latest_receipt : null;
                 const latestStorageLotId = latestReceipt?.storage_lot_id ?? l.lot_id ?? null;
@@ -435,20 +453,10 @@ export function useQAReceiving() {
                 })
                 .find(Boolean) || "";
             setReceivingTicketNumber(!isReplacement && isReceived ? storedReceivingTicketNumber : "");
-
-            // Reuse the last partial receipt branch when available; otherwise use the PO branch.
-            const latestReceiptBranchId = isPartiallyReceived
-                ? lines.find(line => line.latest_receipt?.branch_id)?.latest_receipt?.branch_id
-                : null;
-            if (latestReceiptBranchId) {
-                setSelectedBranchId(latestReceiptBranchId.toString());
-            } else if (shipment.branch_id) {
-                setSelectedBranchId(shipment.branch_id.toString());
-            } else if (branches.length > 0) {
-                setSelectedBranchId(branches[0].id.toString());
-            } else {
-                setSelectedBranchId("");
-            }
+            const storedReceiptDate = lines
+                .map(line => line.latest_receipt?.receipt_date || "")
+                .find(Boolean) || "";
+            setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             setQaSpecificationStates(Object.fromEntries(productIds.map(productId => [productId, {
@@ -705,7 +713,10 @@ export function useQAReceiving() {
     const receivingValidationIssues = useMemo<ReceivingValidationIssue[]>(() => {
         if (isLockedReceivingShipment(selectedShipment, replacementDisposition)) return [];
 
-        const issues = validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
+        const issues = [
+            ...validateReceivingReceiptDate(receiptDate),
+            ...validateReceivingReceiptNumber(receivingTicketNumber),
+            ...validateReceivingMetadata(selectedBranchId, lineItems.map(line => {
             const row = inspectionRows[line.line_id];
             return {
                 lineId: line.line_id,
@@ -717,7 +728,8 @@ export function useQAReceiving() {
                 manufacturingDate: row?.manufacturingDate || "",
                 expirationDate: row?.expirationDate || ""
             };
-        }));
+            }))
+        ];
         const addIssue = (issue: ReceivingValidationIssue) => {
             if (!issues.some(existing => existing.field === issue.field && existing.lineId === issue.lineId && existing.message === issue.message)) {
                 issues.push(issue);
@@ -809,15 +821,15 @@ export function useQAReceiving() {
             return total + previouslyAccepted + accepted;
         }, 0);
         const fullyRejected = allLinesPhysicallyComplete && cumulativeAccepted <= OVER_DELIVERY_EPSILON;
-        if (!replacementDisposition && receiptMode === "full" && !completesPurchaseOrder && !fullyRejected) {
-            addIssue({ field: "receiptMode", message: "Full Receipt requires every line to meet or exceed its remaining accepted quantity, or be fully rejected." });
+        if (!replacementDisposition && receiptType === "full" && !completesPurchaseOrder && !fullyRejected) {
+            addIssue({ field: "receiptType", message: "Full Receipt requires every line to meet or exceed its remaining accepted quantity, or be fully rejected." });
         }
-        if (!replacementDisposition && receiptMode === "partial" && (completesPurchaseOrder || fullyRejected)) {
-            addIssue({ field: "receiptMode", message: "Partial Receipt requires at least one line to remain below its remaining accepted quantity." });
+        if (!replacementDisposition && receiptType === "partial" && (completesPurchaseOrder || fullyRejected)) {
+            addIssue({ field: "receiptType", message: "Partial Receipt requires at least one line to remain below its remaining accepted quantity." });
         }
 
         return issues;
-    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptMode, replacementDisposition, selectedBranchId, selectedShipment]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receiptType, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment]);
 
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -924,10 +936,13 @@ export function useQAReceiving() {
                 };
             });
 
+            const normalizedReceiptNumber = receivingTicketNumber.trim();
             const preview = await previewReceivingQa({
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
-                receiptMode,
+                receiptNumber: normalizedReceiptNumber,
+                receiptDate,
+                receiptType,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
@@ -939,7 +954,9 @@ export function useQAReceiving() {
                 workflowRevision: preview.workflowRevision,
                 shipmentId: selectedShipment.shipment_id,
                 replacementDispositionId: replacementDisposition?.id || null,
-                receiptMode,
+                receiptNumber: normalizedReceiptNumber,
+                receiptDate,
+                receiptType,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
@@ -1084,8 +1101,8 @@ export function useQAReceiving() {
                 if (!prod) return;
 
                 const prodId = prod.product_id;
-                if (prod.category_type !== "RAW_MATERIAL" && prod.category_type !== "PACKAGING") {
-                    throw new Error(`Product ${prod.product_name || prod.product_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                if (prod.category_type !== "RAW_MATERIAL" && prod.category_type !== "PACKAGING" && prod.category_type !== "FINISHED_GOODS") {
+                    throw new Error(`Product ${prod.product_name || prod.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
                 const isPkg = prod.category_type === "PACKAGING";
 
@@ -1171,10 +1188,12 @@ export function useQAReceiving() {
         setLineItems,
         loadingLines,
         selectedBranchId,
-        setSelectedBranchId: handleDestinationBranchChange,
         receivingTicketNumber,
-        receiptMode,
-        setReceiptMode,
+        handleReceiptNumberChange,
+        receiptDate,
+        handleReceiptDateChange,
+        receiptType,
+        setReceiptType,
         processOverDelivery,
         setProcessOverDelivery: handleProcessOverDeliveryChange,
         overDeliveryLines,

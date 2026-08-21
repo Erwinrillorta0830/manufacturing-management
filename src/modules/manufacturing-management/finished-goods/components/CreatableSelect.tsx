@@ -12,13 +12,13 @@ import {
     CommandInput,
     CommandItem,
     CommandList,
-} from "@/components/ui/command";
+} from "./ui/local-command";
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
     PopoverAnchor,
-} from "@/components/ui/popover";
+} from "./ui/local-popover";
 
 export interface CreatableSelectProps {
     options: { value: string; label: string; disabled?: boolean; labelNode?: React.ReactNode; triggerNode?: React.ReactNode }[];

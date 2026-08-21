@@ -147,7 +147,7 @@ export default function MovementPayloadModal({
                     <DialogDescription className="text-xs">
                         {committedResult
                             ? `Receipt ${committedResult.commitReference} was posted successfully. Confirm the persisted records below.`
-                            : `Receipt Number will be generated on commit for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
+                            : `Receipt Number ${preview?.receivingTicketNumber ? `“${preview.receivingTicketNumber}” ` : ""}will be posted for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -160,6 +160,7 @@ export default function MovementPayloadModal({
                                     <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs border-y py-2.5 bg-muted/20 font-medium">
                                         <span><strong>PO Number:</strong> {purchaseOrderReference || "Current purchase order"}</span>
                                         <span><strong>Receipt Number:</strong> <span className="font-mono font-bold text-primary">{displayReceipt}</span></span>
+                                        <span><strong>Date of Receipt:</strong> {committedResult.receiptDate}</span>
                                         <span><strong>Status:</strong> <span className="font-bold text-emerald-700">{committedResult.status}</span></span>
                                         {committedResult.status === "Received" && (
                                             <>

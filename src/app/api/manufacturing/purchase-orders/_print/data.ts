@@ -176,12 +176,20 @@ async function loadSupplier(value: unknown) {
     const id = relationId(value, ["id", "supplier_id"]);
     const loaded = await lookupRow("suppliers", id, "*");
     const row = { ...(loaded || {}), ...(relation || {}) };
+    const supplierType = text(row.supplier_type, "");
+    const supplierCurrency = text(row.currency || row.default_currency, "").toUpperCase();
+    const isForeign = boolean(row.is_foreign)
+        || /foreign/i.test(supplierType)
+        || (supplierCurrency !== "" && supplierCurrency !== "PHP");
+    const className = (supplierType || (isForeign ? "Foreign" : "Local")).toUpperCase();
+    const currency = supplierCurrency || (isForeign ? "USD" : "PHP");
     return {
         name: text(row.supplier_name, id ? `Supplier #${id}` : "N/A"),
         address: [row.address, row.brgy, row.city, row.state_province, row.country, row.postal_code]
             .map(candidate => text(candidate, ""))
             .filter(Boolean)
-            .join(", ") || "N/A"
+            .join(", ") || "N/A",
+        vendorClass: `${className} (${currency})`
     };
 }
 
@@ -566,8 +574,10 @@ export async function loadPurchaseOrderPrintableData(input: {
         encodedAt: dateText(purchaseOrder.date_encoded),
         supplier: supplier.name,
         supplierAddress,
+        vendorClass: supplier.vendorClass,
         branch,
         paymentTerms: text(paymentTerms?.payment_name || paymentTerms?.payment_description, purchaseOrder.payment_terms ? `Payment Terms #${purchaseOrder.payment_terms}` : "N/A"),
+        deliveryTerms: text(purchaseOrder.delivery_terms),
         paymentMode: text(paymentMode?.mode_name || paymentMode?.code, purchaseOrder.payment_mode ? `Payment Mode #${purchaseOrder.payment_mode}` : "N/A"),
         paymentArrangement: paymentArrangement(purchaseOrder.payment_type),
         priceType: text(purchaseOrder.price_type),

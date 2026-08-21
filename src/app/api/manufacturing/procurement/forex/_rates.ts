@@ -20,40 +20,13 @@ export interface ForexRateHistory {
     new_rate: number;
     effective_date: string;
     changed_by_user_id: number | null;
+    changed_by_user_name?: string;
     change_reason: string;
     created_at: string;
 }
 
 // In-memory fallback cache so rate updates persist during session if the DB collection is initializing.
-export const fallbackActiveRates: ForexConfig[] = [
-    {
-        forex_id: 1,
-        currency_code: "USD",
-        currency_name: "US Dollar",
-        symbol: "$",
-        exchange_rate: 58.500000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    },
-    {
-        forex_id: 2,
-        currency_code: "EUR",
-        currency_name: "Euro",
-        symbol: "\u20ac",
-        exchange_rate: 63.200000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    },
-    {
-        forex_id: 3,
-        currency_code: "JPY",
-        currency_name: "Japanese Yen",
-        symbol: "\u00a5",
-        exchange_rate: 0.385000,
-        effective_date: "2026-08-01",
-        is_active: 1
-    }
-];
+export const fallbackActiveRates: ForexConfig[] = [];
 
 export const fallbackRateHistory: ForexRateHistory[] = [];
 
@@ -78,6 +51,7 @@ function mapForexRateHistory(item: Record<string, unknown>): ForexRateHistory {
         new_rate: Number(item.new_rate),
         effective_date: String(item.effective_date || ""),
         changed_by_user_id: item.changed_by_user_id ? Number(item.changed_by_user_id) : null,
+        changed_by_user_name: item.changed_by_user_name ? String(item.changed_by_user_name) : undefined,
         change_reason: String(item.change_reason || "Exchange rate update"),
         created_at: String(item.created_at || new Date().toISOString())
     };
@@ -126,6 +100,35 @@ export async function getForexRateHistory(): Promise<ForexRateHistory[]> {
             const historyJson = await historyRes.json();
             if (Array.isArray(historyJson.data)) {
                 rateHistory = historyJson.data.map((item: Record<string, unknown>) => mapForexRateHistory(item));
+                
+                // Fetch user names dynamically
+                const userIds = Array.from(new Set(rateHistory.map(r => r.changed_by_user_id).filter(id => id !== null))) as number[];
+                if (userIds.length > 0) {
+                    try {
+                        // Fetch from the custom user table using the limit=-1 pattern found in the codebase
+                        const userRes = await procurementDirectusFetch(`/items/user?limit=-1&fields=user_id,user_fname,user_lname`);
+                        const usersJson = await (userRes.ok ? userRes.json() : Promise.resolve({ data: [] }));
+
+                        const userMap = new Map<number, string>();
+                        if (Array.isArray(usersJson.data)) {
+                            for (const u of usersJson.data) {
+                                const id = Number(u.user_id);
+                                const first = u.user_fname || "";
+                                const last = u.user_lname || "";
+                                const name = [first, last].filter(Boolean).join(" ") || `User #${id}`;
+                                if (name) userMap.set(id, name);
+                            }
+                        }
+                        
+                        for (const r of rateHistory) {
+                            if (r.changed_by_user_id && userMap.has(r.changed_by_user_id)) {
+                                r.changed_by_user_name = userMap.get(r.changed_by_user_id);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("[Procurement Forex API] Failed to fetch user details for history logs", e);
+                    }
+                }
             }
         }
     } catch (e) {

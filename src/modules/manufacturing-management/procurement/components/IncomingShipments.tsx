@@ -65,17 +65,13 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         handleAddLineForm,
         handleRemoveLineForm,
         handleLineFormChange,
-        priceTypes,
-        priceTypeRatesMap,
+        priceControlCostsMap,
         discountTypes,
         productPerSupplierMap,
         isFinanceManager,
         totalUsdValue,
         draftSummary,
-        priceTypeResolution,
-        priceMatrixStatus,
-        priceMatrixError,
-        priceMatrixMissingProductIds,
+        priceControlStatus,
         fxRateStatus,
         fxRateError
     } = useIncomingShipmentsForm({
@@ -92,7 +88,9 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         onCreateShipment,
         onEditShipment,
         canonicalDrafting,
-        priceTypeRules
+        priceTypeRules,
+        paymentTerms,
+        paymentModes
     });
 
     useEffect(() => {
@@ -287,20 +285,13 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 handleRemoveLineForm={handleRemoveLineForm}
                 handleLineFormChange={handleLineFormChange}
                 getLineErrors={getLineErrors}
-                rawMaterials={rawMaterials}
                 supplierRawMaterials={supplierRawMaterials}
-                priceTypes={priceTypes}
-                priceTypeRatesMap={priceTypeRatesMap}
+                priceControlCostsMap={priceControlCostsMap}
                 discountTypes={discountTypes}
                 productPerSupplierMap={productPerSupplierMap}
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
-                paymentModes={paymentModes}
-                priceTypeRules={priceTypeRules}
-                priceTypeResolution={priceTypeResolution}
-                priceMatrixStatus={priceMatrixStatus}
-                priceMatrixError={priceMatrixError}
-                priceMatrixMissingProductIds={priceMatrixMissingProductIds}
+                priceControlStatus={priceControlStatus}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}

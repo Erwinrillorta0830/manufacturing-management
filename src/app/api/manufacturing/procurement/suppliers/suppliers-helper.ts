@@ -2,6 +2,11 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { 
     DirectusProductPerSupplier 
 } from "@/modules/manufacturing-management/procurement/types";
+import type {
+    LinkedProductPageResponse,
+    SupplierPageResponse,
+    SupplierStatusCounts
+} from "@/modules/manufacturing-management/procurement/types";
 import {
     PHILIPPINES_COUNTRY,
     canonicalizeSupplierCountry,
@@ -33,6 +38,12 @@ interface InputRepresentative {
 }
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
+export type SupplierForeignFilter = "all" | "local" | "foreign";
+
+const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency";
+const SUPPLIER_PAGE_SIZE_DEFAULT = 10;
+const SUPPLIER_PAGE_SIZE_MAX = 100;
+const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.unit_of_measurement.*";
 
 export class SupplierCurrencyValidationError extends Error {
     constructor(message: string) {
@@ -119,6 +130,134 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
         default_currency: resolvedCurrency || undefined,
         notes_or_comments: cleanNotesText(supplier.notes_or_comments)
     };
+}
+
+function normalizePage(value: number, fallback: number): number {
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function normalizePageSize(value: number): number {
+    if (!Number.isInteger(value) || value <= 0) return SUPPLIER_PAGE_SIZE_DEFAULT;
+    return Math.min(value, SUPPLIER_PAGE_SIZE_MAX);
+}
+
+function directusTotal(body: { meta?: { filter_count?: number | string }; data?: unknown[] }): number {
+    const total = Number(body.meta?.filter_count);
+    return Number.isFinite(total) && total >= 0 ? total : (Array.isArray(body.data) ? body.data.length : 0);
+}
+
+function withSupplierStatusFilter(params: URLSearchParams, status: SupplierStatusFilter): void {
+    if (status !== "all") {
+        params.set("filter[isActive][_eq]", status === "active" ? "true" : "false");
+    }
+}
+
+function withSupplierDirectoryFilters(
+    params: URLSearchParams,
+    search: string,
+    foreign: SupplierForeignFilter
+): void {
+    const normalizedSearch = search.trim();
+    if (normalizedSearch) {
+        params.set("filter[_or][0][supplier_name][_icontains]", normalizedSearch);
+        params.set("filter[_or][1][supplier_shortcut][_icontains]", normalizedSearch);
+        params.set("filter[_or][2][tin_number][_icontains]", normalizedSearch);
+    }
+
+    if (foreign !== "all") {
+        params.set("filter[is_foreign][_eq]", foreign === "foreign" ? "1" : "0");
+    }
+}
+
+function normalizeSupplierRows(suppliers: DirectusSup[], reps: DirectusRepresentative[]): Record<string, unknown>[] {
+    return suppliers.map((supplier) => ({
+        ...normalizeSupplier(supplier),
+        representatives: reps.filter((rep) => Number(rep.supplier_id) === Number(supplier.id))
+    }));
+}
+
+async function fetchSupplierCount(status: SupplierStatusFilter): Promise<number> {
+    const params = new URLSearchParams({ fields: "id", limit: "1", meta: "filter_count" });
+    withSupplierStatusFilter(params, status);
+    const response = await fetch(`${DIRECTUS_URL}/items/suppliers?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) throw new Error(`Failed to count suppliers: ${response.status}`);
+    return directusTotal(await response.json());
+}
+
+export async function fetchSuppliersPage(
+    status: SupplierStatusFilter = "active",
+    search = "",
+    foreign: SupplierForeignFilter = "all",
+    requestedPage = 1,
+    requestedPageSize = SUPPLIER_PAGE_SIZE_DEFAULT
+): Promise<SupplierPageResponse> {
+    const page = normalizePage(requestedPage, 1);
+    const pageSize = normalizePageSize(requestedPageSize);
+    const params = new URLSearchParams({
+        fields: SUPPLIER_FIELDS,
+        sort: "supplier_name,id",
+        limit: String(pageSize),
+        offset: String((page - 1) * pageSize),
+        meta: "filter_count"
+    });
+    withSupplierStatusFilter(params, status);
+    withSupplierDirectoryFilters(params, search, foreign);
+
+    try {
+        const [supplierResponse, counts] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/suppliers?${params.toString()}`, { headers, cache: "no-store" }),
+            Promise.all([
+                fetchSupplierCount("active"),
+                fetchSupplierCount("inactive"),
+                fetchSupplierCount("all")
+            ])
+        ]);
+
+        if (!supplierResponse.ok) throw new Error(`Failed to fetch supplier page: ${supplierResponse.status}`);
+
+        const supplierBody = await supplierResponse.json();
+        const suppliers = (Array.isArray(supplierBody?.data) ? supplierBody.data : []) as DirectusSup[];
+        const reps = suppliers.length === 0
+            ? []
+            : await (async () => {
+                const representativeParams = new URLSearchParams({
+                    fields: "id,supplier_id,first_name,last_name,middle_name,suffix,email,contact_number",
+                    limit: "-1"
+                });
+                representativeParams.set(
+                    "filter[supplier_id][_in]",
+                    suppliers.map(supplier => String(supplier.id)).join(",")
+                );
+                const representativeResponse = await fetch(
+                    `${DIRECTUS_URL}/items/suppliers_representative?${representativeParams.toString()}`,
+                    { headers, cache: "no-store" }
+                );
+                if (!representativeResponse.ok) return [];
+                const representativeBody = await representativeResponse.json();
+                return (Array.isArray(representativeBody?.data) ? representativeBody.data : []) as DirectusRepresentative[];
+            })();
+        const total = directusTotal(supplierBody);
+        const pagination = {
+            page,
+            pageSize,
+            total,
+            totalPages: Math.max(1, Math.ceil(total / pageSize))
+        };
+        const statusCounts: SupplierStatusCounts = {
+            active: counts[0],
+            inactive: counts[1],
+            all: counts[2]
+        };
+
+        return {
+            data: normalizeSupplierRows(suppliers, reps) as unknown as SupplierPageResponse["data"],
+            pagination,
+            counts: statusCounts
+        };
+    } catch (e) {
+        console.error("[Manufacturing Directus API] Error fetching supplier page:", e);
+        throw e;
+    }
 }
 
 export async function fetchSuppliers(status: SupplierStatusFilter = "active"): Promise<unknown[]> {
@@ -331,7 +470,7 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
 
 export async function fetchProductsBySupplier(supplierId: number): Promise<DirectusProductPerSupplier[]> {
     try {
-        const url = `${DIRECTUS_URL}/items/product_per_supplier?filter[supplier_id][_eq]=${supplierId}&fields=id,supplier_id,discount_type.*,product_id.*,product_id.unit_of_measurement.*&limit=-1`;
+        const url = `${DIRECTUS_URL}/items/product_per_supplier?filter[supplier_id][_eq]=${supplierId}&fields=${encodeURIComponent(PRODUCT_FIELDS)}&limit=-1`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) throw new Error("Failed to fetch products for supplier");
         const json = await res.json();
@@ -339,6 +478,50 @@ export async function fetchProductsBySupplier(supplierId: number): Promise<Direc
     } catch (e) {
         console.error("[Manufacturing Directus API] Error fetching products for supplier:", e);
         return [];
+    }
+}
+
+export async function fetchProductsBySupplierPage(
+    supplierId: number,
+    requestedPage = 1,
+    requestedPageSize = SUPPLIER_PAGE_SIZE_DEFAULT,
+    search = ""
+): Promise<LinkedProductPageResponse> {
+    const page = normalizePage(requestedPage, 1);
+    const pageSize = normalizePageSize(requestedPageSize);
+    const normalizedSearch = search.trim();
+    const params = new URLSearchParams({
+        "filter[supplier_id][_eq]": String(supplierId),
+        fields: PRODUCT_FIELDS,
+        sort: "id",
+        limit: String(pageSize),
+        offset: String((page - 1) * pageSize),
+        meta: "filter_count"
+    });
+    if (normalizedSearch) {
+        params.set("filter[_or][0][product_id][product_name][_icontains]", normalizedSearch);
+        params.set("filter[_or][1][product_id][product_code][_icontains]", normalizedSearch);
+    }
+
+    try {
+        const response = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?${params.toString()}`, { headers, cache: "no-store" });
+        if (!response.ok) throw new Error(`Failed to fetch linked product page: ${response.status}`);
+        const body = await response.json();
+        const data = Array.isArray(body?.data) ? body.data : [];
+        const total = directusTotal(body);
+
+        return {
+            data,
+            pagination: {
+                page,
+                pageSize,
+                total,
+                totalPages: Math.max(1, Math.ceil(total / pageSize))
+            }
+        };
+    } catch (e) {
+        console.error("[Manufacturing Directus API] Error fetching linked product page:", e);
+        throw e;
     }
 }
 

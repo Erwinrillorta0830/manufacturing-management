@@ -35,6 +35,7 @@ import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from "../../procurement/_category-type";
 import { forceReceivedIntakeMessage } from "../_force-received";
+import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -161,7 +162,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptType, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -175,7 +176,7 @@ export async function POST(request: Request) {
             })
             : null;
         const replacementFlow = Boolean(replacementContext);
-        const previewSourceDocumentNo = "Generated on commit";
+        const previewSourceDocumentNo = receiptNumber;
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
             throw new ReceivingPreviewError("Duplicate purchase-order lines are not allowed.");
@@ -225,13 +226,12 @@ export async function POST(request: Request) {
                 ...normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId)
                     .map(allocation => allocation.storageLotId)
             ]))];
-        const [headerResponse, lineResponse, lotResponse, lotInventoryResponse, receivingResponseWithLine, destinationBranch, movementTypeResponse] = await Promise.all([
-            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,workflow_revision,force_received_at`),
+        const [headerResponse, lineResponse, lotResponse, lotInventoryResponse, receivingResponseWithLine, movementTypeResponse] = await Promise.all([
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`),
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
             procurementDirectusFetch(`/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,lot_name,max_batch_capacity&limit=${requestedLotIds.length}`),
             procurementDirectusFetch(`/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`),
             procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`),
-            loadBranch(destinationBranchId),
             procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1")
         ]);
         let receivingResponse = receivingResponseWithLine;
@@ -244,6 +244,14 @@ export async function POST(request: Request) {
         }
 
         const header = (await headerResponse.json()).data as Record<string, unknown>;
+        const purchaseOrderBranchId = resolvePurchaseOrderBranchId(header);
+        if (!purchaseOrderBranchId) {
+            throw new ReceivingPreviewError("The Purchase Order does not have a valid receiving branch.", 409);
+        }
+        if (purchaseOrderBranchId !== destinationBranchId) {
+            throw new ReceivingPreviewError("Receiving Branch must match the Purchase Order branch.", 409);
+        }
+        const destinationBranch = await loadBranch(purchaseOrderBranchId);
         const forceClosedMessage = forceReceivedIntakeMessage(header.force_received_at);
         if (forceClosedMessage) throw new ReceivingPreviewError(forceClosedMessage, 409);
         const statusId = positiveInteger(header.inventory_status, "transaction_status_id") || Number(header.inventory_status);
@@ -289,7 +297,7 @@ export async function POST(request: Request) {
             }
             const categoryType = categoryTypes.get(line.productId);
             if (!categoryType) {
-                throw new ReceivingPreviewError(`Product ${line.productId} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                throw new ReceivingPreviewError(`Product ${line.productId} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
             }
             if (line.isPackaging !== (categoryType === "PACKAGING")) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} Category_Type does not match the product master classification.`);
@@ -428,10 +436,10 @@ export async function POST(request: Request) {
                 rejectedQuantity: previous.rejected + (current?.rejectedQuantity || 0)
             };
         }));
-        if (!replacementFlow && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+        if (!replacementFlow && receiptType === "full" && receivingStatus.status === "Partially Received") {
             throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.");
         }
-        if (!replacementFlow && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+        if (!replacementFlow && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
             throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.");
         }
 
@@ -559,8 +567,9 @@ export async function POST(request: Request) {
         return NextResponse.json({
             data: {
                 shipmentId,
-                receivingTicketNumber: null,
-                receiptMode,
+                receivingTicketNumber: receiptNumber,
+                receiptDate,
+                receiptType,
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,
                 workflowRevision: Number(header.workflow_revision || 0),
