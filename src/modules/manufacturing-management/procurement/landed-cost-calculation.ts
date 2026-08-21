@@ -1,7 +1,7 @@
 import { calculatePackagingWeightShares } from "./packaging-weight";
 
 export type LandedCostAllocationRule = "Value" | "Weight" | "Volume" | "Hybrid";
-export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING";
+export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
 
 export interface LandedCostCalculationLine {
     key: number;
@@ -73,6 +73,11 @@ export function calculateLandedCost(
     }
 
     const normalizedFee = finiteNonNegative(totalLandedFee);
+    for (const line of lines) {
+        if (line.category_type !== "RAW_MATERIAL" && line.category_type !== "PACKAGING" && line.category_type !== "FINISHED_GOODS") {
+            throw new Error(`Line ${line.key} has an unsupported purchase-order Category_Type.`);
+        }
+    }
     const normalizedLines = lines.map(line => ({
         ...line,
         quantity: finiteNonNegative(line.quantity),
@@ -86,7 +91,7 @@ export function calculateLandedCost(
         0
     );
     const rawMaterialValue = normalizedLines
-        .filter(line => line.category_type === "RAW_MATERIAL")
+        .filter(line => line.category_type !== "PACKAGING")
         .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
     const packagingValue = normalizedLines
         .filter(line => line.category_type === "PACKAGING")
@@ -106,7 +111,7 @@ export function calculateLandedCost(
             rmFeePool = normalizedFee * rmValueShare;
             pkgFeePool = normalizedFee * pkgValueShare;
         } else {
-            const rmCount = normalizedLines.filter(line => line.category_type === "RAW_MATERIAL").length;
+            const rmCount = normalizedLines.filter(line => line.category_type !== "PACKAGING").length;
             const pkgCount = normalizedLines.filter(line => line.category_type === "PACKAGING").length;
             const totalCount = Math.max(1, rmCount + pkgCount);
             rmFeePool = normalizedFee * rmCount / totalCount;
@@ -118,7 +123,7 @@ export function calculateLandedCost(
     const weightShares = new Map<number, number>();
 
     if (rule === "Hybrid") {
-        const rawLines = normalizedLines.filter(line => line.category_type === "RAW_MATERIAL");
+        const rawLines = normalizedLines.filter(line => line.category_type !== "PACKAGING");
         const packageLines = normalizedLines.filter(line => line.category_type === "PACKAGING");
         const totalRawQuantity = rawLines.reduce((sum, line) => sum + line.quantity, 0);
         for (const line of rawLines) {

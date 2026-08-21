@@ -2,8 +2,8 @@ import React from "react";
 import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
 import { normalizeProductRelationId } from "../../product-relation";
 
-export type PurchaseOrderMaterialType = "raw_material" | "packaging";
-export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING";
+export type PurchaseOrderMaterialType = "raw_material" | "packaging" | "finished_goods";
+export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
 
 export type FxRateStatus = "idle" | "loading" | "ready" | "error";
 
@@ -13,7 +13,8 @@ export const PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS: Array<{
     productTypeId: number;
 }> = [
     { value: "raw_material", label: "Raw Material", productTypeId: 389 },
-    { value: "packaging", label: "Packaging Item", productTypeId: 390 }
+    { value: "packaging", label: "Packaging Item", productTypeId: 390 },
+    { value: "finished_goods", label: "Finished Goods", productTypeId: 388 }
 ];
 
 export function purchaseOrderMaterialTypeFromProductType(
@@ -28,6 +29,7 @@ export function purchaseOrderCategoryTypeFromMaterialType(
 ): PurchaseOrderCategoryType | "" {
     if (materialType === "raw_material") return "RAW_MATERIAL";
     if (materialType === "packaging") return "PACKAGING";
+    if (materialType === "finished_goods") return "FINISHED_GOODS";
     return "";
 }
 
@@ -36,6 +38,7 @@ export function purchaseOrderMaterialTypeFromCategoryType(
 ): PurchaseOrderMaterialType | "" {
     if (categoryType === "RAW_MATERIAL") return "raw_material";
     if (categoryType === "PACKAGING") return "packaging";
+    if (categoryType === "FINISHED_GOODS") return "finished_goods";
     return "";
 }
 
@@ -87,6 +90,7 @@ export interface ShipmentFormState {
     payment_type: number | null;
     payment_mode: number | null;
     payment_terms?: number | null;
+    delivery_terms: string;
     price_type: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;

@@ -21,7 +21,7 @@ export interface POLineItem {
     };
     product_name?: string;
     product_category?: string;
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     received_quantity: number;
     unit_price: number;
     gross_weight?: number | null;

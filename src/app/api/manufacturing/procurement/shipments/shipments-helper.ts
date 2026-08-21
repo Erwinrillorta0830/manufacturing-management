@@ -90,6 +90,7 @@ interface DirectusPO {
     payment_type?: number | null;
     payment_mode?: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     exchange_rate?: number | string | null;
     total_foreign_currency?: number | string | null;
@@ -122,6 +123,8 @@ interface DirectusSupplier {
     currency?: string;
     default_currency?: string;
     country?: string;
+    payment_terms?: string | null;
+    delivery_terms?: string | null;
     notes_or_comments?: string;
 }
 
@@ -369,6 +372,7 @@ function mapPurchaseOrder(
         payment_mode: po.payment_mode || null,
         payment_mode_name: po.payment_mode ? paymentModes.get(Number(po.payment_mode))?.mode_name || null : null,
         payment_terms: po.payment_terms || null,
+        delivery_terms: po.delivery_terms || null,
         price_type: po.price_type || null,
         currency_code: po.currency_code || "PHP",
         workflow_revision: Number(po.workflow_revision || 0),
@@ -407,15 +411,30 @@ async function fetchPaymentModeMap(ids: readonly number[]): Promise<Map<number, 
     }
 }
 
+async function fetchItemsWithDeliveryTermsFallback(collection: string, params: URLSearchParams): Promise<Response> {
+    const url = `${DIRECTUS_URL}/items/${collection}?${params.toString()}`;
+    const response = await fetch(url, { headers, cache: "no-store" });
+    if (response.ok || response.status !== 403) return response;
+
+    const requestedFields = (params.get("fields") || "").split(",").filter(Boolean);
+    const fallbackFields = requestedFields.filter(field => field !== "delivery_terms");
+    if (fallbackFields.length === requestedFields.length) return response;
+
+    console.warn(`[Manufacturing Directus API] ${collection} denied delivery_terms; retrying without the optional field.`);
+    const fallbackParams = new URLSearchParams(params);
+    fallbackParams.set("fields", fallbackFields.join(","));
+    return fetch(`${DIRECTUS_URL}/items/${collection}?${fallbackParams.toString()}`, { headers, cache: "no-store" });
+}
+
 async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, DirectusSupplier>> {
     const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
     if (uniqueIds.length === 0) return new Map();
     const params = new URLSearchParams({
-        fields: "id,supplier_name,is_foreign,currency,country,notes_or_comments",
+        fields: "id,supplier_name,is_foreign,currency,country,payment_terms,delivery_terms,notes_or_comments",
         limit: String(uniqueIds.length),
         filter: JSON.stringify({ id: { _in: uniqueIds } })
     });
-    const response = await fetch(`${DIRECTUS_URL}/items/suppliers?${params.toString()}`, { headers, cache: "no-store" });
+    const response = await fetchItemsWithDeliveryTermsFallback("suppliers", params);
     if (!response.ok) throw new Error(`Failed to load purchase-order suppliers (${response.status}).`);
     const rows = ((await response.json()).data || []) as DirectusSupplier[];
     return new Map(rows.map(row => [Number(row.id), row]));
@@ -545,7 +564,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
+        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -553,7 +572,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     });
     if (Object.keys(filter).length > 0) params.set("filter", JSON.stringify(filter));
 
-    const res = await fetch(`${DIRECTUS_URL}/items/purchase_order?${params.toString()}`, { headers, cache: "no-store" });
+    const res = await fetchItemsWithDeliveryTermsFallback("purchase_order", params);
     if (!res.ok) throw new Error(`Failed to load purchase orders (${res.status}).`);
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
@@ -701,7 +720,7 @@ export async function fetchShipmentLineItems(
                 throw new ProductCategoryTypeValidationError(
                     400,
                     "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                    `Product ${rawProdId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                    `Product ${rawProdId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
                     { productId: Number(rawProdId), lineId }
                 );
             }
@@ -930,9 +949,9 @@ export async function createIncomingShipment(
         const calculatedTotals = calculatePurchaseOrderTotals(lineItems.map(item => ({
             quantity: Number(item.quantity_ordered || 0),
             unitPrice: item.base_unit_cost_php || 0,
-            discountMode: item.discount_mode || "Percentage",
+            discountMode: "Percentage",
             discountPercent: Number(item.discount_percent || 0),
-            discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
+            discountAmount: 0,
             vatPercent: Number(item.vat_percent || 0),
             withholdingPercent: Number(item.withholding_percent || 0)
         })), 1);
@@ -947,6 +966,7 @@ export async function createIncomingShipment(
             receiving_type: 1,
             payment_type: extendedData.payment_type || null,
             payment_mode: extendedData.payment_mode,
+            delivery_terms: extendedData.delivery_terms || null,
             price_type: "Internal",
             date_encoded: new Date().toISOString(),
             date: await getTodayDateString(),
@@ -998,11 +1018,12 @@ export async function createIncomingShipment(
                 body: JSON.stringify(buildPurchaseOrderProductPayload({
                     purchaseOrderId: poId,
                     productId: typeof item.product_id === "object" ? item.product_id.product_id : item.product_id,
+                    categoryType: item.category_type!,
                     quantity: qty,
                     unitPrice: price,
-                    discountMode: item.discount_mode || "Percentage",
+                    discountMode: "Percentage",
                     discountPercent: Number(item.discount_percent || 0),
-                    discountAmount: item.discount_amount ?? item.discount_amount_foreign ?? 0,
+                    discountAmount: 0,
                     vatPercent: Number(item.vat_percent || 0),
                     withholdingPercent: Number(item.withholding_percent || 0),
                     exchangeRate: 1,

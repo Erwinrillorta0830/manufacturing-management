@@ -506,7 +506,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             const product = productMap.get(productId);
             if (!product) throw new ReceivingError(`Product ${productId} does not exist.`, 400);
             const categoryType = categoryTypes.get(productId);
-            if (!categoryType) throw new ReceivingError(`Product ${productId} has no valid RAW_MATERIAL or PACKAGING Category_Type.`, 400);
+            if (!categoryType) throw new ReceivingError(`Product ${productId} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`, 400);
             let weightBreakdown;
             try {
                 weightBreakdown = resolveProductWeightBreakdown(product, {

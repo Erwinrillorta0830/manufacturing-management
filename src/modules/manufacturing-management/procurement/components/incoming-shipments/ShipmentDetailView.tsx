@@ -5,6 +5,7 @@ import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBa
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
 import { isLandedCostPostingEligible } from "../../landed-cost-eligibility";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import { calculatePercentageDiscount } from "../../discount-calculation";
 
 export interface ShipmentDetailViewProps {
     loading: boolean;
@@ -131,18 +132,22 @@ export function ShipmentDetailView({
                                         })()}
                                     </strong>
                                 </span>
-                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
-                                <span>
-                                    Payment Type:{" "}
-                                    <strong className="text-foreground font-bold">
-                                        {(() => {
-                                            const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
-                                            const mode = paymentModes.find(item => item.id === Number(payMode));
-                                            return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
-                                        })()}
-                                    </strong>
-                                </span>
-                                <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                {!canonicalDrafting && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span>
+                                            Payment Type:{" "}
+                                            <strong className="text-foreground font-bold">
+                                                {(() => {
+                                                    const payMode = (activeShipment as IncomingShipment & { payment_mode?: number | null }).payment_mode;
+                                                    const mode = paymentModes.find(item => item.id === Number(payMode));
+                                                    return activeShipment.payment_mode_name || mode?.mode_name || (payMode ? "Configured payment type unavailable" : "Not specified (legacy PO)");
+                                                })()}
+                                            </strong>
+                                        </span>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                    </>
+                                )}
                                 <span>
                                     Payment Status:{" "}
                                     <strong className="text-foreground font-bold">{paymentStatusLabel(activeShipment.payment_status)}</strong>
@@ -196,11 +201,22 @@ export function ShipmentDetailView({
                                 </span>
                                 <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
                                 <span>
-                                    Price Type:{" "}
+                                    Delivery Terms:{" "}
                                     <strong className="text-foreground font-bold">
-                                        {(activeShipment as IncomingShipment & { price_type?: string | null }).price_type || "Standard"}
+                                        {activeShipment.delivery_terms || "N/A"}
                                     </strong>
                                 </span>
+                                {!canonicalDrafting && (
+                                    <>
+                                        <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
+                                        <span>
+                                            Price Type:{" "}
+                                            <strong className="text-foreground font-bold">
+                                                {(activeShipment as IncomingShipment & { price_type?: string | null }).price_type || "Standard"}
+                                            </strong>
+                                        </span>
+                                    </>
+                                )}
                             </div>
                             {/* Status Progress Stepper (Read-Only) */}
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
@@ -412,10 +428,15 @@ export function ShipmentDetailView({
                                                     const currency = activeShipment?.currency_code || "PHP";
                                                     const discountMode = line.discount_mode || "Percentage";
                                                     const transactionUnitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
-                                                    const gross = Number(line.quantity_ordered || 0) * transactionUnitPrice;
+                                                    const quantity = Number(line.quantity_ordered || 0);
+                                                    const percentageDiscount = calculatePercentageDiscount(
+                                                        quantity,
+                                                        transactionUnitPrice,
+                                                        Number(line.discount_percent || 0)
+                                                    );
                                                     const discountAmount = discountMode === "Fixed Amount"
                                                         ? Number(line.discount_amount_foreign || 0)
-                                                        : gross * Number(line.discount_percent || 0) / 100;
+                                                        : Number(percentageDiscount.discountAmount);
                                                     return (
                                                 <tr key={line.line_id} className="hover:bg-muted/20">
                                                     <td className="p-3">
@@ -438,9 +459,12 @@ export function ShipmentDetailView({
                                                         {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}
                                                     </td>
                                                     <td className="p-3 text-right font-mono text-[11px]">
-                                                        {discountMode === "Fixed Amount"
-                                                            ? formatMoney(discountAmount, currency)
-                                                            : `${Number(line.discount_percent || 0).toFixed(2)}%`}
+                                                        {formatMoney(discountAmount, currency)}
+                                                        {discountMode === "Percentage" && (
+                                                            <span className="ml-1 text-[10px] text-muted-foreground">
+                                                                ({Number(line.discount_percent || 0).toFixed(2)}%)
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="p-3 text-right font-mono text-[11px] text-muted-foreground">
                                                         +{formatMoney(line.allocated_expense_php || 0)}

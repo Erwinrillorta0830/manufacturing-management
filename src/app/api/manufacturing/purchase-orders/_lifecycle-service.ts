@@ -15,7 +15,6 @@ import { fetchCurrentPurchaseOrderRejectionStage } from "./_rejection-guard";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import {
     assertEnteredPricesForMissingPriceControl,
-    buildPriceControlWarning,
     PurchaseOrderPriceTypeError,
     resolvePurchaseOrderPriceType
 } from "./_price-type";
@@ -53,6 +52,7 @@ interface PurchaseOrderRecord {
     payment_type?: number | null;
     payment_mode?: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     currency_code?: string | null;
     exchange_rate?: number | string | null;
@@ -288,9 +288,9 @@ function legacyLineAmounts(line: RevisionCommand["lineItems"][number], exchangeR
     return {
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
-        discountMode: line.discount_mode || "Percentage",
+        discountMode: "Percentage" as const,
         discountPercent: Number(line.discount_percent || 0),
-        discountAmount: line.discount_amount || 0,
+        discountAmount: 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate
@@ -306,11 +306,12 @@ function linePayload(
     return buildPurchaseOrderProductPayload({
         purchaseOrderId,
         productId: Number(line.product_id),
+        categoryType: line.category_type,
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
-        discountMode: line.discount_mode || "Percentage",
+        discountMode: "Percentage",
         discountPercent: Number(line.discount_percent || 0),
-        discountAmount: line.discount_amount || 0,
+        discountAmount: 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate,
@@ -346,6 +347,7 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         payment_type: order.payment_type || null,
         payment_mode: order.payment_mode || null,
         payment_terms: order.payment_terms || null,
+        delivery_terms: order.delivery_terms || null,
         price_type: order.price_type || null,
         currency_code: order.currency_code || "PHP",
         exchange_rate: order.exchange_rate || 1,
@@ -506,6 +508,10 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         throw new PurchaseOrderLifecycleError("Currency and exchange rate are locked after purchase-order submission.", 409);
     }
     await validateRevisionReferences(command);
+    const deliveryTerms = command.shipmentData.delivery_terms?.trim() || order.delivery_terms?.trim() || "";
+    if (!deliveryTerms) {
+        throw new PurchaseOrderLifecycleError("Delivery Terms are required for purchase-order revisions.", 400);
+    }
     let resolvedPriceType;
     try {
         resolvedPriceType = await resolvePurchaseOrderPriceType(command.lineItems.map(line => Number(line.product_id)));
@@ -561,6 +567,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         payment_type: command.shipmentData.payment_type || null,
         payment_mode: command.shipmentData.payment_mode,
         payment_terms: command.shipmentData.payment_terms ?? order.payment_terms ?? null,
+        delivery_terms: deliveryTerms,
         price_type: resolvedPriceType.priceTypeName,
         currency_code: currencyCode,
         exchange_rate: exchangeRate,
@@ -620,8 +627,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         success: true,
         purchaseOrderId: id,
         status: "For Approval",
-        workflowRevision: nextRevision,
-        priceControlWarning: buildPriceControlWarning(resolvedPriceType)
+        workflowRevision: nextRevision
     };
 }
 

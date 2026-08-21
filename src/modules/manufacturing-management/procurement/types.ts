@@ -98,6 +98,7 @@ export interface IncomingShipment {
     branch_id?: number | null;
     payment_type?: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
@@ -132,7 +133,7 @@ export interface ShipmentLineItem {
             unit_name: string;
         };
     };
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     quantity_ordered?: number;
     quantity_received?: number | null;
     base_unit_cost_php: number | string;
@@ -446,6 +447,7 @@ export interface DirectusShipment {
     payment_status?: number | null;
     payment_type?: number | null;
     payment_mode?: number | null;
+    delivery_terms?: string | null;
     created_at?: string;
 }
 
@@ -539,6 +541,7 @@ export interface ShipmentData {
     payment_type: number | null;
     payment_mode: number | null;
     payment_terms?: number | null;
+    delivery_terms?: string | null;
     price_type: string | null;
 }
 

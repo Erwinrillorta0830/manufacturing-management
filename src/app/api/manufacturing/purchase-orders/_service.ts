@@ -18,7 +18,6 @@ import { validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPaymentModeError } from "./_payment-modes";
 import {
     assertEnteredPricesForMissingPriceControl,
-    buildPriceControlWarning,
     fetchPurchaseOrderPriceTypeRules,
     PurchaseOrderPriceTypeError,
     resolvePurchaseOrderPriceType
@@ -361,6 +360,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         payment_type: order.paymentArrangementId,
         payment_mode: order.paymentModeId,
         price_type: resolvedPriceType.priceTypeName,
+        delivery_terms: order.deliveryTerms,
         date_encoded: now.toISOString(),
         date: await getTodayDateString(),
         time: now.toTimeString().split(" ")[0],
@@ -393,6 +393,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
                 body: JSON.stringify(buildPurchaseOrderProductPayload({
                     purchaseOrderId: header.purchase_order_id,
                     productId: line.productId,
+                    categoryType: line.categoryType,
                     quantity: line.quantity,
                     unitPrice: line.unitPrice,
                     discountMode: line.discountMode,
@@ -433,7 +434,6 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         exchangeRate,
         priceType: resolvedPriceType.priceTypeName,
         priceTypeId: resolvedPriceType.priceTypeId,
-        priceControlWarning: buildPriceControlWarning(resolvedPriceType),
         totals: {
             grossPhp: totals.grossPhp,
             discountPhp: totals.discountPhp,
@@ -447,7 +447,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
 
 export async function fetchPurchaseOrderCatalog() {
     const [suppliers, branches, jobOrders, paymentTerms, paymentModes, priceTypeRules] = await Promise.all([
-        directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name,is_foreign,currency,country&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
+        directusData<unknown[]>("/items/suppliers?filter[isActive][_eq]=1&filter[nonBuy][_eq]=0&fields=id,supplier_name,is_foreign,currency,country,payment_terms,delivery_terms&sort=supplier_name&limit=-1", "Unable to load eligible suppliers."),
         directusData<unknown[]>("/items/branches?filter[isActive][_eq]=1&fields=id,branch_name,branch_code&sort=branch_name&limit=200", "Unable to load branches."),
         directusData<unknown[]>("/items/manufacturing_job_orders?fields=job_order_id,job_order_no,status&sort=-job_order_id&limit=250", "Unable to load job orders."),
         directusData<unknown[]>("/items/payment_terms?fields=id,payment_name,payment_days,payment_description&sort=payment_name&limit=-1", "Unable to load payment terms."),

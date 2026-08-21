@@ -11,6 +11,7 @@ export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
 export type QaParameterType = typeof QA_PARAMETER_TYPES[number];
 
 import { compareDecimals, DecimalValue, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import { calculatePercentageDiscount } from "@/modules/manufacturing-management/procurement/discount-calculation";
 
 export type CurrencyCode = string;
 export type QaDisposition = "Passed" | "Partially Accepted" | "Rejected";
@@ -53,35 +54,23 @@ export class PurchaseOrderDiscountError extends Error {
 
 export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchangeRate: DecimalInput) {
     const discountMode = line.discountMode || "Percentage";
-    if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") {
-        throw new PurchaseOrderDiscountError("Discount Type must be Percentage or Fixed Amount.", "DISCOUNT_MODE_INVALID", {
+    if (discountMode !== "Percentage") {
+        throw new PurchaseOrderDiscountError("New purchase orders must use percentage discounts.", "DISCOUNT_MODE_INVALID", {
             discountMode
         });
     }
 
-    const grossForeign = DecimalValue.from(line.quantity).multiply(line.unitPrice).toFixed(2);
+    const percentageDiscount = calculatePercentageDiscount(line.quantity, line.unitPrice, line.discountPercent ?? 0);
+    const grossForeign = percentageDiscount.grossAmount;
     const discountPercent = DecimalValue.from(line.discountPercent ?? 0);
-    const discountAmount = DecimalValue.from(line.discountAmount ?? 0);
-    if (discountMode === "Percentage") {
-        if (discountPercent.compare(0) < 0 || discountPercent.compare(100) > 0) {
-            throw new PurchaseOrderDiscountError("Percentage discounts must be between 0 and 100.", "DISCOUNT_PERCENT_INVALID", {
-                discountPercent: discountPercent.toFixed(2),
-                grossForeign
-            });
-        }
-    } else if (discountAmount.compare(0) < 0) {
-        throw new PurchaseOrderDiscountError("Fixed discounts cannot be negative.", "DISCOUNT_AMOUNT_INVALID", {
-            discountAmount: discountAmount.toFixed(2),
+    if (discountPercent.compare(0) < 0 || discountPercent.compare(100) > 0) {
+        throw new PurchaseOrderDiscountError("Percentage discounts must be between 0 and 100.", "DISCOUNT_PERCENT_INVALID", {
+            discountPercent: discountPercent.toFixed(2),
             grossForeign
         });
     }
 
-    const discountForeign = discountMode === "Fixed Amount"
-        ? discountAmount.toFixed(2)
-        : DecimalValue.from(grossForeign)
-            .multiply(discountPercent)
-            .divideRounded(100, 2)
-            .toFixed(2);
+    const discountForeign = percentageDiscount.discountAmount;
     if (DecimalValue.from(discountForeign).compare(grossForeign) > 0) {
         throw new PurchaseOrderDiscountError("Discount Amount cannot exceed Gross Amount.", "DISCOUNT_EXCEEDS_GROSS", {
             discountMode,
@@ -149,6 +138,7 @@ export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyL
 export interface PurchaseOrderProductPayloadInput extends PurchaseOrderMoneyLine {
     purchaseOrderId: number;
     productId: number;
+    categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     exchangeRate: DecimalInput;
     branchId?: number | null;
     purchaseIntent?: PurchaseIntent;
@@ -171,11 +161,12 @@ export function buildPurchaseOrderProductPayload(
     return {
         purchase_order_id: input.purchaseOrderId,
         product_id: input.productId,
+        category_type: input.categoryType,
         ordered_quantity: quantity,
         unit_price: unitPricePhp,
         approved_price: unitPricePhp,
         discount_type: input.discountType ?? null,
-        discount_mode: input.discountMode || "Percentage",
+        discount_mode: "Percentage",
         gross_amount: amount.grossPhp,
         discounted_price: DecimalValue.from(discountedSubtotalPhp).divideRounded(quantity, 2).toFixed(2),
         discounted_amount: amount.discountPhp,
@@ -191,7 +182,7 @@ export function buildPurchaseOrderProductPayload(
         gross_amount_foreign: amount.grossForeign,
         discount_amount_foreign: amount.discountForeign,
         net_amount_foreign: amount.netForeign,
-        discount_percent: input.discountMode === "Fixed Amount" ? 0 : input.discountPercent ?? 0,
+        discount_percent: input.discountPercent ?? 0,
         vat_percent: input.vatPercent,
         withholding_percent: input.withholdingPercent
     };

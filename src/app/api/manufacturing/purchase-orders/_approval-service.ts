@@ -34,6 +34,7 @@ interface ApprovalOrder {
     branch_id?: number | null;
     payment_type?: number | null;
     payment_mode?: number | null;
+    delivery_terms?: string | null;
     price_type?: string | null;
     remark?: string | null;
     encoder_id?: number | null;
@@ -81,7 +82,7 @@ interface ApprovalActorRow {
 }
 
 const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
+    "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
     "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
     "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
     "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval"

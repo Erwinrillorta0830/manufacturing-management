@@ -85,7 +85,7 @@ export interface LandedCostInputLine {
     key: number;
     productId: number;
     productName: string;
-    categoryType: "RAW_MATERIAL" | "PACKAGING";
+    categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     quantity: number;
     baseUnitCostPhp: number;
     lineGrossWeightKg: number;
@@ -289,11 +289,11 @@ export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<L
         const productId = relationId(line.product_id, "product_id");
         if (!key || !productId) continue;
         const categoryType = categoryTypes.get(productId);
-        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING") {
+        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING" && categoryType !== "FINISHED_GOODS") {
             throw new ProductCategoryTypeValidationError(
                 400,
                 "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                `Product ${productId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                `Product ${productId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
                 { productId, lineId: key }
             );
         }

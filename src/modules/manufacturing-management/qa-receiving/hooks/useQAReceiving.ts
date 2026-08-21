@@ -371,8 +371,8 @@ export function useQAReceiving() {
             // Prepopulate form states
             const rowsInit: Record<number, InspectionRow> = {};
             lines.forEach(l => {
-                if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING") {
-                    throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING" && l.category_type !== "FINISHED_GOODS") {
+                    throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
                 const latestReceipt = !isReplacement && (isReceived || isPartiallyReceived) ? l.latest_receipt : null;
                 const latestStorageLotId = latestReceipt?.storage_lot_id ?? l.lot_id ?? null;
@@ -1084,8 +1084,8 @@ export function useQAReceiving() {
                 if (!prod) return;
 
                 const prodId = prod.product_id;
-                if (prod.category_type !== "RAW_MATERIAL" && prod.category_type !== "PACKAGING") {
-                    throw new Error(`Product ${prod.product_name || prod.product_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                if (prod.category_type !== "RAW_MATERIAL" && prod.category_type !== "PACKAGING" && prod.category_type !== "FINISHED_GOODS") {
+                    throw new Error(`Product ${prod.product_name || prod.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
                 const isPkg = prod.category_type === "PACKAGING";
 

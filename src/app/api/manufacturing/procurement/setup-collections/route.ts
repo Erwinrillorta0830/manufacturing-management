@@ -44,6 +44,21 @@ const NEW_COLLECTIONS = [
     }
 ];
 
+const DELIVERY_TERMS_FIELDS = [
+    {
+        collection: "purchase_order",
+        field: "delivery_terms",
+        type: "string",
+        schema: { is_nullable: true, max_length: 255 }
+    },
+    {
+        collection: "suppliers",
+        field: "delivery_terms",
+        type: "string",
+        schema: { is_nullable: true, max_length: 255 }
+    }
+];
+
 export async function GET() {
     const results = [];
 
@@ -89,6 +104,67 @@ export async function GET() {
             results.push({ field: `suppliers.${field}`, status: "Directus metadata synchronized" });
         } catch {
             results.push({ field: `suppliers.${field}`, status: "Failed to sync metadata" });
+        }
+    }
+
+    for (const definition of DELIVERY_TERMS_FIELDS) {
+        try {
+            const fieldUrl = `${DIRECTUS_URL}/fields/${definition.collection}/${definition.field}`;
+            const existing = await fetch(fieldUrl, { headers, cache: "no-store" });
+            if (existing.ok) {
+                const patchRes = await fetch(fieldUrl, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        meta: {
+                            collection: definition.collection,
+                            field: definition.field,
+                            interface: "input",
+                            readonly: false,
+                            hidden: false
+                        }
+                    })
+                });
+                results.push({
+                    field: `${definition.collection}.${definition.field}`,
+                    status: patchRes.ok ? "Directus metadata synchronized" : "Failed to sync Directus metadata"
+                });
+                continue;
+            }
+
+            if (existing.status !== 404) {
+                results.push({
+                    field: `${definition.collection}.${definition.field}`,
+                    status: `Unable to inspect field (${existing.status})`
+                });
+                continue;
+            }
+
+            const createRes = await fetch(`${DIRECTUS_URL}/fields/${definition.collection}`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    field: definition.field,
+                    type: definition.type,
+                    schema: definition.schema,
+                    meta: {
+                        collection: definition.collection,
+                        field: definition.field,
+                        interface: "input",
+                        readonly: false,
+                        hidden: false
+                    }
+                })
+            });
+            results.push({
+                field: `${definition.collection}.${definition.field}`,
+                status: createRes.ok ? "Successfully registered in Directus" : "Failed to register in Directus"
+            });
+        } catch {
+            results.push({
+                field: `${definition.collection}.${definition.field}`,
+                status: "Failed to synchronize Directus field"
+            });
         }
     }
 

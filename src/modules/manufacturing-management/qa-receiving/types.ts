@@ -54,14 +54,14 @@ export interface Product {
     unit_of_measurement_count?: number | null;
     parent_id?: number | null;
     product_image?: string | null;
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
 }
 
 export interface ShipmentLineItem {
     line_id: number;
     shipment_id: unknown;
     product_id: Product; // Can be object when queried with fields relation
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     quantity_ordered: number;
     quantity_received: number;
     quantity_rejected: number;
