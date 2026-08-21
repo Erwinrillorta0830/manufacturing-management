@@ -61,11 +61,23 @@ export const receivingCommitLineSchema = z.object({
 
 const serverOwnedNumber = z.string().trim().max(50).optional();
 const receiptNumber = z.string().trim().min(1, "Receipt Number is required.").max(32, "Receipt Number cannot exceed 32 characters.");
+const receiptDate = z.string()
+    .trim()
+    .min(1, "Date of Receipt is required.")
+    .refine(value => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const [year, month, day] = value.split("-").map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        return date.getUTCFullYear() === year
+            && date.getUTCMonth() === month - 1
+            && date.getUTCDate() === day;
+    }, "Date of Receipt must be a valid date.");
 
 const receivingRequestSchema = z.object({
     shipmentId: z.number().int().positive(),
     replacementDispositionId: z.number().int().positive().nullable().optional(),
     receiptNumber,
+    receiptDate,
     supplierDocumentNumber: serverOwnedNumber,
     referenceNumber: serverOwnedNumber,
     grnNumber: serverOwnedNumber,
@@ -147,6 +159,7 @@ export interface ReceivingCommitResult {
     mode: "compatibility";
     commitReference: string;
     receivingTicketNumber: string;
+    receiptDate: string;
     idempotentReplay: boolean;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";

@@ -71,6 +71,7 @@ export interface ReceivingPreviewLineResult {
 export interface ReceivingPreviewResult {
     shipmentId: number;
     receivingTicketNumber: string | null;
+    receiptDate: string;
     receiptMode: "full" | "partial";
     processOverDelivery: boolean;
     workflowRevision: number;

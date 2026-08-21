@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
-import { INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { dateOnlyInManila, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 import {
@@ -184,7 +184,7 @@ interface DirectusReceivingRecord {
     purchase_order_line_id?: number | { purchase_order_product_id: number } | null;
     product_id: number | { product_id: number };
     receipt_no?: string | null;
-    receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null } | null;
+    receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null; receipt_date?: string | null } | null;
     batch_no?: string | null;
     lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
@@ -216,6 +216,7 @@ interface ReceivingLotAllocationSnapshot {
 
 interface LatestReceivingSnapshot {
     receipt_number: string;
+    receipt_date: string | null;
     received_quantity: number;
     accepted_quantity: number;
     rejected_quantity: number;
@@ -707,7 +708,7 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,batch_no,lot_id,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,lot_id,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
@@ -857,8 +858,11 @@ export async function fetchShipmentLineItems(
                     receipt_number: String(
                         typeof latestReceipt.receiving_header_id === "object" && latestReceipt.receiving_header_id?.receiving_ticket_no
                             ? latestReceipt.receiving_header_id.receiving_ticket_no
-                            : latestReceipt.receipt_no || ""
+                        : latestReceipt.receipt_no || ""
                     ),
+                    receipt_date: typeof latestReceipt.receiving_header_id === "object" && latestReceipt.receiving_header_id?.receipt_date
+                        ? String(latestReceipt.receiving_header_id.receipt_date).slice(0, 10)
+                        : dateOnlyInManila(latestReceipt.received_date),
                     received_quantity: latestReceivedQuantity,
                     accepted_quantity: latestAcceptedQuantity,
                     rejected_quantity: latestRejectedQuantity,

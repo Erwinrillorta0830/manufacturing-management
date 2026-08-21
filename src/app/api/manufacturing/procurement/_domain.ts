@@ -226,3 +226,14 @@ export function todayInManila(now = new Date()): string {
     const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
     return `${values.year}-${values.month}-${values.day}`;
 }
+
+export function receiptDateAtManilaMidnight(receiptDate: string): string {
+    return new Date(`${receiptDate}T00:00:00+08:00`).toISOString();
+}
+
+export function dateOnlyInManila(value: string | Date | null | undefined): string | null {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return todayInManila(date);
+}

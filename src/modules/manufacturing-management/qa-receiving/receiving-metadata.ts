@@ -18,6 +18,37 @@ export interface ReceivingValidationIssue {
 
 export const RECEIPT_NUMBER_MAX_LENGTH = 32;
 
+export function getTodayReceiptDate(now = new Date()): string {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+    }).formatToParts(now);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function isValidReceiptDate(receiptDate: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(receiptDate)) return false;
+    const [year, month, day] = receiptDate.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year
+        && date.getUTCMonth() === month - 1
+        && date.getUTCDate() === day;
+}
+
+export function validateReceivingReceiptDate(receiptDate: string): ReceivingValidationIssue[] {
+    const normalized = receiptDate.trim();
+    if (!normalized) {
+        return [{ field: "receiptDate", message: "Date of Receipt is required." }];
+    }
+    if (!isValidReceiptDate(normalized)) {
+        return [{ field: "receiptDate", message: "Date of Receipt must be a valid date." }];
+    }
+    return [];
+}
+
 export function validateReceivingReceiptNumber(receiptNumber: string): ReceivingValidationIssue[] {
     const normalized = receiptNumber.trim();
     if (!normalized) {
