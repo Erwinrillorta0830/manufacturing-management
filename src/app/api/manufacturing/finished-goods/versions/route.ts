@@ -40,24 +40,38 @@ export async function GET(request: Request) {
         const json = await res.json();
         const rawData = json.data || [];
 
-        const activeVersions = rawData.filter((item: VersionRecord) => item.status === "Active");
-        const explicitPrimary = rawData.find((item: VersionRecord) => item.is_primary);
-        const primaryVersionId = explicitPrimary?.version_id ?? (activeVersions[0]?.version_id || rawData[0]?.version_id);
+        const versionsList = rawData.map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; is_primary?: boolean | number; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null; rejection_reason?: string | null; approval_remarks?: string | null; created_at?: string | null; updated_at?: string | null; created_by?: number | string | null; approved_by?: number | string | null; approved_at?: string | null }) => {
+            const isActive = v.status === "Active";
+            return {
+                version_id: v.version_id,
+                id: v.version_id, // compatibility
+                product_id: productId,
+                version_name: v.version_name || `Version #${v.version_id}`,
+                base_quantity: v.base_quantity ?? 1,
+                uom_id: v.uom_id ?? null,
+                expected_yield_percentage: v.expected_yield_percentage ?? 100,
+                status: v.status || "For Approval",
+                valid_from: v.valid_from || null,
+                valid_to: v.valid_to || null,
+                is_active: isActive,
+                is_primary: v.is_primary === true || v.is_primary === 1,
+                rejection_reason: v.rejection_reason ?? null,
+                approval_remarks: v.approval_remarks ?? null,
+                created_at: v.created_at ?? null,
+                updated_at: v.updated_at ?? (v.updated_on as string) ?? v.created_at ?? null,
+                created_by: v.created_by ?? null,
+                approved_by: v.approved_by ?? null,
+                approved_at: v.approved_at ?? null
+            };
+        });
 
-        const versionsList = rawData.map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; is_primary?: boolean; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null }) => ({
-            version_id: v.version_id,
-            id: v.version_id, // compatibility
-            product_id: productId,
-            version_name: v.version_name || `Version #${v.version_id}`,
-            base_quantity: v.base_quantity ?? 1,
-            uom_id: v.uom_id ?? null,
-            expected_yield_percentage: v.expected_yield_percentage ?? 100,
-            status: v.status || "Draft",
-            valid_from: v.valid_from || null,
-            valid_to: v.valid_to || null,
-            is_active: v.status === "Active",
-            is_primary: v.version_id === primaryVersionId
-        }));
+        // Order by most recent update first, then newest version_id
+        versionsList.sort((a: { updated_at?: string | null; created_at?: string | null; version_id: number }, b: { updated_at?: string | null; created_at?: string | null; version_id: number }) => {
+            const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+            const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+            return b.version_id - a.version_id;
+        });
 
         return NextResponse.json(versionsList);
     } catch (e) {
@@ -170,6 +184,8 @@ export async function POST(request: Request) {
             const formattedBaseQty = Math.max(0.0001, Number(bQty || 1));
             const formattedYield = Math.min(100, Math.max(0.01, Number(yieldPercent || 100)));
 
+            const requestedStatus = body.status === "Pending Approval" || body.status === "Active" || body.status === "Rejected" ? body.status : "Draft";
+
             // 1. Create product manufacturing version matching MySQL table schema
             const versionPayload: Record<string, unknown> = {
                 product_id: numericProductId,
@@ -177,7 +193,8 @@ export async function POST(request: Request) {
                 base_quantity: formattedBaseQty,
                 uom_id: resolvedUomId || 1,
                 expected_yield_percentage: formattedYield,
-                status: "For Approval",
+                status: requestedStatus,
+                is_primary: requestedStatus === "Active" && Boolean(body.is_primary) ? true : false,
                 valid_from: today,
                 created_by: userId || null
             };
@@ -195,8 +212,114 @@ export async function POST(request: Request) {
             const verJson = await verRes.json();
             createdVersionId = verJson.data?.version_id;
 
-            // 2. Clone from base version if baseVersionId is provided
-            if (baseVersionId && createdVersionId) {
+            const passedRoutes = Array.isArray(body.routes) ? body.routes : null;
+            const passedLabor = Array.isArray(body.labor_positions) ? body.labor_positions : null;
+            const passedOverheads = Array.isArray(body.overhead_items) ? body.overhead_items : null;
+
+            // 2A. Insert provided routes & BOM items if provided in payload
+            if (passedRoutes && createdVersionId) {
+                for (const step of passedRoutes) {
+                    const routePayload = {
+                        version_id: createdVersionId,
+                        work_center_id: step.work_center_id || null,
+                        operation_id: step.operation_id || null,
+                        sequence_order: step.sequence_order || 1,
+                        setup_time_hours: step.setup_time_hours || 0,
+                        run_time_hours: step.run_time_hours || 0,
+                        step_batch_size: step.step_batch_size !== undefined ? step.step_batch_size : 1,
+                        qa_template_id: step.qa_template_id || null,
+                        created_by: userId
+                    };
+
+                    const resStep = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(routePayload)
+                    });
+
+                    if (resStep.ok) {
+                        const stepData = await resStep.json();
+                        const newRouteId = stepData.data.route_id;
+                        createdRoutes.push(newRouteId);
+
+                        const bomItems = Array.isArray(step.bom_items) ? step.bom_items : [];
+                        for (const item of bomItems) {
+                            if (!item.product_id || Number(item.product_id) <= 0) continue;
+                            const bomPayload = {
+                                route_id: newRouteId,
+                                product_id: Number(item.product_id),
+                                quantity_required: Number(item.quantity_required) || 0,
+                                unit_of_measurement: item.unit_of_measurement || null,
+                                wastage_factor_percentage: Number(item.wastage_factor_percentage) || 0,
+                                cost_per_unit: Number(item.cost_per_unit) || 0,
+                                created_by: userId
+                            };
+
+                            const resItem = await fetch(`${DIRECTUS_URL}/items/manufacturing_routes_bom`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify(bomPayload)
+                            });
+
+                            if (resItem.ok) {
+                                const itemData = await resItem.json();
+                                createdBOMItems.push(itemData.data.id);
+                            }
+                        }
+                    }
+                }
+
+                // Insert passed labor positions
+                if (passedLabor) {
+                    let targetCollection = "product_version_positions";
+                    const testRes = await fetch(`${DIRECTUS_URL}/items/${targetCollection}?limit=1`, { headers, cache: "no-store" }).catch(() => null);
+                    if (!testRes || !testRes.ok) {
+                        targetCollection = "manufacturing_version_positions";
+                    }
+                    for (const pos of passedLabor) {
+                        const newPosPayload = {
+                            version_id: createdVersionId,
+                            position_id: pos.position_id || null,
+                            position_name: pos.position_name || "Operator",
+                            category: pos.category || "direct_labor",
+                            manpower_count: Number(pos.manpower_count) || 1,
+                            hourly_rate: Number(pos.hourly_rate) || 0,
+                            hours_required: Number(pos.hours_required) || 0,
+                            daily_rate: Number(pos.daily_rate) || 0,
+                            ot_hours: Number(pos.ot_hours) || 0,
+                            include_mandates: pos.include_mandates !== undefined ? Boolean(pos.include_mandates) : true,
+                            sss_amount: Number(pos.sss_amount) || 0,
+                            phic_amount: Number(pos.phic_amount) || 0,
+                            hdmf_amount: Number(pos.hdmf_amount) || 0,
+                            created_by: userId
+                        };
+                        await fetch(`${DIRECTUS_URL}/items/${targetCollection}`, {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify(newPosPayload)
+                        }).catch(() => { });
+                    }
+                }
+
+                // Insert passed overhead items
+                if (passedOverheads) {
+                    for (const ov of passedOverheads) {
+                        await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify({
+                                version_id: createdVersionId,
+                                overhead_type_id: ov.overhead_type_id,
+                                cost: Number(ov.cost) || 0,
+                                allocation_basis: ov.allocation_basis || "per_unit",
+                                is_active: ov.is_active !== undefined ? Boolean(ov.is_active) : true,
+                                remarks: ov.remarks || ""
+                            })
+                        }).catch(() => { });
+                    }
+                }
+            } else if (baseVersionId && createdVersionId) {
+                // 2B. Fallback clone from base version if baseVersionId is provided and no routes passed
                 const oldVersionId = parseInt(baseVersionId);
 
                 // Fetch routes of old version
@@ -389,7 +512,7 @@ export async function PATCH(request: Request) {
         if (deactivateAll || action === "deactivate_all") {
             // Deactivate all versions
             for (const v of versions) {
-                await patchVersionItem(v.version_id, { status: "Inactive", valid_to: today, is_primary: false });
+                await patchVersionItem(v.version_id, { status: "Inactive", valid_to: today });
             }
             return NextResponse.json({ success: true });
         }
@@ -399,64 +522,56 @@ export async function PATCH(request: Request) {
         }
         const numericVersionId = parseInt(versionId);
 
-        if (action === "set_primary") {
+        if (action === "set_primary" || action === "set_active") {
             const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
-            if (targetVer && targetVer.status !== "Active" && targetVer.status !== "Approved") {
+            if (!targetVer) {
+                return NextResponse.json({ error: "Target version not found" }, { status: 404 });
+            }
+
+            if (targetVer.status !== "Active") {
                 return NextResponse.json(
-                    { error: `Version is currently "${targetVer.status || 'Unapproved'}". Only approved or active versions can be set as Primary Default.` },
+                    { error: `Cannot set primary: Version must be approved and 'Active' first. Current status is '${targetVer.status}'.` },
                     { status: 400 }
                 );
             }
-            // 1. Unset primary on all other versions of this product
+
+            // 1. Clear is_primary on all other versions of this product (do NOT deactivate them; they remain Active with is_primary = false)
             for (const v of versions) {
-                if (v.version_id !== numericVersionId) {
+                if (v.version_id !== numericVersionId && v.is_primary) {
                     await patchVersionItem(v.version_id, { is_primary: false });
                 }
             }
-            // 2. Activate & set is_primary on target version
-            const actRes = await patchVersionItem(numericVersionId, { status: "Active", is_primary: true, valid_from: today, valid_to: null });
-            if (!actRes.ok) throw new Error("Failed to set primary version");
-            return NextResponse.json({ success: true });
-        } else if (action === "deactivate") {
-            // Deactivate specific version
-            const target = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
-            const wasPrimary = target?.is_primary;
 
-            await patchVersionItem(numericVersionId, { status: "Inactive", valid_to: today, is_primary: false });
+            // 2. Set target version as Primary = true (status remains Active)
+            const actRes = await patchVersionItem(numericVersionId, { is_primary: true });
+            if (!actRes.ok) throw new Error("Failed to set version as primary");
 
-            // If the deactivated version was primary, auto-promote the next available active version
-            if (wasPrimary) {
-                const remainingActive = versions.find((v: VersionRecord) => v.version_id !== numericVersionId && v.status === "Active");
-                if (remainingActive) {
-                    await patchVersionItem(remainingActive.version_id, { is_primary: true });
-                }
-            }
+            // 3. Automatically ensure the product master record is set to Active
+            await fetch(`${DIRECTUS_URL}/items/products/${numericProductId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ status: "Active", isActive: true })
+            }).catch(() => {});
+
             return NextResponse.json({ success: true });
         } else if (action === "submit_for_approval") {
             const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
-            const allowedForSubmit = ["Draft", "Revision Required"];
-            if (targetVer && !allowedForSubmit.includes(targetVer.status || "Draft")) {
+            if (targetVer && targetVer.status !== "Draft") {
                 return NextResponse.json(
-                    { error: `Version is currently "${targetVer.status}". Only Draft or Revision Required versions can be submitted for approval.` },
+                    { error: `Version is currently '${targetVer.status}'. Only Draft versions can be submitted for approval.` },
                     { status: 400 }
                 );
             }
-            const actRes = await patchVersionItem(numericVersionId, { status: "For Approval" });
+            const actRes = await patchVersionItem(numericVersionId, { status: "Pending Approval", is_primary: false });
             if (!actRes.ok) throw new Error("Failed to submit version for approval");
             return NextResponse.json({ success: true });
         } else {
-            // Action "set_active": Activate version — only allowed for Approved versions
+            // Generic activation fallback (e.g. approving/activating)
             const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
-            if (targetVer && targetVer.status !== "Approved" && targetVer.status !== "Archived") {
-                return NextResponse.json(
-                    { error: `Version is currently "${targetVer.status || "Draft"}". Only Approved versions can be set to Active.` },
-                    { status: 400 }
-                );
+            if (!targetVer) {
+                return NextResponse.json({ error: "Version not found" }, { status: 404 });
             }
-            const hasPrimary = versions.some((v: VersionRecord) => v.is_primary);
-            const isPrimary = !hasPrimary;
-
-            const actRes = await patchVersionItem(numericVersionId, { status: "Active", is_primary: isPrimary, valid_from: today, valid_to: null });
+            const actRes = await patchVersionItem(numericVersionId, { status: "Active" });
             if (!actRes.ok) throw new Error("Failed to activate version");
             return NextResponse.json({ success: true });
         }

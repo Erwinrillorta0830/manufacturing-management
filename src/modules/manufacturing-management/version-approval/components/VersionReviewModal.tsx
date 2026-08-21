@@ -56,10 +56,9 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     // Decision Form State
-    const [decision, setDecision] = useState<"approve" | "reject" | "revision">("approve");
+    const [decision, setDecision] = useState<"approve" | "reject">("approve");
     const [setActive, setSetActive] = useState<boolean>(true);
     const [reason, setReason] = useState<string>("");
-    const [feedback, setFeedback] = useState<string>("");
     const [ecnReference, setEcnReference] = useState<string>("");
 
     useEffect(() => {
@@ -118,22 +117,17 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
             setErrorMsg("Please specify a reason for rejecting this version.");
             return;
         }
-        if (decision === "revision" && !feedback.trim()) {
-            setErrorMsg("Please enter feedback for requesting revisions.");
-            return;
-        }
 
         setSubmitting(true);
         setErrorMsg(null);
 
         const payload: DecisionPayload = {
             versionId: item.version_id,
-            action: decision === "revision" ? "request_revision" : decision,
+            action: decision,
             setActive: decision === "approve" ? setActive : false,
-            remarks: decision === "revision" ? feedback.trim() : (decision === "approve" ? ecnReference.trim() : undefined),
+            remarks: decision === "approve" ? ecnReference.trim() : undefined,
             rejectionReason: decision === "reject" ? reason.trim() : undefined,
             reason: decision === "reject" ? reason.trim() : undefined,
-            feedback: decision === "revision" ? feedback.trim() : undefined,
         };
 
         try {
@@ -399,7 +393,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div
                                 className={`va-decision-radio-card p-3 rounded-lg border cursor-pointer flex items-center gap-3 transition-all ${decision === "approve" ? "border-primary bg-primary/10" : "border-border bg-background hover:border-border/80"}`}
                                 onClick={() => setDecision("approve")}
@@ -408,17 +402,6 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                                 <div className="flex flex-col">
                                     <span className="font-semibold text-foreground text-sm">Approve</span>
                                     <span className="text-xs text-muted-foreground">Accept & approve version</span>
-                                </div>
-                            </div>
-
-                            <div
-                                className={`va-decision-radio-card p-3 rounded-lg border cursor-pointer flex items-center gap-3 transition-all ${decision === "revision" ? "border-amber-500 bg-amber-500/10" : "border-border bg-background hover:border-border/80"}`}
-                                onClick={() => setDecision("revision")}
-                            >
-                                <AlertCircle className={decision === "revision" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"} size={20} />
-                                <div className="flex flex-col">
-                                    <span className="font-semibold text-foreground text-sm">Request Revision</span>
-                                    <span className="text-xs text-muted-foreground">Send feedback to author</span>
                                 </div>
                             </div>
 
@@ -436,15 +419,28 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
                         {/* Extra fields according to selected decision */}
                         {decision === "approve" && (
-                            <div className="flex items-center space-x-2 mt-1 p-2 bg-muted/30 rounded-lg border border-border/60">
-                                <Checkbox
-                                    id="setActiveCheckbox"
-                                    checked={setActive}
-                                    onCheckedChange={(checked) => setSetActive(Boolean(checked))}
-                                />
-                                <label htmlFor="setActiveCheckbox" className="text-xs text-foreground font-medium cursor-pointer">
-                                    Set as Active Production Version immediately upon approval
-                                </label>
+                            <div className="flex flex-col gap-2 mt-1 p-3 bg-muted/30 rounded-lg border border-border/60">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="setActiveCheckbox"
+                                        checked={setActive}
+                                        onCheckedChange={(checked) => setSetActive(Boolean(checked))}
+                                    />
+                                    <label htmlFor="setActiveCheckbox" className="text-xs text-foreground font-medium cursor-pointer">
+                                        Set as Primary immediately upon approval
+                                    </label>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground pt-1.5 border-t border-border/40 pl-6">
+                                    <span>Current Primary Version:</span>
+                                    {comparisonData?.baseVersion?.version_name ? (
+                                        <span className="font-semibold text-foreground bg-background px-2 py-0.5 rounded border border-border text-[11px]">
+                                            {comparisonData.baseVersion.version_name}
+                                        </span>
+                                    ) : (
+                                        <span className="italic text-muted-foreground/70 text-[11px]">None</span>
+                                    )}
+                                </div>
                             </div>
                         )}
 
@@ -458,20 +454,6 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                                     placeholder="Specify why this product version is being rejected..."
                                     value={reason}
                                     onChange={(e) => setReason(e.target.value)}
-                                />
-                            </div>
-                        )}
-
-                        {decision === "revision" && (
-                            <div className="flex flex-col gap-1.5 mt-1">
-                                <label className="text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                    Revision Feedback & Instructions (Required)
-                                </label>
-                                <Textarea
-                                    className="bg-background border-amber-500/40 text-foreground placeholder:text-muted-foreground min-h-[80px]"
-                                    placeholder="Describe required changes for engineering / QA team..."
-                                    value={feedback}
-                                    onChange={(e) => setFeedback(e.target.value)}
                                 />
                             </div>
                         )}

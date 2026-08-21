@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { Settings, Check, Upload, Loader2, Info, Calendar, User, Edit } from "lucide-react";
 import { AssetRecord, DepartmentRecord } from "@/modules/manufacturing-management/finished-goods/types";
 import {
@@ -521,13 +522,18 @@ export function MaintenanceWorkOrderModal({
                                     {/* Left: Image Container */}
                                     <div className="w-full md:w-1/3 shrink-0">
                                         {viewingAsset.item_image ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img
-                                                src={viewingAsset.item_image}
-                                                alt="Asset preview"
+                                            <div 
+                                                className="w-full h-24 rounded-lg border border-border bg-muted/5 shrink-0 overflow-hidden relative cursor-zoom-in hover:scale-102 transition-transform"
                                                 onClick={() => setPreviewImage(viewingAsset.item_image || null)}
-                                                className="w-full h-24 object-cover rounded-lg border border-border bg-muted/5 shrink-0 cursor-zoom-in hover:scale-102 transition-transform"
-                                            />
+                                            >
+                                                <Image
+                                                    src={viewingAsset.item_image}
+                                                    alt="Asset preview"
+                                                    fill
+                                                    unoptimized
+                                                    className="object-cover"
+                                                />
+                                            </div>
                                         ) : (
                                             <div className="w-full h-24 bg-muted/20 border border-dashed rounded-lg flex flex-col items-center justify-center text-muted-foreground/30 gap-1 shrink-0">
                                                 <span className="text-[9px] font-semibold uppercase tracking-wider">No Image</span>

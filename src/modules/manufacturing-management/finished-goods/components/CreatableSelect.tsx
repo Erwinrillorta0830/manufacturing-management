@@ -27,6 +27,7 @@ export interface CreatableSelectProps {
     placeholder?: string;
     searchPlaceholder?: string;
     disabled?: boolean;
+    isLoading?: boolean;
     className?: string;
     id?: string;
     "aria-invalid"?: boolean | "true" | "false";
@@ -45,6 +46,7 @@ export function CreatableSelect({
     placeholder = "Select option...",
     searchPlaceholder,
     disabled = false,
+    isLoading = false,
     className,
     id,
     "aria-invalid": ariaInvalid,
@@ -143,8 +145,16 @@ export function CreatableSelect({
                         onKeyDown={onKeyDown}
                         data-index={dataIndex}
                     >
-                        <span className="truncate w-full text-left">
-                            {selectedOption ? (selectedOption.triggerNode || selectedOption.labelNode || selectedOption.label) : placeholder}
+                        <span className="truncate w-full text-left flex items-center">
+                            {isLoading && !selectedOption ? (
+                                <span className="inline-flex items-center gap-2 text-muted-foreground animate-pulse">
+                                    <span className="h-3 w-32 bg-muted-foreground/20 rounded inline-block" />
+                                </span>
+                            ) : selectedOption ? (
+                                selectedOption.triggerNode || selectedOption.labelNode || selectedOption.label
+                            ) : (
+                                placeholder
+                            )}
                         </span>
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
@@ -164,52 +174,77 @@ export function CreatableSelect({
                         />
                     )}
                     <CommandList>
-                        {filteredOptions.length === 0 && (
-                            <CommandEmpty className="py-2 px-3 text-xs flex flex-col gap-2">
+                        {isLoading ? (
+                            <div className="p-2.5 space-y-2" role="status" aria-label="Loading options">
+                                <div className="flex items-center gap-2.5 p-2 rounded-lg bg-muted/30 animate-pulse">
+                                    <div className="h-4 w-4 rounded-full bg-muted-foreground/20 shrink-0" />
+                                    <div className="flex-1 space-y-1.5 min-w-0">
+                                        <div className="h-3.5 w-3/4 bg-muted-foreground/20 rounded" />
+                                        <div className="h-2.5 w-1/2 bg-muted-foreground/15 rounded" />
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2.5 p-2 rounded-lg bg-muted/30 animate-pulse">
+                                    <div className="h-4 w-4 rounded-full bg-muted-foreground/20 shrink-0" />
+                                    <div className="flex-1 space-y-1.5 min-w-0">
+                                        <div className="h-3.5 w-2/3 bg-muted-foreground/20 rounded" />
+                                        <div className="h-2.5 w-1/3 bg-muted-foreground/15 rounded" />
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2.5 p-2 rounded-lg bg-muted/30 animate-pulse">
+                                    <div className="h-4 w-4 rounded-full bg-muted-foreground/20 shrink-0" />
+                                    <div className="flex-1 space-y-1.5 min-w-0">
+                                        <div className="h-3.5 w-4/5 bg-muted-foreground/20 rounded" />
+                                        <div className="h-2.5 w-2/5 bg-muted-foreground/15 rounded" />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : filteredOptions.length === 0 ? (
+                            <CommandEmpty className="py-3 px-3 text-xs flex flex-col gap-2 text-center text-muted-foreground">
                                 <span>No results found.</span>
                                 {onCreateOption && searchQuery.trim() !== "" && (
                                     <Button
                                         type="button"
                                         size="sm"
                                         variant="secondary"
-                                        className="w-full text-[10px] inline-flex items-center gap-1 justify-center py-1 h-auto"
+                                        className="w-full text-[10px] inline-flex items-center gap-1 justify-center py-1 h-auto cursor-pointer"
                                         onClick={handleCreate}
                                     >
                                         <Plus className="h-3 w-3" /> Create &quot;{searchQuery}&quot;
                                     </Button>
                                 )}
                             </CommandEmpty>
+                        ) : (
+                            <CommandGroup>
+                                {filteredOptions.map((opt, idx) => {
+                                    const itemKey = (opt.value != null && opt.value !== "") ? opt.value : `opt-${idx}`;
+                                    const searchValue = `${opt.label} ${opt.value ?? ""}`;
+                                    return (
+                                        <CommandItem
+                                            key={itemKey}
+                                            value={searchValue}
+                                            disabled={opt.disabled}
+                                            onSelect={() => {
+                                                if (opt.disabled) return;
+                                                onValueChange(opt.value);
+                                                setOpen(false);
+                                                setSearchQuery("");
+                                            }}
+                                            className={cn(opt.disabled && "opacity-50 cursor-not-allowed pointer-events-none")}
+                                        >
+                                            <Check
+                                                className={cn(
+                                                    "mr-2 h-4 w-4 shrink-0",
+                                                    value === opt.value ? "opacity-100" : "opacity-0"
+                                                )}
+                                            />
+                                            <div className="w-full truncate">
+                                                {opt.labelNode || opt.label}
+                                            </div>
+                                        </CommandItem>
+                                    );
+                                })}
+                            </CommandGroup>
                         )}
-                        <CommandGroup>
-                            {filteredOptions.map((opt, idx) => {
-                                const itemKey = (opt.value != null && opt.value !== "") ? opt.value : `opt-${idx}`;
-                                const searchValue = `${opt.label} ${opt.value ?? ""}`;
-                                return (
-                                    <CommandItem
-                                        key={itemKey}
-                                        value={searchValue}
-                                        disabled={opt.disabled}
-                                        onSelect={() => {
-                                            if (opt.disabled) return;
-                                            onValueChange(opt.value);
-                                            setOpen(false);
-                                            setSearchQuery("");
-                                        }}
-                                        className={cn(opt.disabled && "opacity-50 cursor-not-allowed pointer-events-none")}
-                                    >
-                                        <Check
-                                            className={cn(
-                                                "mr-2 h-4 w-4 shrink-0",
-                                                value === opt.value ? "opacity-100" : "opacity-0"
-                                            )}
-                                        />
-                                        <div className="w-full truncate">
-                                            {opt.labelNode || opt.label}
-                                        </div>
-                                    </CommandItem>
-                                );
-                            })}
-                        </CommandGroup>
                     </CommandList>
                 </Command>
             </PopoverContent>

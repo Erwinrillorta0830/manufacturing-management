@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import {
     Lot,
-    InventoryType,
     UnitOfMeasure,
     CreateLotPayload,
     UpdateLotPayload
@@ -12,36 +11,30 @@ import {
     createLot,
     updateLot,
     deleteLot,
-    fetchInventoryTypes,
     fetchUoms
 } from "../services/lot-management-api";
 
 export function useLotManagement() {
     const [lots, setLots] = useState<Lot[]>([]);
-    const [inventoryTypes, setInventoryTypes] = useState<InventoryType[]>([]);
     const [uoms, setUoms] = useState<UnitOfMeasure[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [filterType, setFilterType] = useState<number | "all">("all");
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingLot, setEditingLot] = useState<Lot | null>(null);
 
     const [formData, setFormData] = useState<{
         lotName: string;
-        inventoryTypeId: number | "";
         uomId: number | "";
         maxBatchCapacity: string;
     }>({
         lotName: "",
-        inventoryTypeId: "",
         uomId: "",
         maxBatchCapacity: ""
     });
 
     const [formErrors, setFormErrors] = useState<{
         lotName?: boolean;
-        inventoryTypeId?: boolean;
         uomId?: boolean;
         maxBatchCapacity?: boolean;
     }>({});
@@ -49,13 +42,11 @@ export function useLotManagement() {
     const loadLots = async () => {
         setLoading(true);
         try {
-            const [lotsList, typesList, uomsList] = await Promise.all([
+            const [lotsList, uomsList] = await Promise.all([
                 fetchLots(),
-                fetchInventoryTypes(),
                 fetchUoms().catch(() => [])
             ]);
             setLots(lotsList);
-            setInventoryTypes(typesList);
             setUoms(uomsList);
         } catch (e) {
             console.error("Failed to load lots:", e);
@@ -72,7 +63,6 @@ export function useLotManagement() {
     const openCreateDialog = () => {
         setFormData({
             lotName: "",
-            inventoryTypeId: "",
             uomId: "",
             maxBatchCapacity: ""
         });
@@ -84,7 +74,6 @@ export function useLotManagement() {
     const openEditDialog = (lot: Lot) => {
         setFormData({
             lotName: lot.lotName,
-            inventoryTypeId: lot.inventoryTypeId,
             uomId: lot.uomId !== null && lot.uomId !== undefined ? lot.uomId : "",
             maxBatchCapacity: String(lot.maxBatchCapacity)
         });
@@ -96,7 +85,6 @@ export function useLotManagement() {
     const closeDialog = () => {
         setFormData({
             lotName: "",
-            inventoryTypeId: "",
             uomId: "",
             maxBatchCapacity: ""
         });
@@ -132,14 +120,12 @@ export function useLotManagement() {
 
     const validateForm = (): boolean => {
         const isNameEmpty = !formData.lotName.trim();
-        const isTypeEmpty = formData.inventoryTypeId === "";
         const isUomEmpty = !editingLot && formData.uomId === "";
         const capacityNum = Number(formData.maxBatchCapacity);
         const isCapacityInvalid = isNaN(capacityNum) || capacityNum <= 0;
 
         const newErrors = {
             lotName: isNameEmpty || isDuplicateLotName,
-            inventoryTypeId: isTypeEmpty,
             uomId: isUomEmpty,
             maxBatchCapacity: isCapacityInvalid
         };
@@ -151,10 +137,6 @@ export function useLotManagement() {
         }
         if (isDuplicateLotName) {
             toast.error(`A lot with the name "${formData.lotName.trim()}" already exists`);
-            return false;
-        }
-        if (isTypeEmpty) {
-            toast.error("Inventory Type is required");
             return false;
         }
         if (isUomEmpty) {
@@ -175,7 +157,6 @@ export function useLotManagement() {
             const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: CreateLotPayload = {
                 lot_name: formData.lotName.trim(),
-                inventory_type_id: Number(formData.inventoryTypeId),
                 unit_id: uomNum,
                 uom_id: uomNum,
                 max_batch_capacity: Number(formData.maxBatchCapacity)
@@ -203,7 +184,6 @@ export function useLotManagement() {
             const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: UpdateLotPayload = {
                 lot_name: formData.lotName.trim(),
-                inventory_type_id: Number(formData.inventoryTypeId),
                 unit_id: uomNum,
                 uom_id: uomNum,
                 max_batch_capacity: Number(formData.maxBatchCapacity)
@@ -267,26 +247,21 @@ export function useLotManagement() {
                 const matchesSearch = lot.lotName
                     .toLowerCase()
                     .includes(searchQuery.toLowerCase());
-                const matchesType =
-                    filterType === "all" || lot.inventoryTypeId === Number(filterType);
-                return matchesSearch && matchesType;
+                return matchesSearch;
             })
             .map((lot, index) => ({
                 ...lot,
                 displayNumber: index + 1
             }));
-    }, [lots, searchQuery, filterType]);
+    }, [lots, searchQuery]);
 
     return {
         lots,
-        inventoryTypes,
         uoms,
         loading,
         saving,
         searchQuery,
         setSearchQuery,
-        filterType,
-        setFilterType,
         isFormOpen,
         editingLot,
         formData,
@@ -303,4 +278,3 @@ export function useLotManagement() {
         loadLots
     };
 }
-

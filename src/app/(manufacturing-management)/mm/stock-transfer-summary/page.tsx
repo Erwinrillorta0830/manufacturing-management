@@ -8,88 +8,34 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
-
-// ✅ Wire the finished goods module
-import FinishedGoodsModule from "@/modules/manufacturing-management/finished-goods/FinishedGoodsModule";
+import { StockTransferSummaryView } from "@/modules/manufacturing-management/stock-transfer";
+import { NavUser } from "@/components/shared/app-sidebar/nav-user";
+import { decodeJwtPayload } from "@/lib/auth-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const COOKIE_NAME = "vos_access_token";
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-    try {
-        const parts = token.split(".");
-        if (parts.length < 2) return null;
-
-        const p = parts[1];
-        const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
-        const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-
-        const json = Buffer.from(padded, "base64").toString("utf8");
-        return JSON.parse(json);
-    } catch {
-        return null;
-    }
-}
-
-function pickString(obj: Record<string, unknown> | null | undefined, keys: string[]): string {
-    for (const k of keys) {
-        const v = obj ? obj[k] : undefined;
-        if (typeof v === "string" && v.trim()) return v.trim();
-    }
-    return "";
-}
-
-function buildHeaderUserFromToken(token: string | null | undefined) {
-    const payload = token ? decodeJwtPayload(token) : null;
-
-    const first = pickString(payload, [
-        "Firstname",
-        "FirstName",
-        "firstName",
-        "firstname",
-        "first_name",
-    ]);
-    const last = pickString(payload, [
-        "LastName",
-        "Lastname",
-        "lastName",
-        "lastname",
-        "last_name",
-    ]);
-    const email = pickString(payload, ["email", "Email"]);
-
-    const name = [first, last].filter(Boolean).join(" ") || email || "User";
-
-    return {
-        name,
-        email: email || "",
-        avatar: "",
-    };
-}
-
-export default async function FinishedGoodsPage() {
-    // ✅ Next.js 16: cookies() is async
+export default async function StockTransferSummaryPage() {
     const cookieStore = await cookies();
-    const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
-
-    const headerUser = buildHeaderUserFromToken(token);
+    const token = cookieStore.get("vos_access_token")?.value;
+    const payload = token ? decodeJwtPayload(token) : null;
+    
+    const headerUser = {
+        name: payload ? `${payload.FirstName || ""} ${payload.LastName || ""}`.trim() || "System User" : "System User",
+        email: payload?.email || "user@vos.com",
+        avatar: "/avatars/shadcn.jpg",
+    };
 
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Topbar */}
             <header className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b shadow-sm bg-background sm:h-16 overflow-hidden">
                 <div className="flex h-full min-w-0 items-center gap-2 px-3 sm:px-4 overflow-hidden">
                     <SidebarTrigger className="-ml-1 shrink-0" />
-
                     <Separator
                         orientation="vertical"
                         className="hidden sm:block mr-2 data-[orientation=vertical]:h-4 shrink-0"
                     />
-
                     <div className="min-w-0 overflow-hidden">
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
@@ -99,7 +45,7 @@ export default async function FinishedGoodsPage() {
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Finished Goods Master
+                                        Stock Transfer Summary
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -112,9 +58,8 @@ export default async function FinishedGoodsPage() {
                 </div>
             </header>
 
-            {/* Scrollable Content wrapper */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
-                <FinishedGoodsModule />
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
+                <StockTransferSummaryView />
             </main>
         </div>
     );
