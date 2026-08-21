@@ -114,10 +114,11 @@ async function renderPoDocument(doc: PdfDocument, data: PurchaseOrderPrintableSn
         displayDate(po.encodedAt),
         po.priceType
     ]]);
-    y = await renderTable(doc, y, ["Supplier", "Destination branch", "Payment terms", "Payment mode", "Currency", "Status"], [[
+    y = await renderTable(doc, y, ["Supplier", "Destination branch", "Payment terms", "Delivery terms", "Payment mode", "Currency", "Status"], [[
         `${po.supplier}\n${po.supplierAddress}`,
         po.branch,
         po.paymentTerms,
+        po.deliveryTerms,
         `${po.paymentMode}\n${po.paymentArrangement}`,
         `${po.currencyCode} @ ${po.exchangeRate.toFixed(4)}`,
         `${po.inventoryStatus}\n${po.paymentStatus}`

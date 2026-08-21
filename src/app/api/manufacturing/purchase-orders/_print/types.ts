@@ -53,6 +53,7 @@ export interface PurchaseOrderPrintHeader {
     supplierAddress: string;
     branch: string;
     paymentTerms: string;
+    deliveryTerms: string;
     paymentMode: string;
     paymentArrangement: string;
     priceType: string;

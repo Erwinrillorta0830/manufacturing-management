@@ -23,13 +23,6 @@ export interface ResolvedPurchaseOrderPriceType {
     missingProductIds: number[];
 }
 
-export interface PurchaseOrderPriceControlWarning {
-    code: "PRICE_MATRIX_NOT_CONFIGURED";
-    priceTypeId: number;
-    missingProductIds: number[];
-    usingEnteredPrices: true;
-}
-
 export class PurchaseOrderPriceTypeError extends Error {
     constructor(
         message: string,
@@ -196,18 +189,6 @@ export function assertEnteredPricesForMissingPriceControl(
         400,
         { missingProductIds: [...new Set(invalidProductIds)] }
     );
-}
-
-export function buildPriceControlWarning(
-    resolved: ResolvedPurchaseOrderPriceType
-): PurchaseOrderPriceControlWarning | null {
-    if (resolved.missingProductIds.length === 0) return null;
-    return {
-        code: "PRICE_MATRIX_NOT_CONFIGURED",
-        priceTypeId: resolved.priceTypeId,
-        missingProductIds: resolved.missingProductIds,
-        usingEnteredPrices: true
-    };
 }
 
 function resolveProductType(

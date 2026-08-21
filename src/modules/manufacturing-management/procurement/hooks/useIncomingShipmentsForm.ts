@@ -7,11 +7,15 @@ import {
     purchaseOrderMaterialTypeFromCategoryType,
     FxRateStatus
 } from "../components/incoming-shipments/types";
-import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPriceTypeRule } from "../types";
+import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 import { normalizeProductRelationId, resolveProductParentId } from "../product-relation";
 import { fetchPurchaseOrderFxRate } from "../../purchase-order/services/purchase-order-api";
+import {
+    defaultPurchaseOrderPaymentModeId,
+    resolveSupplierPaymentTermId
+} from "../../purchase-order/commercial-terms";
 
 export interface UseIncomingShipmentsFormProps {
     suppliers: Supplier[];
@@ -28,6 +32,13 @@ export interface UseIncomingShipmentsFormProps {
     onEditShipment: (shipmentId: number, shipmentData: ShipmentFormState, lineItems: ManifestLineFormItem[]) => void | Promise<boolean | void>;
     canonicalDrafting?: boolean;
     priceTypeRules?: PurchaseOrderPriceTypeRule[];
+    paymentTerms?: Array<{
+        id: number;
+        payment_name: string;
+        payment_days?: number | null;
+        payment_description?: string | null;
+    }>;
+    paymentModes?: PurchaseOrderPaymentMode[];
 }
 
 export function useIncomingShipmentsForm({
@@ -44,7 +55,9 @@ export function useIncomingShipmentsForm({
     onCreateShipment,
     onEditShipment,
     canonicalDrafting = false,
-    priceTypeRules = []
+    priceTypeRules = [],
+    paymentTerms = [],
+    paymentModes = []
 }: UseIncomingShipmentsFormProps) {
     const [editingShipmentId, setEditingShipmentId] = useState<number | null>(null);
     const [isOverridden, setIsOverridden] = useState(false);
@@ -135,6 +148,32 @@ export function useIncomingShipmentsForm({
         }
     }, [loadCurrentFxRate, setShipmentForm]);
 
+    useEffect(() => {
+        if (!isModalOpen || editingShipmentId || shipmentForm.payment_mode !== null) return;
+        const defaultPaymentModeId = defaultPurchaseOrderPaymentModeId(paymentModes);
+        if (defaultPaymentModeId === null) return;
+        setShipmentForm(previous => previous.payment_mode === null
+            ? { ...previous, payment_mode: defaultPaymentModeId }
+            : previous);
+    }, [editingShipmentId, isModalOpen, paymentModes, setShipmentForm, shipmentForm.payment_mode]);
+
+    useEffect(() => {
+        if (!isModalOpen || !shipmentForm.supplier_id) return;
+        const selectedSupplier = suppliers.find(supplier => String(supplier.id) === String(shipmentForm.supplier_id));
+        if (!selectedSupplier) return;
+        const profilePaymentTerms = resolveSupplierPaymentTermId(selectedSupplier.payment_terms, paymentTerms);
+        const profileDeliveryTerms = selectedSupplier.delivery_terms?.trim() || "";
+        if (profilePaymentTerms === null && !profileDeliveryTerms) return;
+        setShipmentForm(previous => {
+            if (String(previous.supplier_id) !== String(shipmentForm.supplier_id)) return previous;
+            const nextPaymentTerms = previous.payment_terms ?? profilePaymentTerms;
+            const nextDeliveryTerms = previous.delivery_terms?.trim() || profileDeliveryTerms;
+            return previous.payment_terms === nextPaymentTerms && previous.delivery_terms === nextDeliveryTerms
+                ? previous
+                : { ...previous, payment_terms: nextPaymentTerms, delivery_terms: nextDeliveryTerms };
+        });
+    }, [isModalOpen, paymentTerms, setShipmentForm, shipmentForm.supplier_id, suppliers]);
+
     const handleSupplierSelect = useCallback((val: string) => {
         const matchedSup = suppliers.find(s => String(s.id) === String(val));
 
@@ -156,11 +195,19 @@ export function useIncomingShipmentsForm({
         }
         
         if (!matchedSup) {
-            setShipmentForm(prev => ({ ...prev, supplier_id: val }));
+            setShipmentForm(prev => ({
+                ...prev,
+                supplier_id: val,
+                payment_terms: null,
+                delivery_terms: ""
+            }));
             return;
         }
 
         const foreign = isSupplierForeign(matchedSup);
+        const paymentTermsId = resolveSupplierPaymentTermId(matchedSup.payment_terms, paymentTerms);
+        const deliveryTerms = matchedSup.delivery_terms?.trim() || "";
+        const defaultPaymentModeId = defaultPurchaseOrderPaymentModeId(paymentModes);
 
         if (foreign) {
             const targetCurrency = "USD" as const;
@@ -170,6 +217,9 @@ export function useIncomingShipmentsForm({
             setShipmentForm(prev => ({
                 ...prev,
                 supplier_id: val,
+                payment_terms: paymentTermsId,
+                delivery_terms: deliveryTerms,
+                payment_mode: prev.payment_mode ?? defaultPaymentModeId,
                 currency_code: targetCurrency,
                 exchange_rate: ""
             }));
@@ -180,6 +230,9 @@ export function useIncomingShipmentsForm({
             setShipmentForm(prev => ({
                 ...prev,
                 supplier_id: val,
+                payment_terms: paymentTermsId,
+                delivery_terms: deliveryTerms,
+                payment_mode: prev.payment_mode ?? defaultPaymentModeId,
                 currency_code: "PHP",
                 exchange_rate: "1"
             }));
@@ -189,7 +242,7 @@ export function useIncomingShipmentsForm({
 
             toast.info(`Automated Currency: Set to PHP for Local Supplier (${matchedSup.supplier_name})`);
         }
-    }, [loadCurrentFxRate, setLinesForm, shipmentForm.supplier_id, suppliers, isSupplierForeign, setShipmentForm]);
+    }, [isSupplierForeign, loadCurrentFxRate, paymentModes, paymentTerms, setLinesForm, setShipmentForm, shipmentForm.supplier_id, suppliers]);
 
     const handleStartEdit = async () => {
         if (!activeShipment) return;
@@ -201,6 +254,8 @@ export function useIncomingShipmentsForm({
             ? activeShipment.date_received.split("T")[0]
             : new Date().toISOString().split("T")[0];
 
+        const supplierId = Number(activeShipment.supplier_id && typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id.id : activeShipment.supplier_id || 0);
+        const storedSupplier = suppliers.find(supplier => supplier.id === supplierId);
         setShipmentForm({
             reference_number: activeShipment.reference_number,
             remark: legacyRemarkMatch ? "" : storedRemark,
@@ -213,7 +268,8 @@ export function useIncomingShipmentsForm({
             branch_id: activeShipment.branch_id || 182,
             payment_type: activeShipment.payment_type || 1,
             payment_mode: activeShipment.payment_mode || null,
-            payment_terms: activeShipment.payment_terms || null,
+            payment_terms: activeShipment.payment_terms || resolveSupplierPaymentTermId(storedSupplier?.payment_terms, paymentTerms),
+            delivery_terms: activeShipment.delivery_terms || storedSupplier?.delivery_terms || "",
             price_type: activeShipment.price_type || "Internal",
             currency_code: (activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP",
             workflow_revision: activeShipment.workflow_revision || 0
@@ -282,6 +338,7 @@ export function useIncomingShipmentsForm({
             payment_type: null,
             payment_mode: null,
             payment_terms: null,
+            delivery_terms: "",
             price_type: "",
             currency_code: "PHP"
         });
@@ -342,7 +399,7 @@ export function useIncomingShipmentsForm({
         }
 
         if (canonicalDrafting && priceTypeResolution.status !== "resolved") {
-            toast.error(priceTypeResolution.message || "Price Type could not be determined from the selected products.");
+            toast.error(priceTypeResolution.message || "Price Control could not be determined from the selected products.");
             return;
         }
         if (
@@ -478,7 +535,7 @@ export function useIncomingShipmentsForm({
                 status: "pending" as const,
                 priceTypeId: null,
                 priceTypeName: null,
-                message: "Select a product to determine the Price Type."
+                message: "Select a product to determine the Price Control pricing source."
             };
         }
         if (priceTypeRules.length === 0) {
@@ -486,7 +543,7 @@ export function useIncomingShipmentsForm({
                 status: "pending" as const,
                 priceTypeId: null,
                 priceTypeName: null,
-                message: "Loading product classification Price Type rules..."
+                message: "Loading product classification Price Control rules..."
             };
         }
 
@@ -509,7 +566,7 @@ export function useIncomingShipmentsForm({
                 : undefined;
             if (!rule?.priceTypeId) {
                 return {
-                    error: `Price Type is not configured for ${line.product_name || `product ${line.product_id}`}.`
+                    error: `Price Control is not configured for ${line.product_name || `product ${line.product_id}`}.`
                 };
             }
             return {
@@ -521,7 +578,7 @@ export function useIncomingShipmentsForm({
 
         const firstError = resolved.find(item => "error" in item);
         if (firstError && "error" in firstError) {
-            return { status: "error" as const, priceTypeId: null, priceTypeName: null, message: firstError.error || "Price Type could not be determined." };
+            return { status: "error" as const, priceTypeId: null, priceTypeName: null, message: firstError.error || "Price Control could not be determined." };
         }
 
         const priceTypeIds = [...new Set(resolved
@@ -532,7 +589,7 @@ export function useIncomingShipmentsForm({
                 status: "error" as const,
                 priceTypeId: null,
                 priceTypeName: null,
-                message: "All purchase-order lines must resolve to the same Price Type."
+                message: "All purchase-order lines must resolve to the same Price Control pricing source."
             };
         }
 

@@ -568,6 +568,7 @@ export async function loadPurchaseOrderPrintableData(input: {
         supplierAddress,
         branch,
         paymentTerms: text(paymentTerms?.payment_name || paymentTerms?.payment_description, purchaseOrder.payment_terms ? `Payment Terms #${purchaseOrder.payment_terms}` : "N/A"),
+        deliveryTerms: text(purchaseOrder.delivery_terms),
         paymentMode: text(paymentMode?.mode_name || paymentMode?.code, purchaseOrder.payment_mode ? `Payment Mode #${purchaseOrder.payment_mode}` : "N/A"),
         paymentArrangement: paymentArrangement(purchaseOrder.payment_type),
         priceType: text(purchaseOrder.price_type),

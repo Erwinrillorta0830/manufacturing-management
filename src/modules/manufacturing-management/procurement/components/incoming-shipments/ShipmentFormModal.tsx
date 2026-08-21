@@ -6,11 +6,12 @@ import {
     PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     FxRateStatus
 } from "./types";
-import { IncomingShipment, RawMaterial, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+import { IncomingShipment, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { normalizeProductRelationId } from "../../product-relation";
+import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
 
 export interface UOMOption {
     product_id: number;
@@ -43,9 +44,7 @@ export interface ShipmentFormModalProps {
     handleRemoveLineForm: (idx: number) => void;
     handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
-    rawMaterials: RawMaterial[];
     supplierRawMaterials: RawMaterial[];
-    priceTypes?: Array<{ price_type_id: number; price_type_name?: string; name?: string }>;
     priceTypeRatesMap: Record<number, number>;
     discountTypes?: Array<{ id: number; discount_type: string; total_percent: number | string }>;
     productPerSupplierMap?: Record<number, { discount_type_id?: number; total_percent?: number }>;
@@ -56,16 +55,12 @@ export interface ShipmentFormModalProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
-    paymentModes?: PurchaseOrderPaymentMode[];
-    priceTypeRules?: PurchaseOrderPriceTypeRule[];
     priceTypeResolution?: {
         status: "idle" | "pending" | "resolved" | "error";
         priceTypeName: string | null;
         message: string | null;
     };
     priceMatrixStatus?: "idle" | "loading" | "ready" | "warning" | "error";
-    priceMatrixError?: string | null;
-    priceMatrixMissingProductIds?: number[];
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -119,18 +114,13 @@ export function ShipmentFormModal({
     handleRemoveLineForm,
     handleLineFormChange,
     getLineErrors,
-    rawMaterials,
     supplierRawMaterials,
-    priceTypes,
     priceTypeRatesMap,
     discountTypes,
     productPerSupplierMap,
     paymentTerms = [],
-    paymentModes = [],
     priceTypeResolution = { status: "idle", priceTypeName: null, message: null },
     priceMatrixStatus = "idle",
-    priceMatrixError = null,
-    priceMatrixMissingProductIds = [],
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -141,11 +131,14 @@ export function ShipmentFormModal({
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
 
-    const missingPriceControlProducts = priceMatrixMissingProductIds.map(productId => {
-        const line = linesForm.find(item => Number(item.product_id) === productId);
-        const material = rawMaterials.find(item => Number(item.product_id) === productId);
-        return line?.product_name || material?.product_name || `Product #${productId}`;
-    });
+    const deliveryTermsOptions = React.useMemo(() => {
+        const options: Array<{ value: string; label: string }> = [...PURCHASE_ORDER_DELIVERY_TERMS];
+        const currentValue = shipmentForm.delivery_terms?.trim();
+        if (currentValue && !options.some(option => option.value === currentValue)) {
+            options.unshift({ value: currentValue, label: currentValue });
+        }
+        return options;
+    }, [shipmentForm.delivery_terms]);
 
     const handleAddRow = React.useCallback(() => {
         if (!shipmentForm.supplier_id || (!canonicalDrafting && activeRowEdit !== null)) return;
@@ -433,20 +426,6 @@ export function ShipmentFormModal({
                                 </div>
 
                                 <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Type *</label>
-                                    <select
-                                        value={shipmentForm.payment_mode !== null ? String(shipmentForm.payment_mode) : ""}
-                                        onChange={e => setShipmentForm({...shipmentForm, payment_mode: e.target.value ? parseInt(e.target.value) : null})}
-                                        className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
-                                    >
-                                        <option value="" disabled hidden>Select Payment...</option>
-                                        {paymentModes.map(mode => (
-                                            <option key={mode.id} value={mode.id}>{mode.mode_name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Arrangement *</label>
                                     <select
                                         value={shipmentForm.payment_type !== null ? String(shipmentForm.payment_type) : ""}
@@ -485,65 +464,23 @@ export function ShipmentFormModal({
                                     </div>
                                 )}
 
-                                {canonicalDrafting ? (
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type</label>
-                                        <div
-                                            aria-live="polite"
-                                            role={priceTypeResolution.status === "error" ? "alert" : "status"}
-                                            className={`flex min-h-8 items-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${
-                                                priceTypeResolution.status === "error"
-                                                    ? "border-destructive/40 bg-destructive/5 text-destructive"
-                                                    : priceTypeResolution.status === "resolved"
-                                                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
-                                                        : "bg-muted text-muted-foreground"
-                                            }`}
-                                        >
-                                            {priceTypeResolution.status === "resolved"
-                                                ? priceTypeResolution.priceTypeName
-                                                : priceTypeResolution.message || "Determined from selected products"}
-                                        </div>
-                                        {priceMatrixStatus === "loading" && (
-                                            <p className="text-[10px] font-medium text-muted-foreground">Loading Price Control prices...</p>
-                                        )}
-                                        {priceMatrixStatus === "error" && (
-                                            <p className="text-[10px] font-medium text-destructive" role="alert">{priceMatrixError}</p>
-                                        )}
-                                        {priceMatrixStatus === "warning" && (
-                                            <p className="text-[10px] font-medium text-amber-700" role="status">
-                                                Price Control is not configured for {missingPriceControlProducts.join(", ") || "one or more selected products"}. Enter a positive unit price; that price will be used for this purchase order only. Submit a separate Price Control change for future purchase orders.
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type *</label>
-                                        <select
-                                            value={shipmentForm.price_type || ""}
-                                            onChange={e => setShipmentForm({...shipmentForm, price_type: e.target.value || null})}
-                                            className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
-                                        >
-                                            <option value="" disabled hidden>Select Price Type...</option>
-                                            {priceTypes && priceTypes.length > 0 ? (
-                                                priceTypes.map(pt => {
-                                                    const name = pt.price_type_name || pt.name || `Price Type #${pt.price_type_id}`;
-                                                    return (
-                                                        <option key={pt.price_type_id} value={name}>{name}</option>
-                                                    );
-                                                })
-                                            ) : (
-                                                <>
-                                                    <option value="Internal">Internal</option>
-                                                    <option value="SRP">SRP</option>
-                                                    <option value="Government">Government</option>
-                                                    <option value="Dealer">Dealer</option>
-                                                    <option value="Sub-Dealer">Sub-Dealer</option>
-                                                    <option value="Project">Project</option>
-                                                </>
-                                            )}
-                                        </select>
-                                    </div>
-                                )}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Delivery Terms {canonicalDrafting ? "*" : ""}</label>
+                                    <select
+                                        required={canonicalDrafting}
+                                        value={shipmentForm.delivery_terms || ""}
+                                        onChange={e => setShipmentForm({
+                                            ...shipmentForm,
+                                            delivery_terms: e.target.value
+                                        })}
+                                        className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8"
+                                    >
+                                        <option value="" disabled hidden>Select Delivery Terms...</option>
+                                        {deliveryTermsOptions.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
 
                                 {!canonicalDrafting && (
                                     <div className="space-y-1">

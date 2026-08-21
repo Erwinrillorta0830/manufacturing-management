@@ -30,7 +30,7 @@ const blankLine = (): ManifestLineFormItem => ({
 });
 const blankForm = (): ShipmentFormState => ({
     reference_number: "", remark: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
-    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, price_type: "", currency_code: "PHP"
+    status: "Ordered", date_received: new Date().toISOString().split("T")[0], branch_id: null, payment_type: null, payment_mode: null, payment_terms: null, delivery_terms: "", price_type: "", currency_code: "PHP"
 });
 
 function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchangeRate: number) {
@@ -219,6 +219,10 @@ export function usePurchaseOrder() {
             toast.error("Payment Terms is required.");
             return;
         }
+        if (!shipmentForm.delivery_terms?.trim()) {
+            toast.error("Delivery Terms is required.");
+            return;
+        }
         if (lines.length === 0) {
             toast.error("Add at least one Purchase Order Line.");
             return;
@@ -276,17 +280,13 @@ export function usePurchaseOrder() {
                 paymentArrangementId: Number(shipmentForm.payment_type),
                 paymentModeId: Number(shipmentForm.payment_mode),
                 paymentTermsId: Number(shipmentForm.payment_terms),
+                deliveryTerms: shipmentForm.delivery_terms.trim(),
                 currencyCode: shipmentForm.currency_code || "PHP",
                 exchangeRate,
                 expectedTotals: totals,
                 lines: lineItems
             });
             toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in For Approval status.`.trim());
-            if (result.priceControlWarning) {
-                toast.warning(
-                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} selected product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
-                );
-            }
             setIsShipmentModalOpen(false);
             await loadShipments();
         } catch (error) {
@@ -303,13 +303,8 @@ export function usePurchaseOrder() {
         }
         setLoading(true);
         try {
-            const result = await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
+            await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
             toast.success("Finance-rejected purchase order revised and resubmitted for approval.");
-            if (result.priceControlWarning) {
-                toast.warning(
-                    `Price Control is not configured for ${result.priceControlWarning.missingProductIds.length} revised product(s). The entered unit prices were saved for this PO only; submit a separate Price Control change for future POs.`
-                );
-            }
             setSelectedShipment(null);
             await loadShipments();
             return true;

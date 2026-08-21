@@ -115,6 +115,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         branch_id: null,
         payment_type: null,
         payment_mode: null,
+        delivery_terms: "",
         price_type: ""
     });
 
@@ -164,6 +165,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 branch_id: null,
                 payment_type: null,
                 payment_mode: null,
+                delivery_terms: "",
                 price_type: ""
             });
             setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
@@ -525,10 +527,6 @@ export function useProcurement(defaultTab: string = "suppliers") {
             toast.error("Payment type is required");
             return;
         }
-        if (!shipmentForm.price_type) {
-            toast.error("Price type is required");
-            return;
-        }
         const rateVal = parseFloat(shipmentForm.exchange_rate);
         if (isNaN(rateVal) || rateVal <= 0) {
             toast.error("Exchange rate required — check forex settings in header");
@@ -601,6 +599,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 branch_id: Number(shipmentForm.branch_id),
                 payment_type: Number(shipmentForm.payment_type),
                 payment_mode: Number(shipmentForm.payment_mode),
+                delivery_terms: shipmentForm.delivery_terms?.trim() || null,
                 price_type: shipmentForm.price_type
             };
 
@@ -618,6 +617,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 branch_id: null,
                 payment_type: null,
                 payment_mode: null,
+                delivery_terms: "",
                 price_type: ""
             });
             setShipmentLinesForm([{ material_type: "", parent_product_id: "", product_id: "", quantity_ordered: "", base_unit_cost_php: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0" }]);
