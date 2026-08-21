@@ -289,7 +289,7 @@ export async function POST(request: Request) {
             }
             const categoryType = categoryTypes.get(line.productId);
             if (!categoryType) {
-                throw new ReceivingPreviewError(`Product ${line.productId} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                throw new ReceivingPreviewError(`Product ${line.productId} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
             }
             if (line.isPackaging !== (categoryType === "PACKAGING")) {
                 throw new ReceivingPreviewError(`Line ${line.lineId} Category_Type does not match the product master classification.`);

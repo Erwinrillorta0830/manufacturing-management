@@ -542,7 +542,7 @@ export function ShipmentFormModal({
                                 <div className="p-8 rounded-xl border bg-amber-500/5 border-amber-500/10 text-center space-y-2 animate-in fade-in duration-200">
                                     <AlertCircle className="h-6 w-6 text-amber-500 mx-auto animate-pulse" />
                                     <p className="text-xs text-amber-700 font-extrabold uppercase tracking-wider">Vendor Selection Required</p>
-                                    <p className="text-[11px] text-amber-600/90 font-medium max-w-md mx-auto">Please select a supplier vendor above to unlock the raw materials catalog and spreadsheet grid.</p>
+                                    <p className="text-[11px] text-amber-600/90 font-medium max-w-md mx-auto">Please select a supplier vendor above to unlock the product catalog and spreadsheet grid.</p>
                                 </div>
                             ) : (
                                 <div className="border rounded-xl shadow-sm bg-card min-w-0 h-[320px] min-h-[220px] max-h-[45dvh] overflow-auto overscroll-contain">
@@ -552,7 +552,7 @@ export function ShipmentFormModal({
                                             <tr>
                                                 <th className="p-2 border-r text-center w-10">#</th>
                                                 <th className="p-2 border-r min-w-[110px]">Type <span className="text-red-500">*</span></th>
-                                                <th className="p-2 border-r min-w-[260px]">Raw Product Name <span className="text-red-500">*</span></th>
+                                                <th className="p-2 border-r min-w-[260px]">Product Name <span className="text-red-500">*</span></th>
                                                 <th className="p-2 border-r min-w-[160px]">Packaging / UOM</th>
                                                 <th className="p-2 border-r text-right min-w-[110px]">Qty <span className="text-red-500">*</span></th>
                                                 <th className="p-2 border-r text-right min-w-[120px]">Price ({currencyCode}) <span className="text-red-500">*</span></th>
@@ -624,7 +624,7 @@ export function ShipmentFormModal({
                                                             </select>
                                                         </td>
 
-                                                        {/* Raw Product Name Selector */}
+                                                        {/* Product Name Selector */}
                                                         <td className="p-1.5 border-r align-middle">
                                                             <RawProductSelector
                                                                 id={`search-input-${idx}`}

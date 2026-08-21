@@ -248,7 +248,11 @@ export function usePurchaseOrder() {
 
             return {
                 productId,
-                categoryType: line.material_type === "raw_material" ? "RAW_MATERIAL" : "PACKAGING",
+                categoryType: line.material_type === "raw_material"
+                    ? "RAW_MATERIAL"
+                    : line.material_type === "packaging"
+                        ? "PACKAGING"
+                        : "FINISHED_GOODS",
                 parentProductId: canonicalParentId,
                 purchaseIntent: line.purchase_intent || "Buffer_Stock",
                 jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,

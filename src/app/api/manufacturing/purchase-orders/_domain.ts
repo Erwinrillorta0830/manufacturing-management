@@ -149,6 +149,7 @@ export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyL
 export interface PurchaseOrderProductPayloadInput extends PurchaseOrderMoneyLine {
     purchaseOrderId: number;
     productId: number;
+    categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     exchangeRate: DecimalInput;
     branchId?: number | null;
     purchaseIntent?: PurchaseIntent;
@@ -171,6 +172,7 @@ export function buildPurchaseOrderProductPayload(
     return {
         purchase_order_id: input.purchaseOrderId,
         product_id: input.productId,
+        category_type: input.categoryType,
         ordered_quantity: quantity,
         unit_price: unitPricePhp,
         approved_price: unitPricePhp,

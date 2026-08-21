@@ -80,7 +80,7 @@ export interface PurchaseOrderDraftPayload {
     };
     lines: Array<{
         productId: number;
-        categoryType: "RAW_MATERIAL" | "PACKAGING";
+        categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
         parentProductId?: number | null;
         purchaseIntent: "MRP_Demand" | "Buffer_Stock";
         jobOrderId: number | null;

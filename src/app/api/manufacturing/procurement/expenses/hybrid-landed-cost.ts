@@ -27,8 +27,8 @@ export function calculateHybridLandedCostAllocation(
     const result: HybridAllocationResult = new Map();
     if (lineItems.length === 0) return result;
     for (const item of lineItems) {
-        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING") {
-            throw new Error(`Line ${item.key} must have Category_Type RAW_MATERIAL or PACKAGING for Hybrid allocation.`);
+        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING" && item.category_type !== "FINISHED_GOODS") {
+            throw new Error(`Line ${item.key} must have Category_Type RAW_MATERIAL, PACKAGING, or FINISHED_GOODS for Hybrid allocation.`);
         }
     }
     if (totalLandedFee === 0) {

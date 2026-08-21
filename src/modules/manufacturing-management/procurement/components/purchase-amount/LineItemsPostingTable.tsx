@@ -57,6 +57,11 @@ export default function LineItemsPostingTable({
                         {calculationResult.lineCalculations.map((line) => {
                             const name = line.product_name || `Product #${line.product_id}`;
                             const isPkg = line.category_type === "PACKAGING";
+                            const categoryLabel = isPkg
+                                ? "PACKAGING"
+                                : line.category_type === "FINISHED_GOODS"
+                                    ? "FINISHED GOODS"
+                                    : "RAW MATERIAL";
                             const price = Number(line.unit_price) || 0;
                             const basePhp = price * (isForeignPO ? exchangeRate : 1.0);
                             const lineTotal = basePhp * (line.received_quantity || 0);
@@ -70,7 +75,7 @@ export default function LineItemsPostingTable({
                                                 ? "bg-purple-500/10 text-purple-600 border border-purple-500/20" 
                                                 : "bg-blue-500/10 text-blue-600 border border-blue-500/20"
                                         }`}>
-                                            {isPkg ? "PACKAGING" : "RAW MATERIAL"}
+                                            {categoryLabel}
                                         </span>
                                     </td>
                                     <td className="p-3 text-right font-mono font-bold">{line.received_quantity.toLocaleString()}</td>

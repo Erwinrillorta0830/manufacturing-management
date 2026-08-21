@@ -566,7 +566,11 @@ export function useProcurement(defaultTab: string = "suppliers") {
             setLoading(true);
             const linesPayload = validLines.map(l => ({
                 product_id: parseInt(l.product_id),
-                category_type: l.material_type === "raw_material" ? "RAW_MATERIAL" : "PACKAGING",
+                category_type: l.material_type === "raw_material"
+                    ? "RAW_MATERIAL"
+                    : l.material_type === "packaging"
+                        ? "PACKAGING"
+                        : "FINISHED_GOODS",
                 quantity_ordered: parseFloat(l.quantity_ordered),
                 base_unit_cost_php: parseFloat(l.base_unit_cost_php),
                 discount_type: l.discount_type_id ? Number(l.discount_type_id) : null,

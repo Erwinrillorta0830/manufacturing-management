@@ -133,7 +133,7 @@ export interface ShipmentLineItem {
             unit_name: string;
         };
     };
-    category_type?: "RAW_MATERIAL" | "PACKAGING";
+    category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     quantity_ordered?: number;
     quantity_received?: number | null;
     base_unit_cost_php: number | string;

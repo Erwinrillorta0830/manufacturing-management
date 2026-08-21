@@ -720,7 +720,7 @@ export async function fetchShipmentLineItems(
                 throw new ProductCategoryTypeValidationError(
                     400,
                     "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                    `Product ${rawProdId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                    `Product ${rawProdId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
                     { productId: Number(rawProdId), lineId }
                 );
             }
@@ -1018,6 +1018,7 @@ export async function createIncomingShipment(
                 body: JSON.stringify(buildPurchaseOrderProductPayload({
                     purchaseOrderId: poId,
                     productId: typeof item.product_id === "object" ? item.product_id.product_id : item.product_id,
+                    categoryType: item.category_type!,
                     quantity: qty,
                     unitPrice: price,
                     discountMode: item.discount_mode || "Percentage",
