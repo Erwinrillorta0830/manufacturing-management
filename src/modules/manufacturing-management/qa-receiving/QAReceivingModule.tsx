@@ -32,7 +32,6 @@ export default function QAReceivingModule() {
         setProcessOverDelivery,
         overDeliveryLines,
         selectedBranchId,
-        setSelectedBranchId,
         inspectionRows,
         qaSpecificationStates,
         qaReadings,
@@ -207,7 +206,6 @@ export default function QAReceivingModule() {
                                     setProcessOverDelivery={setProcessOverDelivery}
                                     overDeliveryLines={overDeliveryLines}
                                     selectedBranchId={selectedBranchId}
-                                    setSelectedBranchId={setSelectedBranchId}
                                     inspectionRows={inspectionRows}
                                     qaSpecificationStates={qaSpecificationStates}
                                     qaReadings={qaReadings}

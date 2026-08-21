@@ -26,7 +26,6 @@ interface ShipmentInspectionFormProps {
     setProcessOverDelivery: (value: boolean) => void;
     overDeliveryLines: OverDeliveryLine[];
     selectedBranchId: string;
-    setSelectedBranchId: (val: string) => void;
     inspectionRows: Record<number, InspectionRow>;
     qaSpecificationStates: Record<number, QaSpecificationLoadState>;
     qaReadings: QaSpecificationReadings;
@@ -191,7 +190,6 @@ export default function ShipmentInspectionForm({
     receiptMode,
     setReceiptMode,
     selectedBranchId,
-    setSelectedBranchId,
     processOverDelivery,
     setProcessOverDelivery,
     overDeliveryLines,
@@ -536,19 +534,19 @@ export default function ShipmentInspectionForm({
 
                 <div className="space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                         Receiving Branch {!readOnly && <span className="text-red-500">*</span>}
+                        Receiving Branch <span className="text-muted-foreground">(from PO)</span>
                     </label>
                     <div className="relative">
                         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
                         <select
                             id="receiving-branch"
-                            required={!readOnly}
+                            required={false}
                             value={selectedBranchId}
-                            onChange={(event) => setSelectedBranchId(event.target.value)}
-                            disabled={readOnly}
+                            disabled={true}
+                            aria-readonly="true"
                             aria-invalid={Boolean(issueFor(undefined, "branchId"))}
                             aria-describedby={issueFor(undefined, "branchId") ? "receiving-branch-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
+                            className={`w-full h-10 rounded-xl border bg-muted/40 text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none cursor-not-allowed disabled:opacity-100 ${issueFor(undefined, "branchId") ? "border-red-500" : ""}`}
                         >
                             <option value="">Select receiving branch...</option>
                             {filteredBranches.map(branch => (
@@ -557,6 +555,7 @@ export default function ShipmentInspectionForm({
                         </select>
                     </div>
                     {issueFor(undefined, "branchId") && <p id="receiving-branch-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "branchId")?.message}</p>}
+                    {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
                 </div>
 
                 <div className="space-y-1">

@@ -27,6 +27,7 @@ import {
     QuarantineDispositionError
 } from "../_quarantine-disposition";
 import { forceReceivedIntakeMessage } from "../_force-received";
+import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
@@ -58,19 +59,22 @@ async function directusRows(path: string, message: string) {
     return rows(await response.json());
 }
 
-async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null) {
+async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null): Promise<number> {
     const headerRows = await directusRows(
-        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,inventory_status,force_received_at&limit=1`,
+        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,branch_id,inventory_status,force_received_at&limit=1`,
         "Unable to verify the current purchase-order status."
     );
+    const purchaseOrderBranchId = resolvePurchaseOrderBranchId(headerRows[0]);
+    if (!purchaseOrderBranchId) throw new CommitError(409, "The Purchase Order does not have a valid receiving branch.");
     const status = Number(headerRows[0]?.inventory_status);
     const forceClosedMessage = forceReceivedIntakeMessage(headerRows[0]?.force_received_at);
     if (forceClosedMessage) throw new CommitError(409, forceClosedMessage);
-    if (replacementDispositionId) return;
-    if (status === INVENTORY_STATUS.RECEIVED) return;
+    if (replacementDispositionId) return purchaseOrderBranchId;
+    if (status === INVENTORY_STATUS.RECEIVED) return purchaseOrderBranchId;
     if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
         throw new CommitError(409, "The purchase order must be in Receiving (QA) before it can be received.");
     }
+    return purchaseOrderBranchId;
 }
 
 async function inventoryRowsForMovements(shipmentId: number, movementRows: Record<string, unknown>[]) {
@@ -460,7 +464,10 @@ export async function POST(request: Request) {
         if (!parsed.success) {
             return NextResponse.json({ error: "Invalid receiving commit request.", details: parsed.error.flatten() }, { status: 400 });
         }
-        await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
+        const purchaseOrderBranchId = await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
+        if (parsed.data.destinationBranchId !== purchaseOrderBranchId) {
+            throw new CommitError(409, "Receiving Branch must match the Purchase Order branch.");
+        }
         const existingTicket = await fetchReceivingTicketByIdempotencyKey(idempotencyKey);
         if (existingTicket?.posting_status === "Posted" && existingTicket.receiving_ticket_no) {
             const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true, new Set(), existingTicket.receipt_date || parsed.data.receiptDate);
@@ -535,7 +542,7 @@ export async function POST(request: Request) {
             });
         const receivingTicket = await allocateReceivingTicket({
             purchaseOrderId: parsed.data.shipmentId,
-            branchId: parsed.data.destinationBranchId,
+            branchId: purchaseOrderBranchId,
             receiptNumber: parsed.data.receiptNumber,
             receiptDate: parsed.data.receiptDate,
             receiptMode: parsed.data.receiptMode,
@@ -566,7 +573,7 @@ export async function POST(request: Request) {
                 receiptDate: parsed.data.receiptDate,
                 receiptMode: parsed.data.receiptMode,
                 processOverDelivery: parsed.data.processOverDelivery,
-                branchId: parsed.data.destinationBranchId,
+                branchId: purchaseOrderBranchId,
                 branchName: preview.destinationBranch.name,
                 mrp_allocation_drafts: mrpAllocationDrafts,
                 lineItemUpdates: preview.lines.map(result => {

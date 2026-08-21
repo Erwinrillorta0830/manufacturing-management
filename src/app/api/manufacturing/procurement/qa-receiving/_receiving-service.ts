@@ -24,6 +24,7 @@ import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history
 import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-receiving/_receiving-status";
 import { sumMovementQuantitiesByLot } from "../../qa-receiving/_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
+import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 
@@ -318,7 +319,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             receiptDate,
             receiptMode,
             processOverDelivery,
-            branchId,
+            branchId: submittedBranchId,
             lineItemUpdates: submittedLineItemUpdates
         } = parsed.data;
         const replacementDispositionId = submittedReplacementDispositionId ?? options.replacementDispositionId ?? null;
@@ -354,7 +355,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,date_received,force_received_at`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,max_batch_capacity&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -365,6 +366,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!linesRes.ok || !lotsRes.ok || !lotInventoryRes.ok || !branchesRes.ok || !movementTypesRes.ok) throw new Error("Failed to validate receiving reference data.");
 
         const shipment = (await headerRes.json()).data as Record<string, unknown>;
+        const branchId = resolvePurchaseOrderBranchId(shipment);
+        if (!branchId) throw new ReceivingError("The Purchase Order does not have a valid receiving branch.", 409);
+        if (branchId !== submittedBranchId) throw new ReceivingError("Receiving Branch must match the Purchase Order branch.", 409);
         const forceClosedMessage = forceReceivedIntakeMessage(shipment.force_received_at);
         if (forceClosedMessage) throw new ReceivingError(forceClosedMessage, 409);
         const poLines = ((await linesRes.json()).data || []) as Record<string, unknown>[];

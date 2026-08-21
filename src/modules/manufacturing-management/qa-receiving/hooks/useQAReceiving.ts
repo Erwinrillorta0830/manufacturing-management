@@ -109,20 +109,6 @@ export function useQAReceiving() {
     const receivingPreview = receivingCommitContext?.preview ?? null;
     const receivingCommitReady = Boolean(receivingCommitContext?.preview.postingEnabled);
 
-    const handleDestinationBranchChange = useCallback((value: string) => {
-        previewController.current?.abort();
-        setSelectedBranchId(value);
-        setProcessOverDeliveryState(false);
-        setQaEvaluationResults({});
-        setReceivingCommitContext(null);
-        setCommittedResult(null);
-        setPreviewOpen(false);
-        setPreviewAcknowledged(false);
-        setPreviewError(null);
-        setValidatingInspection(false);
-        setForceReceivedSubmitting(false);
-    }, []);
-
     const handleReceiptNumberChange = useCallback((value: string) => {
         previewController.current?.abort();
         setReceivingTicketNumber(value);
@@ -372,6 +358,9 @@ export function useQAReceiving() {
         detailController.current = controller;
         setSelectedShipment(shipment);
         setReplacementDisposition(replacementContext);
+        setSelectedBranchId(Number.isSafeInteger(Number(shipment.branch_id)) && Number(shipment.branch_id) > 0
+            ? String(shipment.branch_id)
+            : "");
         setReceivingTicketNumber("");
         setReceiptDate(getTodayReceiptDate());
         setReceiptMode(isReplacement || isPartiallyReceived ? "partial" : "full");
@@ -467,19 +456,8 @@ export function useQAReceiving() {
                 .find(Boolean) || "";
             setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
-            // Reuse the last partial receipt branch when available; otherwise use the PO branch.
-            const latestReceiptBranchId = isPartiallyReceived
-                ? lines.find(line => line.latest_receipt?.branch_id)?.latest_receipt?.branch_id
-                : null;
-            if (latestReceiptBranchId) {
-                setSelectedBranchId(latestReceiptBranchId.toString());
-            } else if (shipment.branch_id) {
-                setSelectedBranchId(shipment.branch_id.toString());
-            } else if (branches.length > 0) {
-                setSelectedBranchId(branches[0].id.toString());
-            } else {
-                setSelectedBranchId("");
-            }
+            const poBranchId = Number(shipment.branch_id);
+            setSelectedBranchId(Number.isSafeInteger(poBranchId) && poBranchId > 0 ? poBranchId.toString() : "");
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             setQaSpecificationStates(Object.fromEntries(productIds.map(productId => [productId, {
@@ -1211,7 +1189,6 @@ export function useQAReceiving() {
         setLineItems,
         loadingLines,
         selectedBranchId,
-        setSelectedBranchId: handleDestinationBranchChange,
         receivingTicketNumber,
         handleReceiptNumberChange,
         receiptDate,
