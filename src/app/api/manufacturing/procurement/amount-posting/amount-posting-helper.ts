@@ -193,7 +193,7 @@ export async function resolvePostingLineItems(
             throw new ProductCategoryTypeValidationError(
                 400,
                 "PRODUCT_CATEGORY_TYPE_REQUIRED",
-                `Product ${productId} must have a RAW_MATERIAL or PACKAGING Category_Type in the product master.`,
+                `Product ${productId} must have a RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type in the product master.`,
                 { productId, lineId }
             );
         }
@@ -315,8 +315,8 @@ export function calculateHybridAllocationEngine(
     const totalLandedFee = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     for (const item of lineItems) {
-        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING") {
-            throw new Error(`Receiving line ${item.purchase_order_product_id} must have Category_Type RAW_MATERIAL or PACKAGING.`);
+        if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING" && item.category_type !== "FINISHED_GOODS") {
+            throw new Error(`Receiving line ${item.purchase_order_product_id} must have Category_Type RAW_MATERIAL, PACKAGING, or FINISHED_GOODS.`);
         }
     }
 

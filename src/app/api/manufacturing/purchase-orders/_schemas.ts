@@ -23,7 +23,7 @@ const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).co
 const percentage = z.coerce.number().finite().min(0).max(100);
 const discountMode = z.enum(["Percentage", "Fixed Amount"]);
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING"]);
+const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"]);
 
 export const purchaseOrderStatusSchema = z.enum([
     "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",

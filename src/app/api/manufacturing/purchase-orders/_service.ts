@@ -393,6 +393,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
                 body: JSON.stringify(buildPurchaseOrderProductPayload({
                     purchaseOrderId: header.purchase_order_id,
                     productId: line.productId,
+                    categoryType: line.categoryType,
                     quantity: line.quantity,
                     unitPrice: line.unitPrice,
                     discountMode: line.discountMode,

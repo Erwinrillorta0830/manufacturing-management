@@ -306,6 +306,7 @@ function linePayload(
     return buildPurchaseOrderProductPayload({
         purchaseOrderId,
         productId: Number(line.product_id),
+        categoryType: line.category_type,
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
         discountMode: line.discount_mode || "Percentage",

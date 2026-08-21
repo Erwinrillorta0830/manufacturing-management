@@ -140,8 +140,8 @@ export function usePurchaseAmountPosting(
                     setLineItems(data.lineItems.map((item: Record<string, unknown>) => {
                         const prodObj = typeof item.product_id === "object" && item.product_id !== null ? (item.product_id as Record<string, unknown>) : null;
                         const categoryType = item.category_type;
-                        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING") {
-                            throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL or PACKAGING Category_Type.`);
+                        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING" && categoryType !== "FINISHED_GOODS") {
+                            throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                         }
 
                         const weightBreakdown = resolveProductWeightBreakdown(prodObj, {
@@ -261,7 +261,7 @@ export function usePurchaseAmountPosting(
             };
         }
 
-        const rmItems = lineItems.filter(i => i.category_type === "RAW_MATERIAL");
+        const rmItems = lineItems.filter(i => i.category_type === "RAW_MATERIAL" || i.category_type === "FINISHED_GOODS");
         const pkgItems = lineItems.filter(i => i.category_type === "PACKAGING");
 
         const totalRMCommercialVal = rmItems.reduce((sum, i) => sum + (i.received_quantity || 0) * (i.unit_price || 0) * (isForeignPO ? exchangeRate : 1.0), 0);

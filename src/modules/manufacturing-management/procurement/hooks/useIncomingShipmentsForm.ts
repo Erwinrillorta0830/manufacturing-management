@@ -363,9 +363,9 @@ export function useIncomingShipmentsForm({
         const selectedMaterialType = purchaseOrderMaterialTypeFromProduct(selectedMaterial, rawMaterials);
 
         if (!line.material_type) errors.push("Type is required");
-        if (!line.product_id) errors.push("Raw Product Name is required");
+        if (!line.product_id) errors.push("Product Name is required");
         if (line.material_type && selectedMaterial && selectedMaterialType !== line.material_type) {
-            errors.push("Raw Product Name must match the selected Type");
+            errors.push("Product Name must match the selected Type");
         }
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
         if (!isNonNegativeDecimal(unitPrice)) {
@@ -422,7 +422,11 @@ export function useIncomingShipmentsForm({
         if (editingShipmentId) {
             const linesForEdit = linesForm.map(line => ({
                 ...line,
-                category_type: line.material_type === "raw_material" ? "RAW_MATERIAL" as const : "PACKAGING" as const
+                category_type: line.material_type === "raw_material"
+                    ? "RAW_MATERIAL" as const
+                    : line.material_type === "packaging"
+                        ? "PACKAGING" as const
+                        : "FINISHED_GOODS" as const
             }));
             const editSucceeded = await onEditShipment(editingShipmentId, shipmentForm, linesForEdit);
             if (editSucceeded !== false) {
