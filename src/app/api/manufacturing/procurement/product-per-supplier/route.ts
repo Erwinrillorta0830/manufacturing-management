@@ -6,10 +6,19 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const supplierId = searchParams.get("supplierId");
         const productId = searchParams.get("productId");
+        const productIdsParam = searchParams.get("productIds") || searchParams.get("product_ids");
+        const productIds = (productIdsParam || "")
+            .split(",")
+            .map(value => Number(value.trim()))
+            .filter(value => Number.isSafeInteger(value) && value > 0);
 
         const filters: string[] = [];
         if (supplierId) filters.push(`filter[supplier_id][_eq]=${supplierId}`);
-        if (productId) filters.push(`filter[product_id][_eq]=${productId}`);
+        if (productIds.length > 0) {
+            filters.push(`filter[product_id][_in]=${productIds.join(",")}`);
+        } else if (productId) {
+            filters.push(`filter[product_id][_eq]=${productId}`);
+        }
 
         const filterQuery = filters.length > 0 ? filters.join("&") + "&" : "";
         const url = `${DIRECTUS_URL}/items/product_per_supplier?${filterQuery}fields=id,supplier_id,product_id,discount_type.*&limit=-1`;

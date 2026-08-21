@@ -65,14 +65,13 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         handleAddLineForm,
         handleRemoveLineForm,
         handleLineFormChange,
-        priceTypeRatesMap,
+        priceControlCostsMap,
         discountTypes,
         productPerSupplierMap,
         isFinanceManager,
         totalUsdValue,
         draftSummary,
-        priceTypeResolution,
-        priceMatrixStatus,
+        priceControlStatus,
         fxRateStatus,
         fxRateError
     } = useIncomingShipmentsForm({
@@ -287,13 +286,12 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 handleLineFormChange={handleLineFormChange}
                 getLineErrors={getLineErrors}
                 supplierRawMaterials={supplierRawMaterials}
-                priceTypeRatesMap={priceTypeRatesMap}
+                priceControlCostsMap={priceControlCostsMap}
                 discountTypes={discountTypes}
                 productPerSupplierMap={productPerSupplierMap}
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
-                priceTypeResolution={priceTypeResolution}
-                priceMatrixStatus={priceMatrixStatus}
+                priceControlStatus={priceControlStatus}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}
