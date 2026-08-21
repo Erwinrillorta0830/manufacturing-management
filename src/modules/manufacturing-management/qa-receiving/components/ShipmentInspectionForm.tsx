@@ -221,7 +221,8 @@ function LotAllocationEditor({
 
     React.useEffect(() => {
         for (const allocation of allocations) {
-            if (allocation.storageLotId > 0) loadBatches(allocation.storageLotId);
+            const lotId = Number(allocation.storageLotId);
+            if (Number.isFinite(lotId) && lotId > 0) loadBatches(lotId);
         }
     }, [allocations, loadBatches]);
 

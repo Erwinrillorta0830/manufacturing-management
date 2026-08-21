@@ -440,8 +440,12 @@ export function useQAReceiving() {
                 if (l.category_type !== "RAW_MATERIAL" && l.category_type !== "PACKAGING" && l.category_type !== "FINISHED_GOODS") {
                     throw new Error(`Product ${l.product_id?.product_name || l.product_id?.product_id || l.line_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
                 }
-                const latestReceipt = !isReplacement && (isReceived || isPartiallyReceived) ? l.latest_receipt : null;
-                const latestStorageLotId = latestReceipt?.storage_lot_id ?? l.lot_id ?? null;
+                // A partially received PO is editable for a new receipt. Do not
+                // hydrate the prior receipt's lot/batch allocations into that
+                // new draft; those quantities are historical and would make
+                // the next receipt appear over-allocated.
+                const latestReceipt = !isReplacement && isReceived ? l.latest_receipt : null;
+                const latestStorageLotId = isReceived ? (latestReceipt?.storage_lot_id ?? l.lot_id ?? null) : null;
                 const isPkg = l.category_type === "PACKAGING";
                 
                 const orderedQuantity = Number(l.quantity_ordered || 0);
