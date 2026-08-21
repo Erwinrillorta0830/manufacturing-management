@@ -161,7 +161,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptMode, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -175,7 +175,7 @@ export async function POST(request: Request) {
             })
             : null;
         const replacementFlow = Boolean(replacementContext);
-        const previewSourceDocumentNo = "Generated on commit";
+        const previewSourceDocumentNo = receiptNumber;
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
             throw new ReceivingPreviewError("Duplicate purchase-order lines are not allowed.");
@@ -559,7 +559,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
             data: {
                 shipmentId,
-                receivingTicketNumber: null,
+                receivingTicketNumber: receiptNumber,
                 receiptMode,
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,

@@ -17,6 +17,7 @@ interface ShipmentInspectionFormProps {
     branches: Branch[];
     storageLots: StorageLot[];
     receivingTicketNumber: string;
+    onReceiptNumberChange: (value: string) => void;
     receiptMode?: "full" | "partial";
     setReceiptMode?: (val: "full" | "partial") => void;
     processOverDelivery: boolean;
@@ -182,6 +183,7 @@ export default function ShipmentInspectionForm({
     branches,
     storageLots,
     receivingTicketNumber,
+    onReceiptNumberChange,
     receiptMode,
     setReceiptMode,
     selectedBranchId,
@@ -482,21 +484,28 @@ export default function ShipmentInspectionForm({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 border-b bg-background shrink-0">
                 <div className="space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                        Receipt Number
+                        Receipt Number {!readOnly && <span className="text-red-500">*</span>}
                     </label>
-                    <div
-                        id="receiving-receipt-number"
-                        role="status"
-                        className="w-full h-10 rounded-xl border bg-muted/30 text-foreground text-xs font-semibold pl-9 pr-3 py-2 flex items-center relative"
-                    >
-                        <ReceiptText className="absolute left-3 h-4 w-4 text-primary" />
-                        <span className={receivingTicketNumber ? "font-mono text-primary" : "text-muted-foreground"}>
-                            {receivingTicketNumber || "Auto-Generated on commit"}
-                        </span>
+                    <div className="relative">
+                        <ReceiptText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
+                        <input
+                            id="receiving-receipt-number"
+                            name="receiptNumber"
+                            type="text"
+                            required={!readOnly}
+                            maxLength={32}
+                            autoComplete="off"
+                            value={receivingTicketNumber}
+                            onChange={event => onReceiptNumberChange(event.target.value)}
+                            readOnly={readOnly}
+                            aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
+                            aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
+                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
+                        />
                     </div>
-                    <p className="text-[9px] text-muted-foreground">Unique delivery receipt document identifier.</p>
+                    {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
+                    <p className="text-[9px] text-muted-foreground">Enter the physical receiving ticket or delivery receipt number.</p>
                 </div>
-
 
                 <div className="space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">

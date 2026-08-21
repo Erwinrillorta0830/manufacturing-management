@@ -16,6 +16,19 @@ export interface ReceivingValidationIssue {
     message: string;
 }
 
+export const RECEIPT_NUMBER_MAX_LENGTH = 32;
+
+export function validateReceivingReceiptNumber(receiptNumber: string): ReceivingValidationIssue[] {
+    const normalized = receiptNumber.trim();
+    if (!normalized) {
+        return [{ field: "receiptNumber", message: "Receipt Number is required." }];
+    }
+    if (normalized.length > RECEIPT_NUMBER_MAX_LENGTH) {
+        return [{ field: "receiptNumber", message: `Receipt Number cannot exceed ${RECEIPT_NUMBER_MAX_LENGTH} characters.` }];
+    }
+    return [];
+}
+
 export function validateReceivingMetadata(
     branchId: string,
     lines: ReceivingMetadataLine[]
