@@ -13,6 +13,7 @@ import type {
     LandedCostAttachmentRecord,
     LandedCostExpenseDraft
 } from "../types";
+import { landedCostMethodLabel } from "../landed-cost-methods";
 
 interface LandedCostAttachmentsProps {
     purchaseOrderId: number;
@@ -141,6 +142,9 @@ export default function LandedCostAttachments({
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2">
+                <div className={`self-center rounded-md border px-2.5 py-1.5 text-[11px] font-bold ${allocationRule ? "border-primary/30 bg-primary/5 text-primary" : "border-amber-500/30 bg-amber-500/5 text-amber-700"}`}>
+                    Selected rule: {landedCostMethodLabel(allocationRule)}
+                </div>
                 <select
                     value={documentType}
                     onChange={event => setDocumentType(event.target.value as LandedCostAttachmentRecord["document_type"])}
@@ -149,7 +153,10 @@ export default function LandedCostAttachments({
                 >
                     {DOCUMENT_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
-                <label className={`h-9 px-3 rounded-md border text-xs font-bold inline-flex items-center justify-center gap-1.5 ${locked || loading || !allocationRule ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"}`}>
+                <label
+                    aria-disabled={locked || loading || !allocationRule}
+                    className={`h-9 px-3 rounded-md border text-xs font-bold inline-flex items-center justify-center gap-1.5 ${locked || loading || !allocationRule ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"}`}
+                >
                     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     Upload document
                     <input

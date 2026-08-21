@@ -72,6 +72,7 @@ export interface HybridCalculationResult {
     lineCalculations: LineCalculationItem[];
     rmSubPool: number;
     pkgSubPool: number;
+    fgSubPool: number;
     totalLandedFee: number;
     roundingVariance: number;
     hasMissingWeight: boolean;

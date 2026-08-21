@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { DollarSign, Landmark, AlertTriangle, CheckCircle2, Calculator, ShieldCheck, ListFilter, Printer, Loader2 } from "lucide-react";
+import { DollarSign, Landmark, AlertTriangle, Check, CheckCircle2, Calculator, ShieldCheck, ListFilter, Printer, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { usePurchaseAmountPosting } from "../hooks/usePurchaseAmountPosting";
 import { PurchaseAmountPostingModuleProps } from "./purchase-amount/types";
@@ -11,6 +11,7 @@ import LandedExpensesTable from "./purchase-amount/LandedExpensesTable";
 import LineItemsPostingTable from "./purchase-amount/LineItemsPostingTable";
 import PostedPOLedgerTable from "./purchase-amount/PostedPOLedgerTable";
 import LandedCostAttachments from "./LandedCostAttachments";
+import { LANDED_COST_METHOD_OPTIONS } from "../landed-cost-methods";
 import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 
 export default function PurchaseAmountPostingModule({
@@ -188,16 +189,26 @@ export default function PurchaseAmountPostingModule({
                                     <p className="text-[11px] text-muted-foreground mt-1">Choose the rule used by the server for every landed-cost allocation. This selection is required before posting.</p>
                                 </div>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                    {(["Value", "Weight", "Volume", "Hybrid"] as const).map(rule => (
+                                    {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
+                                        const selected = allocationRule === value;
+                                        return (
                                         <button
-                                            key={rule}
+                                            key={value}
                                             type="button"
-                                            onClick={() => setAllocationRule(rule)}
-                                            className={`rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${allocationRule === rule ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted"}`}
+                                            aria-pressed={selected}
+                                            data-state={selected ? "active" : "inactive"}
+                                            title={description}
+                                            onClick={() => setAllocationRule(value)}
+                                            className={`rounded-lg border px-3 py-2 text-xs font-bold transition-all inline-flex items-center justify-center gap-1.5 ${selected
+                                                ? "bg-primary text-primary-foreground border-primary ring-2 ring-primary/40 shadow-md"
+                                                : "hover:bg-muted"
+                                                }`}
                                         >
-                                            {rule === "Value" ? "Commercial Value" : rule === "Hybrid" ? "Hybrid (RM Qty / PKG Weight)" : rule}
+                                            {label}
+                                            {selected && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
                                         </button>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
 

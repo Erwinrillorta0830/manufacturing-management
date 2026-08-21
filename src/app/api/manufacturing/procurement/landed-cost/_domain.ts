@@ -108,6 +108,8 @@ export interface ComputationRecord extends DirectusRecord {
     purchase_order_id: number;
     allocation_rule: AllocationRule;
     status: ComputationStatus;
+    fg_value_share?: number | string | null;
+    fg_fee_pool?: number | string | null;
 }
 
 export class LandedCostDomainError extends Error {
@@ -653,6 +655,8 @@ export async function getLandedCostAudit(purchaseOrderId: number) {
             status: computation.status,
             totalLandedFee: expectedFee,
             roundingVariance: variance,
+            fgValueShare: asNumber(computation.fg_value_share),
+            fgFeePool: asNumber(computation.fg_fee_pool),
             finalizationKey: computation.finalization_key ? String(computation.finalization_key) : null,
             finalizedAt: computation.finalized_at ? String(computation.finalized_at) : null
         },
@@ -850,6 +854,8 @@ export async function finalizeLandedCost(input: {
         pkg_value_share: calculation.pkgValueShare,
         rm_fee_pool: calculation.rmFeePool,
         pkg_fee_pool: calculation.pkgFeePool,
+        fg_value_share: calculation.fgValueShare,
+        fg_fee_pool: calculation.fgFeePool,
         rounding_variance: calculation.roundingVariance,
         rounding_recipient_line_id: calculation.roundingRecipientKey,
         failure_reason: null

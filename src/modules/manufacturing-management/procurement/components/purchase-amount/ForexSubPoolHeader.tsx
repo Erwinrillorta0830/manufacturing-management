@@ -15,7 +15,7 @@ export default function ForexSubPoolHeader({
     calculationResult
 }: ForexSubPoolHeaderProps) {
     return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-slate-900/5 dark:bg-slate-900/40 rounded-xl border">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-900/5 dark:bg-slate-900/40 rounded-xl border">
             <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
                     Forex Exchange Rate (USD/PHP)
@@ -47,6 +47,15 @@ export default function ForexSubPoolHeader({
                 </label>
                 <div className="h-9 px-3 rounded-md border text-xs font-bold bg-background flex items-center text-purple-600 dark:text-purple-400">
                     ₱{calculationResult.pkgSubPool.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                </div>
+            </div>
+
+            <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    Finished Goods Sub-Pool Share
+                </label>
+                <div className="h-9 px-3 rounded-md border text-xs font-bold bg-background flex items-center text-amber-600 dark:text-amber-400">
+                    ₱{calculationResult.fgSubPool.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                 </div>
             </div>
         </div>
