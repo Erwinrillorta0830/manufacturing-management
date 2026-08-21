@@ -12,9 +12,6 @@ export default function LotManagementModule() {
         saving,
         searchQuery,
         setSearchQuery,
-        filterType,
-        setFilterType,
-        inventoryTypes,
         uoms,
         isFormOpen,
         editingLot,
@@ -38,9 +35,6 @@ export default function LotManagementModule() {
                 loading={loading}
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
-                filterType={filterType}
-                onFilterTypeChange={setFilterType}
-                inventoryTypes={inventoryTypes}
                 onEdit={openEditDialog}
                 onRefresh={loadLots}
                 onAddClick={openCreateDialog}
@@ -56,7 +50,6 @@ export default function LotManagementModule() {
                 formErrors={formErrors}
                 isDuplicateLotName={isDuplicateLotName}
                 onFormChange={handleFormChange}
-                inventoryTypes={inventoryTypes}
                 uoms={uoms}
                 saving={saving}
             />
