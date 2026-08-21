@@ -66,7 +66,13 @@ export function SalesOrderDetailPanel({
         const qty = editableQuantities[item.detail_id] ?? item.ordered_quantity;
         return acc + (item.unit_price * qty);
     }, 0);
-    const discount = Number(selectedOrder.discount_amount || 0);
+    const discount = orderDetails.reduce((acc, item) => {
+        // Scale discount based on quantity changes
+        const currentQty = editableQuantities[item.detail_id] ?? item.ordered_quantity;
+        const originalQty = item.ordered_quantity || 1;
+        const discountPerUnit = (item.discount_amount || 0) / originalQty;
+        return acc + (discountPerUnit * currentQty);
+    }, 0);
     const netSum = Math.max(0, grossSum - discount);
 
     // Check if any quantity has been edited from initial orderDetails
@@ -110,7 +116,7 @@ export function SalesOrderDetailPanel({
     };
 
     return (
-        <div className="border border-border rounded-2xl bg-card p-6 shadow-sm space-y-6">
+        <div className="bg-card p-6 space-y-6">
             {/* Header info */}
             <div className="flex justify-between items-start border-b border-border pb-4">
                 <div>
@@ -132,12 +138,6 @@ export function SalesOrderDetailPanel({
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">Sales Order Overview & Line Items</p>
                 </div>
-                <button
-                    onClick={() => setSelectedOrder(null)}
-                    className="text-muted-foreground hover:text-foreground text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-muted transition-all cursor-pointer border-none bg-transparent"
-                >
-                    Close
-                </button>
             </div>
 
             {/* Metadata Grid */}
@@ -277,11 +277,16 @@ export function SalesOrderDetailPanel({
                                         </div>
                                         <div className="text-right shrink-0">
                                             <div className="text-xs font-black text-foreground font-mono">
-                                                {formatCurrency(totalCost)}
+                                                {formatCurrency(totalCost - (item.discount_amount || 0))}
                                             </div>
                                             <div className="text-[9px] text-muted-foreground font-semibold mt-0.5">
                                                 {formatCurrency(item.unit_price)} / {uom}
                                             </div>
+                                            {item.discount_amount ? (
+                                                <div className="text-[9px] text-destructive font-semibold mt-0.5">
+                                                    - {formatCurrency(item.discount_amount)} discount
+                                                </div>
+                                            ) : null}
                                         </div>
                                     </div>
 
@@ -347,9 +352,9 @@ export function SalesOrderDetailPanel({
                         {formatCurrency(grossSum)}
                     </span>
                 </div>
-                {selectedOrder.discount_amount ? (
+                {discount > 0 ? (
                     <div className="flex justify-between items-center text-xs text-destructive">
-                        <span className="font-medium">Discount Code</span>
+                        <span className="font-medium">Total Discount</span>
                         <span className="font-bold font-mono">
                             - {formatCurrency(discount)}
                         </span>
