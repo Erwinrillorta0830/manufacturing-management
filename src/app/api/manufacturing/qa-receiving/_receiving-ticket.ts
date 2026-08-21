@@ -1,7 +1,7 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
-import { todayInManila } from "../procurement/_domain";
 
 export type ReceivingTicketStatus = "Reserved" | "Posted" | "Failed";
+const RECEIVING_TICKET_MAX_LENGTH = 32;
 
 export class ReceivingTicketError extends Error {
     constructor(message: string, readonly statusCode: number = 503) {
@@ -12,9 +12,10 @@ export class ReceivingTicketError extends Error {
 export interface ReceivingTicketRow {
     id: number;
     receiving_ticket_no: string | null;
+    receipt_date: string | null;
     purchase_order_id: number;
     branch_id: number;
-    receipt_mode: "full" | "partial" | string;
+    receipt_type: "full" | "partial" | string;
     workflow_revision: number;
     idempotency_key: string;
     posting_status: ReceivingTicketStatus | string;
@@ -30,6 +31,12 @@ function relationId(value: unknown, key: string): number {
     return Number(value && typeof value === "object" ? (value as Record<string, unknown>)[key] : value);
 }
 
+function dateOnly(value: unknown): string | null {
+    if (value == null || value === "") return null;
+    const normalized = String(value).trim();
+    return normalized ? normalized.slice(0, 10) : null;
+}
+
 function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow | null {
     if (!row) return null;
     const id = Number(row.id);
@@ -39,9 +46,10 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
         receiving_ticket_no: row.receiving_ticket_no == null || row.receiving_ticket_no === ""
             ? null
             : String(row.receiving_ticket_no),
+        receipt_date: dateOnly(row.receipt_date),
         purchase_order_id: relationId(row.purchase_order_id, "purchase_order_id"),
         branch_id: relationId(row.branch_id, "id"),
-        receipt_mode: String(row.receipt_mode || "full"),
+        receipt_type: String(row.receipt_type || "full"),
         workflow_revision: Number(row.workflow_revision || 0),
         idempotency_key: String(row.idempotency_key || ""),
         posting_status: String(row.posting_status || "")
@@ -49,7 +57,7 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
 }
 
 function ticketFields() {
-    return "id,receiving_ticket_no,purchase_order_id,branch_id,receipt_mode,workflow_revision,idempotency_key,posting_status";
+    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,receipt_type,workflow_revision,idempotency_key,posting_status";
 }
 
 async function directusJson(path: string, init?: RequestInit) {
@@ -81,18 +89,6 @@ async function withReceivingTicketAllocationLock<T>(key: string, task: () => Pro
     }
 }
 
-export function currentReceivingTicketYear(now = new Date()): number {
-    return Number(todayInManila(now).slice(0, 4));
-}
-
-export function formatReceivingTicketNumber(id: number, year = currentReceivingTicketYear()): string {
-    if (!Number.isSafeInteger(id) || id <= 0) {
-        throw new ReceivingTicketError("Directus returned an invalid receiving-ticket sequence ID.", 503);
-    }
-    const sequence = id >= 100000 ? String(id) : String(id).padStart(5, "0");
-    return `RT-${year}-${sequence}`;
-}
-
 export async function fetchReceivingTicketByIdempotencyKey(idempotencyKey: string): Promise<ReceivingTicketRow | null> {
     const params = new URLSearchParams({
         "filter[idempotency_key][_eq]": idempotencyKey,
@@ -100,8 +96,28 @@ export async function fetchReceivingTicketByIdempotencyKey(idempotencyKey: strin
         limit: "1"
     });
     const result = await directusJson(`/items/purchase_order_receiving_headers?${params.toString()}`);
-    if (!result.ok) throw new ReceivingTicketError("Unable to look up the generated receiving ticket.");
+    if (!result.ok) throw new ReceivingTicketError("Unable to look up the receiving ticket.");
     return mapTicket(rows(result.body)[0]);
+}
+
+async function fetchReceivingTicketByNumber(receiptNumber: string): Promise<ReceivingTicketRow | null> {
+    const params = new URLSearchParams({
+        "filter[receiving_ticket_no][_eq]": receiptNumber,
+        fields: ticketFields(),
+        limit: "1"
+    });
+    const result = await directusJson(`/items/purchase_order_receiving_headers?${params.toString()}`);
+    if (!result.ok) throw new ReceivingTicketError("Unable to verify Receipt Number uniqueness.");
+    return mapTicket(rows(result.body)[0]);
+}
+
+function normalizeReceiptNumber(receiptNumber: string): string {
+    const normalized = receiptNumber.trim();
+    if (!normalized) throw new ReceivingTicketError("Receipt Number is required.", 400);
+    if (normalized.length > RECEIVING_TICKET_MAX_LENGTH) {
+        throw new ReceivingTicketError(`Receipt Number cannot exceed ${RECEIVING_TICKET_MAX_LENGTH} characters.`, 400);
+    }
+    return normalized;
 }
 
 export async function fetchOpenReceivingTickets(purchaseOrderId: number, workflowRevision: number): Promise<ReceivingTicketRow[]> {
@@ -117,24 +133,17 @@ export async function fetchOpenReceivingTickets(purchaseOrderId: number, workflo
     return rows(result.body).map(mapTicket).filter((row): row is ReceivingTicketRow => Boolean(row));
 }
 
-async function assignReceivingTicketNumber(headerId: number): Promise<string> {
-    const receivingTicketNo = formatReceivingTicketNumber(headerId);
-    const result = await directusJson(`/items/purchase_order_receiving_headers/${headerId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ receiving_ticket_no: receivingTicketNo })
-    });
-    if (!result.ok) throw new ReceivingTicketError("Unable to persist the generated receiving ticket.");
-    return receivingTicketNo;
-}
-
 export async function allocateReceivingTicket(input: {
     purchaseOrderId: number;
     branchId: number;
-    receiptMode: "full" | "partial";
+    receiptNumber: string;
+    receiptDate: string;
+    receiptType: "full" | "partial";
     workflowRevision: number;
     idempotencyKey: string;
     createdBy: number;
 }): Promise<ReceivingTicketRow> {
+    const receiptNumber = normalizeReceiptNumber(input.receiptNumber);
     return withReceivingTicketAllocationLock(
         `${input.purchaseOrderId}:${input.workflowRevision}`,
         async () => {
@@ -147,6 +156,11 @@ export async function allocateReceivingTicket(input: {
                 throw new ReceivingTicketError("A receiving commit with this idempotency key is already in progress.", 409);
             }
 
+            const existingNumber = await fetchReceivingTicketByNumber(receiptNumber);
+            if (existingNumber) {
+                throw new ReceivingTicketError("Receipt Number is already in use.", 409);
+            }
+
             const openTickets = await fetchOpenReceivingTickets(input.purchaseOrderId, input.workflowRevision);
             if (openTickets.length > 0) {
                 throw new ReceivingTicketError("Another receiving commit is already in progress for this purchase-order revision.", 409);
@@ -157,7 +171,9 @@ export async function allocateReceivingTicket(input: {
                 body: JSON.stringify({
                     purchase_order_id: input.purchaseOrderId,
                     branch_id: input.branchId,
-                    receipt_mode: input.receiptMode,
+                    receiving_ticket_no: receiptNumber,
+                    receipt_date: input.receiptDate,
+                    receipt_type: input.receiptType,
                     workflow_revision: input.workflowRevision,
                     idempotency_key: input.idempotencyKey,
                     created_by: input.createdBy
@@ -167,16 +183,16 @@ export async function allocateReceivingTicket(input: {
                 const raced = await fetchReceivingTicketByIdempotencyKey(input.idempotencyKey);
                 if (raced?.posting_status === "Posted" && raced.receiving_ticket_no) return raced;
                 if (raced) throw new ReceivingTicketError("A receiving commit with this idempotency key is already in progress.", 409);
+                const racedNumber = await fetchReceivingTicketByNumber(receiptNumber);
+                if (racedNumber) throw new ReceivingTicketError("Receipt Number is already in use.", 409);
                 throw new ReceivingTicketError(`Unable to create the receiving ticket header${create.text ? `: ${create.text.slice(0, 300)}` : "."}`);
             }
 
             const created = mapTicket((create.body as { data?: Record<string, unknown> })?.data);
             if (!created) throw new ReceivingTicketError("Directus did not return the receiving ticket header ID.");
-            try {
-                created.receiving_ticket_no = await assignReceivingTicketNumber(created.id);
-            } catch (error) {
+            if (created.receiving_ticket_no !== receiptNumber || created.receipt_date !== input.receiptDate) {
                 await markReceivingTicketFailed(created.id).catch(() => false);
-                throw error;
+                throw new ReceivingTicketError("Unable to persist the submitted receipt metadata.");
             }
             return created;
         }

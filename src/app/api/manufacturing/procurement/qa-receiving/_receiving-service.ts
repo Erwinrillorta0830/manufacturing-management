@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers } from "../_directus";
-import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, todayInManila } from "../_domain";
+import { DIRECTUS_URL, headers, procurementDirectusFetch } from "../_directus";
+import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, receiptDateAtManilaMidnight } from "../_domain";
 import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
@@ -24,6 +24,7 @@ import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history
 import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-receiving/_receiving-status";
 import { sumMovementQuantitiesByLot } from "../../qa-receiving/_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
+import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 
@@ -315,9 +316,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             shipmentId,
             replacementDispositionId: submittedReplacementDispositionId,
             referenceNumber,
-            receiptMode,
+            receiptDate,
+            receiptType,
             processOverDelivery,
-            branchId,
+            branchId: submittedBranchId,
             lineItemUpdates: submittedLineItemUpdates
         } = parsed.data;
         const replacementDispositionId = submittedReplacementDispositionId ?? options.replacementDispositionId ?? null;
@@ -353,7 +355,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,date_received,force_received_at`, { headers, cache: "no-store" }),
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at`),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,max_batch_capacity&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -364,6 +366,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!linesRes.ok || !lotsRes.ok || !lotInventoryRes.ok || !branchesRes.ok || !movementTypesRes.ok) throw new Error("Failed to validate receiving reference data.");
 
         const shipment = (await headerRes.json()).data as Record<string, unknown>;
+        const branchId = resolvePurchaseOrderBranchId(shipment);
+        if (!branchId) throw new ReceivingError("The Purchase Order does not have a valid receiving branch.", 409);
+        if (branchId !== submittedBranchId) throw new ReceivingError("Receiving Branch must match the Purchase Order branch.", 409);
         const forceClosedMessage = forceReceivedIntakeMessage(shipment.force_received_at);
         if (forceClosedMessage) throw new ReceivingError(forceClosedMessage, 409);
         const poLines = ((await linesRes.json()).data || []) as Record<string, unknown>[];
@@ -388,7 +393,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
-        if (!replacementDispositionId && receiptMode === "full" && missingLineIds.length > 0) {
+        if (!replacementDispositionId && receiptType === "full" && missingLineIds.length > 0) {
             throw new ReceivingError(`Full receipt requires every purchase-order line to be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
         if (lineItemUpdates.some(item => item.lot_id && !validLotIds.has(item.lot_id))) throw new ReceivingError("One or more storage lots do not exist.", 400);
@@ -545,7 +550,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
             if (declaredAccepted > 0 && categoryType !== "PACKAGING" && !item.expiration_date) {
                 const shelfLifeDays = Number(product.product_shelf_life || 365);
-                const mfgDateStr = item.manufacturing_date || todayInManila();
+                const mfgDateStr = item.manufacturing_date || receiptDate;
                 const mfgTime = new Date(mfgDateStr).getTime();
                 if (!isNaN(mfgTime)) {
                     const calculatedExp = new Date(mfgTime + shelfLifeDays * 24 * 60 * 60 * 1000);
@@ -554,7 +559,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     throw new ReceivingError(`Expiration date is required for product ${productId}.`, 400);
                 }
             }
-            if (item.expiration_date && !evaluateShelfLife(todayInManila(), item.expiration_date, Number(product.product_shelf_life || 0)).valid) {
+            if (item.expiration_date && !evaluateShelfLife(receiptDate, item.expiration_date, Number(product.product_shelf_life || 0)).valid) {
                 throw new ReceivingError(`Expiry date must be after the receipt date for product ${productId}.`, 400);
             }
 
@@ -616,10 +621,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 rejectedQuantity: previous.rejected + (current?.rejected || 0)
             };
         }));
-        if (!replacementDispositionId && receiptMode === "full" && receivingStatus.status === "Partially Received") {
+        if (!replacementDispositionId && receiptType === "full" && receivingStatus.status === "Partially Received") {
             throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.", 422);
         }
-        if (!replacementDispositionId && receiptMode === "partial" && receivingStatus.status !== "Partially Received") {
+        if (!replacementDispositionId && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
             throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.", 422);
         }
         if (!replacementDispositionId && receivingStatus.status === "Received" && !paymentStatusAllowsReceivingHandoff(shipment.payment_status)) {
@@ -687,7 +692,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
-                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: new Date().toISOString(),
+                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
                     quarantine_disposition_id: replacementDispositionId || null,
                     is_replacement: Boolean(replacementDispositionId),
@@ -830,7 +835,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     ...(nextInventoryStatus === INVENTORY_STATUS.RECEIVED
                         ? { payment_status: PAYMENT_STATUS.AWAITING_PAYMENT }
                         : {}),
-                    ...(receivingStatus.status !== "Partially Received" ? { date_received: todayInManila() } : {})
+                    ...(receivingStatus.status !== "Partially Received" ? { date_received: receiptDate } : {})
                 });
                 if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
             }

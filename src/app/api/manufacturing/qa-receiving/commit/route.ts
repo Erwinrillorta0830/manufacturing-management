@@ -27,6 +27,7 @@ import {
     QuarantineDispositionError
 } from "../_quarantine-disposition";
 import { forceReceivedIntakeMessage } from "../_force-received";
+import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
@@ -58,19 +59,22 @@ async function directusRows(path: string, message: string) {
     return rows(await response.json());
 }
 
-async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null) {
+async function assertReceivingStatusOpen(shipmentId: number, replacementDispositionId?: number | null): Promise<number> {
     const headerRows = await directusRows(
-        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,inventory_status,force_received_at&limit=1`,
+        `/items/purchase_order?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_id,branch_id,inventory_status,force_received_at&limit=1`,
         "Unable to verify the current purchase-order status."
     );
+    const purchaseOrderBranchId = resolvePurchaseOrderBranchId(headerRows[0]);
+    if (!purchaseOrderBranchId) throw new CommitError(409, "The Purchase Order does not have a valid receiving branch.");
     const status = Number(headerRows[0]?.inventory_status);
     const forceClosedMessage = forceReceivedIntakeMessage(headerRows[0]?.force_received_at);
     if (forceClosedMessage) throw new CommitError(409, forceClosedMessage);
-    if (replacementDispositionId) return;
-    if (status === INVENTORY_STATUS.RECEIVED) return;
+    if (replacementDispositionId) return purchaseOrderBranchId;
+    if (status === INVENTORY_STATUS.RECEIVED) return purchaseOrderBranchId;
     if (status !== INVENTORY_STATUS.FOR_PICKUP && status !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
         throw new CommitError(409, "The purchase order must be in Receiving (QA) before it can be received.");
     }
+    return purchaseOrderBranchId;
 }
 
 async function inventoryRowsForMovements(shipmentId: number, movementRows: Record<string, unknown>[]) {
@@ -157,7 +161,8 @@ async function persistedResult(
     input: ReceivingCommitRequest,
     receivingTicketNumber: string,
     idempotentReplay: boolean,
-    expectedAllocationLineIds: Set<number> = new Set()
+    expectedAllocationLineIds: Set<number> = new Set(),
+    receiptDate: string = input.receiptDate
 ): Promise<ReceivingCommitResult | null> {
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
@@ -410,6 +415,7 @@ async function persistedResult(
         mode: "compatibility",
         commitReference: receivingTicketNumber,
         receivingTicketNumber,
+        receiptDate,
         idempotentReplay,
         shipmentId: input.shipmentId,
         status: statusLabel(status),
@@ -458,10 +464,13 @@ export async function POST(request: Request) {
         if (!parsed.success) {
             return NextResponse.json({ error: "Invalid receiving commit request.", details: parsed.error.flatten() }, { status: 400 });
         }
-        await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
+        const purchaseOrderBranchId = await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
+        if (parsed.data.destinationBranchId !== purchaseOrderBranchId) {
+            throw new CommitError(409, "Receiving Branch must match the Purchase Order branch.");
+        }
         const existingTicket = await fetchReceivingTicketByIdempotencyKey(idempotencyKey);
         if (existingTicket?.posting_status === "Posted" && existingTicket.receiving_ticket_no) {
-            const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true);
+            const completed = await persistedResult(parsed.data, existingTicket.receiving_ticket_no, true, new Set(), existingTicket.receipt_date || parsed.data.receiptDate);
             if (completed) {
                 await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
                 return NextResponse.json({ data: completed });
@@ -479,7 +488,9 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/json", cookie: request.headers.get("cookie") || "" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
-                receiptMode: parsed.data.receiptMode,
+                receiptNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
+                receiptType: parsed.data.receiptType,
                 processOverDelivery: parsed.data.processOverDelivery,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
                 destinationBranchId: parsed.data.destinationBranchId,
@@ -531,19 +542,21 @@ export async function POST(request: Request) {
             });
         const receivingTicket = await allocateReceivingTicket({
             purchaseOrderId: parsed.data.shipmentId,
-            branchId: parsed.data.destinationBranchId,
-            receiptMode: parsed.data.receiptMode,
+            branchId: purchaseOrderBranchId,
+            receiptNumber: parsed.data.receiptNumber,
+            receiptDate: parsed.data.receiptDate,
+            receiptType: parsed.data.receiptType,
             workflowRevision: parsed.data.workflowRevision,
             idempotencyKey,
             createdBy: actor.userId
         });
         allocatedTicketId = receivingTicket.id;
         if (!receivingTicket.receiving_ticket_no) {
-            throw new CommitError(503, "The receiving ticket number was not generated.");
+            throw new CommitError(503, "The submitted Receipt Number was not persisted.");
         }
         if (receivingTicket.posting_status === "Posted") {
             ticketPosted = true;
-            const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)));
+            const completed = await persistedResult(parsed.data, receivingTicket.receiving_ticket_no, true, new Set(mrpAllocationDrafts.map(draft => draft.line_id)), receivingTicket.receipt_date || parsed.data.receiptDate);
             if (completed) {
                 await settleReplacementAfterReceiving(parsed.data.replacementDispositionId, completed, actor.userId, idempotencyKey);
                 return NextResponse.json({ data: completed });
@@ -556,10 +569,11 @@ export async function POST(request: Request) {
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
-                referenceNumber: receivingTicket.receiving_ticket_no,
-                receiptMode: parsed.data.receiptMode,
+                referenceNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
+                receiptType: parsed.data.receiptType,
                 processOverDelivery: parsed.data.processOverDelivery,
-                branchId: parsed.data.destinationBranchId,
+                branchId: purchaseOrderBranchId,
                 branchName: preview.destinationBranch.name,
                 mrp_allocation_drafts: mrpAllocationDrafts,
                 lineItemUpdates: preview.lines.map(result => {
@@ -606,7 +620,8 @@ export async function POST(request: Request) {
             parsed.data,
             receivingTicket.receiving_ticket_no,
             legacyBody.idempotent === true,
-            new Set(mrpAllocationDrafts.map(draft => draft.line_id))
+            new Set(mrpAllocationDrafts.map(draft => draft.line_id)),
+            receivingTicket.receipt_date || parsed.data.receiptDate
         );
         if (!committed) {
             throw new CommitError(500, "Receiving completed but persisted records could not be fully verified. Reconciliation is required.");

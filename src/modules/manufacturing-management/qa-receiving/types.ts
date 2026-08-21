@@ -74,6 +74,7 @@ export interface ShipmentLineItem {
     over_delivery_quantity?: number;
     latest_receipt?: {
         receipt_number: string;
+        receipt_date?: string | null;
         received_quantity: number;
         accepted_quantity: number;
         rejected_quantity: number;
@@ -162,7 +163,8 @@ export interface ReceivingPreview {
     shipmentId: number;
     replacementDispositionId?: number | null;
     receivingTicketNumber: string | null;
-    receiptMode: "full" | "partial";
+    receiptDate: string;
+    receiptType: "full" | "partial";
     processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;
@@ -176,7 +178,9 @@ export interface ReceivingCommitPayload {
     workflowRevision: number;
     shipmentId: number;
     replacementDispositionId?: number | null;
-    receiptMode: "full" | "partial";
+    receiptNumber: string;
+    receiptDate: string;
+    receiptType: "full" | "partial";
     processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{
@@ -201,6 +205,7 @@ export interface ReceivingCommitResult {
     mode: "compatibility";
     commitReference: string;
     receivingTicketNumber: string;
+    receiptDate: string;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
     paymentStatus?: number | null;

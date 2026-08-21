@@ -373,7 +373,7 @@ export function ShipmentDetailView({
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Revision Count</span>
                             <span className="text-xs font-extrabold text-foreground">
-                                {Math.max(0, Math.trunc(Number(activeShipment.workflow_revision) || 0))}
+                                {Math.max(0, Math.trunc(Number(activeShipment.revision_count) || 0))}
                             </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">

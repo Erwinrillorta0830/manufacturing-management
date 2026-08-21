@@ -328,7 +328,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                 <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{Number(approvalDetail.order.exchange_rate || 1).toFixed(4)}</div></div>
-                                <div><div className="text-[10px] uppercase text-muted-foreground">Revision</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.workflow_revision || 0}</div></div>
+                                <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
                             </div>
 
                             <div className="grid gap-3 lg:grid-cols-2">
@@ -468,7 +468,6 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                     detail={approvalDetail}
                                     selectedShipment={selectedShipment}
                                     currentLines={selectedShipmentLines}
-                                    suppliers={suppliers}
                                 />
                             )}
 
