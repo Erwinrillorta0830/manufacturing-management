@@ -584,10 +584,13 @@ export default function FinishedGoodsModule() {
     const parentOptions = useMemo(() => {
         return products
             .filter(p => !p.parent_id)
-            .map(p => ({
-                value: String(p.id),
-                label: `${p.title} (${p.sku}) - ${p.baseUom}`
-            }));
+            .map(p => {
+                const displayName = p.identityKey || p.title;
+                return {
+                    value: String(p.id),
+                    label: `${displayName} (${p.sku}) - ${p.baseUom}`
+                };
+            });
     }, [products]);
 
     const brandOptions = useMemo(() => {

@@ -1093,13 +1093,14 @@ export function useFinishedGoods(initialTab: string = "details") {
                         const identityParent = updatedParentId ? products.find(parent => parent.id === String(updatedParentId)) : null;
                         const identityName = identityParent?.title || editedDetails.title || p.title;
                         const identityUom = matchedUnit?.unit_shortcut || editedDetails.baseUom || p.baseUom;
+                        const resolvedIdentityKey = updatedParentId ? `${identityName} - ${identityUom.trim().toUpperCase()}` : identityName;
                         const updatedStatus = (editedDetails as unknown as { status?: string }).status || (p as unknown as { status?: string }).status || "Active";
                         return {
                             ...p,
                             sku: editedDetails.sku || p.sku,
                             title: editedDetails.title || p.title,
-                            description: editedDetails.description || p.description,
-                            identityKey: `${identityName} - ${identityUom.trim().toUpperCase()}`,
+                            description: editedDetails.description !== undefined ? editedDetails.description : p.description,
+                            identityKey: resolvedIdentityKey || p.identityKey || null,
                             barcode: editedDetails.barcode || p.barcode,
                             baseUom: editedDetails.baseUom || p.baseUom,
                             targetSellingPrice: editedDetails.targetSellingPrice || p.targetSellingPrice,

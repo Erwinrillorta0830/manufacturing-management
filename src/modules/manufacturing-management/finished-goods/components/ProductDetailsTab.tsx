@@ -89,10 +89,13 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     const parentOptions = React.useMemo(() => {
         const baseOptions = products
             .filter((p) => p.id !== selectedProduct.id && !p.parent_id)
-            .map((p) => ({
-                value: String(p.id),
-                label: `${p.title} (${p.sku}) - ${p.baseUom}`
-            }));
+            .map((p) => {
+                const displayName = p.identityKey || p.title;
+                return {
+                    value: String(p.id),
+                    label: `${displayName} (${p.sku}) - ${p.baseUom}`
+                };
+            });
         return [
             { value: "", label: "None (This is a parent product)" },
             ...baseOptions

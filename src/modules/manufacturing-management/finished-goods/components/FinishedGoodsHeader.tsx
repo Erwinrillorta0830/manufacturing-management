@@ -99,13 +99,14 @@ export function FinishedGoodsHeader({
         const opts: { value: string; label: string; labelNode?: React.ReactNode; triggerNode?: React.ReactNode }[] = [];
 
         roots.forEach(root => {
+            const rootDisplayName = root.identityKey || root.title;
             opts.push({
                 value: root.id,
-                label: `${root.title} (${root.sku || 'N/A'}) - ${root.baseUom}`,
+                label: `${rootDisplayName} (${root.sku || 'N/A'}) - ${root.baseUom}`,
                 triggerNode: (
                     <div className="flex items-center gap-2 min-w-0">
                         <Package className="h-3.5 w-3.5 text-primary shrink-0" />
-                        <span className="font-bold text-foreground truncate">{root.title}</span>
+                        <span className="font-bold text-foreground truncate">{rootDisplayName}</span>
                     </div>
                 ),
                 labelNode: (
@@ -116,7 +117,7 @@ export function FinishedGoodsHeader({
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                    <span className="font-bold text-foreground truncate">{root.title}</span>
+                                    <span className="font-bold text-foreground truncate">{rootDisplayName}</span>
                                     <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[8px] font-bold px-1.5 py-0.2 rounded border border-blue-500/20 shrink-0">
                                         Parent
                                     </span>
@@ -137,13 +138,14 @@ export function FinishedGoodsHeader({
 
             const children = childrenMap.get(root.id) || [];
             children.forEach(child => {
+                const childDisplayName = child.identityKey || child.title;
                 opts.push({
                     value: child.id,
-                    label: `  ↳ ${child.title} (${child.sku || 'N/A'}) - ${child.baseUom}`,
+                    label: `  ↳ ${childDisplayName} (${child.sku || 'N/A'}) - ${child.baseUom}`,
                     triggerNode: (
                         <div className="flex items-center gap-2 min-w-0">
                             <Layers className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-semibold text-foreground truncate">{child.title}</span>
+                            <span className="font-semibold text-foreground truncate">{childDisplayName}</span>
                         </div>
                     ),
                     labelNode: (
@@ -154,7 +156,7 @@ export function FinishedGoodsHeader({
                                 </div>
                                 <div className="flex flex-col min-w-0">
                                     <div className="flex items-center gap-1.5">
-                                        <span className="font-semibold text-foreground truncate">{child.title}</span>
+                                        <span className="font-semibold text-foreground truncate">{childDisplayName}</span>
                                         <span className="bg-muted text-muted-foreground text-[8px] font-bold px-1 py-0.2 rounded border shrink-0">
                                             Child
                                         </span>
