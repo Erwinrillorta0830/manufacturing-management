@@ -20,6 +20,7 @@ import { usePurchaseOrderApproval } from "../purchase-order-approval/hooks/usePu
 import type { PurchaseOrderDecisionStage } from "../purchase-order/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
+import { calculatePercentageDiscount } from "../procurement/discount-calculation";
 
 type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
 
@@ -429,7 +430,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
 
                                                 const discAmount = discountMode === "Fixed Amount"
                                                     ? Number(line.discount_amount_foreign || 0)
-                                                    : (gross * discPercent) / 100;
+                                                    : Number(calculatePercentageDiscount(qty, unitPrice, discPercent).discountAmount);
                                                 if (discountMode === "Fixed Amount") {
                                                     dtLabel = `Fixed Amount (${money(discAmount, currency)})`;
                                                 }

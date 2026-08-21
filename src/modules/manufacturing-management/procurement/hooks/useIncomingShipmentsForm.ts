@@ -9,6 +9,7 @@ import {
 } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../types";
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import { calculatePercentageDiscount } from "../discount-calculation";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 import { normalizeProductRelationId, resolveProductParentId } from "../product-relation";
 import { fetchPurchaseOrderFxRate } from "../../purchase-order/services/purchase-order-api";
@@ -354,7 +355,6 @@ export function useIncomingShipmentsForm({
         const unitPrice = line.base_unit_cost_php;
         const discountMode = line.discount_mode || "Percentage";
         const discount = Number(line.discount_percent || 0);
-        const discountAmount = Number(line.discount_amount || 0);
         const selectedMaterial = rawMaterials.find(material =>
             String(material.product_id) === String(line.product_id)
         ) || rawMaterials.find(material =>
@@ -377,14 +377,12 @@ export function useIncomingShipmentsForm({
         ) {
             errors.push("Unit Price must be greater than zero when Price Control is not configured");
         }
-        if (discountMode !== "Percentage" && discountMode !== "Fixed Amount") errors.push("Discount Type must be Percentage or Fixed Amount");
-        if (discountMode === "Percentage" && (discount < 0 || discount > 100)) errors.push("Discount % must be between 0 and 100");
         if (discountMode === "Fixed Amount") {
-            const gross = Number.isFinite(quantity) && Number.isFinite(Number(unitPrice))
-                ? DecimalValue.from(quantity).multiply(unitPrice).toFixed(2)
-                : "0.00";
-            if (!Number.isFinite(discountAmount) || discountAmount < 0) errors.push("Discount Amount must be non-negative");
-            else if (DecimalValue.from(discountAmount).compare(gross) > 0) errors.push("Discount Amount cannot exceed Gross Amount");
+            errors.push("Legacy fixed discounts must be converted to Percentage before saving");
+        } else if (discountMode !== "Percentage") {
+            errors.push("Discount Type must be Percentage");
+        } else if (discount < 0 || discount > 100) {
+            errors.push("Discount % must be between 0 and 100");
         }
         return errors;
     }, [canonicalDrafting, priceControlMissingProductIds, rawMaterials]);
@@ -449,11 +447,22 @@ export function useIncomingShipmentsForm({
 
     const handleLineFormChange = (index: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => {
         const copy = [...linesForm];
-        if (typeof fieldOrObject === "object" && fieldOrObject !== null) {
-            copy[index] = { ...copy[index], ...fieldOrObject } as ManifestLineFormItem;
-        } else {
-            copy[index] = { ...copy[index], [fieldOrObject]: value } as ManifestLineFormItem;
+        const currentLine = copy[index];
+        const nextLine = (typeof fieldOrObject === "object" && fieldOrObject !== null
+            ? { ...currentLine, ...fieldOrObject }
+            : { ...currentLine, [fieldOrObject]: value }) as ManifestLineFormItem;
+        if (nextLine.discount_mode !== "Fixed Amount") {
+            try {
+                nextLine.discount_amount = calculatePercentageDiscount(
+                    nextLine.quantity_ordered || 0,
+                    nextLine.base_unit_cost_php || 0,
+                    nextLine.discount_percent || 0
+                ).discountAmount;
+            } catch {
+                nextLine.discount_amount = "0.00";
+            }
         }
+        copy[index] = nextLine;
         setLinesForm(copy);
     };
 
@@ -527,6 +536,7 @@ export function useIncomingShipmentsForm({
                     }
 
                     const pps = map[prodId] || (parentId ? map[parentId] : undefined);
+                    if (editingShipmentId && line.discount_mode === "Fixed Amount") return line;
                     if (pps) {
                         return {
                             ...line,
@@ -774,10 +784,15 @@ export function useIncomingShipmentsForm({
     const draftSummary = React.useMemo(() => {
         const exchangeRate = DecimalValue.from(shipmentForm.exchange_rate || 0);
         return linesForm.reduce((summary, line) => {
-            const grossForeign = DecimalValue.from(line.quantity_ordered || 0).multiply(line.base_unit_cost_php || 0).toFixed(2);
+            const discountCalculation = calculatePercentageDiscount(
+                line.quantity_ordered || 0,
+                line.base_unit_cost_php || 0,
+                line.discount_percent || 0
+            );
+            const grossForeign = discountCalculation.grossAmount;
             const discountForeign = line.discount_mode === "Fixed Amount"
                 ? DecimalValue.from(line.discount_amount || 0).toFixed(2)
-                : DecimalValue.from(grossForeign).multiply(line.discount_percent || 0).divideRounded(100, 2).toFixed(2);
+                : discountCalculation.discountAmount;
             const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
             return {
                 grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(2),

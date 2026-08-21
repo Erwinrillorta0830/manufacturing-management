@@ -288,9 +288,9 @@ function legacyLineAmounts(line: RevisionCommand["lineItems"][number], exchangeR
     return {
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
-        discountMode: line.discount_mode || "Percentage",
+        discountMode: "Percentage" as const,
         discountPercent: Number(line.discount_percent || 0),
-        discountAmount: line.discount_amount || 0,
+        discountAmount: 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate
@@ -309,9 +309,9 @@ function linePayload(
         categoryType: line.category_type,
         quantity: Number(line.quantity_ordered),
         unitPrice: line.base_unit_cost_php,
-        discountMode: line.discount_mode || "Percentage",
+        discountMode: "Percentage",
         discountPercent: Number(line.discount_percent || 0),
-        discountAmount: line.discount_amount || 0,
+        discountAmount: 0,
         vatPercent: Number(line.vat_percent || 0),
         withholdingPercent: Number(line.withholding_percent || 0),
         exchangeRate,
