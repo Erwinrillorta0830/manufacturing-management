@@ -28,8 +28,10 @@ export interface LandedCostCalculationResult {
     totalShipmentValue: number;
     rmValueShare: number;
     pkgValueShare: number;
+    fgValueShare: number;
     rmFeePool: number;
     pkgFeePool: number;
+    fgFeePool: number;
     totalLandedFee: number;
     roundingVariance: number;
     roundingRecipientKey: number | null;
@@ -64,8 +66,10 @@ export function calculateLandedCost(
             totalShipmentValue: 0,
             rmValueShare: 0,
             pkgValueShare: 0,
+            fgValueShare: 0,
             rmFeePool: 0,
             pkgFeePool: 0,
+            fgFeePool: 0,
             totalLandedFee: roundMoney(finiteNonNegative(totalLandedFee)),
             roundingVariance: 0,
             roundingRecipientKey: null
@@ -91,16 +95,21 @@ export function calculateLandedCost(
         0
     );
     const rawMaterialValue = normalizedLines
-        .filter(line => line.category_type !== "PACKAGING")
+        .filter(line => line.category_type === "RAW_MATERIAL")
         .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
     const packagingValue = normalizedLines
         .filter(line => line.category_type === "PACKAGING")
         .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
+    const finishedGoodsValue = normalizedLines
+        .filter(line => line.category_type === "FINISHED_GOODS")
+        .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
     const rmValueShare = totalShipmentValue > EPSILON ? rawMaterialValue / totalShipmentValue : 0;
     const pkgValueShare = totalShipmentValue > EPSILON ? packagingValue / totalShipmentValue : 0;
+    const fgValueShare = totalShipmentValue > EPSILON ? finishedGoodsValue / totalShipmentValue : 0;
 
     let rmFeePool = 0;
     let pkgFeePool = 0;
+    let fgFeePool = 0;
     if (rule === "Hybrid") {
         if (packagingValue > EPSILON && normalizedLines.some(line =>
             line.category_type === "PACKAGING" && line.quantity > EPSILON && line.lineGrossWeightKg <= EPSILON
@@ -110,12 +119,16 @@ export function calculateLandedCost(
         if (totalShipmentValue > EPSILON) {
             rmFeePool = normalizedFee * rmValueShare;
             pkgFeePool = normalizedFee * pkgValueShare;
+            fgFeePool = normalizedFee * fgValueShare;
         } else {
-            const rmCount = normalizedLines.filter(line => line.category_type !== "PACKAGING").length;
+            const rmCount = normalizedLines.filter(line => line.category_type === "RAW_MATERIAL").length;
             const pkgCount = normalizedLines.filter(line => line.category_type === "PACKAGING").length;
-            const totalCount = Math.max(1, rmCount + pkgCount);
-            rmFeePool = normalizedFee * rmCount / totalCount;
-            pkgFeePool = normalizedFee * pkgCount / totalCount;
+            const fgCount = normalizedLines.filter(line => line.category_type === "FINISHED_GOODS").length;
+            const populatedCategoryCount = [rmCount, pkgCount, fgCount].filter(count => count > 0).length;
+            const categoryPool = populatedCategoryCount > 0 ? normalizedFee / populatedCategoryCount : 0;
+            rmFeePool = rmCount > 0 ? categoryPool : 0;
+            pkgFeePool = pkgCount > 0 ? categoryPool : 0;
+            fgFeePool = fgCount > 0 ? categoryPool : 0;
         }
     }
 
@@ -123,8 +136,9 @@ export function calculateLandedCost(
     const weightShares = new Map<number, number>();
 
     if (rule === "Hybrid") {
-        const rawLines = normalizedLines.filter(line => line.category_type !== "PACKAGING");
+        const rawLines = normalizedLines.filter(line => line.category_type === "RAW_MATERIAL");
         const packageLines = normalizedLines.filter(line => line.category_type === "PACKAGING");
+        const finishedGoodsLines = normalizedLines.filter(line => line.category_type === "FINISHED_GOODS");
         const totalRawQuantity = rawLines.reduce((sum, line) => sum + line.quantity, 0);
         for (const line of rawLines) {
             rawAllocations.set(
@@ -144,6 +158,19 @@ export function calculateLandedCost(
             rawAllocations.set(
                 line.key,
                 share > EPSILON ? pkgFeePool * share : pkgFeePool / Math.max(1, packageLines.length)
+            );
+        }
+        const totalFinishedGoodsValue = finishedGoodsLines.reduce(
+            (sum, line) => sum + line.quantity * line.baseUnitCostPhp,
+            0
+        );
+        for (const line of finishedGoodsLines) {
+            const commercialValue = line.quantity * line.baseUnitCostPhp;
+            rawAllocations.set(
+                line.key,
+                totalFinishedGoodsValue > EPSILON
+                    ? fgFeePool * commercialValue / totalFinishedGoodsValue
+                    : fgFeePool / Math.max(1, finishedGoodsLines.length)
             );
         }
     } else {
@@ -168,7 +195,9 @@ export function calculateLandedCost(
         const allocatedExpense = roundMoney(rawAllocations.get(line.key) || 0);
         roundedTotal += allocatedExpense;
         const categoryFeePool = rule === "Hybrid"
-            ? line.category_type === "PACKAGING" ? pkgFeePool : rmFeePool
+            ? line.category_type === "PACKAGING"
+                ? pkgFeePool
+                : line.category_type === "FINISHED_GOODS" ? fgFeePool : rmFeePool
             : normalizedFee;
         return {
             ...line,
@@ -204,8 +233,10 @@ export function calculateLandedCost(
         totalShipmentValue: roundMoney(totalShipmentValue),
         rmValueShare,
         pkgValueShare,
+        fgValueShare,
         rmFeePool: roundMoney(rmFeePool),
         pkgFeePool: roundMoney(pkgFeePool),
+        fgFeePool: roundMoney(fgFeePool),
         totalLandedFee: roundMoney(normalizedFee),
         roundingVariance,
         roundingRecipientKey

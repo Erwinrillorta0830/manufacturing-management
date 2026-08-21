@@ -108,7 +108,7 @@ export default async function ShipmentExpensesPage() {
 
             {/* Scrollable Content */}
             <main className="min-h-0 min-w-0 flex-1 flex flex-col p-2 sm:p-4 bg-background overflow-hidden">
-                <ProcurementModule initialTab="shipment-expenses" />
+                <ProcurementModule initialTab="shipment-expenses" hideNavTabs={true} />
             </main>
         </div>
     );

@@ -3,6 +3,7 @@ import { IncomingShipment, ShipmentLineItem, ShipmentExpense } from "../types";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import { toast } from "sonner";
 import { resolveProductWeightBreakdown } from "../packaging-weight";
+import { LANDED_COST_METHOD_OPTIONS } from "../landed-cost-methods";
 import LandedCostAttachments from "./LandedCostAttachments";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Landmark, Plus, Scale, DollarSign, Layers, Anchor, AlertCircle, Info, Calculator, Check, ArrowRight, Loader2 } from "lucide-react";
@@ -92,10 +93,16 @@ export default function ShipmentExpenses({
     }, 0);
 
     const rmQuantity = lines.reduce((sum, line) => {
-        if (line.category_type === "RAW_MATERIAL" || line.category_type === "FINISHED_GOODS") {
+        if (line.category_type === "RAW_MATERIAL") {
             return sum + (isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0));
         }
         return sum;
+    }, 0);
+
+    const fgCommercialValue = lines.reduce((sum, line) => {
+        if (line.category_type !== "FINISHED_GOODS") return sum;
+        const qty = isReceivedOrQA ? Number(line.quantity_received || 0) : Number(line.quantity_ordered || 0);
+        return sum + qty * Number(line.base_unit_cost_php || 0);
     }, 0);
 
     const pkgWeight = lines.reduce((sum, line) => {
@@ -161,8 +168,9 @@ export default function ShipmentExpenses({
                                 <div className="flex justify-between items-center text-[11px] text-muted-foreground border-t pt-2.5 mt-2.5">
                                     <span>Hybrid Breakdown</span>
                                     <div className="flex gap-1.5">
-                                        <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">Material: {rmQuantity.toLocaleString()}</span>
-                                        <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-bold">PKG: {pkgWeight.toLocaleString()}kg</span>
+                                        <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">RM Qty: {rmQuantity.toLocaleString()}</span>
+                                        <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-bold">PKG Weight: {pkgWeight.toLocaleString()}kg</span>
+                                        <span className="bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded font-bold">FG Value: ₱{fgCommercialValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
                             )}
@@ -179,7 +187,7 @@ export default function ShipmentExpenses({
                             <br />• <strong>Commercial Value</strong>: Higher value items shoulder more brokerage fees.
                             <br />• <strong>Weight (KG)</strong>: Heavy items (e.g. raw vegetable oil) carry more trucking weight.
                             <br />• <strong>Volume (CBM)</strong>: Bulky items shoulder more sea freight volume.
-                             <br />• <strong>Hybrid</strong>: Raw Materials and Finished Goods use Quantity, Packaging items use Weight.
+                             <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Gross Weight, and Finished Goods use Commercial Value.
                         </p>
                     </div>
                 </div>
@@ -310,19 +318,26 @@ export default function ShipmentExpenses({
                             <div className="space-y-1.5 bg-muted/20 p-4 rounded-xl border">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Allocation Logic Method</label>
                                 <div className="grid grid-cols-2 gap-2 mt-1">
-                                    {["Value", "Weight", "Volume", "Hybrid"].map((method) => (
+                                    {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
+                                        const selected = allocationForm.allocation_method === value;
+                                        return (
                                         <button
-                                            key={method}
+                                            key={value}
                                             type="button"
-                                            onClick={() => setAllocationForm({ ...allocationForm, allocation_method: method })}
-                                            className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${allocationForm.allocation_method === method
-                                                    ? "bg-primary text-primary-foreground border-primary"
+                                            aria-pressed={selected}
+                                            data-state={selected ? "active" : "inactive"}
+                                            title={description}
+                                            onClick={() => setAllocationForm({ ...allocationForm, allocation_method: value })}
+                                            className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all inline-flex items-center justify-center gap-1.5 ${selected
+                                                    ? "bg-primary text-primary-foreground border-primary ring-2 ring-primary/40 shadow-md"
                                                     : "bg-background border-border hover:bg-muted"
                                                 }`}
                                         >
-                                             {method === "Value" ? "Commercial Value" : method === "Hybrid" ? "Hybrid (Material: Quantity / PKG: Weight)" : method}
+                                            {label}
+                                            {selected && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
                                         </button>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
 
