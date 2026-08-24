@@ -67,6 +67,93 @@ function extractImageUuid(imageVal: string | null | undefined): string | null {
     return trimmed;
 }
 
+function formatSqlDateTime(val: string | Date | null | undefined): string | null {
+    if (!val) return null;
+    if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+            return trimmed;
+        }
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) {
+            return trimmed.replace("T", " ").split(".")[0].substring(0, 19);
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+            return `${trimmed} 00:00:00`;
+        }
+        const d = new Date(trimmed.includes(" ") ? trimmed.replace(" ", "T") : trimmed);
+        if (!isNaN(d.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, "0");
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+        return trimmed;
+    }
+    if (val instanceof Date && !isNaN(val.getTime())) {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(val.getDate())} ${pad(val.getHours())}:${pad(val.getMinutes())}`;
+    }
+    return null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchSpringBootAssetDepreciation(searchParams?: URLSearchParams): Promise<any[]> {
+    const springBase = process.env.SPRING_API_BASE_URL?.replace(/\/$/, "");
+    if (!springBase) return [];
+    try {
+        const cookieStore = await cookies();
+        const springToken = cookieStore.get("springboot_token")?.value || cookieStore.get("vos_access_token")?.value;
+
+        const query = new URLSearchParams();
+        if (searchParams) {
+            const allowedParams = [
+                "type",
+                "assetType",
+                "department",
+                "employee",
+                "depreciationMethod",
+                "productionUnit",
+                "jobOrder",
+                "product",
+                "acquisitionDateFrom",
+                "acquisitionDateTo",
+                "depreciationStartDateFrom",
+                "depreciationStartDateTo",
+                "acquisitionCostMin",
+                "acquisitionCostMax",
+                "residualValueMin",
+                "residualValueMax"
+            ];
+            for (const param of allowedParams) {
+                const val = searchParams.get(param);
+                if (val !== null && val !== undefined && val.trim() !== "") {
+                    query.set(param, val.trim());
+                }
+            }
+            if (!query.has("depreciationMethod") && searchParams.get("depreciation_method")) {
+                query.set("depreciationMethod", searchParams.get("depreciation_method")!.trim());
+            }
+            if (!query.has("assetType") && searchParams.get("asset_type")) {
+                query.set("assetType", searchParams.get("asset_type")!.trim());
+            }
+        }
+
+        const queryString = query.toString() ? `?${query.toString()}` : "";
+        const res = await fetch(`${springBase}/api/asset-depreciation${queryString}`, {
+            headers: {
+                ...(springToken ? { Authorization: `Bearer ${springToken}` } : {}),
+                "Content-Type": "application/json"
+            },
+            cache: "no-store"
+        });
+        if (res.ok) {
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
+        }
+    } catch (err) {
+        console.error("Error fetching /api/asset-depreciation from Spring Boot:", err);
+    }
+    return [];
+}
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type");
@@ -143,10 +230,62 @@ export async function GET(request: Request) {
             return NextResponse.json(json.data || []);
         }
 
-        // 6. Main Assets List
-        const [assetsRes, usersRes, deptRes] = await Promise.all([
+        // 6. Units of Measure dropdown
+        if (type === "units") {
+            const res = await fetch(
+                `${DIRECTUS_URL}/items/units?limit=-1&sort=unit_name&fields=unit_id,unit_name,unit_shortcut`,
+                { headers, cache: "no-store" }
+            );
+            if (!res.ok) throw new Error(`Directus error: ${res.status}`);
+            const json = await res.json();
+            return NextResponse.json(json.data || []);
+        }
+
+        // 7. Depreciation Summary & Spring Boot Depreciation API
+        if (type === "depreciation_summary" || type === "asset_depreciation") {
+            const springData = await fetchSpringBootAssetDepreciation(searchParams);
+            if (springData.length > 0) {
+                return NextResponse.json(springData);
+            }
+            const res = await fetch(`${DIRECTUS_URL}/items/vw_asset_depreciation_summary?limit=-1`, {
+                headers,
+                cache: "no-store"
+            }).catch(() => null);
+            if (res && res.ok) {
+                const json = await res.json();
+                return NextResponse.json(json.data || []);
+            }
+            return NextResponse.json([]);
+        }
+
+        // 8. Depreciation Details View
+        if (type === "depreciation_details") {
+            const assetId = searchParams.get("asset_id");
+            const springData = await fetchSpringBootAssetDepreciation(searchParams);
+            if (springData.length > 0) {
+                if (assetId) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const filtered = springData.filter((item: any) => Number(item.assetId || item.asset_id) === Number(assetId));
+                    return NextResponse.json(filtered);
+                }
+                return NextResponse.json(springData);
+            }
+            const filter = assetId ? `?filter[asset_id][_eq]=${assetId}&sort=-production_date` : "?sort=-production_date";
+            const res = await fetch(`${DIRECTUS_URL}/items/vw_asset_depreciation${filter}&limit=-1`, {
+                headers,
+                cache: "no-store"
+            }).catch(() => null);
+            if (res && res.ok) {
+                const json = await res.json();
+                return NextResponse.json(json.data || []);
+            }
+            return NextResponse.json([]);
+        }
+
+        // 9. Main Assets List
+        const [assetsRes, usersRes, deptRes, springDepreciationList] = await Promise.all([
             fetch(
-                `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,item_id.item_classification.id,item_id.item_classification.classification_name,department.department_id,department.department_name,employee.user_id,employee.user_fname,employee.user_lname,created_by.user_id,created_by.user_fname,created_by.user_lname,updated_by.user_id,updated_by.user_fname,updated_by.user_lname,encoder.user_id,encoder.user_fname,encoder.user_lname,user_created.user_id,user_created.user_fname,user_created.user_lname,user_created.first_name,user_created.last_name,user_updated.user_id,user_updated.user_fname,user_updated.user_lname,user_updated.first_name,user_updated.last_name`,
+                `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,item_id.item_classification.id,item_id.item_classification.classification_name,department.department_id,department.department_name,employee.user_id,employee.user_fname,employee.user_lname,created_by.user_id,created_by.user_fname,created_by.user_lname,updated_by.user_id,updated_by.user_fname,updated_by.user_lname,encoder.user_id,encoder.user_fname,encoder.user_lname,user_created.user_id,user_created.user_fname,user_created.user_lname,user_created.first_name,user_created.last_name,user_updated.user_id,user_updated.user_fname,user_updated.user_lname,user_updated.first_name,user_updated.last_name,production_unit_id.unit_id,production_unit_id.unit_name,production_unit_id.unit_shortcut`,
                 { headers, cache: "no-store" }
             ),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, {
@@ -156,7 +295,8 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/department?limit=-1&fields=department_id,department_name`, {
                 headers,
                 cache: "no-store"
-            }).catch(() => null)
+            }).catch(() => null),
+            fetchSpringBootAssetDepreciation(searchParams).catch(() => [])
         ]);
 
         if (!assetsRes.ok) throw new Error(`Directus failed to fetch assets: ${assetsRes.status}`);
@@ -281,8 +421,31 @@ export async function GET(request: Request) {
             const quantity = Number(asset.quantity) || 1;
             const total = Number(asset.total) || unitCost * quantity;
 
+            // Production Unit resolution
+            let prodUnitId: number | null = null;
+            let prodUnitName: string | null = null;
+            let prodUnitShortcut: string | null = null;
+            if (asset.production_unit_id && typeof asset.production_unit_id === "object") {
+                prodUnitId = Number(asset.production_unit_id.unit_id || asset.production_unit_id.id) || null;
+                prodUnitName = asset.production_unit_id.unit_name || null;
+                prodUnitShortcut = asset.production_unit_id.unit_shortcut || null;
+            } else if (typeof asset.production_unit_id === "number") {
+                prodUnitId = asset.production_unit_id;
+            }
+
+            const assetIdNum = Number(asset.id);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const matchedDepreciation = springDepreciationList.filter((d: any) => Number(d.assetId || d.asset_id) === assetIdNum);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const totalActualUnits = matchedDepreciation.reduce((sum: number, d: any) => sum + (Number(d.productionUnits) || 0), 0);
+            const latestRemainingCap = matchedDepreciation.length > 0 && matchedDepreciation[0].remainingProductionCapacity != null
+                ? Number(matchedDepreciation[0].remainingProductionCapacity)
+                : null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const totalProdDep = matchedDepreciation.reduce((sum: number, d: any) => sum + (Number(d.productionDepreciation) || 0), 0);
+
             return {
-                id: Number(asset.id),
+                id: assetIdNum,
                 barcode: asset.barcode ? String(asset.barcode) : null,
                 rfid_code: asset.rfid_code ? String(asset.rfid_code) : null,
                 serial: asset.serial ? String(asset.serial) : null,
@@ -293,6 +456,21 @@ export async function GET(request: Request) {
                 total,
                 date_acquired: asset.date_acquired ? String(asset.date_acquired) : "",
                 life_span: Number(asset.life_span) || 1,
+
+                // Depreciation & Capacity Fields
+                asset_type: asset.asset_type || "Administrative",
+                depreciation_method: asset.depreciation_method || "Straight Line",
+                acquisition_cost: asset.acquisition_cost != null ? Number(asset.acquisition_cost) : total,
+                residual_value: asset.residual_value != null ? Number(asset.residual_value) : 0,
+                useful_life_months: asset.useful_life_months != null ? Number(asset.useful_life_months) : (Number(asset.life_span || 1) * 12),
+                maximum_unit_produced_capacity: asset.maximum_unit_produced_capacity != null ? Number(asset.maximum_unit_produced_capacity) : null,
+                production_unit_id: prodUnitId,
+                production_unit: prodUnitName,
+                production_unit_shortcut: prodUnitShortcut,
+                depreciation_start_date: asset.depreciation_start_date ? String(asset.depreciation_start_date) : (asset.date_acquired ? String(asset.date_acquired) : null),
+                actual_units_produced: totalActualUnits > 0 ? totalActualUnits : (asset.actual_units_produced != null ? Number(asset.actual_units_produced) : 0),
+                remaining_production_capacity: latestRemainingCap,
+                production_depreciation: totalProdDep > 0 ? totalProdDep : null,
 
                 // Joined metadata
                 item_name: itemName,
@@ -498,14 +676,22 @@ export async function POST(request: Request) {
             item_name,
             item_type,
             item_classification,
+            asset_type,
+            depreciation_method,
             barcode,
             rfid_code,
             serial,
             condition,
             quantity,
             cost_per_item,
+            acquisition_cost,
+            residual_value,
             life_span,
+            useful_life_months,
+            maximum_unit_produced_capacity,
+            production_unit_id,
             date_acquired,
+            depreciation_start_date,
             department,
             employee,
             is_active_warning,
@@ -530,7 +716,8 @@ export async function POST(request: Request) {
         const unitCost = Number(cost_per_item) || 0;
         const qty = Number(quantity) || 1;
         const totalCost = unitCost * qty;
-        const cleanDate = date_acquired ? new Date(date_acquired).toISOString() : now;
+        const cleanDate = formatSqlDateTime(date_acquired) || now;
+        const cleanDepStart = depreciation_start_date ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0] || cleanDate.split(" ")[0]) : cleanDate.split(" ")[0];
 
         const assetPayload = {
             item_id: itemId,
@@ -546,6 +733,17 @@ export async function POST(request: Request) {
             total: totalCost,
             life_span: Number(life_span) || 1,
             date_acquired: cleanDate,
+
+            // Depreciation & Capacity Fields
+            asset_type: asset_type || "Administrative",
+            depreciation_method: depreciation_method || "Straight Line",
+            acquisition_cost: acquisition_cost != null ? Number(acquisition_cost) : totalCost,
+            residual_value: residual_value != null ? Number(residual_value) : 0,
+            useful_life_months: useful_life_months != null ? Number(useful_life_months) : (Number(life_span || 1) * 12),
+            maximum_unit_produced_capacity: maximum_unit_produced_capacity != null ? Number(maximum_unit_produced_capacity) : null,
+            production_unit_id: production_unit_id ? Number(production_unit_id) : null,
+            depreciation_start_date: cleanDepStart,
+
             department: department ? Number(department) : null,
             employee: employee ? Number(employee) : null,
             encoder: userId || (encoder ? Number(encoder) : null),
@@ -597,11 +795,19 @@ export async function PATCH(request: Request) {
             item_name,
             item_type_name,
             classification_name,
+            asset_type,
+            depreciation_method,
             condition,
             cost_per_item,
+            acquisition_cost,
+            residual_value,
             quantity,
             life_span,
+            useful_life_months,
+            maximum_unit_produced_capacity,
+            production_unit_id,
             date_acquired,
+            depreciation_start_date,
             department,
             employee,
             item_image,
@@ -641,7 +847,8 @@ export async function PATCH(request: Request) {
         const unitCost = Number(cost_per_item) || 0;
         const qty = Number(quantity) || 1;
         const totalCost = unitCost * qty;
-        const cleanDate = date_acquired ? new Date(date_acquired).toISOString() : undefined;
+        const cleanDate = formatSqlDateTime(date_acquired) || undefined;
+        const cleanDepStart = depreciation_start_date ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0]) : undefined;
 
         const assetUpdate: Record<string, unknown> = {
             condition: condition || "Good",
@@ -655,10 +862,21 @@ export async function PATCH(request: Request) {
             rfid_code: rfid_code?.trim() || null,
             serial: serial?.trim() || null,
             is_active_warning: is_active_warning ? 1 : 0,
+
+            // Depreciation & Capacity Fields
             updated_by: userId,
             date_updated: now,
             updated_at: now
         };
+
+        if (asset_type !== undefined) assetUpdate.asset_type = asset_type;
+        if (depreciation_method !== undefined) assetUpdate.depreciation_method = depreciation_method;
+        if (acquisition_cost !== undefined) assetUpdate.acquisition_cost = Number(acquisition_cost);
+        if (residual_value !== undefined) assetUpdate.residual_value = Number(residual_value);
+        if (useful_life_months !== undefined) assetUpdate.useful_life_months = useful_life_months != null ? Number(useful_life_months) : null;
+        if (maximum_unit_produced_capacity !== undefined) assetUpdate.maximum_unit_produced_capacity = maximum_unit_produced_capacity != null ? Number(maximum_unit_produced_capacity) : null;
+        if (production_unit_id !== undefined) assetUpdate.production_unit_id = production_unit_id ? Number(production_unit_id) : null;
+        if (cleanDepStart !== undefined) assetUpdate.depreciation_start_date = cleanDepStart;
 
         if (cleanDate) assetUpdate.date_acquired = cleanDate;
         if (item_image !== undefined) assetUpdate.item_image = extractImageUuid(item_image);
