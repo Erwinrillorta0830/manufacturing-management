@@ -302,7 +302,7 @@ function LotAllocationEditor({
                                 </datalist>
                             </div>
                             <div className="space-y-1">
-                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>3. Mfg Date</label>
+                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>3. Manufacturing Date</label>
                                 <input
                                     type="date"
                                     value={allocation.manufacturingDate}
@@ -314,7 +314,7 @@ function LotAllocationEditor({
                                 />
                             </div>
                             <div className="space-y-1">
-                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>3. Expiry Date</label>
+                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>4. Expiry Date</label>
                                 <input
                                     type="date"
                                     value={allocation.expirationDate}
@@ -326,7 +326,7 @@ function LotAllocationEditor({
                                 />
                             </div>
                             <div className="space-y-1">
-                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>4. Quantity</label>
+                                <label className={`text-[8px] font-extrabold uppercase tracking-wider ${tone.text}`}>5. Quantity</label>
                                 <input
                                     type="number"
                                     min="0"
@@ -823,6 +823,8 @@ export default function ShipmentInspectionForm({
                         const remainingAcceptedVal = Math.max(0, Number(line.remaining_accepted_quantity ?? (orderedVal - previouslyAcceptedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
                         const rejectedVal = Math.max(0, deriveRejectedQuantity(receivedVal, acceptedVal));
+                        const acceptedAllocatedVal = row.acceptedLotAllocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
+                        const rejectedAllocatedVal = row.rejectedLotAllocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
                         const quantitiesReconcile = [receivedVal, acceptedVal].every(Number.isFinite)
                             && acceptedVal >= 0
@@ -1073,13 +1075,18 @@ export default function ShipmentInspectionForm({
                                                 <button
                                                     type="button"
                                                     onClick={() => addAcceptedLot(line.line_id, row)}
-                                                    disabled={lineStorageLots.length === 0}
+                                                    disabled={lineStorageLots.length === 0 || acceptedAllocatedVal >= acceptedVal - 1e-9}
                                                     className="h-8 px-2.5 rounded-lg border border-emerald-500/30 bg-background text-emerald-700 text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-emerald-500/10 disabled:opacity-50"
                                                 >
                                                     <Plus className="h-3.5 w-3.5" /> Add accepted batch
                                                 </button>
                                             )}
                                         </div>
+                                        {lineStorageLots.length === 0 && (
+                                            <p className="text-[9px] font-semibold text-amber-700" role="alert">
+                                                No compatible storage lots are available. A lot must match this product&apos;s Product Type and UOM and have remaining capacity.
+                                            </p>
+                                        )}
                                         {acceptedVal > 0 && (
                                             <LotAllocationEditor
                                                 lineId={line.line_id}
@@ -1107,7 +1114,7 @@ export default function ShipmentInspectionForm({
                                                         <button
                                                             type="button"
                                                             onClick={() => addRejectedLot(line.line_id, row)}
-                                                            disabled={lineStorageLots.length === 0}
+                                                            disabled={lineStorageLots.length === 0 || rejectedAllocatedVal >= rejectedVal - 1e-9}
                                                             className="h-8 px-2.5 rounded-lg border border-red-500/30 bg-background text-red-700 text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-red-500/10 disabled:opacity-50"
                                                         >
                                                             <Plus className="h-3.5 w-3.5" /> Add rejected batch
