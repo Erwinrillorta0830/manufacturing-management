@@ -107,6 +107,8 @@ async function fetchSpringBootAssetDepreciation(searchParams?: URLSearchParams):
             const allowedParams = [
                 "type",
                 "assetType",
+                "assetOrigin",
+                "asset_origin",
                 "department",
                 "employee",
                 "depreciationMethod",
@@ -133,6 +135,9 @@ async function fetchSpringBootAssetDepreciation(searchParams?: URLSearchParams):
             }
             if (!query.has("assetType") && searchParams.get("asset_type")) {
                 query.set("assetType", searchParams.get("asset_type")!.trim());
+            }
+            if (!query.has("assetOrigin") && searchParams.get("asset_origin")) {
+                query.set("assetOrigin", searchParams.get("asset_origin")!.trim());
             }
         }
 
@@ -283,11 +288,11 @@ export async function GET(request: Request) {
         }
 
         // 9. Main Assets List
-        const [assetsRes, usersRes, deptRes, springDepreciationList] = await Promise.all([
+        const [assetsRes, usersRes, deptRes, itemsRes, springDepreciationList] = await Promise.all([
             fetch(
-                `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,item_id.item_classification.id,item_id.item_classification.classification_name,department.department_id,department.department_name,employee.user_id,employee.user_fname,employee.user_lname,created_by.user_id,created_by.user_fname,created_by.user_lname,updated_by.user_id,updated_by.user_fname,updated_by.user_lname,encoder.user_id,encoder.user_fname,encoder.user_lname,user_created.user_id,user_created.user_fname,user_created.user_lname,user_created.first_name,user_created.last_name,user_updated.user_id,user_updated.user_fname,user_updated.user_lname,user_updated.first_name,user_updated.last_name,production_unit_id.unit_id,production_unit_id.unit_name,production_unit_id.unit_shortcut`,
+                `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,item_id.item_classification.id,item_id.item_classification.classification_name,department.department_id,department.department_name`,
                 { headers, cache: "no-store" }
-            ),
+            ).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, {
                 headers,
                 cache: "no-store"
@@ -296,12 +301,33 @@ export async function GET(request: Request) {
                 headers,
                 cache: "no-store"
             }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/items?limit=-1&fields=id,item_name,item_type.id,item_type.type_name,item_classification.id,item_classification.classification_name`, {
+                headers,
+                cache: "no-store"
+            }).catch(() => null),
             fetchSpringBootAssetDepreciation(searchParams).catch(() => [])
         ]);
 
-        if (!assetsRes.ok) throw new Error(`Directus failed to fetch assets: ${assetsRes.status}`);
-        const assetsJson = await assetsRes.json();
-        const rawAssets = assetsJson.data || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let rawAssets: any[] = [];
+        if (assetsRes && assetsRes.ok) {
+            const assetsJson = await assetsRes.json();
+            rawAssets = assetsJson.data || [];
+        } else {
+            // Resilient fallback to simple fields=* query if relational query fails
+            const fallbackRes = await fetch(`${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id`, {
+                headers,
+                cache: "no-store"
+            }).catch(() => null);
+            if (fallbackRes && fallbackRes.ok) {
+                const fbJson = await fallbackRes.json();
+                rawAssets = fbJson.data || [];
+            } else if (springDepreciationList && springDepreciationList.length > 0) {
+                rawAssets = springDepreciationList;
+            } else {
+                throw new Error(`Directus failed to fetch assets: ${assetsRes ? assetsRes.status : 'network error'}`);
+            }
+        }
 
         let usersList: DirectusUser[] = [];
         if (usersRes && usersRes.ok) {
@@ -320,6 +346,17 @@ export async function GET(request: Request) {
                 deptList = dJson.data || [];
             } catch {
                 deptList = [];
+            }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let itemsList: any[] = [];
+        if (itemsRes && itemsRes.ok) {
+            try {
+                const iJson = await itemsRes.json();
+                itemsList = iJson.data || [];
+            } catch {
+                itemsList = [];
             }
         }
 
@@ -460,6 +497,7 @@ export async function GET(request: Request) {
                 // Depreciation & Capacity Fields
                 asset_type: asset.asset_type || "Administrative",
                 depreciation_method: asset.depreciation_method || "Straight Line",
+                asset_origin: asset.asset_origin || ((asset.opening_book_value != null && Number(asset.opening_book_value) < (asset.acquisition_cost != null ? Number(asset.acquisition_cost) : total)) || Number(asset.opening_accumulated_depreciation || 0) > 0 ? "Existing" : "New"),
                 acquisition_cost: asset.acquisition_cost != null ? Number(asset.acquisition_cost) : total,
                 residual_value: asset.residual_value != null ? Number(asset.residual_value) : 0,
                 useful_life_months: asset.useful_life_months != null ? Number(asset.useful_life_months) : (Number(asset.life_span || 1) * 12),
@@ -471,6 +509,12 @@ export async function GET(request: Request) {
                 actual_units_produced: totalActualUnits > 0 ? totalActualUnits : (asset.actual_units_produced != null ? Number(asset.actual_units_produced) : 0),
                 remaining_production_capacity: latestRemainingCap,
                 production_depreciation: totalProdDep > 0 ? totalProdDep : null,
+
+                // Opening / Migration Fields
+                opening_book_value: asset.opening_book_value != null ? Number(asset.opening_book_value) : null,
+                opening_accumulated_depreciation: asset.opening_accumulated_depreciation != null ? Number(asset.opening_accumulated_depreciation) : 0,
+                opening_production_units: asset.opening_production_units != null ? Number(asset.opening_production_units) : 0,
+                opening_production_date: asset.opening_production_date ? String(asset.opening_production_date) : null,
 
                 // Joined metadata
                 item_name: itemName,
@@ -696,7 +740,12 @@ export async function POST(request: Request) {
             employee,
             is_active_warning,
             item_image,
-            encoder
+            encoder,
+            asset_origin,
+            opening_book_value,
+            opening_accumulated_depreciation,
+            opening_production_units,
+            opening_production_date
         } = body;
 
         if (!item_name || !String(item_name).trim()) {
@@ -717,7 +766,11 @@ export async function POST(request: Request) {
         const qty = Number(quantity) || 1;
         const totalCost = unitCost * qty;
         const cleanDate = formatSqlDateTime(date_acquired) || now;
-        const cleanDepStart = depreciation_start_date ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0] || cleanDate.split(" ")[0]) : cleanDate.split(" ")[0];
+        const resolvedOrigin = asset_origin || (opening_book_value != null && Number(opening_book_value) < (acquisition_cost != null ? Number(acquisition_cost) : totalCost) || Number(opening_accumulated_depreciation || 0) > 0 ? "Existing" : "New");
+        const cleanDepStart = (resolvedOrigin === "Existing" && depreciation_start_date)
+            ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0] || cleanDate.split(" ")[0])
+            : cleanDate.split(" ")[0];
+        const cleanOpeningDate = opening_production_date ? formatSqlDateTime(opening_production_date) : null;
 
         const assetPayload = {
             item_id: itemId,
@@ -737,12 +790,19 @@ export async function POST(request: Request) {
             // Depreciation & Capacity Fields
             asset_type: asset_type || "Administrative",
             depreciation_method: depreciation_method || "Straight Line",
+            asset_origin: resolvedOrigin,
             acquisition_cost: acquisition_cost != null ? Number(acquisition_cost) : totalCost,
             residual_value: residual_value != null ? Number(residual_value) : 0,
             useful_life_months: useful_life_months != null ? Number(useful_life_months) : (Number(life_span || 1) * 12),
             maximum_unit_produced_capacity: maximum_unit_produced_capacity != null ? Number(maximum_unit_produced_capacity) : null,
             production_unit_id: production_unit_id ? Number(production_unit_id) : null,
             depreciation_start_date: cleanDepStart,
+
+            // Opening / Migration Fields
+            opening_book_value: opening_book_value != null ? Number(opening_book_value) : (acquisition_cost != null ? Number(acquisition_cost) : totalCost),
+            opening_accumulated_depreciation: opening_accumulated_depreciation != null ? Number(opening_accumulated_depreciation) : 0,
+            opening_production_units: opening_production_units != null ? Number(opening_production_units) : 0,
+            opening_production_date: cleanOpeningDate,
 
             department: department ? Number(department) : null,
             employee: employee ? Number(employee) : null,
@@ -814,7 +874,12 @@ export async function PATCH(request: Request) {
             barcode,
             rfid_code,
             serial,
-            is_active_warning
+            is_active_warning,
+            asset_origin,
+            opening_book_value,
+            opening_accumulated_depreciation,
+            opening_production_units,
+            opening_production_date
         } = body;
 
         if (!id) {
@@ -848,7 +913,11 @@ export async function PATCH(request: Request) {
         const qty = Number(quantity) || 1;
         const totalCost = unitCost * qty;
         const cleanDate = formatSqlDateTime(date_acquired) || undefined;
-        const cleanDepStart = depreciation_start_date ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0]) : undefined;
+        const isLegacyUpdate = asset_origin === "Existing" || (opening_book_value !== undefined && opening_book_value != null && Number(opening_book_value) < totalCost) || (opening_accumulated_depreciation !== undefined && Number(opening_accumulated_depreciation) > 0);
+        const cleanDepStart = (isLegacyUpdate && depreciation_start_date)
+            ? (formatSqlDateTime(depreciation_start_date)?.split(" ")[0])
+            : (cleanDate ? cleanDate.split(" ")[0] : undefined);
+        const cleanOpeningDate = opening_production_date !== undefined ? (opening_production_date ? formatSqlDateTime(opening_production_date) : null) : undefined;
 
         const assetUpdate: Record<string, unknown> = {
             condition: condition || "Good",
@@ -871,12 +940,19 @@ export async function PATCH(request: Request) {
 
         if (asset_type !== undefined) assetUpdate.asset_type = asset_type;
         if (depreciation_method !== undefined) assetUpdate.depreciation_method = depreciation_method;
+        if (asset_origin !== undefined) assetUpdate.asset_origin = asset_origin;
         if (acquisition_cost !== undefined) assetUpdate.acquisition_cost = Number(acquisition_cost);
         if (residual_value !== undefined) assetUpdate.residual_value = Number(residual_value);
         if (useful_life_months !== undefined) assetUpdate.useful_life_months = useful_life_months != null ? Number(useful_life_months) : null;
         if (maximum_unit_produced_capacity !== undefined) assetUpdate.maximum_unit_produced_capacity = maximum_unit_produced_capacity != null ? Number(maximum_unit_produced_capacity) : null;
         if (production_unit_id !== undefined) assetUpdate.production_unit_id = production_unit_id ? Number(production_unit_id) : null;
         if (cleanDepStart !== undefined) assetUpdate.depreciation_start_date = cleanDepStart;
+
+        // Opening / Migration Fields
+        if (opening_book_value !== undefined) assetUpdate.opening_book_value = opening_book_value != null ? Number(opening_book_value) : null;
+        if (opening_accumulated_depreciation !== undefined) assetUpdate.opening_accumulated_depreciation = opening_accumulated_depreciation != null ? Number(opening_accumulated_depreciation) : 0;
+        if (opening_production_units !== undefined) assetUpdate.opening_production_units = opening_production_units != null ? Number(opening_production_units) : 0;
+        if (cleanOpeningDate !== undefined) assetUpdate.opening_production_date = cleanOpeningDate;
 
         if (cleanDate) assetUpdate.date_acquired = cleanDate;
         if (item_image !== undefined) assetUpdate.item_image = extractImageUuid(item_image);

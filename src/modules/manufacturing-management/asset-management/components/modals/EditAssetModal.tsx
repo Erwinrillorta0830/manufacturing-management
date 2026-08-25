@@ -8,6 +8,7 @@ import { useForm, FieldErrors } from "react-hook-form";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,7 @@ import {
   UnitOption,
   User,
 } from "@/modules/manufacturing-management/asset-management/types";
-import { Loader2, UploadCloud, X } from "lucide-react";
+import { Check, Loader2, UploadCloud, X } from "lucide-react";
 import { assetService } from "../../services/assetService";
 import { cn, formatPHP, getAssetImageUrl, formatDateTimeForDB, parseDateTimeSafe } from "../../utils/lib";
 import {
@@ -76,6 +77,7 @@ export default function EditAssetModal({
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isLegacyAsset, setIsLegacyAsset] = useState(false);
 
   const form = useForm<AssetFormValues>({
     resolver: zodResolver(assetFormSchema),
@@ -103,6 +105,7 @@ export default function EditAssetModal({
       item_image: null,
       serial: "",
       is_active_warning: 0,
+      asset_origin: "New",
     },
   });
 
@@ -115,6 +118,15 @@ export default function EditAssetModal({
       const maxCap = asset.maximum_unit_produced_capacity != null ? Number(asset.maximum_unit_produced_capacity) : 0;
       const parsedAcqDate = parseDateTimeSafe(asset.date_acquired) || new Date();
       const parsedDepDate = parseDateTimeSafe(asset.depreciation_start_date) || parsedAcqDate;
+
+      const parsedOpeningDate = parseDateTimeSafe(asset.opening_production_date) || parsedAcqDate;
+      const isExistingOrigin =
+        asset.asset_origin === "Existing" ||
+        (asset.opening_book_value != null && Number(asset.opening_book_value) < acqCost) ||
+        Number(asset.opening_accumulated_depreciation || 0) > 0 ||
+        Number(asset.opening_production_units || 0) > 0;
+
+      setIsLegacyAsset(isExistingOrigin);
 
       form.reset({
         item_name: asset.item_name,
@@ -135,6 +147,11 @@ export default function EditAssetModal({
         production_unit_id: asset.production_unit_id || null,
         date_acquired: parsedAcqDate,
         depreciation_start_date: parsedDepDate,
+        asset_origin: isExistingOrigin ? "Existing" : "New",
+        opening_book_value: asset.opening_book_value != null ? Number(asset.opening_book_value) : acqCost,
+        opening_accumulated_depreciation: asset.opening_accumulated_depreciation != null ? Number(asset.opening_accumulated_depreciation) : 0,
+        opening_production_units: asset.opening_production_units != null ? Number(asset.opening_production_units) : 0,
+        opening_production_date: parsedOpeningDate,
         department: asset.department || 0,
         employee: asset.employee,
         item_image: asset.item_image,
@@ -211,10 +228,12 @@ export default function EditAssetModal({
         finalImageValue = null;
       }
 
+      const resolvedAssetOrigin = isLegacyAsset ? "Existing" : (values.asset_origin || "New");
+
       await assetService.updateAsset(
         asset.id,
         asset.item_id,
-        values,
+        { ...values, asset_origin: resolvedAssetOrigin },
         finalImageValue,
       );
 
@@ -225,7 +244,7 @@ export default function EditAssetModal({
       const selectedUnit = units.find((u) => u.unit_id === Number(values.production_unit_id));
 
       const dbDateStr = formatDateTimeForDB(values.date_acquired);
-      const depStartDateStr = values.depreciation_start_date
+      const depStartDateStr = isLegacyAsset && values.depreciation_start_date
         ? formatDateTimeForDB(values.depreciation_start_date).split(" ")[0]
         : dbDateStr.split(" ")[0];
 
@@ -246,6 +265,7 @@ export default function EditAssetModal({
 
         asset_type: values.asset_type,
         depreciation_method: values.depreciation_method,
+        asset_origin: resolvedAssetOrigin,
         acquisition_cost: acqCostVal,
         residual_value: Number(values.residual_value || 0),
         useful_life_months: usefulMonthsVal,
@@ -254,6 +274,16 @@ export default function EditAssetModal({
         production_unit: selectedUnit?.unit_name || null,
         production_unit_shortcut: selectedUnit?.unit_shortcut || null,
         depreciation_start_date: depStartDateStr,
+
+        opening_book_value:
+          values.opening_book_value != null ? Number(values.opening_book_value) : acqCostVal,
+        opening_accumulated_depreciation:
+          values.opening_accumulated_depreciation != null ? Number(values.opening_accumulated_depreciation) : 0,
+        opening_production_units:
+          values.opening_production_units != null ? Number(values.opening_production_units) : 0,
+        opening_production_date: values.opening_production_date
+          ? (typeof values.opening_production_date === "string" ? values.opening_production_date : values.opening_production_date.toISOString())
+          : null,
 
         department: values.department,
         department_name:
@@ -279,16 +309,8 @@ export default function EditAssetModal({
     }
   };
 
-  const onInvalid = (errors: FieldErrors<AssetFormValues>) => {
-    console.error("Form validation errors:", errors);
-    const errorKeys = Object.keys(errors) as (keyof AssetFormValues)[];
-    if (errorKeys.length > 0) {
-      const firstKey = errorKeys[0];
-      const errorObj = errors[firstKey];
-      const fieldName = firstKey.replace(/_/g, " ");
-      const msg = (typeof errorObj?.message === "string" && errorObj.message) ? errorObj.message : `Please check the ${fieldName} field.`;
-      toast.error(msg);
-    }
+  const onInvalid = () => {
+    toast.error("Please input all required fields.");
   };
 
   if (!asset) return null;
@@ -300,14 +322,28 @@ export default function EditAssetModal({
   const watchUsefulMonths = form.watch("useful_life_months") || (form.watch("life_span") || 1) * 12;
   const watchMaxCapacity = form.watch("maximum_unit_produced_capacity") || 0;
   const watchProdUnitId = form.watch("production_unit_id");
+  const watchOpeningBookValue = form.watch("opening_book_value");
+  const watchOpeningUnits = form.watch("opening_production_units") || 0;
   const selectedUnitObj = units.find((u) => u.unit_id === Number(watchProdUnitId));
 
-  const monthlyStraightLine = watchUsefulMonths > 0 ? Math.max(0, (watchAcqCost - watchResValue) / watchUsefulMonths) : 0;
-  const uopRate = watchMaxCapacity > 0 ? Math.max(0, (watchAcqCost - watchResValue) / watchMaxCapacity) : 0;
+  const effectiveOpeningBookValue =
+    watchOpeningBookValue != null && Number(watchOpeningBookValue) > 0
+      ? Number(watchOpeningBookValue)
+      : watchAcqCost;
+
+  const remainingDepreciableBasis = Math.max(0, effectiveOpeningBookValue - watchResValue);
+  const remainingCapacityAtCutover = Math.max(0, watchMaxCapacity - watchOpeningUnits);
+
+  const monthlyStraightLine = watchUsefulMonths > 0 ? remainingDepreciableBasis / watchUsefulMonths : 0;
+  const uopRate = remainingCapacityAtCutover > 0 ? remainingDepreciableBasis / remainingCapacityAtCutover : (watchMaxCapacity > 0 ? remainingDepreciableBasis / watchMaxCapacity : 0);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-[95vw] md:max-w-5xl lg:max-w-6xl max-h-[95vh] overflow-y-auto p-0 rounded-2xl">
+      <DialogContent
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="max-w-[95vw] md:max-w-5xl lg:max-w-6xl max-h-[95vh] overflow-y-auto p-0 rounded-2xl"
+      >
         <DialogHeader className="p-6 pb-0 gap-0">
           <DialogTitle className="text-lg font-semibold flex items-center">
             Edit Asset
@@ -689,7 +725,15 @@ export default function EditAssetModal({
                       <FormControl>
                         <AssetDateTimePicker
                           value={field.value}
-                          onValueChange={field.onChange}
+                          onValueChange={(val) => {
+                            field.onChange(val);
+                            if (!isLegacyAsset && val) {
+                              form.setValue("depreciation_start_date", val, {
+                                shouldValidate: true,
+                                shouldDirty: true,
+                              });
+                            }
+                          }}
                           placeholder="Pick date & time..."
                         />
                       </FormControl>
@@ -808,49 +852,26 @@ export default function EditAssetModal({
               {/* METHOD-SPECIFIC CONFIGURATION */}
               {watchDepMethod === "Straight Line" ? (
                 <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start w-full">
-                    <FormField
-                      control={form.control}
-                      name="useful_life_months"
-                      render={({ field }) => (
-                        <FormItem className="w-full flex flex-col">
-                          <FormLabel>Useful Life (Months) *</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="e.g. 60"
-                              className="h-10 bg-background"
-                              value={field.value === 0 ? "" : (field.value ?? 60)}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const months = val === "" ? 0 : parseInt(val) || 0;
-                                field.onChange(months);
-                                form.setValue("life_span", Math.max(1, Math.round(months / 12)));
-                              }}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start w-full">
                     <FormField
                       control={form.control}
                       name="life_span"
                       render={({ field }) => (
                         <FormItem className="w-full flex flex-col">
-                          <FormLabel>Useful Life (Years)</FormLabel>
+                          <FormLabel>Useful Life (Years) *</FormLabel>
                           <FormControl>
                             <Input
                               type="number"
+                              min="1"
+                              step="0.1"
                               placeholder="e.g. 5"
                               className="h-10 bg-background"
                               value={field.value === 0 ? "" : (field.value ?? 5)}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                const years = val === "" ? 0 : parseInt(val) || 0;
+                                const years = val === "" ? 0 : parseFloat(val) || 0;
                                 field.onChange(years);
-                                form.setValue("useful_life_months", years * 12);
+                                form.setValue("useful_life_months", Math.round(years * 12));
                               }}
                             />
                           </FormControl>
@@ -868,7 +889,7 @@ export default function EditAssetModal({
                         <span className="font-bold text-foreground text-sm">
                           {formatPHP(monthlyStraightLine)}{" "}
                           <span className="text-xs font-normal text-muted-foreground">
-                            / month
+                            / month ({Math.round(watchUsefulMonths)} mos)
                           </span>
                         </span>
                       </div>
@@ -907,23 +928,18 @@ export default function EditAssetModal({
                       render={({ field }) => (
                         <FormItem className="w-full flex flex-col">
                           <FormLabel>Production Unit (UoM) *</FormLabel>
-                          <Select
-                            onValueChange={(val) => field.onChange(val ? Number(val) : null)}
-                            value={field.value ? field.value.toString() : ""}
-                          >
-                            <FormControl>
-                              <SelectTrigger className="h-10 w-full bg-background">
-                                <SelectValue placeholder="Select UoM" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {units.map((u) => (
-                                <SelectItem key={u.unit_id} value={u.unit_id.toString()}>
-                                  {u.unit_name} {u.unit_shortcut ? `(${u.unit_shortcut})` : ""}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <AssetSearchableSelect
+                              options={units.map((u) => ({
+                                value: u.unit_id.toString(),
+                                label: `${u.unit_name}${u.unit_shortcut ? ` (${u.unit_shortcut})` : ""}`,
+                              }))}
+                              value={field.value ? field.value.toString() : ""}
+                              onValueChange={(val) => field.onChange(val ? Number(val) : null)}
+                              placeholder="Select UoM..."
+                              allowClear={true}
+                            />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -946,16 +962,226 @@ export default function EditAssetModal({
                   </div>
                 </div>
               )}
+
+              {/* SECTION 3B: LEGACY ASSET MIGRATION & OPENING CARRYING VALUE */}
+              <div className="p-4 rounded-xl border border-border/80 bg-muted/20 space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-foreground flex items-center gap-2">
+                      <span>Existing / Migrated Asset (Opening Balance Setup)</span>
+                      {isLegacyAsset && (
+                        <span className="text-[10px] font-bold uppercase bg-primary/10 text-primary px-2 py-0.5 rounded border border-primary/20">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Enable if this asset was already in service prior to system implementation and requires an opening carrying balance.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={isLegacyAsset}
+                    onCheckedChange={(checked) => {
+                      setIsLegacyAsset(checked);
+                      form.setValue("asset_origin", checked ? "Existing" : "New");
+                      if (!checked) {
+                        form.setValue("opening_book_value", undefined);
+                        form.setValue("opening_accumulated_depreciation", 0);
+                        form.setValue("opening_production_units", 0);
+                      }
+                    }}
+                  />
+                </div>
+
+                {isLegacyAsset && (
+                  <div className="space-y-4 pt-3 border-t border-border/60">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start w-full">
+                      <FormField
+                        control={form.control}
+                        name="opening_book_value"
+                        render={({ field }) => (
+                          <FormItem className="w-full flex flex-col">
+                            <FormLabel className="text-xs">
+                              Opening Carrying Value (PHP)
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder={watchAcqCost > 0 ? String(watchAcqCost) : "0.00"}
+                                className="h-10 bg-background"
+                                value={field.value ?? ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const num = val === "" ? undefined : parseFloat(val) || 0;
+                                  field.onChange(num);
+                                  if (num !== undefined) {
+                                    form.setValue("opening_accumulated_depreciation", Math.max(0, watchAcqCost - num));
+                                  }
+                                }}
+                              />
+                            </FormControl>
+                            <span className="text-[10px] text-muted-foreground">
+                              Assessed carrying value at cutover
+                            </span>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="opening_accumulated_depreciation"
+                        render={({ field }) => (
+                          <FormItem className="w-full flex flex-col">
+                            <FormLabel className="text-xs">
+                              Prior Accum. Dep. (PHP)
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0.00"
+                                className="h-10 bg-background"
+                                value={field.value === 0 ? "" : (field.value ?? "")}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  field.onChange(val === "" ? 0 : parseFloat(val) || 0);
+                                }}
+                              />
+                            </FormControl>
+                            <span className="text-[10px] text-muted-foreground">
+                              Historical wear &amp; tear prior to cutover
+                            </span>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {watchDepMethod === "Units of Production" ? (
+                        <FormField
+                          control={form.control}
+                          name="opening_production_units"
+                          render={({ field }) => (
+                            <FormItem className="w-full flex flex-col">
+                              <FormLabel className="text-xs">
+                                Prior Units Produced ({selectedUnitObj?.unit_shortcut || selectedUnitObj?.unit_name || "UoM"})
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.0001"
+                                  placeholder="0"
+                                  className="h-10 bg-background"
+                                  value={field.value === 0 ? "" : (field.value ?? "")}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    field.onChange(val === "" ? 0 : parseFloat(val) || 0);
+                                  }}
+                                />
+                              </FormControl>
+                              <span className="text-[10px] text-muted-foreground">
+                                Units produced before system
+                              </span>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      ) : (
+                        <FormField
+                          control={form.control}
+                          name="depreciation_start_date"
+                          render={({ field }) => (
+                            <FormItem className="w-full flex flex-col">
+                              <FormLabel className="text-xs">Depreciation Start Date</FormLabel>
+                              <FormControl>
+                                <AssetDateTimePicker
+                                  value={field.value}
+                                  onValueChange={field.onChange}
+                                  placeholder="Pick start date..."
+                                />
+                              </FormControl>
+                              <span className="text-[10px] text-muted-foreground">
+                                When calculations begin
+                              </span>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                      <FormField
+                        control={form.control}
+                        name="opening_production_date"
+                        render={({ field }) => (
+                          <FormItem className="w-full flex flex-col">
+                            <FormLabel className="text-xs">Cutover / Assessment Date</FormLabel>
+                            <FormControl>
+                              <AssetDateTimePicker
+                                value={field.value}
+                                onValueChange={field.onChange}
+                                placeholder="Pick cutover date..."
+                              />
+                            </FormControl>
+                            <span className="text-[10px] text-muted-foreground">
+                              Cutover date
+                            </span>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
+                      <div className="p-2.5 rounded-lg bg-background border border-border">
+                        <span className="text-muted-foreground block text-[11px]">Starting Carrying Basis:</span>
+                        <span className="font-bold text-foreground text-sm mt-0.5 block">{formatPHP(effectiveOpeningBookValue)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-background border border-border">
+                        <span className="text-muted-foreground block text-[11px]">Remaining Depreciable:</span>
+                        <span className="font-bold text-foreground text-sm mt-0.5 block">{formatPHP(remainingDepreciableBasis)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-background border border-primary/30 bg-primary/5">
+                        <span className="text-primary block text-[11px] font-medium">Effective Future Rate:</span>
+                        <span className="font-bold text-primary text-sm mt-0.5 block">
+                          {watchDepMethod === "Units of Production"
+                            ? `${formatPHP(uopRate)} / ${selectedUnitObj?.unit_shortcut || selectedUnitObj?.unit_name || "unit"}`
+                            : `${formatPHP(monthlyStraightLine)} / month`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex justify-end gap-3 pt-4">
-              <Button variant="outline" type="button" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Update Asset
-              </Button>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4 border-t border-border/80">
+               
+
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="outline" type="button" onClick={onClose} disabled={loading}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="min-w-48 font-semibold shadow-sm" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Updating Asset...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="mr-1.5 h-4 w-4" />
+                      {isLegacyAsset
+                        ? (watchDepMethod === "Units of Production"
+                            ? "Update Existing Asset (UOP)"
+                            : "Update Existing Asset (Straight Line)")
+                        : (watchDepMethod === "Units of Production"
+                            ? "Update Asset (UOP)"
+                            : "Update Asset (Straight Line)")}
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </form>
         </Form>

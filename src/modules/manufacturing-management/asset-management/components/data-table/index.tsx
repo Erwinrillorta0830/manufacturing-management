@@ -10,6 +10,7 @@ import {
   getFilteredRowModel,
   SortingState,
   ColumnFiltersState,
+  VisibilityState,
   useReactTable,
   OnChangeFn,
 } from "@tanstack/react-table";
@@ -37,6 +38,11 @@ const conditionOptions = [
   { label: "Bad", value: "Bad" },
   { label: "Under Maintenance", value: "Under Maintenance" },
   { label: "Discontinued", value: "Discontinued" },
+];
+
+const originOptions = [
+  { label: "New", value: "New" },
+  { label: "Existing", value: "Existing" },
 ];
 
 const assetTypeOptions = [
@@ -69,6 +75,10 @@ export function AssetDataTable<TData extends AssetTableData, TValue>({
     pageSize: 10,
   });
   const [sorting, setSorting] = React.useState<SortingState>([]);
+  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({
+    asset_origin: false,
+    depreciation_method: false,
+  });
   const [selectedAsset, setSelectedAsset] = useState<TData | null>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
 
@@ -79,7 +89,9 @@ export function AssetDataTable<TData extends AssetTableData, TValue>({
       pagination,
       sorting,
       columnFilters,
+      columnVisibility,
     },
+    onColumnVisibilityChange: setColumnVisibility,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -144,6 +156,14 @@ export function AssetDataTable<TData extends AssetTableData, TValue>({
             className="pl-8 h-9 text-xs"
           />
         </div>
+
+        {table.getColumn("asset_origin") && (
+          <DataTableFacetedFilter
+            column={table.getColumn("asset_origin")}
+            title="Origin"
+            options={originOptions}
+          />
+        )}
 
         {table.getColumn("department_name") && (
           <DataTableFacetedFilter

@@ -88,7 +88,8 @@ export function AssetSearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-trigger-width)] p-0 z-[100] pointer-events-auto"
+        style={{ width: "var(--radix-popover-trigger-width)" }}
         align="start"
         onWheel={(e) => e.stopPropagation()}
       >
@@ -206,7 +207,8 @@ export function AssetCreatableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-trigger-width)] p-0 z-[100] pointer-events-auto"
+        style={{ width: "var(--radix-popover-trigger-width)" }}
         align="start"
         onWheel={(e) => e.stopPropagation()}
       >
