@@ -147,7 +147,9 @@ async function directusFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Directus error (${res.status})`);
   }
-  return (await res.json()) as T;
+  if (res.status === 204) return {} as T;
+  const text = await res.text().catch(() => "");
+  return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
 function json(body: unknown, status = 200) {
@@ -288,6 +290,13 @@ export async function POST(req: NextRequest) {
       return json({ success: false, message: "Discount type is required.", data: null }, 400);
     }
 
+    const existing = await directusFetch<DirectusList<Pick<DiscountTypeItem, "id">>>(
+      `/items/discount_type?filter[discount_type][_eq]=${encodeURIComponent(discount_type)}&fields=id`
+    );
+    if (existing?.data?.length > 0) {
+      return json({ success: false, message: `Discount type "${discount_type}" already exists.`, data: null }, 400);
+    }
+
     const lines = await listLineDiscounts();
     const lineMap = new Map<number, LineDiscountItem>();
     for (const l of lines) lineMap.set(Number(l.id), l);
@@ -338,6 +347,13 @@ export async function PUT(req: NextRequest) {
     }
     if (!discount_type) {
       return json({ success: false, message: "Discount type is required.", data: null }, 400);
+    }
+
+    const existing = await directusFetch<DirectusList<Pick<DiscountTypeItem, "id">>>(
+      `/items/discount_type?filter[discount_type][_eq]=${encodeURIComponent(discount_type)}&filter[id][_neq]=${id}&fields=id`
+    );
+    if (existing?.data?.length > 0) {
+      return json({ success: false, message: `Discount type "${discount_type}" already exists.`, data: null }, 400);
     }
 
     const lines = await listLineDiscounts();

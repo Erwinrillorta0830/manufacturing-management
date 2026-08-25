@@ -4,18 +4,18 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import imageCompression from "browser-image-compression";
 import Image from "next/image";
 import React, { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, FieldErrors } from "react-hook-form";
 import { toast } from "sonner";
 
 import { Separator } from "@/components/ui/separator";
-import { format } from "date-fns";
+ 
 import {
   Loader2,
   Plus,
   UploadCloud,
   X,
 } from "lucide-react";
-import { cn } from "../../utils/lib";
+import { cn, formatDateTimeForDB } from "../../utils/lib";
 
 import { Button } from "@/components/ui/button";
 
@@ -26,7 +26,7 @@ import {
   ComboboxList,
   ComboboxItem,
   ComboboxGroup,
-  ComboboxEmpty,
+ 
   ComboboxLabel,
 } from "@/components/ui/combobox";
 import {
@@ -66,8 +66,10 @@ import {
   Department,
   ItemClassification,
   ItemType,
+  UnitOption,
   User,
 } from "@/modules/manufacturing-management/asset-management/types";
+import { formatPHP } from "../../utils/lib";
 
 interface AddAssetModalProps {
   onSuccess: () => void;
@@ -93,10 +95,10 @@ export default function AddAssetModal({
     [],
   );
   const [items, setItems] = useState<AssetItem[]>([]);
+  const [units, setUnits] = useState<UnitOption[]>([]);
   const [itemNameSearch, setItemNameSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-
 
   const form = useForm<AssetFormValues>({
     resolver: zodResolver(assetFormSchema),
@@ -104,13 +106,21 @@ export default function AddAssetModal({
       item_name: "",
       item_type: "",
       item_classification: "",
+      asset_type: "Administrative",
+      depreciation_method: "Straight Line",
       barcode: "",
       rfid_code: "",
       condition: "Good",
       quantity: 1,
       cost_per_item: 0,
+      acquisition_cost: 0,
+      residual_value: 0,
       life_span: 5,
+      useful_life_months: 60,
+      maximum_unit_produced_capacity: 0,
+      production_unit_id: null,
       date_acquired: new Date(),
+      depreciation_start_date: new Date(),
       department: 0,
       employee: null,
       serial: "",
@@ -122,13 +132,14 @@ export default function AddAssetModal({
     if (open) {
       const fetchData = async () => {
         try {
-          const [depData, userData, typeData, classData, itemData] =
+          const [depData, userData, typeData, classData, itemData, unitData] =
             await Promise.all([
               assetService.getDepartments(),
               assetService.getUsers(),
               assetService.getItemTypes(),
               assetService.getItemClassifications(),
               assetService.getItems(),
+              assetService.getUnits(),
             ]);
 
           setDepartments(Array.isArray(depData) ? depData : []);
@@ -136,6 +147,7 @@ export default function AddAssetModal({
           setTypes(Array.isArray(typeData) ? typeData : []);
           setClassifications(Array.isArray(classData) ? classData : []);
           setItems(Array.isArray(itemData) ? itemData : []);
+          setUnits(Array.isArray(unitData) ? unitData : []);
         } catch (error) {
           console.error("Failed to load dropdown data", error);
           toast.error("Failed to load form options");
@@ -153,13 +165,21 @@ export default function AddAssetModal({
         item_name: "",
         item_type: "",
         item_classification: "",
+        asset_type: "Administrative",
+        depreciation_method: "Straight Line",
         barcode: "",
         rfid_code: "",
         condition: "Good",
         quantity: 1,
         cost_per_item: 0,
+        acquisition_cost: 0,
+        residual_value: 0,
         life_span: 5,
+        useful_life_months: 60,
+        maximum_unit_produced_capacity: 0,
+        production_unit_id: null,
         date_acquired: now,
+        depreciation_start_date: now,
         department: 0,
         employee: null,
         serial: "",
@@ -180,14 +200,12 @@ export default function AddAssetModal({
 
   const uploadToDirectus = async (file: File) => {
     try {
-      // 1. Compress the image before uploading to save time/bandwidth
       const options = {
-        maxSizeMB: 1, // Max size 1MB
-        maxWidthOrHeight: 1024, // Max resolution 1024px
+        maxSizeMB: 1,
+        maxWidthOrHeight: 1024,
         useWebWorker: true,
       };
 
-      console.log("DEBUG: Compressing file...");
       const compressedFile = await imageCompression(file, options);
 
       const formData = new FormData();
@@ -201,7 +219,7 @@ export default function AddAssetModal({
       if (!res.ok) throw new Error("Upload failed");
 
       const result = await res.json();
-      return result?.data?.id; // Returning the UUID string
+      return result?.data?.id;
     } catch (error) {
       console.error("Upload Error:", error);
       throw error;
@@ -217,12 +235,37 @@ export default function AddAssetModal({
         finalImageValue = await uploadToDirectus(selectedFile);
       }
 
+      const costVal = Number(values.cost_per_item) || 0;
+      const qtyVal = Number(values.quantity) || 1;
+      const totalVal = costVal * qtyVal;
+      const acqCostVal = values.acquisition_cost != null ? Number(values.acquisition_cost) : totalVal;
+      const resVal = Number(values.residual_value) || 0;
+      const usefulMonthsVal = values.useful_life_months != null ? Number(values.useful_life_months) : Number(values.life_span || 1) * 12;
+
+      const acqDateStr = formatDateTimeForDB(values.date_acquired);
+      const depDateStr = values.depreciation_start_date
+        ? formatDateTimeForDB(values.depreciation_start_date).split(" ")[0]
+        : acqDateStr.split(" ")[0];
+
       const submissionData = {
         ...values,
-        date_acquired: format(values.date_acquired, "yyyy-MM-dd"),
-        cost_per_item: Number(values.cost_per_item),
-        quantity: Number(values.quantity),
-        life_span: Number(values.life_span),
+        asset_type: values.asset_type || "Administrative",
+        depreciation_method: values.depreciation_method || "Straight Line",
+        date_acquired: acqDateStr,
+        depreciation_start_date: depDateStr,
+        cost_per_item: costVal,
+        quantity: qtyVal,
+        acquisition_cost: acqCostVal,
+        residual_value: resVal,
+        life_span: Number(values.life_span) || 1,
+        useful_life_months: usefulMonthsVal,
+        maximum_unit_produced_capacity:
+          values.maximum_unit_produced_capacity != null
+            ? Number(values.maximum_unit_produced_capacity)
+            : null,
+        production_unit_id: values.production_unit_id
+          ? Number(values.production_unit_id)
+          : null,
         department: Number(values.department),
         employee: values.employee ? Number(values.employee) : null,
         item_type: values.item_type,
@@ -248,75 +291,93 @@ export default function AddAssetModal({
       }
 
       const selectedDepartment = departments.find(
-        (d) => d.department_id === values.department,
+        (d) => d.department_id === Number(values.department),
       );
-      const selectedEmployee = users.find((u) => u.user_id === values.employee);
+      const selectedUser = users.find(
+        (u) => u.user_id === Number(values.employee),
+      );
+      const selectedUnit = units.find(
+        (u) => u.unit_id === Number(values.production_unit_id),
+      );
 
-      const d = values.date_acquired ? new Date(values.date_acquired) : new Date();
-      const isoDateStr = d.toISOString();
-
-      // 👇 Build full display row — id and item_id come from API, rest from form + resolved names
-      const newAssetRow: AssetTableData = {
-        id: result.data.id,
-        item_id: result.data.item_id,
+      onLocalAppend({
+        id: result.data?.id || Date.now(),
         item_name: values.item_name,
         item_type_name: values.item_type,
         classification_name: values.item_classification,
-        condition: values.condition,
-        cost_per_item: values.cost_per_item,
-        quantity: values.quantity,
-        total: values.cost_per_item * values.quantity,
-        life_span: values.life_span,
-        date_acquired: isoDateStr,
-        department: values.department,
-        department_name: selectedDepartment?.department_name ?? "Unassigned",
-        employee: values.employee,
-        assigned_to_name: selectedEmployee
-          ? `${selectedEmployee.user_fname} ${selectedEmployee.user_lname}`.trim()
-          : "Unassigned",
-        item_image: finalImageValue,
         barcode: values.barcode || null,
         rfid_code: values.rfid_code || null,
         serial: values.serial || null,
-        is_active_warning: values.is_active_warning,
-        encoder: 133,
-      };
+        condition: values.condition,
+        quantity: qtyVal,
+        cost_per_item: costVal,
+        total: totalVal,
+        date_acquired: acqDateStr,
+        life_span: Number(values.life_span) || 1,
 
-      onLocalAppend(newAssetRow);
-      toast.success("Asset saved successfully!");
+        asset_type: values.asset_type,
+        depreciation_method: values.depreciation_method,
+        acquisition_cost: acqCostVal,
+        residual_value: resVal,
+        useful_life_months: usefulMonthsVal,
+        maximum_unit_produced_capacity:
+          values.maximum_unit_produced_capacity != null
+            ? Number(values.maximum_unit_produced_capacity)
+            : null,
+        production_unit_id: values.production_unit_id
+          ? Number(values.production_unit_id)
+          : null,
+        production_unit: selectedUnit?.unit_name || null,
+        production_unit_shortcut: selectedUnit?.unit_shortcut || null,
+        depreciation_start_date: depDateStr,
+
+        department_name: selectedDepartment?.department_name || "Unassigned",
+        assigned_to_name: selectedUser
+          ? `${selectedUser.user_fname} ${selectedUser.user_lname}`.trim()
+          : "Unassigned",
+        item_id: result.data?.item_id || 0,
+        department: Number(values.department),
+        employee: values.employee ? Number(values.employee) : null,
+        item_image: finalImageValue,
+        is_active_warning: values.is_active_warning ? 1 : 0,
+        encoder: 133,
+      });
+
+      toast.success("Asset created successfully");
       setOpen(false);
-      resetForm();
-      // onSuccess();
-    } catch (error: unknown) {
-      console.error("Asset creation error:", error);
+    } catch (error) {
+      console.error(error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to save asset",
+        error instanceof Error ? error.message : "Failed to create asset",
       );
     } finally {
       setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    form.reset({
-      item_name: "",
-      item_type: "",
-      item_classification: "",
-      barcode: "",
-      rfid_code: "",
-      condition: "Good",
-      quantity: 1,
-      cost_per_item: 0,
-      life_span: 5,
-      date_acquired: new Date(),
-      department: 0,
-      employee: null,
-      serial: "",
-      is_active_warning: 0,
-    });
-    setSelectedFile(null);
-    setPreviewUrl(null);
+  const onInvalid = (errors: FieldErrors<AssetFormValues>) => {
+    console.error("Form validation errors:", errors);
+    const errorKeys = Object.keys(errors) as (keyof AssetFormValues)[];
+    if (errorKeys.length > 0) {
+      const firstKey = errorKeys[0];
+      const errorObj = errors[firstKey];
+      const fieldName = firstKey.replace(/_/g, " ");
+      const msg = (typeof errorObj?.message === "string" && errorObj.message) ? errorObj.message : `Please check the ${fieldName} field.`;
+      toast.error(msg);
+    }
   };
+
+  const watchDepMethod = form.watch("depreciation_method");
+  const watchCost = form.watch("cost_per_item") || 0;
+  const watchAcqCost = form.watch("acquisition_cost") != null && form.watch("acquisition_cost")! > 0 ? form.watch("acquisition_cost")! : watchCost;
+  const watchResValue = form.watch("residual_value") || 0;
+  const watchUsefulMonths = form.watch("useful_life_months") || (form.watch("life_span") || 1) * 12;
+  const watchMaxCapacity = form.watch("maximum_unit_produced_capacity") || 0;
+  const watchProdUnitId = form.watch("production_unit_id");
+  const selectedUnitObj = units.find((u) => u.unit_id === Number(watchProdUnitId));
+
+  const monthlyStraightLine = watchUsefulMonths > 0 ? Math.max(0, (watchAcqCost - watchResValue) / watchUsefulMonths) : 0;
+  const uopRate = watchMaxCapacity > 0 ? Math.max(0, (watchAcqCost - watchResValue) / watchMaxCapacity) : 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -326,19 +387,19 @@ export default function AddAssetModal({
           Add New Asset
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[95vw] md:max-w-4xl lg:max-w-5xl max-h-[95vh] overflow-y-auto p-0 rounded-2xl">
+      <DialogContent className="max-w-[95vw] md:max-w-5xl lg:max-w-6xl max-h-[95vh] overflow-y-auto p-0 rounded-2xl">
         <DialogHeader className="p-6 pb-0 gap-0">
           <DialogTitle className="text-lg font-semibold flex items-center">
             Create New Asset
           </DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground">
-            Fill in the details below to add a new asset to the inventory.
+            Fill in the details below to add a new asset and configure its depreciation parameters.
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit(onSubmit)}
+            onSubmit={form.handleSubmit(onSubmit, onInvalid)}
             className="px-6 pb-8 space-y-6"
           >
             {/* SECTION 0: IMAGE */}
@@ -413,52 +474,65 @@ export default function AddAssetModal({
                       value={field.value}
                       onValueChange={(val) => {
                         if (val) {
-                          form.setValue("item_name", val);
+                          form.setValue("item_name", val, { shouldValidate: true, shouldDirty: true });
                           const item = items.find((i) => i.item_name === val);
                           if (item) {
                             if (item.item_type?.type_name) {
-                              form.setValue("item_type", item.item_type.type_name);
+                              form.setValue("item_type", item.item_type.type_name, { shouldValidate: true, shouldDirty: true });
                             }
                             if (item.item_classification?.classification_name) {
-                              form.setValue("item_classification", item.item_classification.classification_name);
+                              form.setValue("item_classification", item.item_classification.classification_name, { shouldValidate: true, shouldDirty: true });
                             }
                           }
-                          setItemNameSearch("");
+                          setItemNameSearch(val);
                         }
                       }}
                       inputValue={itemNameSearch}
                       onInputValueChange={(val) => {
                         setItemNameSearch(val);
-                        field.onChange(val); // Continuously update form value as user types
+                        field.onChange(val);
                       }}
                     >
                       <ComboboxInput placeholder="Search or type asset name..." showTrigger={true} />
                       <ComboboxContent align="start" className="w-(--radix-popover-trigger-width) p-0 pointer-events-auto z-[100]">
                         <ComboboxList className="max-h-[200px] overflow-y-auto" onWheel={(e) => e.stopPropagation()}>
-                          <ComboboxGroup>
-                            <ComboboxLabel>Existing Assets</ComboboxLabel>
-                            {Array.from(
+                          {(() => {
+                            const filtered = Array.from(
                               new Map(
                                 items
                                   .filter((item) =>
-                                    item.item_name.toLowerCase().includes(itemNameSearch.toLowerCase()),
+                                    item.item_name
+                                      ?.toLowerCase()
+                                      .includes(itemNameSearch.toLowerCase())
                                   )
-                                  .map((item) => [item.item_name.toLowerCase(), item]),
-                              ).values(),
-                            ).map((item) => (
-                              <ComboboxItem key={item.id} value={item.item_name}>
-                                <div className="flex flex-col">
-                                  <span>{item.item_name}</span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {item.item_type?.type_name} • {item.item_classification?.classification_name}
-                                  </span>
-                                </div>
-                              </ComboboxItem>
-                            ))}
-                          </ComboboxGroup>
-                          <ComboboxEmpty className="p-2 text-sm text-muted-foreground">
-                            New item will be created.
-                          </ComboboxEmpty>
+                                  .map((item) => [item.item_name.toLowerCase(), item])
+                              ).values()
+                            );
+
+                            if (filtered.length > 0) {
+                              return (
+                                <ComboboxGroup>
+                                  <ComboboxLabel>Existing Assets</ComboboxLabel>
+                                  {filtered.map((item) => (
+                                    <ComboboxItem key={item.id} value={item.item_name}>
+                                      <div className="flex flex-col">
+                                        <span>{item.item_name}</span>
+                                        <span className="text-xs text-muted-foreground">
+                                          {item.item_type?.type_name} • {item.item_classification?.classification_name}
+                                        </span>
+                                      </div>
+                                    </ComboboxItem>
+                                  ))}
+                                </ComboboxGroup>
+                              );
+                            }
+
+                            return (
+                              <div className="p-3 text-center text-xs text-muted-foreground">
+                                New item will be created.
+                              </div>
+                            );
+                          })()}
                         </ComboboxList>
                       </ComboboxContent>
                     </Combobox>
@@ -467,13 +541,12 @@ export default function AddAssetModal({
                 )}
               />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-                {/* ITEM TYPE FIELD */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start w-full">
                 <FormField
                   control={form.control}
                   name="item_type"
                   render={({ field }) => (
-                    <FormItem className="flex flex-col">
+                    <FormItem className="w-full flex flex-col">
                       <FormLabel>Item Type *</FormLabel>
                       <FormControl>
                         <AssetCreatableSelect
@@ -487,7 +560,8 @@ export default function AddAssetModal({
                           )}
                           value={field.value}
                           onValueChange={field.onChange}
-                          placeholder="Select or type item type..."
+                          placeholder="Select or type type..."
+                          className="w-full"
                         />
                       </FormControl>
                       <FormMessage />
@@ -495,12 +569,11 @@ export default function AddAssetModal({
                   )}
                 />
 
-                {/* CLASSIFICATION FIELD */}
                 <FormField
                   control={form.control}
                   name="item_classification"
                   render={({ field }) => (
-                    <FormItem className="flex flex-col">
+                    <FormItem className="w-full flex flex-col">
                       <FormLabel>Classification *</FormLabel>
                       <FormControl>
                         <AssetCreatableSelect
@@ -518,8 +591,83 @@ export default function AddAssetModal({
                           value={field.value}
                           onValueChange={field.onChange}
                           placeholder="Select or type classification..."
+                          className="w-full"
                         />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="asset_type"
+                  render={({ field }) => (
+                    <FormItem className="w-full flex flex-col">
+                      <FormLabel>Asset Type *</FormLabel>
+                      <Select
+                        onValueChange={(val: "Administrative" | "Production") => {
+                          field.onChange(val);
+                          if (val === "Production") {
+                            form.setValue("depreciation_method", "Units of Production", {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                              shouldTouch: true,
+                            });
+                          } else {
+                            form.setValue("depreciation_method", "Straight Line", {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                              shouldTouch: true,
+                            });
+                          }
+                        }}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="h-10 w-full whitespace-nowrap [&>span]:truncate">
+                            <SelectValue placeholder="Select Asset Type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="Administrative">Administrative</SelectItem>
+                          <SelectItem value="Production">Production Machinery</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="depreciation_method"
+                  render={({ field }) => (
+                    <FormItem className="w-full flex flex-col">
+                      <FormLabel>Depreciation Method *</FormLabel>
+                      <Select
+                        onValueChange={(val: "Straight Line" | "Units of Production") => {
+                          field.onChange(val);
+                          if (val === "Units of Production") {
+                            form.setValue("asset_type", "Production", {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                              shouldTouch: true,
+                            });
+                          }
+                        }}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="h-10 w-full whitespace-nowrap [&>span]:truncate">
+                            <SelectValue placeholder="Select Method" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="Straight Line">Straight Line (SL)</SelectItem>
+                          <SelectItem value="Units of Production">Units of Production (UOP)</SelectItem>
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -677,15 +825,46 @@ export default function AddAssetModal({
               </div>
             </div>
 
-            {/* SECTION 3: FINANCIALS & CONDITION */}
+            {/* SECTION 3: FINANCIALS & DEPRECIATION */}
             <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-start">
+              <Separator />
+              <div className="text-sm font-semibold text-foreground">
+                Financial Baseline &amp; Depreciation Setup
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start w-full">
                 <FormField
                   control={form.control}
                   name="cost_per_item"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cost (PHP)</FormLabel>
+                    <FormItem className="w-full flex flex-col">
+                      <FormLabel>Acquisition Cost (PHP) *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={field.value === 0 ? "" : (field.value ?? "")}
+                          className="h-10"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const num = val === "" ? 0 : parseFloat(val) || 0;
+                            field.onChange(num);
+                            form.setValue("acquisition_cost", num);
+                          }}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="residual_value"
+                  render={({ field }) => (
+                    <FormItem className="w-full flex flex-col">
+                      <FormLabel>Residual Value (PHP)</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
@@ -703,57 +882,19 @@ export default function AddAssetModal({
                     </FormItem>
                   )}
                 />
-                <FormField
-                  control={form.control}
-                  name="quantity"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Qty</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          {...field}
-                          disabled
-                          className="h-10 bg-muted"
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="life_span"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Life (Yrs)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          placeholder="e.g. 5"
-                          className="h-10"
-                          value={field.value === 0 ? "" : (field.value ?? "")}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            field.onChange(val === "" ? 0 : parseInt(val) || 0);
-                          }}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+
                 <FormField
                   control={form.control}
                   name="condition"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="w-full flex flex-col">
                       <FormLabel>Condition</FormLabel>
                       <Select
                         onValueChange={field.onChange}
                         value={field.value}
                       >
                         <FormControl>
-                          <SelectTrigger className="h-10">
+                          <SelectTrigger className="h-10 w-full">
                             <SelectValue />
                           </SelectTrigger>
                         </FormControl>
@@ -772,10 +913,169 @@ export default function AddAssetModal({
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name="quantity"
+                  render={({ field }) => (
+                    <FormItem className="w-full flex flex-col">
+                      <FormLabel>Qty</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          {...field}
+                          disabled
+                          className="h-10 bg-muted"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </div>
 
-              <Separator />
+              {/* METHOD-SPECIFIC CONFIGURATION */}
+              {watchDepMethod === "Straight Line" ? (
+                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start w-full">
+                    <FormField
+                      control={form.control}
+                      name="useful_life_months"
+                      render={({ field }) => (
+                        <FormItem className="w-full flex flex-col">
+                          <FormLabel>Useful Life (Months) *</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="e.g. 60"
+                              className="h-10 bg-background"
+                              value={field.value === 0 ? "" : (field.value ?? 60)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const months = val === "" ? 0 : parseInt(val) || 0;
+                                field.onChange(months);
+                                form.setValue("life_span", Math.max(1, Math.round(months / 12)));
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="life_span"
+                      render={({ field }) => (
+                        <FormItem className="w-full flex flex-col">
+                          <FormLabel>Useful Life (Years)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="e.g. 5"
+                              className="h-10 bg-background"
+                              value={field.value === 0 ? "" : (field.value ?? 5)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const years = val === "" ? 0 : parseInt(val) || 0;
+                                field.onChange(years);
+                                form.setValue("useful_life_months", years * 12);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="w-full flex flex-col space-y-2">
+                      <div className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                        Straight-Line Monthly Rate
+                      </div>
+                      <div className="h-10 rounded-md border bg-background px-3 flex items-center justify-between">
+                        <span className="text-muted-foreground text-xs font-medium">Rate:</span>
+                        <span className="font-bold text-foreground text-sm">
+                          {formatPHP(monthlyStraightLine)}{" "}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            / month
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start w-full">
+                    <FormField
+                      control={form.control}
+                      name="maximum_unit_produced_capacity"
+                      render={({ field }) => (
+                        <FormItem className="w-full flex flex-col">
+                          <FormLabel>Max Lifetime Capacity *</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="10000"
+                              className="h-10 bg-background"
+                              value={field.value === 0 ? "" : (field.value ?? "")}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                field.onChange(val === "" ? 0 : parseFloat(val) || 0);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="production_unit_id"
+                      render={({ field }) => (
+                        <FormItem className="w-full flex flex-col">
+                          <FormLabel>Production Unit (UoM) *</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val ? Number(val) : null)}
+                            value={field.value ? field.value.toString() : ""}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-10 w-full bg-background">
+                                <SelectValue placeholder="Select UoM" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {units.map((u) => (
+                                <SelectItem key={u.unit_id} value={u.unit_id.toString()}>
+                                  {u.unit_name} {u.unit_shortcut ? `(${u.unit_shortcut})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="w-full flex flex-col space-y-2">
+                      <div className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                        UOP Depreciation Rate
+                      </div>
+                      <div className="h-10 rounded-md border bg-background px-3 flex items-center justify-between">
+                        <span className="text-muted-foreground text-xs font-medium">Rate:</span>
+                        <span className="font-bold text-foreground text-sm">
+                          {formatPHP(uopRate)}{" "}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            / {selectedUnitObj?.unit_shortcut || selectedUnitObj?.unit_name || "unit"}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+
             <div className="flex items-center justify-end gap-3 pt-4">
               <Button
                 variant="outline"

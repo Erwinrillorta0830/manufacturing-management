@@ -215,9 +215,26 @@ export default function PlanningEngineeringModule() {
         });
     }, [selectedUnreleasedJo, unreleasedJobs]);
 
-    const handleOpenDetails = async (jo: any, silent = false) => {
+    const activeFamilyJo = useMemo(() => {
+        if (!selectedUnreleasedJo) return null;
+        if (familyActiveTab === "family-all" || familyActiveTab === "parent") {
+            return selectedUnreleasedJo;
+        }
+        return familyChildJobs.find((child: any) => child.jo_id === familyActiveTab) || selectedUnreleasedJo;
+    }, [familyActiveTab, familyChildJobs, selectedUnreleasedJo]);
+
+    const activeFamilyMaterials = useMemo(() => {
+        if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
+            return joMaterials;
+        }
+        return childJoMaterials[activeFamilyJo.jo_id] || [];
+    }, [activeFamilyJo, childJoMaterials, familyActiveTab, joMaterials]);
+
+    const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
+
+    const handleOpenDetails = async (jo: any, silent = false, tabToRestore = "family-all") => {
         setSelectedUnreleasedJo(jo);
-        setFamilyActiveTab("family-all");
+        setFamilyActiveTab(tabToRestore);
         if (!silent) setLoadingMaterials(true);
         try {
             const res = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${jo.order_id}`);
@@ -288,7 +305,7 @@ export default function PlanningEngineeringModule() {
             }
             toast.success(`Successfully reserved ${qty.toLocaleString()} units from ${lotNo}!`);
             if (selectedUnreleasedJo) {
-                await handleOpenDetails(selectedUnreleasedJo, true);
+                await handleOpenDetails(selectedUnreleasedJo, true, familyActiveTab);
             }
             setConfirmReserveData(null);
         } catch (err: any) {
@@ -320,7 +337,7 @@ export default function PlanningEngineeringModule() {
             }
             toast.success(`Successfully removed reservation of ${qty.toLocaleString()} units from ${lotNo}!`);
             if (selectedUnreleasedJo) {
-                await handleOpenDetails(selectedUnreleasedJo, true);
+                await handleOpenDetails(selectedUnreleasedJo, true, familyActiveTab);
             }
             setConfirmUnreserveData(null);
         } catch (err: any) {
@@ -331,19 +348,19 @@ export default function PlanningEngineeringModule() {
     };
 
     const handlePrintShortfall = () => {
-        if (!selectedUnreleasedJo) return;
+        if (!activeFamilyJo) return;
 
-        const isFamily = familyChildJobs.length > 0 && familyActiveTab === "family-all";
+        const isFamily = isFamilyOverview;
         const shortfallItems: any[] = [];
 
-        joMaterials.forEach((m: any) => {
+        activeFamilyMaterials.forEach((m: any) => {
             const needed = Number(m.allocated_quantity || 0);
             const reserved = Number(m.reserved_quantity || 0);
             const shortfall = needed - reserved;
             if (shortfall > 0) {
                 shortfallItems.push({
-                    joId: selectedUnreleasedJo.jo_id,
-                    productName: selectedUnreleasedJo.product_name,
+                    joId: activeFamilyJo.jo_id,
+                    productName: activeFamilyJo.product_name,
                     materialName: m.product_name,
                     unit: m.unit_shortcut,
                     needed,
@@ -400,7 +417,7 @@ export default function PlanningEngineeringModule() {
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Material Shortfall Report - ${selectedUnreleasedJo.jo_id}</title>
+                <title>Material Shortfall Report - ${activeFamilyJo.jo_id}</title>
                 <style>
                     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 25px; color: #111827; }
                     .header { border-bottom: 3px solid #dc2626; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
@@ -417,7 +434,7 @@ export default function PlanningEngineeringModule() {
                 <div class="header">
                     <div>
                         <div class="title">⚠️ Material Shortfall Pick Report</div>
-                        <div class="meta">Generated for Job Order: <strong>${selectedUnreleasedJo.jo_id}</strong> ${isFamily ? `(Family Group)` : ''}</div>
+                        <div class="meta">Generated for Job Order: <strong>${activeFamilyJo.jo_id}</strong> ${isFamily ? `(Family Group)` : ''}</div>
                     </div>
                     <div style="text-align: right;" class="meta">
                         <div>Date Printed: ${new Date().toLocaleString()}</div>
@@ -426,9 +443,9 @@ export default function PlanningEngineeringModule() {
                 </div>
 
                 <div class="info-box">
-                    <strong>Primary Product:</strong> ${selectedUnreleasedJo.product_name} &bull; 
-                    <strong>Target Run Qty:</strong> ${selectedUnreleasedJo.quantity?.toLocaleString()} pcs &bull; 
-                    <strong>Shift Duration:</strong> ${selectedUnreleasedJo.shiftOption || 8} hrs
+                    <strong>Primary Product:</strong> ${activeFamilyJo.product_name} &bull;
+                    <strong>Target Run Qty:</strong> ${activeFamilyJo.quantity?.toLocaleString()} pcs &bull;
+                    <strong>Shift Duration:</strong> ${activeFamilyJo.shiftOption || 8} hrs
                 </div>
 
                 <table>
@@ -467,9 +484,9 @@ export default function PlanningEngineeringModule() {
     };
 
     const handlePrintJobOrder = () => {
-        if (!selectedUnreleasedJo) return;
+        if (!activeFamilyJo) return;
 
-        const isFamily = familyChildJobs.length > 0 && familyActiveTab === "family-all";
+        const isFamily = isFamilyOverview;
         const printWin = window.open("", "_blank");
         if (!printWin) {
             toast.error("Please allow popups to print the job order.");
@@ -522,7 +539,9 @@ export default function PlanningEngineeringModule() {
             `;
         };
 
-        let bodyContent = renderJoPrintBlock(selectedUnreleasedJo, joMaterials, "📦 Parent Assembly Run", "#2563eb");
+        const activeTitle = activeFamilyJo.jo_id?.includes("-SUB") ? "🧩 Sub-Assembly Piece Run" : "📦 Parent Assembly Run";
+        const activeColor = activeFamilyJo.jo_id?.includes("-SUB") ? "#0284c7" : "#2563eb";
+        let bodyContent = renderJoPrintBlock(activeFamilyJo, activeFamilyMaterials, activeTitle, activeColor);
 
         if (isFamily) {
             familyChildJobs.forEach((child: any) => {
@@ -535,7 +554,7 @@ export default function PlanningEngineeringModule() {
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Job Order Worksheet - ${selectedUnreleasedJo.jo_id}</title>
+                <title>Job Order Worksheet - ${activeFamilyJo.jo_id}</title>
                 <style>
                     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 25px; color: #111827; }
                     .header { border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-end; }
@@ -549,7 +568,7 @@ export default function PlanningEngineeringModule() {
                 <div class="header">
                     <div>
                         <div class="title">📄 Production Job Order Worksheet</div>
-                        <div class="meta">Manufacturing Operations &bull; Job Order: <strong>${selectedUnreleasedJo.jo_id}</strong> ${isFamily ? '(Family Run)' : ''}</div>
+                        <div class="meta">Manufacturing Operations &bull; Job Order: <strong>${activeFamilyJo.jo_id}</strong> ${isFamily ? '(Family Run)' : ''}</div>
                     </div>
                     <div style="text-align: right;" class="meta">
                         <div>Date Printed: ${new Date().toLocaleString()}</div>
@@ -579,6 +598,27 @@ export default function PlanningEngineeringModule() {
             </html>
         `);
         printWin.document.close();
+    };
+
+    const handleReleaseCurrentView = async () => {
+        if (!activeFamilyJo) return;
+
+        const targetJo = activeFamilyJo;
+        const familyChildrenToRelease = familyChildJobs;
+        const shouldReleaseFamily = isFamilyOverview;
+
+        setSelectedUnreleasedJo(null);
+        setJoMaterials([]);
+
+        await handleReleaseDraftFromPlanning(targetJo.order_id);
+
+        if (shouldReleaseFamily) {
+            for (const child of familyChildrenToRelease) {
+                if (child.order_id) {
+                    await handleReleaseDraftFromPlanning(child.order_id);
+                }
+            }
+        }
     };
 
     const shortfallCount = netRequirements.filter((n: any) => n.net_shortfall > 0).length;
@@ -794,7 +834,7 @@ export default function PlanningEngineeringModule() {
                                         <span>{allocationProgress}%</span>
                                     </div>
                                     <div className="w-full h-2 bg-muted rounded-full overflow-hidden border">
-                                        <div 
+                                        <div
                                             className="h-full bg-green-500 rounded-full transition-all duration-300 ease-out"
                                             style={{ width: `${allocationProgress}%` }}
                                         />
@@ -839,8 +879,8 @@ export default function PlanningEngineeringModule() {
             </AlertDialog>
 
             {/* Unreleased JO Details Modal */}
-            <Dialog 
-                open={selectedUnreleasedJo !== null} 
+            <Dialog
+                open={selectedUnreleasedJo !== null}
                 onOpenChange={(open) => {
                     if (!open) {
                         setSelectedUnreleasedJo(null);
@@ -864,18 +904,18 @@ export default function PlanningEngineeringModule() {
                                     )}
                                 </div>
                                 <DialogTitle className="font-extrabold text-xl tracking-tight text-foreground mt-2">
-                                    {selectedUnreleasedJo?.jo_id}
+                                    {activeFamilyJo?.jo_id}
                                 </DialogTitle>
                                 <DialogDescription className="text-xs text-muted-foreground mt-1">
-                                    Product: <span className="font-bold text-foreground">{selectedUnreleasedJo?.product_name}</span> • Quantity: <span className="font-bold text-foreground">{selectedUnreleasedJo?.quantity?.toLocaleString()} pcs</span>
+                                    Product: <span className="font-bold text-foreground">{activeFamilyJo?.product_name}</span> • Quantity: <span className="font-bold text-foreground">{activeFamilyJo?.quantity?.toLocaleString()} pcs</span>
                                 </DialogDescription>
                             </div>
                             <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
-                                selectedUnreleasedJo?.status === "Draft" 
+                                activeFamilyJo?.status === "Draft"
                                     ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
                                     : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
                             }`}>
-                                {selectedUnreleasedJo?.status}
+                                {activeFamilyJo?.status}
                             </span>
                         </div>
 
@@ -909,7 +949,7 @@ export default function PlanningEngineeringModule() {
 
                     {/* Body */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-6 min-h-0 bg-muted/5">
-                        {familyChildJobs.length > 0 && familyActiveTab === "family-all" ? (
+                        {isFamilyOverview ? (
                             /* DUAL / MULTI FAMILY VIEW: Render Parent & Child JOs side-by-side / stacked */
                             <div className="space-y-8">
                                 {/* CARD 1: PARENT JOB ORDER */}
@@ -933,7 +973,7 @@ export default function PlanningEngineeringModule() {
                                         <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.remarks || "None"}</span></div>
                                         <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{selectedUnreleasedJo?.shiftOption || "8"} hours</span></div>
                                         <div>
-                                            <span className="text-muted-foreground font-medium">Parent Run Lead Time:</span> 
+                                            <span className="text-muted-foreground font-medium">Parent Run Lead Time:</span>
                                             <span className="font-bold ml-1 text-primary">
                                                 {(() => {
                                                     const tasks = selectedUnreleasedJo?.routing_tasks || [];
@@ -1028,11 +1068,11 @@ export default function PlanningEngineeringModule() {
                                                                                 {mat.candidate_lots.map((lot: any) => {
                                                                                     const isReserved = !!lot.reservation_id;
                                                                                     return (
-                                                                                        <div 
-                                                                                            key={`parent-lot-${lot.receipt_id || lot.lot_no}`} 
+                                                                                        <div
+                                                                                            key={`parent-lot-${lot.receipt_id || lot.lot_no}`}
                                                                                             className={`text-xs p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all ${
-                                                                                                isReserved 
-                                                                                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm" 
+                                                                                                isReserved
+                                                                                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm"
                                                                                                     : "bg-card border-border hover:border-primary/40"
                                                                                             }`}
                                                                                         >
@@ -1117,7 +1157,7 @@ export default function PlanningEngineeringModule() {
                                                 <div><span className="text-muted-foreground font-medium">Planning Remarks:</span> <span className="font-bold ml-1 text-foreground">{childJo.remarks || "Auto-spawned"}</span></div>
                                                 <div><span className="text-muted-foreground font-medium">Shift Option:</span> <span className="font-bold ml-1 text-foreground">{childJo.shiftOption || "8"} hours</span></div>
                                                 <div>
-                                                    <span className="text-muted-foreground font-medium">Sub-Assembly Lead Time:</span> 
+                                                    <span className="text-muted-foreground font-medium">Sub-Assembly Lead Time:</span>
                                                     <span className="font-bold ml-1 text-sky-700 dark:text-sky-300">
                                                         {(() => {
                                                             const tasks = childJo.routing_tasks || [];
@@ -1207,11 +1247,11 @@ export default function PlanningEngineeringModule() {
                                                                                         {cMat.candidate_lots.map((lot: any) => {
                                                                                             const isReserved = !!lot.reservation_id;
                                                                                             return (
-                                                                                                <div 
-                                                                                                    key={`child-lot-${lot.receipt_id || lot.lot_no}`} 
+                                                                                                <div
+                                                                                                    key={`child-lot-${lot.receipt_id || lot.lot_no}`}
                                                                                                     className={`text-xs p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all ${
-                                                                                                        isReserved 
-                                                                                                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm" 
+                                                                                                        isReserved
+                                                                                                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm"
                                                                                                             : "bg-card border-border hover:border-sky-500/40"
                                                                                                     }`}
                                                                                                 >
@@ -1274,36 +1314,18 @@ export default function PlanningEngineeringModule() {
                             <>
                                 <div className="bg-card border rounded-xl p-4 space-y-2 text-sm">
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                        <div><span className="text-muted-foreground">Planning Remarks:</span> <span className="font-medium ml-1">{selectedUnreleasedJo?.remarks || "None"}</span></div>
-                                        <div><span className="text-muted-foreground">Shift Option:</span> <span className="font-medium ml-1">{selectedUnreleasedJo?.shiftOption || "8"} hours</span></div>
+                                        <div><span className="text-muted-foreground">Planning Remarks:</span> <span className="font-medium ml-1">{activeFamilyJo?.remarks || "None"}</span></div>
+                                        <div><span className="text-muted-foreground">Shift Option:</span> <span className="font-medium ml-1">{activeFamilyJo?.shiftOption || "8"} hours</span></div>
                                         <div>
-                                            <span className="text-muted-foreground">Estimated Duration:</span> 
+                                            <span className="text-muted-foreground">Estimated Duration:</span>
                                             <span className="font-medium ml-1">
                                                 {(() => {
-                                                    const setup = selectedUnreleasedJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0) || 0;
-                                                    const run = selectedUnreleasedJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0) || 0;
-                                                    const parentTotal = setup + run;
-                                                    
-                                                    const pId = Number(selectedUnreleasedJo?.job_order_id || selectedUnreleasedJo?.id || 0);
-                                                    const joNo = selectedUnreleasedJo?.jo_id || selectedUnreleasedJo?.job_order_no;
-                                                    const childJos = unreleasedJobs.filter((c: any) => 
-                                                        (c.parent_job_order_id && Number(c.parent_job_order_id) === pId) ||
-                                                        (joNo && c.jo_id && String(c.jo_id).startsWith(`${joNo}-SUB`))
-                                                    );
-                                                    const subTotal = childJos.reduce((sum: number, c: any) => {
-                                                        const cTasks = c.routing_tasks || [];
-                                                        return sum + cTasks.reduce((tsum: number, t: any) => tsum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
-                                                    }, 0);
-
-                                                    const combinedTotal = parentTotal + subTotal;
-                                                    if (combinedTotal === 0) return "Not estimated";
-                                                    const shiftHours = Number(selectedUnreleasedJo?.shiftOption || 8) || 8;
-                                                    const days = (combinedTotal / shiftHours).toFixed(1);
-                                                    
-                                                    if (subTotal > 0) {
-                                                        return `${combinedTotal.toFixed(1)} hrs (~${days} Days) [Parent: ${parentTotal.toFixed(1)}h, Sub-Assemblies: ${subTotal.toFixed(1)}h]`;
-                                                    }
-                                                    return `${combinedTotal.toFixed(1)} hrs (~${days} Days)`;
+                                                    const tasks = activeFamilyJo?.routing_tasks || [];
+                                                    const total = tasks.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0);
+                                                    if (total === 0) return "Not estimated";
+                                                    const shiftHours = Number(activeFamilyJo?.shiftOption || 8) || 8;
+                                                    const days = (total / shiftHours).toFixed(1);
+                                                    return `${total.toFixed(1)} hrs (~${days} Days)`;
                                                 })()}
                                             </span>
                                         </div>
@@ -1312,7 +1334,7 @@ export default function PlanningEngineeringModule() {
 
                                 <div className="space-y-4">
                                     <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">BOM Materials Allocation Worksheet</h4>
-                                    
+
                                     {loadingMaterials ? (
                                         <div className="flex flex-col items-center justify-center py-12 space-y-2">
                                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1331,7 +1353,7 @@ export default function PlanningEngineeringModule() {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y text-foreground/90">
-                                                    {joMaterials.map((mat) => {
+                                                    {activeFamilyMaterials.map((mat) => {
                                                         const needed = Number(mat.allocated_quantity || 0);
                                                         const reserved = Number(mat.reserved_quantity || 0);
                                                         const shortfall = needed - reserved;
@@ -1391,11 +1413,11 @@ export default function PlanningEngineeringModule() {
                                                                             {mat.candidate_lots.map((lot: any) => {
                                                                                 const isReserved = !!lot.reservation_id;
                                                                                 return (
-                                                                                    <div 
-                                                                                        key={lot.receipt_id || lot.lot_no} 
+                                                                                    <div
+                                                                                        key={lot.receipt_id || lot.lot_no}
                                                                                         className={`text-xs p-2.5 rounded-lg border flex items-center justify-between gap-3 transition-all ${
-                                                                                            isReserved 
-                                                                                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200" 
+                                                                                            isReserved
+                                                                                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200"
                                                                                                 : "bg-card border-border hover:border-primary/40"
                                                                                         }`}
                                                                                     >
@@ -1419,7 +1441,7 @@ export default function PlanningEngineeringModule() {
                                                                                                     <Button
                                                                                                         size="xs"
                                                                                                         variant="ghost"
-                                                                                                        onClick={() => setConfirmUnreserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
+                                                                                                        onClick={() => setConfirmUnreserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                         className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
                                                                                                     >
                                                                                                         Unreserve
@@ -1427,7 +1449,7 @@ export default function PlanningEngineeringModule() {
                                                                                                 ) : shortfall > 0 && lot.available > 0 ? (
                                                                                                     <Button
                                                                                                         size="xs"
-                                                                                                        onClick={() => setConfirmReserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
+                                                                                                        onClick={() => setConfirmReserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
                                                                                                     >
                                                                                                         Reserve
@@ -1456,25 +1478,25 @@ export default function PlanningEngineeringModule() {
                     {/* Footer */}
                     <div className="p-6 bg-muted/20 border-t shrink-0 flex flex-wrap justify-between items-center gap-3">
                         <div className="flex items-center gap-2">
-                            <Button 
-                                variant="outline" 
-                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-sky-500/30 text-sky-600 hover:text-sky-500 hover:bg-sky-500/10 dark:text-sky-400" 
+                            <Button
+                                variant="outline"
+                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-sky-500/30 text-sky-600 hover:text-sky-500 hover:bg-sky-500/10 dark:text-sky-400"
                                 onClick={() => setIsTravelerOpen(true)}
                             >
                                 <Printer className="h-4 w-4" />
                                 Traveler Sheet
                             </Button>
-                            <Button 
-                                variant="outline" 
-                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-amber-500/30 text-amber-600 hover:text-amber-500 hover:bg-amber-500/10 dark:text-amber-400" 
+                            <Button
+                                variant="outline"
+                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-amber-500/30 text-amber-600 hover:text-amber-500 hover:bg-amber-500/10 dark:text-amber-400"
                                 onClick={handlePrintShortfall}
                             >
                                 <Printer className="h-4 w-4" />
                                 Print Shortfall
                             </Button>
-                            <Button 
-                                variant="outline" 
-                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-primary/30 text-primary hover:bg-primary/10" 
+                            <Button
+                                variant="outline"
+                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
                                 onClick={handlePrintJobOrder}
                             >
                                 <Printer className="h-4 w-4" />
@@ -1483,9 +1505,9 @@ export default function PlanningEngineeringModule() {
                         </div>
 
                         <div className="flex items-center gap-3">
-                            <Button 
-                                variant="outline" 
-                                className="font-bold h-10 px-5 text-xs" 
+                            <Button
+                                variant="outline"
+                                className="font-bold h-10 px-5 text-xs"
                                 onClick={() => {
                                     setSelectedUnreleasedJo(null);
                                     setJoMaterials([]);
@@ -1494,25 +1516,13 @@ export default function PlanningEngineeringModule() {
                                 Close Details
                             </Button>
                             <Button
-                                onClick={async () => {
-                                    const parentId = selectedUnreleasedJo.order_id;
-                                    setSelectedUnreleasedJo(null);
-                                    setJoMaterials([]);
-                                    
-                                    await handleReleaseDraftFromPlanning(parentId);
-
-                                    for (const child of familyChildJobs) {
-                                        if (child.order_id) {
-                                            await handleReleaseDraftFromPlanning(child.order_id);
-                                        }
-                                    }
-                                }}
-                                disabled={releasingDraftId === selectedUnreleasedJo?.order_id || loadingMaterials}
+                                onClick={handleReleaseCurrentView}
+                                disabled={releasingDraftId === activeFamilyJo?.order_id || loadingMaterials}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
                             >
-                                {releasingDraftId === selectedUnreleasedJo?.order_id 
-                                    ? "Releasing..." 
-                                    : familyChildJobs.length > 0 
+                                {releasingDraftId === activeFamilyJo?.order_id
+                                    ? "Releasing..."
+                                    : isFamilyOverview
                                         ? `Release Entire Family (${1 + familyChildJobs.length} Job Orders)`
                                         : "Release to Shop Floor"}
                             </Button>
@@ -1528,16 +1538,18 @@ export default function PlanningEngineeringModule() {
                         <AlertDialogTitle className="text-lg font-extrabold text-foreground flex items-center gap-2">
                             Confirm Material Reservation
                         </AlertDialogTitle>
-                        <div className="space-y-4 pt-2 text-sm text-muted-foreground">
-                            <p>
-                                Are you sure you want to reserve stock from this lot for the production run?
-                            </p>
-                            <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-xl space-y-1.5 font-medium text-foreground">
-                                <div><span className="text-muted-foreground">Material:</span> <span className="font-bold">{confirmReserveData?.productName}</span></div>
-                                <div><span className="text-muted-foreground">Lot Number:</span> <span className="font-mono font-bold">{confirmReserveData?.lotNo}</span></div>
-                                <div><span className="text-muted-foreground">Qty to Reserve:</span> <span className="font-extrabold text-emerald-600">{confirmReserveData?.qty?.toLocaleString()} units</span></div>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-4 pt-2 text-sm text-muted-foreground">
+                                <p>
+                                    Are you sure you want to reserve stock from this lot for the production run?
+                                </p>
+                                <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-xl space-y-1.5 font-medium text-foreground">
+                                    <div><span className="text-muted-foreground">Material:</span> <span className="font-bold">{confirmReserveData?.productName}</span></div>
+                                    <div><span className="text-muted-foreground">Lot Number:</span> <span className="font-mono font-bold">{confirmReserveData?.lotNo}</span></div>
+                                    <div><span className="text-muted-foreground">Qty to Reserve:</span> <span className="font-extrabold text-emerald-600">{confirmReserveData?.qty?.toLocaleString()} units</span></div>
+                                </div>
                             </div>
-                        </div>
+                        </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter className="mt-6 flex gap-3">
                         <AlertDialogCancel disabled={reservingLot} className="font-bold h-10 px-5 rounded-lg border-border">Cancel</AlertDialogCancel>
@@ -1569,16 +1581,18 @@ export default function PlanningEngineeringModule() {
                         <AlertDialogTitle className="text-lg font-extrabold text-foreground flex items-center gap-2">
                             Remove Reservation
                         </AlertDialogTitle>
-                        <div className="space-y-4 pt-2 text-sm text-muted-foreground">
-                            <p className="text-red-500/80">
-                                Warning: Unreserving this lot will make the allocated quantity available to other planning Job Orders.
-                            </p>
-                            <div className="bg-red-500/5 border border-red-500/10 p-4 rounded-xl space-y-1.5 font-medium text-foreground">
-                                <div><span className="text-muted-foreground">Material:</span> <span className="font-bold">{confirmUnreserveData?.productName}</span></div>
-                                <div><span className="text-muted-foreground">Lot Number:</span> <span className="font-mono font-bold">{confirmUnreserveData?.lotNo}</span></div>
-                                <div><span className="text-muted-foreground">Qty to Free:</span> <span className="font-extrabold text-red-600">{confirmUnreserveData?.qty?.toLocaleString()} units</span></div>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-4 pt-2 text-sm text-muted-foreground">
+                                <p className="text-red-500/80">
+                                    Warning: Unreserving this lot will make the allocated quantity available to other planning Job Orders.
+                                </p>
+                                <div className="bg-red-500/5 border border-red-500/10 p-4 rounded-xl space-y-1.5 font-medium text-foreground">
+                                    <div><span className="text-muted-foreground">Material:</span> <span className="font-bold">{confirmUnreserveData?.productName}</span></div>
+                                    <div><span className="text-muted-foreground">Lot Number:</span> <span className="font-mono font-bold">{confirmUnreserveData?.lotNo}</span></div>
+                                    <div><span className="text-muted-foreground">Qty to Free:</span> <span className="font-extrabold text-red-600">{confirmUnreserveData?.qty?.toLocaleString()} units</span></div>
+                                </div>
                             </div>
-                        </div>
+                        </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter className="mt-6 flex gap-3">
                         <AlertDialogCancel disabled={reservingLot} className="font-bold h-10 px-5 rounded-lg border-border">Cancel</AlertDialogCancel>
@@ -1604,18 +1618,18 @@ export default function PlanningEngineeringModule() {
             </AlertDialog>
 
             {/* Printable Job Order Traveler Sheet */}
-            {isTravelerOpen && selectedUnreleasedJo && (
+            {isTravelerOpen && activeFamilyJo && (
                 <JobOrderTraveler
                     isOpen={isTravelerOpen}
                     onClose={() => setIsTravelerOpen(false)}
-                    jobOrder={selectedUnreleasedJo}
-                    materials={joMaterials}
-                    operations={selectedUnreleasedJo.operations || selectedUnreleasedJo.routing_tasks || selectedUnreleasedJo.routes || []}
-                    childJobOrders={familyChildJobs.map((child: any) => ({
+                    jobOrder={activeFamilyJo}
+                    materials={activeFamilyMaterials}
+                    operations={activeFamilyJo.operations || activeFamilyJo.routing_tasks || activeFamilyJo.routes || []}
+                    childJobOrders={isFamilyOverview ? familyChildJobs.map((child: any) => ({
                         jobOrder: child,
                         materials: childJoMaterials[child.jo_id] || [],
                         operations: child.operations || child.routing_tasks || child.routes || []
-                    }))}
+                    })) : []}
                     branchName={branches.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || "Manufacturing Facility"}
                 />
             )}

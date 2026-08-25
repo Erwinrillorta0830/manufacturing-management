@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { Brand, Category, PricingFilters, Supplier, Unit } from "../types";
+import type { Brand, Category, PricingFilters, Supplier, Unit, ProductType } from "../types";
 import * as api from "../providers/pricingApi";
 import { applyLoadError } from "../../shared/loadErrorState";
 
@@ -26,6 +26,7 @@ export function useLookups(filters?: Partial<PricingFilters>) {
     const [brands, setBrands] = React.useState<Brand[]>([]);
     const [units, setUnits] = React.useState<Unit[]>([]);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
+    const [productTypes, setProductTypes] = React.useState<ProductType[]>([]);
     const [error, setError] = React.useState<string | null>(null);
     const [unauthorized, setUnauthorized] = React.useState(false);
     const requestIdRef = React.useRef(0);
@@ -62,6 +63,7 @@ export function useLookups(filters?: Partial<PricingFilters>) {
                 setBrands(res.data.brands ?? []);
                 setUnits(res.data.units ?? []);
                 setSuppliers(res.data.suppliers ?? []);
+                setProductTypes(res.data.productTypes ?? []);
                 setUnauthorized(false);
             } catch (error: unknown) {
                 if (requestId !== requestIdRef.current) return;
@@ -74,5 +76,5 @@ export function useLookups(filters?: Partial<PricingFilters>) {
         })();
     }, [supplierIdsKey, supplierScope, categoryIds, brandIds, categoryIdsKey, brandIdsKey]);
 
-    return { loading, error, unauthorized, categories, brands, units, suppliers };
+    return { loading, error, unauthorized, categories, brands, units, suppliers, productTypes };
 }

@@ -458,7 +458,7 @@ export async function GET(request: Request) {
                 }))
             ]);
 
-            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult] = await Promise.all([
+            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult, userResult] = await Promise.all([
                 optionalRead("branches", new URLSearchParams({
                     "filter[isActive][_eq]": "1",
                     fields: "id,branch_name",
@@ -472,7 +472,7 @@ export async function GET(request: Request) {
                 })),
                 optionalRead("salesman", new URLSearchParams({
                     "filter[isActive][_eq]": "true",
-                    fields: "id,salesman_name",
+                    fields: "id,salesman_name,employee_id",
                     limit: "-1",
                     sort: "salesman_name"
                 })),
@@ -485,6 +485,11 @@ export async function GET(request: Request) {
                 optionalRead("product_type", new URLSearchParams({
                     fields: "id,name",
                     limit: "-1"
+                })),
+                optionalRead("user", new URLSearchParams({
+                    fields: "user_id,user_fname,user_lname",
+                    limit: "-1",
+                    sort: "user_fname"
                 }))
             ]);
 
@@ -536,6 +541,7 @@ export async function GET(request: Request) {
                 branches: branchResult.data || [],
                 paymentTerms: paymentTermResult.data || [],
                 salesmen: salesmanResult.data || [],
+                users: userResult.data || [],
                 suppliers: supplierResult.data || [],
                 productTypes: productTypeResult.data || []
             });
@@ -721,6 +727,7 @@ export async function POST(request: Request) {
         const { quotationId, customerId, poNo, items, dueDate, deliveryDate, paymentTerms, remarks, discountAmount, salesmanId, branchId } = body;
         const encoderId = user.id;
         const systemTimestamp = await getSystemTimeISOString();
+        const localCreatedDate = systemTimestamp.substring(0, 19).replace('T', ' ');
 
         if (!quotationId) {
             const directItems = items!;
@@ -832,7 +839,7 @@ export async function POST(request: Request) {
                 gross_amount: item.unit_price * item.quantity,
                 discount_type: item.discount_type || null,
                 discount_amount: item.discount_amount || 0,
-                created_date: systemTimestamp
+                created_date: localCreatedDate
             }));
             const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);
 
@@ -954,7 +961,7 @@ export async function POST(request: Request) {
                 allocated_amount: 0,
                 net_amount: unitPrice * quantity,
                 gross_amount: unitPrice * quantity,
-                created_date: systemTimestamp
+                created_date: localCreatedDate
             };
         });
         const created = await createSalesOrderWithDetails(salesOrderPayload, detailPayloads);
@@ -1020,6 +1027,9 @@ export async function PATCH(request: Request) {
         }
         const body = parsed.data;
         const orderId = body.orderId;
+        
+        const systemTimestamp = await getSystemTimeISOString();
+        const localCreatedDate = systemTimestamp.substring(0, 19).replace('T', ' ');
 
         return await withSalesOrderMutationLock(orderId, async () => {
 
@@ -1050,6 +1060,107 @@ export async function PATCH(request: Request) {
         });
         if (!allDetailsRes.ok) throw new ApiError(503, "Unable to validate sales-order details.");
         const allDetails = (await allDetailsRes.json()).data || [];
+
+        if ("action" in body && body.action === "update-draft") {
+            if (mapStatus(currentStatus) !== "Draft") {
+                throw new ApiError(409, `Sales order cannot be fully edited while it is ${currentStatus || "in an unknown status"}.`);
+            }
+
+            const headerPayload = {
+                customer_code: body.customerId ? undefined : undefined, // Customer doesn't change typically, but wait, the payload has customerId?
+                po_no: body.poNo,
+                delivery_date: body.deliveryDate || null,
+                due_date: body.dueDate || null,
+                payment_terms: body.paymentTerms ? Number(body.paymentTerms) : null,
+                salesman_id: body.salesmanId ? Number(body.salesmanId) : null,
+                branch_id: body.branchId ? Number(body.branchId) : null,
+                remarks: body.remarks || null,
+                discount_amount: body.discountAmount || 0,
+            };
+            
+            // Calculate new totals
+            const items = body.items || [];
+            let newTotal = 0;
+            const newDetails = items.map((item: any) => {
+                const qty = Number(item.quantity);
+                const price = Number(item.unit_price);
+                const discount = Number(item.discount_amount || 0);
+                const net = qty * price - discount;
+                newTotal += (qty * price);
+                return {
+                    product_id: item.product_id,
+                    bom_version_id: item.bom_version_id || null,
+                    ordered_quantity: qty,
+                    unit_price: price,
+                    discount_type: item.discount_type || null,
+                    discount_amount: discount,
+                    net_amount: net,
+                    gross_amount: qty * price,
+                    allocated_quantity: 0,
+                    served_quantity: 0,
+                    allocated_amount: 0,
+                    created_date: localCreatedDate,
+                    order_id: orderId
+                };
+            });
+            const headerDiscount = Number(body.discountAmount || 0);
+            if (headerDiscount > newTotal) {
+                throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
+            }
+            const newNet = newTotal - headerDiscount;
+            
+            const fullHeaderPayload = {
+                ...headerPayload,
+                total_amount: newTotal,
+                net_amount: newNet
+            };
+
+            // Delete existing details
+            const deleteFailures: string[] = [];
+            for (const detail of allDetails) {
+                const detailId = Number(detail.detail_id);
+                try {
+                    const delRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
+                        method: "DELETE",
+                        headers
+                    });
+                    if (!delRes.ok && delRes.status !== 404) {
+                        deleteFailures.push(`detail ${detailId} delete returned ${delRes.status}`);
+                    }
+                } catch (err) {
+                    deleteFailures.push(`detail ${detailId} delete failed: ${err instanceof Error ? err.message : "unknown error"}`);
+                }
+            }
+            
+            if (deleteFailures.length > 0) {
+                console.error(`Failed to delete details for order ${orderId}:`, deleteFailures);
+                throw new ApiError(500, "Failed to update draft sales order (could not clear existing details).");
+            }
+
+            // Update header
+            const headerUpdateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify(fullHeaderPayload)
+            });
+            if (!headerUpdateRes.ok) {
+                throw new ApiError(503, "Failed to update the sales-order header.");
+            }
+
+            // Create new details
+            for (const newDetail of newDetails) {
+                const detailResponse = await fetch(`${DIRECTUS_URL}/items/sales_order_details`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(newDetail)
+                });
+                if (!detailResponse.ok) {
+                    throw new ApiError(503, "Failed to create a sales-order detail.");
+                }
+            }
+            
+            return NextResponse.json({ success: true, order_status: "Draft" });
+        }
 
         if ("orderStatus" in body) {
             const targetStatus = body.orderStatus;
@@ -1167,7 +1278,11 @@ export async function PATCH(request: Request) {
             throw new ApiError(409, `Quantities cannot be changed while the sales order is ${currentStatus || "in an unknown status"}.`);
         }
 
-        const requestedDetails = new Map(body.details.map((detail) => [detail.detail_id, detail.ordered_quantity]));
+        if (!("details" in body) || !body.details) {
+            throw new ApiError(400, "Invalid patch request. Expected details array.");
+        }
+
+        const requestedDetails = new Map<number, number>(body.details.map((detail: any) => [Number(detail.detail_id), Number(detail.ordered_quantity)]));
         const existingDetailIds = new Set(allDetails.map((detail: any) => Number(detail.detail_id)));
         const foreignDetailIds = [...requestedDetails.keys()].filter((detailId) => !existingDetailIds.has(detailId));
         if (foreignDetailIds.length > 0) {
@@ -1181,7 +1296,7 @@ export async function PATCH(request: Request) {
             if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
                 throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
             }
-            return sum + quantity * unitPrice;
+            return sum + (quantity * unitPrice);
         }, 0);
         if (discount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
 

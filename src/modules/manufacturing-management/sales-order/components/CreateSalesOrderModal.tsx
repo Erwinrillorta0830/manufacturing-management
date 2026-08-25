@@ -42,9 +42,11 @@ interface DirectOrderItem {
     discount_amount?: number;
     discount_percent?: number;
     bom_version_id?: number;
+    product_type_id?: number;
 }
 
 interface LineErrors {
+    product_type?: string;
     product?: string;
     uom?: string;
     quantity?: string;
@@ -57,6 +59,8 @@ interface FormErrors {
     poNo?: string;
     branchId?: string;
     paymentTermId?: string;
+    userId?: string;
+    salesmanAccountId?: string;
     deliveryDate?: string;
     dueDate?: string;
     discountAmount?: string;
@@ -126,6 +130,8 @@ export function CreateSalesOrderModal({
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
     const [salesmen, setSalesmen] = useState<any[]>([]);
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
+    const [users, setUsers] = useState<any[]>([]);
+    // disabled-lint-next-line @typescript-eslint/no-explicit-any
     const [productTypes, setProductTypes] = useState<any[]>([]);
 
     const [loadingLookups, setLoadingLookups] = useState(false);
@@ -136,7 +142,8 @@ export function CreateSalesOrderModal({
     const [poNo, setPoNo] = useState("");
     const [branchId, setBranchId] = useState("");
     const [paymentTermId, setPaymentTermId] = useState("");
-    const [salesmanId, setSalesmanId] = useState("");
+    const [userId, setUserId] = useState("");
+    const [salesmanAccountId, setSalesmanAccountId] = useState("");
     const [deliveryDate, setDeliveryDate] = useState("");
     const [dueDate, setDueDate] = useState("");
     const [remarks, setRemarks] = useState("");
@@ -256,60 +263,37 @@ export function CreateSalesOrderModal({
     useEffect(() => {
         if (!isOpen) return;
 
-        // Fetch lookups
-        const loadLookups = async () => {
+        if (!isOpen) {
+            setCustomerId("");
+            setPoNo("");
+            setBranchId("");
+            setPaymentTermId("");
+            setUserId("");
+            setSalesmanAccountId("");
+            setDeliveryDate("");
+            setDueDate("");
+            setRemarks("");
+            setOverrideLeadTime(false);
+            setItems([]);
+            setFormErrors({});
+            nextLineIdRef.current = 1;
+        } else {
             setLoadingLookups(true);
-            setLookupError("");
-            try {
-                const response = await fetch("/api/manufacturing/sales-order?action=create-lookups");
-                const data = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(data.error || "Failed to load sales-order setup directories.");
-                }
-
-                const nextCustomers = Array.isArray(data.customers) ? data.customers : [];
-                const nextProducts = Array.isArray(data.products) ? data.products : [];
-                if (nextCustomers.length === 0 || nextProducts.length === 0) {
-                    throw new Error("Customer or finished-good product setup is unavailable.");
-                }
-
-                setCustomers(nextCustomers);
-                setProducts(nextProducts);
-                setBranches(Array.isArray(data.branches) ? data.branches : []);
-                setPaymentTerms(Array.isArray(data.paymentTerms) ? data.paymentTerms : []);
-                setSalesmen(Array.isArray(data.salesmen) ? data.salesmen : []);
-                setProductTypes(Array.isArray(data.productTypes) ? data.productTypes : []);
-            } catch (err) {
-                console.error("Failed to load lookups:", err);
-                const message = err instanceof Error ? err.message : "Failed to load required setup directories.";
-                setCustomers([]);
-                setProducts([]);
-                setLookupError(message);
-                toast.error(message);
-            } finally {
-                setLoadingLookups(false);
-            }
+            fetch("/api/manufacturing/sales-order?action=create-lookups")
+                .then(res => res.json())
+                .then(data => {
+                    setCustomers(data.customers || []);
+                    setProducts(data.products || []);
+                    setBranches(data.branches || []);
+                    setPaymentTerms(data.paymentTerms || []);
+                    setSalesmen(data.salesmen || []);
+                    setUsers(data.users || []);
+                    setProductTypes(data.productTypes || []);
+                    setLookupError("");
+                })
+                .catch(err => setLookupError(err.message || "Failed to load lookup data."))
+                .finally(() => setLoadingLookups(false));
         };
-
-        loadLookups();
-        // Reset state
-        setCustomerId("");
-        setPoNo("");
-        setBranchId("");
-        setPaymentTermId("");
-        setSalesmanId("");
-        setDeliveryDate("");
-        setDueDate("");
-        setRemarks("");
-        setOverrideLeadTime(false);
-        setItems([]);
-        setFormErrors({});
-        setDiscardOpen(false);
-        setCustomerOverrides({});
-        setVersionStates({});
-        setProductSearch("");
-        nextLineIdRef.current = 1;
-
     }, [isOpen]);
 
     const fetchLineDiscount = async (cId: string, pId: number, basePrice: number) => {
@@ -390,6 +374,7 @@ export function CreateSalesOrderModal({
     const handleAddItem = () => {
         setItems(prev => [...prev, {
             line_id: nextLineIdRef.current++,
+            product_type_id: 0,
             parent_product_id: 0,
             product_id: 0,
             quantity: 1,
@@ -421,6 +406,29 @@ export function CreateSalesOrderModal({
                 ...(previous.items || {}),
                 [lineId]: { ...(previous.items?.[lineId] || {}), [field]: undefined }
             }
+        }));
+    };
+
+    const handleProductTypeChange = (index: number, productTypeId: number) => {
+        const lineId = items[index]?.line_id;
+        if (lineId) {
+            clearLineError(lineId, "product_type");
+            clearLineError(lineId, "product");
+            clearLineError(lineId, "uom");
+        }
+        setItems(prev => prev.map((item, idx) => {
+            if (idx !== index) return item;
+            return {
+                ...item,
+                product_type_id: productTypeId,
+                parent_product_id: 0,
+                product_id: 0,
+                unit_price: 0,
+                discount_type: null,
+                discount_amount: 0,
+                discount_percent: 0,
+                bom_version_id: undefined
+            };
         }));
     };
 
@@ -488,7 +496,7 @@ export function CreateSalesOrderModal({
     const grandTotal = subTotal - totalDiscountAmount;
 
     const isDirty = Boolean(
-        customerId || poNo || branchId || paymentTermId || salesmanId
+        customerId || poNo || branchId || paymentTermId || userId || salesmanAccountId
         || deliveryDate || dueDate || remarks || items.length
     );
 
@@ -503,21 +511,29 @@ export function CreateSalesOrderModal({
 
     const validateForm = () => {
         const errors: FormErrors = { items: {} };
-        if (!customerId) errors.customerId = "Select a customer.";
-        if (!poNo.trim()) errors.poNo = "Enter a PO number.";
-        if (!branchId) errors.branchId = "Select a production branch.";
-        if (!paymentTermId) errors.paymentTermId = "Select payment terms.";
-        if (!deliveryDate) errors.deliveryDate = "Select a delivery date.";
+        let valid = true;
+        if (!poNo.trim()) { errors.poNo = "PO Number is required"; valid = false; }
+        if (!customerId) { errors.customerId = "Customer is required"; valid = false; }
+        if (!branchId) { errors.branchId = "Production Branch is required"; valid = false; }
+        if (!paymentTermId) { errors.paymentTermId = "Payment Terms are required"; valid = false; }
+        if (!userId) { errors.userId = "Salesman is required"; valid = false; }
+        if (!salesmanAccountId) { errors.salesmanAccountId = "Salesman Account is required"; valid = false; }
+        if (!deliveryDate) {
+            errors.deliveryDate = "Delivery Date is required";
+            valid = false;
+        }
         if (!dueDate) errors.dueDate = "Due date must be calculated.";
 
         const leadTime = getLeadTimeStatus();
         if (!leadTime.feasible && !overrideLeadTime) {
             errors.deliveryDate = `Delivery date is earlier than required lead time (${leadTime.maxLeadDays} days).`;
+            valid = false;
         }
 
         const seenProductIds = new Set<number>();
         items.forEach(item => {
             const lineErrors: LineErrors = {};
+            if (!item.product_type_id) lineErrors.product_type = "Select a product type.";
             if (!item.parent_product_id) lineErrors.product = "Select a parent product.";
             if (!item.product_id) lineErrors.uom = "Select an available UOM.";
             if (item.product_id && seenProductIds.has(item.product_id)) lineErrors.uom = "This product and UOM are already selected.";
@@ -536,23 +552,25 @@ export function CreateSalesOrderModal({
             }
             if (!Number.isFinite(item.quantity) || item.quantity <= 0) lineErrors.quantity = "Quantity must be greater than zero.";
             if (!Number.isFinite(item.unit_price) || item.unit_price <= 0) lineErrors.unit_price = "Unit price must be explicitly greater than ₱0.00.";
-            if (Object.keys(lineErrors).length > 0) errors.items![item.line_id] = lineErrors;
+            if (Object.keys(lineErrors).length > 0) {
+                errors.items![item.line_id] = lineErrors;
+                valid = false;
+            }
         });
-        if (items.length === 0) errors.items = { 0: { product: "Add at least one product." } };
+        if (items.length === 0) {
+            errors.items = { 0: { product: "Add at least one product." } };
+            valid = false;
+        }
         if (grandTotal <= 0 && items.length > 0) errors.dueDate = "Total net amount must be greater than ₱0.00.";
 
-        const hasErrors = Boolean(
-            errors.customerId || errors.poNo || errors.branchId || errors.paymentTermId
-            || errors.deliveryDate || errors.dueDate || Object.keys(errors.items || {}).length
-        );
         setFormErrors(errors);
-        if (hasErrors) {
+        if (!valid) {
             requestAnimationFrame(() => {
                 const firstInvalid = document.querySelector<HTMLElement>('[data-slot="dialog-content"] [aria-invalid="true"]');
                 firstInvalid?.focus();
             });
         }
-        return !hasErrors;
+        return valid;
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -574,7 +592,7 @@ export function CreateSalesOrderModal({
                 poNo,
                 branchId: Number(branchId),
                 paymentTerms: Number(paymentTermId),
-                salesmanId: salesmanId ? Number(salesmanId) : undefined,
+                salesmanId: salesmanAccountId ? Number(salesmanAccountId) : undefined,
                 deliveryDate,
                 dueDate,
                 remarks: finalRemarks,
@@ -647,7 +665,7 @@ export function CreateSalesOrderModal({
                             </div>
                         )}
                         {/* Header Fields */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div className="space-y-1.5">
                                 <label htmlFor="direct-so-po" className={fieldLabelClassName}>PO Number <span className="text-destructive">*</span></label>
                                 <input
@@ -699,9 +717,7 @@ export function CreateSalesOrderModal({
                                 />
                                 {formErrors.branchId && <p className="text-xs text-destructive">{formErrors.branchId}</p>}
                             </div>
-                        </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="space-y-1.5">
                                 <label className={fieldLabelClassName}>Payment Terms <span className="text-destructive">*</span></label>
                                 <CreatableSelect
@@ -718,17 +734,47 @@ export function CreateSalesOrderModal({
                                 />
                                 {formErrors.paymentTermId && <p className="text-xs text-destructive">{formErrors.paymentTermId}</p>}
                             </div>
+                        </div>
 
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div className="space-y-1.5">
-                                <label className={fieldLabelClassName}>Salesman</label>
+                                <label className={fieldLabelClassName}>Salesman <span className="text-destructive">*</span></label>
                                 <CreatableSelect
-                                    options={salesmen.map(s => ({ value: String(s.id), label: s.salesman_name }))}
-                                    value={salesmanId}
-                                    onValueChange={val => setSalesmanId(val)}
+                                    options={users
+                                        .filter(u => salesmen.some(s => Number(s.employee_id) === Number(u.user_id)))
+                                        .map(u => ({ value: String(u.user_id), label: `${u.user_fname} ${u.user_lname}` }))}
+                                    value={userId}
+                                    onValueChange={val => {
+                                        setUserId(val);
+                                        setSalesmanAccountId("");
+                                        setFormErrors(prev => ({ ...prev, userId: undefined, salesmanAccountId: undefined }));
+                                    }}
                                     placeholder="Select Salesman..."
                                     className="h-9 text-xs"
                                     aria-label="Salesman"
+                                    aria-invalid={Boolean(formErrors.userId)}
                                 />
+                                {formErrors.userId && <p className="text-xs text-destructive">{formErrors.userId}</p>}
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className={fieldLabelClassName}>Salesman Account <span className="text-destructive">*</span></label>
+                                <CreatableSelect
+                                    options={salesmen
+                                        .filter(s => Number(s.employee_id) === Number(userId))
+                                        .map(s => ({ value: String(s.id), label: s.salesman_name }))}
+                                    value={salesmanAccountId}
+                                    onValueChange={val => {
+                                        setSalesmanAccountId(val);
+                                        setFormErrors(prev => ({ ...prev, salesmanAccountId: undefined }));
+                                    }}
+                                    placeholder="Select Account..."
+                                    className="h-9 text-xs"
+                                    disabled={!userId}
+                                    aria-label="Salesman Account"
+                                    aria-invalid={Boolean(formErrors.salesmanAccountId)}
+                                />
+                                {formErrors.salesmanAccountId && <p className="text-xs text-destructive">{formErrors.salesmanAccountId}</p>}
                             </div>
 
                             <div className="space-y-1.5">
@@ -746,9 +792,7 @@ export function CreateSalesOrderModal({
                                 />
                                 {formErrors.deliveryDate && <p className="text-xs text-destructive">{formErrors.deliveryDate}</p>}
                             </div>
-                        </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="space-y-1.5">
                                 <label htmlFor="direct-so-due-date" className={fieldLabelClassName}>Due Date <span className="text-destructive">*</span></label>
                                 <input
@@ -763,16 +807,12 @@ export function CreateSalesOrderModal({
                                 {formErrors.dueDate && <p className="text-xs text-destructive">{formErrors.dueDate}</p>}
                             </div>
 
-                            <div className="space-y-1.5 hidden">
-                                {/* Disabled global discount section, removed */}
-                            </div>
-
                             {/* Lead time feasibility warning alert */}
                             {(() => {
                                 const leadTime = getLeadTimeStatus();
                                 if (leadTime.feasible) return null;
                                 return (
-                                    <div className="col-span-1 md:col-span-3 bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 text-xs flex flex-col gap-1.5 mt-1">
+                                    <div className="col-span-1 md:col-span-4 bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-lg p-3 text-xs flex flex-col gap-1.5 mt-1">
                                         <div className="font-bold flex items-center gap-1.5">
                                             ⚠️ Lead Time Feasibility Warning
                                         </div>
@@ -831,11 +871,11 @@ export function CreateSalesOrderModal({
                                 <table className="block w-full text-left text-xs md:table">
                                     <thead className="hidden md:table-header-group">
                                         <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                            <th className="py-2.5 px-4 w-[22%]">Parent product</th>
+                                            <th className="py-2.5 px-4 w-[18%]">Product Type</th>
+                                            <th className="py-2.5 px-4 w-[20%]">Parent product</th>
                                             <th className="py-2.5 px-4 w-[15%]">Version</th>
                                             <th className="py-2.5 px-4 w-28">UOM</th>
                                             <th className="py-2.5 px-4 text-right w-24">Unit Price (PHP)</th>
-                                            <th className="py-2.5 px-4 text-right w-20">Discount (%)</th>
                                             <th className="py-2.5 px-4 text-right w-24">Discount (PHP)</th>
                                             <th className="py-2.5 px-4 text-right w-20">Quantity</th>
                                             <th className="py-2.5 px-4 text-right">Total Net</th>
@@ -880,6 +920,7 @@ export function CreateSalesOrderModal({
                                                 const parentOptions = products
                                                     .filter(product => product.is_parent)
                                                     .filter(p => {
+                                                        if (item.product_type_id && Number(p.product_type) !== item.product_type_id) return false;
                                                         const totalVariants = products.filter(child => Number(child.parent_product_id) === Number(p.product_id)).length || 1;
                                                         const usedVariantsCount = items.filter((it, idx) => idx !== trueIndex && Number(it.parent_product_id) === Number(p.product_id) && it.product_id > 0).length;
                                                         return usedVariantsCount < totalVariants;
@@ -900,6 +941,21 @@ export function CreateSalesOrderModal({
                                                 return (
                                                     <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
                                                         <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Product Type</span>
+                                                            <CreatableSelect
+                                                                options={productTypes.map(t => ({ value: String(t.id), label: t.name }))}
+                                                                value={item.product_type_id ? String(item.product_type_id) : ""}
+                                                                onValueChange={val => handleProductTypeChange(trueIndex, Number(val))}
+                                                                placeholder="Choose Type..."
+                                                                className="h-8 text-xs font-semibold"
+                                                                disabled={!lookupsReady}
+                                                                aria-label={`Product type for line ${trueIndex + 1}`}
+                                                                aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product_type)}
+                                                                aria-describedby={formErrors.items?.[item.line_id]?.product_type ? `line-${item.line_id}-product-type-error` : undefined}
+                                                            />
+                                                            {formErrors.items?.[item.line_id]?.product_type && <p id={`line-${item.line_id}-product-type-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
+                                                        </td>
+                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Parent Product</span>
                                                             <CreatableSelect
                                                                 options={parentOptions}
@@ -907,26 +963,12 @@ export function CreateSalesOrderModal({
                                                                 onValueChange={val => handleParentProductChange(trueIndex, Number(val))}
                                                                 placeholder="Choose Parent Product..."
                                                                 className="h-8 text-xs font-semibold"
-                                                                disabled={!lookupsReady}
+                                                                disabled={!lookupsReady || !item.product_type_id}
                                                                 aria-label={`Parent product for line ${trueIndex + 1}`}
                                                                 aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product)}
                                                                 aria-describedby={formErrors.items?.[item.line_id]?.product ? `line-${item.line_id}-product-error` : undefined}
                                                             />
                                                             {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
-                                                            {(() => {
-                                                                if (!item.parent_product_id) return null;
-                                                                const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                                                                if (!prod || !prod.product_type) return null;
-                                                                const typeObj = productTypes.find(t => String(t.id) === String(prod.product_type));
-                                                                if (!typeObj) return null;
-                                                                return (
-                                                                    <div className="mt-1.5 flex items-center">
-                                                                        <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                                                                            {typeObj.name}
-                                                                        </span>
-                                                                    </div>
-                                                                );
-                                                            })()}
                                                         </td>
                                                         <td className="block overflow-visible p-0 md:table-cell md:p-3">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
@@ -972,12 +1014,6 @@ export function CreateSalesOrderModal({
                                                                 {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                             </div>
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-20 md:p-3 md:text-right">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount (%)</span>
-                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
-                                                                {item.discount_percent ? `${item.discount_percent}%` : "-"}
-                                                            </div>
-                                                        </td>
                                                         <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Discount (PHP)</span>
                                                             <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
@@ -1020,7 +1056,7 @@ export function CreateSalesOrderModal({
                                         )}
                                     </tbody>
                                 </table>
-                                <div className="p-3 border-t bg-muted/10">
+                                <div className="p-3 border-t bg-muted/10 flex justify-end">
                                     <button
                                         id="direct-so-add-product"
                                         type="button"

@@ -3,6 +3,7 @@
 import type { Table } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function DataTablePagination<TData>({ table }: { table: Table<TData> }) {
   const pageIndex = table.getState().pagination.pageIndex;
@@ -14,12 +15,34 @@ export function DataTablePagination<TData>({ table }: { table: Table<TData> }) {
   const pageCount = table.getPageCount();
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
       <div className="text-sm text-muted-foreground">
         Showing {start}-{end} of {total} entries
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-4 sm:gap-6 lg:gap-8">
+        <div className="flex items-center space-x-2">
+          <p className="text-sm text-muted-foreground">Rows per page</p>
+          <Select
+            value={`${pageSize}`}
+            onValueChange={(value) => {
+              table.setPageSize(Number(value));
+            }}
+          >
+            <SelectTrigger className="h-8 w-[70px]">
+              <SelectValue placeholder={pageSize} />
+            </SelectTrigger>
+            <SelectContent side="top">
+              {[10, 25, 50, 100].map((pageSizeOption) => (
+                <SelectItem key={pageSizeOption} value={`${pageSizeOption}`}>
+                  {pageSizeOption}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
         <Button
           variant="secondary"
           className="gap-2"
@@ -43,6 +66,7 @@ export function DataTablePagination<TData>({ table }: { table: Table<TData> }) {
           Next
           <ChevronRight className="h-4 w-4" />
         </Button>
+        </div>
       </div>
     </div>
   );

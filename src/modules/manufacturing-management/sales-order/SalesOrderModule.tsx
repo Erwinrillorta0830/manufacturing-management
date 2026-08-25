@@ -26,6 +26,7 @@ export default function SalesOrderModule() {
         currentPage,
         setCurrentPage,
         limit,
+        setLimit,
         searchQuery,
         setSearchQuery,
         statusFilter,
@@ -100,6 +101,7 @@ export default function SalesOrderModule() {
                         totalCount={totalCount}
                         totalPages={totalPages}
                         limit={limit}
+                        setLimit={setLimit}
                     />
                 )}
             </div>

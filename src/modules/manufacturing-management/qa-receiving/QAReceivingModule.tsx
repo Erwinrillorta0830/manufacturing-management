@@ -15,7 +15,8 @@ export default function QAReceivingModule() {
         activeTab,
         setActiveTab,
         branches,
-        storageLots,
+        storageLotsByProductId,
+        loadStorageLotBatches,
         loadingShipments,
         selectedShipment,
         lineItems,
@@ -195,7 +196,8 @@ export default function QAReceivingModule() {
                                     isReplacement={Boolean(replacementDisposition)}
                                     lineItems={lineItems}
                                     branches={branches}
-                                    storageLots={storageLots}
+                                    storageLotsByProductId={storageLotsByProductId}
+                                    loadStorageLotBatches={loadStorageLotBatches}
                                     receivingTicketNumber={receivingTicketNumber}
                                     onReceiptNumberChange={handleReceiptNumberChange}
                                     receiptDate={receiptDate}

@@ -86,6 +86,14 @@ export type BatchDetailRow = {
             barcode?: string | null;
         }
         | null;
+    version_id?:
+        | number
+        | string
+        | {
+            version_id?: number | string | null;
+            version_name?: string | null;
+        }
+        | null;
     price_type_id?:
         | number
         | string
@@ -285,6 +293,11 @@ export function normalizeProductId(detail: BatchDetailRow): number {
     return pickId(detail.product_id) ?? 0;
 }
 
+export function normalizeVersionId(detail: BatchDetailRow): number | null {
+    const id = pickId(detail.version_id);
+    return id !== null && id > 0 ? id : null;
+}
+
 export function normalizePriceTypeId(detail: BatchDetailRow): number {
     return pickId(detail.price_type_id) ?? 0;
 }
@@ -377,6 +390,7 @@ export function directusErrorResponse(error: unknown) {
 
 export type BatchCreateLineInput = {
     product_id: number;
+    version_id?: number | null;
     price_type_id: number;
     current_price?: number | null;
     proposed_price: number;
@@ -384,6 +398,7 @@ export type BatchCreateLineInput = {
 
 export type NormalizedBatchCreateLine = {
     product_id: number;
+    version_id?: number | null;
     price_type_id: number;
     current_price: number | null;
     proposed_price: number;
@@ -395,8 +410,8 @@ export type BatchCreatePlan = {
     skippedExistingPending: number;
 };
 
-function batchLineKey(productId: number, priceTypeId: number) {
-    return `${productId}:${priceTypeId}`;
+function batchLineKey(productId: number, priceTypeId: number, versionId?: number | null) {
+    return versionId ? `v:${versionId}:${priceTypeId}` : `${productId}:${priceTypeId}`;
 }
 
 type LivePriceRow = {
@@ -441,31 +456,63 @@ function snapshotPricesMatch(snapshot: number | null, live: number | null): bool
 }
 
 export async function fetchLivePriceSnapshots(
-    keys: Array<{ product_id: number; price_type_id: number }>,
+    keys: Array<{ product_id: number; price_type_id: number; version_id?: number | null }>,
 ): Promise<Map<string, number | null>> {
-    const productIds = Array.from(new Set(keys.map((key) => key.product_id).filter((id) => id > 0)));
-    const priceTypeIds = Array.from(new Set(keys.map((key) => key.price_type_id).filter((id) => id > 0)));
     const snapshots = new Map<string, number | null>();
 
-    if (productIds.length === 0 || priceTypeIds.length === 0) return snapshots;
+    const baseKeys = keys.filter((k) => !k.version_id);
+    if (baseKeys.length > 0) {
+        const productIds = Array.from(new Set(baseKeys.map((k) => k.product_id).filter((id) => id > 0)));
+        const priceTypeIds = Array.from(new Set(baseKeys.map((k) => k.price_type_id).filter((id) => id > 0)));
 
-    for (const productChunk of chunkArray(productIds, IN_CHUNK_SIZE)) {
-        const rows = await fetchAllPagesLocal<LivePriceRow>(PRICES, () => {
-            const params = new URLSearchParams();
-            params.set("fields", "product_id,price_type_id,price");
-            params.set("filter[product_id][_in]", productChunk.join(","));
-            params.set("filter[price_type_id][_in]", priceTypeIds.join(","));
-            return params;
-        });
+        if (productIds.length > 0 && priceTypeIds.length > 0) {
+            for (const productChunk of chunkArray(productIds, IN_CHUNK_SIZE)) {
+                const rows = await fetchAllPagesLocal<LivePriceRow>(PRICES, () => {
+                    const params = new URLSearchParams();
+                    params.set("fields", "product_id,price_type_id,price");
+                    params.set("filter[product_id][_in]", productChunk.join(","));
+                    params.set("filter[price_type_id][_in]", priceTypeIds.join(","));
+                    return params;
+                });
 
-        for (const row of rows) {
-            const productId = pickId(row.product_id) ?? 0;
-            const priceTypeId = pickId(row.price_type_id) ?? 0;
-            if (!productId || !priceTypeId) continue;
-            snapshots.set(
-                batchLineKey(productId, priceTypeId),
-                parseSnapshotPrice(row.price).value,
-            );
+                for (const row of rows) {
+                    const productId = pickId(row.product_id) ?? 0;
+                    const priceTypeId = pickId(row.price_type_id) ?? 0;
+                    if (!productId || !priceTypeId) continue;
+                    snapshots.set(
+                        batchLineKey(productId, priceTypeId),
+                        parseSnapshotPrice(row.price).value,
+                    );
+                }
+            }
+        }
+    }
+
+    const versionKeys = keys.filter((k) => k.version_id);
+    if (versionKeys.length > 0) {
+        const versionIds = Array.from(new Set(versionKeys.map((k) => k.version_id as number).filter((id) => id > 0)));
+        const priceTypeIds = Array.from(new Set(versionKeys.map((k) => k.price_type_id).filter((id) => id > 0)));
+
+        if (versionIds.length > 0 && priceTypeIds.length > 0) {
+            for (const versionChunk of chunkArray(versionIds, IN_CHUNK_SIZE)) {
+                const rows = await fetchAllPagesLocal<{ version_id?: number | null; price_type_id?: number | null; price_per_unit?: number | string | null }>("product_version_prices", () => {
+                    const params = new URLSearchParams();
+                    params.set("fields", "version_id,price_type_id,price_per_unit");
+                    params.set("filter[version_id][_in]", versionChunk.join(","));
+                    params.set("filter[price_type_id][_in]", priceTypeIds.join(","));
+                    return params;
+                });
+
+                for (const row of rows) {
+                    const versionId = pickId(row.version_id) ?? 0;
+                    const priceTypeId = pickId(row.price_type_id) ?? 0;
+                    if (!versionId || !priceTypeId) continue;
+                    snapshots.set(
+                        batchLineKey(0, priceTypeId, versionId),
+                        parseSnapshotPrice(row.price_per_unit).value,
+                    );
+                }
+            }
         }
     }
 
@@ -476,6 +523,7 @@ export async function findPriceSnapshotConflicts(
     lines: Array<{
         request_id?: number;
         product_id: number;
+        version_id?: number | null;
         price_type_id: number;
         current_price: unknown;
     }>,
@@ -485,7 +533,7 @@ export async function findPriceSnapshotConflicts(
 
     for (const line of lines) {
         const stored = parseSnapshotPrice(line.current_price);
-        const live = liveSnapshots.get(batchLineKey(line.product_id, line.price_type_id)) ?? null;
+        const live = liveSnapshots.get(batchLineKey(line.product_id, line.price_type_id, line.version_id)) ?? null;
         if (!stored.valid || !snapshotPricesMatch(stored.value, live)) {
             conflicts.push({
                 request_id: line.request_id ?? 0,
@@ -504,6 +552,7 @@ export async function findPriceSnapshotConflicts(
 export async function assertPriceSnapshotCurrent(args: {
     request_id?: number;
     product_id: number;
+    version_id?: number | null;
     price_type_id: number;
     current_price: unknown;
 }) {
@@ -590,7 +639,7 @@ export async function getExistingPendingBatchKeys(lines: NormalizedBatchCreateLi
     for (const productChunk of productChunks) {
         const rows = await fetchAllPagesLocal<BatchDetailRow>(DETAILS, () => {
             const params = new URLSearchParams();
-            params.set("fields", "request_id,product_id,price_type_id,status,application_status");
+            params.set("fields", "request_id,product_id,version_id,price_type_id,status,application_status");
             params.set("filter[_and][0][_or][0][status][_eq]", "PENDING");
             params.set("filter[_and][0][_or][1][_and][0][status][_eq]", "APPROVED");
             params.set("filter[_and][0][_or][1][_and][1][application_status][_eq]", "SCHEDULED");
@@ -601,9 +650,10 @@ export async function getExistingPendingBatchKeys(lines: NormalizedBatchCreateLi
 
         for (const row of rows) {
             const productId = normalizeProductId(row);
+            const versionId = normalizeVersionId(row);
             const priceTypeId = normalizePriceTypeId(row);
             if (productId > 0 && priceTypeId > 0) {
-                keys.add(batchLineKey(productId, priceTypeId));
+                keys.add(batchLineKey(productId, priceTypeId, versionId));
             }
         }
     }
@@ -618,14 +668,16 @@ export async function normalizeBatchCreateLines(rawLines: BatchCreateLineInput[]
 
     for (const line of rawLines) {
         const productId = Number(line.product_id);
+        const versionId = line.version_id ? Number(line.version_id) : null;
         const priceTypeId = Number(line.price_type_id);
 
         if (!Number.isFinite(productId) || productId <= 0) continue;
+        if (versionId !== null && (!Number.isFinite(versionId) || versionId <= 0)) continue;
         if (!Number.isFinite(priceTypeId) || priceTypeId <= 0) continue;
 
         const proposedPrice = assertValidPriceValue(line.proposed_price, "proposed_price");
 
-        const key = batchLineKey(productId, priceTypeId);
+        const key = batchLineKey(productId, priceTypeId, versionId);
         if (seen.has(key)) {
             skippedDuplicates += 1;
             continue;
@@ -634,6 +686,7 @@ export async function normalizeBatchCreateLines(rawLines: BatchCreateLineInput[]
 
         normalizedLines.push({
             product_id: productId,
+            version_id: versionId,
             price_type_id: priceTypeId,
             current_price: null,
             proposed_price: proposedPrice,
@@ -642,7 +695,7 @@ export async function normalizeBatchCreateLines(rawLines: BatchCreateLineInput[]
 
     const existingPendingKeys = await getExistingPendingBatchKeys(normalizedLines);
     const linesToCreate = normalizedLines.filter(
-        (line) => !existingPendingKeys.has(batchLineKey(line.product_id, line.price_type_id)),
+        (line) => !existingPendingKeys.has(batchLineKey(line.product_id, line.price_type_id, line.version_id)),
     );
     const skippedExistingPending = normalizedLines.length - linesToCreate.length;
 
@@ -700,13 +753,14 @@ export async function createPriceBatchDetails(args: {
     const liveSnapshots = await fetchLivePriceSnapshots(linesToCreate);
     const snapshottedLines = linesToCreate.map((line) => ({
         ...line,
-        current_price: liveSnapshots.get(batchLineKey(line.product_id, line.price_type_id)) ?? null,
+        current_price: liveSnapshots.get(batchLineKey(line.product_id, line.price_type_id, line.version_id)) ?? null,
     }));
 
     const requestedAt = args.requestedAt ?? nowManila();
     const detailPayload = snapshottedLines.map((line) => ({
         header_id: headerId,
         product_id: line.product_id,
+        version_id: line.version_id,
         price_type_id: line.price_type_id,
         current_price: line.current_price,
         proposed_price: line.proposed_price,

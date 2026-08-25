@@ -237,10 +237,10 @@ export async function exportSupplierBatchExcel(args: {
         const rowNumber = dataStartRowNumber + rowIndex;
         const display = row.display;
         const values: Array<string | number | null> = [
-            display.product_id,
+            (typeof display.product_id === "object" ? display.product_id?.product_id : display.product_id) as string | number | null,
             display.product_code ?? "",
             display.barcode ?? "",
-            display.product_name,
+            display.product_name ?? "",
             row.group_id,
             display.parent_id ?? "",
         ];

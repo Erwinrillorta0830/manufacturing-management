@@ -34,17 +34,17 @@ export interface ReceivingMovementRoute {
     kind: ReceivingRouteKind;
     qaStatus: ReceivingRouteKind;
     quantity: number;
+    storageLotId: number;
+    storageLotName: string;
+    supplierBatchNumber: string;
+    manufacturingDate: string | null;
+    expiryDate: string | null;
     branch: ReceivingRouteBranch;
     transactionType: ReceivingRouteTransactionType;
     receivingLineId: null;
     inventoryLotId: null;
     createdBy: number;
     sourceDocumentNo: string;
-    storageLotId: number;
-    storageLotName: string;
-    supplierBatchNumber: string;
-    manufacturingDate: string | null;
-    expiryDate: string | null;
     remarks: string | null;
     allocationDrafts: ReceivingMrpAllocationDraft[];
     unallocatedQuantity: number;
@@ -89,11 +89,6 @@ interface RouteInput {
     rejectedQuantity: number;
     createdBy: number;
     sourceDocumentNo: string;
-    storageLotId: number;
-    storageLotName: string;
-    supplierBatchNumber: string;
-    manufacturingDate: string | null;
-    expiryDate: string | null;
     remarks: string | null;
     rejectionReason: string | null;
     allocationDrafts: ReceivingMrpAllocationDraft[];
@@ -139,12 +134,7 @@ export function buildReceivingRoutes(
         receivingLineId: null,
         inventoryLotId: null,
         createdBy: input.createdBy,
-        sourceDocumentNo: input.sourceDocumentNo,
-        storageLotId: input.storageLotId,
-        storageLotName: input.storageLotName,
-        supplierBatchNumber: input.supplierBatchNumber,
-        manufacturingDate: input.manufacturingDate,
-        expiryDate: input.expiryDate
+        sourceDocumentNo: input.sourceDocumentNo
     } as const;
     const routes: ReceivingMovementRoute[] = [];
 
@@ -159,7 +149,10 @@ export function buildReceivingRoutes(
                 branch: passedBranch,
                 transactionType: passedTransactionType,
                 storageLotId: allocation.storageLotId,
-        storageLotName: input.storageLotNames[allocation.storageLotId] || "Unknown storage lot",
+                storageLotName: input.storageLotNames[allocation.storageLotId] || "Unknown storage lot",
+                supplierBatchNumber: allocation.batchNumber,
+                manufacturingDate: allocation.manufacturingDate,
+                expiryDate: allocation.expirationDate,
                 remarks: input.remarks,
                 allocationDrafts: index === 0 ? input.allocationDrafts : [],
                 unallocatedQuantity: index === 0 ? input.unallocatedQuantity : 0
@@ -172,9 +165,7 @@ export function buildReceivingRoutes(
         }
         const rejectedLotAllocations = input.rejectedLotAllocations?.length
             ? input.rejectedLotAllocations
-            : input.storageLotId > 0
-                ? [{ storageLotId: input.storageLotId, quantity: input.rejectedQuantity }]
-                : [];
+            : [];
         rejectedLotAllocations.forEach(allocation => {
             routes.push({
                 ...shared,
@@ -185,6 +176,9 @@ export function buildReceivingRoutes(
                 transactionType: rejectedTransactionType,
                 storageLotId: allocation.storageLotId,
                 storageLotName: input.storageLotNames[allocation.storageLotId] || "Unknown storage lot",
+                supplierBatchNumber: allocation.batchNumber,
+                manufacturingDate: allocation.manufacturingDate,
+                expiryDate: allocation.expirationDate,
                 remarks: input.rejectionReason || input.remarks,
                 allocationDrafts: [],
                 unallocatedQuantity: 0

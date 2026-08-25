@@ -4,6 +4,7 @@ import * as React from "react";
 import { Check, ChevronsUpDown, Plus, X, Clock, Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { parseDateTimeSafe } from "../utils/lib";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
@@ -86,10 +87,17 @@ export function AssetSearchableSelect({
           </div>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 z-[100]" align="start">
+      <PopoverContent
+        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
+        align="start"
+        onWheel={(e) => e.stopPropagation()}
+      >
         <Command>
           <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
-          <CommandList className="max-h-[220px] overflow-y-auto">
+          <CommandList
+            className="max-h-[220px] overflow-y-auto overscroll-contain pointer-events-auto"
+            onWheel={(e) => e.stopPropagation()}
+          >
             <CommandEmpty>No results found.</CommandEmpty>
             <CommandGroup>
               {allowClear && (
@@ -99,7 +107,7 @@ export function AssetSearchableSelect({
                     onValueChange("");
                     setOpen(false);
                   }}
-                  className="text-muted-foreground italic"
+                  className="text-muted-foreground italic cursor-pointer"
                 >
                   <Check
                     className={cn(
@@ -118,6 +126,7 @@ export function AssetSearchableSelect({
                     onValueChange(opt.value);
                     setOpen(false);
                   }}
+                  className="cursor-pointer"
                 >
                   <Check
                     className={cn(
@@ -196,14 +205,21 @@ export function AssetCreatableSelect({
           <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50 ml-2" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 z-[100]" align="start">
+      <PopoverContent
+        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
+        align="start"
+        onWheel={(e) => e.stopPropagation()}
+      >
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={`Search or type new...`}
             value={searchQuery}
             onValueChange={setSearchQuery}
           />
-          <CommandList className="max-h-[220px] overflow-y-auto">
+          <CommandList
+            className="max-h-[220px] overflow-y-auto overscroll-contain pointer-events-auto"
+            onWheel={(e) => e.stopPropagation()}
+          >
             {searchQuery.trim() && !hasExactMatch && (
               <div
                 role="button"
@@ -234,6 +250,7 @@ export function AssetCreatableSelect({
                     setSearchQuery("");
                     setOpen(false);
                   }}
+                  className="cursor-pointer"
                 >
                   <Check
                     className={cn(
@@ -271,13 +288,11 @@ export function AssetDateTimePicker({
   const [open, setOpen] = React.useState(false);
 
   const dateObj = React.useMemo(() => {
-    if (!value) return null;
-    const d = new Date(value);
-    return isNaN(d.getTime()) ? null : d;
+    return parseDateTimeSafe(value);
   }, [value]);
 
   const timeStr = React.useMemo(() => {
-    if (!dateObj) return "12:00";
+    if (!dateObj) return "00:00";
     const hours = String(dateObj.getHours()).padStart(2, "0");
     const minutes = String(dateObj.getMinutes()).padStart(2, "0");
     return `${hours}:${minutes}`;

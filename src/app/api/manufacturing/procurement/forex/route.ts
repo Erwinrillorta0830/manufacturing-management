@@ -7,8 +7,6 @@ import {
     getForexRateHistory
 } from "./_rates";
 
-export type { ForexConfig, ForexRateHistory } from "./_rates";
-
 export async function GET() {
     try {
         const activeRates = await getActiveForexRates();

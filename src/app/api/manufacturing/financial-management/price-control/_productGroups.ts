@@ -181,8 +181,9 @@ export function applyCommonFilters(args: {
     activeOnly: boolean;
     missingTier: boolean;
     productIdsIn?: number[];
+    productTypeIds?: string[];
 }) {
-    const { params, q, categoryIds, brandIds, unitIds, activeOnly, missingTier, productIdsIn } = args;
+    const { params, q, categoryIds, brandIds, unitIds, activeOnly, missingTier, productIdsIn, productTypeIds } = args;
 
     let andIdx = 0;
     const addAnd = (suffix: string, value: string) => {
@@ -195,6 +196,7 @@ export function applyCommonFilters(args: {
     if (categoryIds.length > 0) addAnd("[product_category][_in]", categoryIds.join(","));
     if (brandIds.length > 0) addAnd("[product_brand][_in]", brandIds.join(","));
     if (unitIds.length > 0) addAnd("[unit_of_measurement][_in]", unitIds.join(","));
+    if (productTypeIds && productTypeIds.length > 0) addAnd("[product_type][_in]", productTypeIds.join(","));
 
     if (q) {
         addAnd("[_or][0][product_name][_contains]", q);
@@ -222,6 +224,7 @@ export type ProductCatalogFilters = {
     unitIds?: string[];
     activeOnly?: boolean;
     missingTier?: boolean;
+    productTypeIds?: string[];
 };
 
 export type GroupIndexEntry = {
@@ -242,6 +245,7 @@ function buildFilteredProductParams(
         activeOnly = true,
         missingTier = false,
         productIdsIn,
+        productTypeIds = [],
     } = args;
 
     const params = new URLSearchParams();
@@ -256,6 +260,7 @@ function buildFilteredProductParams(
         activeOnly,
         missingTier,
         productIdsIn,
+        productTypeIds,
     });
     params.set("limit", String(limit));
     params.set("offset", String(offset));
@@ -448,6 +453,7 @@ export async function fetchProductRows(args: ProductCatalogFilters & { productId
         activeOnly = true,
         missingTier = false,
         productIdsIn,
+        productTypeIds = [],
     } = args;
 
     const rows = await fetchAllPages<ProductRow>(PRODUCTS, () => {
@@ -463,6 +469,7 @@ export async function fetchProductRows(args: ProductCatalogFilters & { productId
             activeOnly,
             missingTier,
             productIdsIn,
+            productTypeIds,
         });
         return params;
     });

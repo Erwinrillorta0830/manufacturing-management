@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { SalesOrder, SalesOrderDetail } from "../types";
 import { formatCurrency } from "@/lib/utils";
+import { SalesOrderDraftEditor } from "./SalesOrderDraftEditor";
 
 interface SalesOrderDetailPanelProps {
     selectedOrder: SalesOrder | null;
@@ -114,6 +115,20 @@ export function SalesOrderDetailPanel({
             [detailId]: current - 1
         }));
     };
+
+    if (selectedOrder?.order_status === "Draft") {
+        return (
+            <SalesOrderDraftEditor
+                selectedOrder={selectedOrder}
+                orderDetails={orderDetails}
+                onSave={async () => {
+                    setSelectedOrder(null);
+                    if (onOrderUpdated) onOrderUpdated();
+                }}
+                onCancel={() => setSelectedOrder(null)}
+            />
+        );
+    }
 
     return (
         <div className="bg-card p-6 space-y-6">
@@ -746,3 +761,4 @@ function FIFOAllocationModal({ isOpen, onClose, selectedOrder, orderDetails }: F
 function isEditableState(status: string) {
     return status === "For Invoicing" || status === "For Picking";
 }
+

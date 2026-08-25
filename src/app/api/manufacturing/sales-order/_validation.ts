@@ -125,7 +125,12 @@ const statusPatchSchema = z.object({
     details: z.never().optional()
 }).strict();
 
-export const salesOrderPatchSchema = z.union([quantityPatchSchema, statusPatchSchema]);
+const updateDraftPatchSchema = salesOrderPostSchema.extend({
+    action: z.literal("update-draft"),
+    orderId: positiveId
+});
+
+export const salesOrderPatchSchema = z.union([quantityPatchSchema, statusPatchSchema, updateDraftPatchSchema]);
 
 export type SalesOrderPostInput = z.infer<typeof salesOrderPostSchema>;
 export type SalesOrderPatchInput = z.infer<typeof salesOrderPatchSchema>;
