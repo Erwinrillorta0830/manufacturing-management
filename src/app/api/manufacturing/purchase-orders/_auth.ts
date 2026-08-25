@@ -6,6 +6,7 @@ const ACCESS_TOKEN_COOKIE = "vos_access_token";
 
 export const PURCHASE_ORDER_MODULE_PATHS = {
     procurement: "/mm/incoming-shipments",
+    suppliers: "/mm/suppliers",
     rawMaterials: "/mm/raw-materials",
     financeApproval: "/mm/finance-approval",
     receiving: "/mm/qa-receiving",
