@@ -84,6 +84,14 @@ export interface StockTransferRow {
   receiver_id: number | null;
   /** Attached by the GET handler after fetching dispatched RFIDs. */
   dispatched_rfids?: string[];
+  // Lot & Batch Tracking
+  source_lot_id?: number | null;
+  source_inventory_lot_id?: number | null;
+  destination_lot_id?: number | null;
+  batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
 }
 
 /** Row from the `stock_transfer_rfid` tracking collection. */
@@ -110,6 +118,12 @@ export interface ScannedItem {
   unitPrice: number;
   totalAmount: number;
   productImage?: string | null;
+  batch_no?: string | null;
+  lot_id?: number | null;
+  inventory_lot_id?: number | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
 }
 
 /** 
@@ -213,6 +227,9 @@ export interface CreateTransferItem {
   unitQty: number;
   unitPrice: number;
   totalAmount: number;
+  source_lot_id?: number | null;
+  source_inventory_lot_id?: number | null;
+  batch_no?: string | null;
 }
 
 /** POST request body for creating a stock transfer. */
@@ -231,6 +248,8 @@ export interface UpdateTransferItem {
   picked_quantity?: number;
   scanned_quantity?: number;
   date_received?: string | null;
+  destination_lot_id?: number | null;
+  destination_batch_no?: string | null;
 }
 
 /** RFID tracking entry in the PATCH request body. */
@@ -255,6 +274,7 @@ export interface UpdateTransferPayload {
   userId?: number;
   /** Directus file IDs attached to the receiving transaction. */
   attachments?: string[];
+  destination_lot_id?: number | null;
 }
 
 /** Directus payload for batch-inserting a stock_transfer row. */
@@ -273,6 +293,10 @@ export interface StockTransferInsertPayload {
   date_requested: string;
   date_encoded: string;
   encoder_id?: number | null;
+  source_lot_id?: number | null;
+  source_inventory_lot_id?: number | null;
+  destination_lot_id?: number | null;
+  batch_no?: string | null;
 }
 
 // ─── Valid Statuses ─────────────────────────────────────────

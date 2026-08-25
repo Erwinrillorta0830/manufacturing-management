@@ -54,7 +54,9 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
 
   // Reset page when group changes
   React.useEffect(() => {
-    setCurrentPage(1);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+    });
   }, [selectedOrderNo]);
 
   const totalItems = selectedGroup?.items.length || 0;

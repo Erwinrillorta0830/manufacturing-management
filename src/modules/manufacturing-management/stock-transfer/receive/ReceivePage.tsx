@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PackageOpen, Printer, Loader2, CheckCircle2, Radar, Edit2 } from 'lucide-react';
+import { PackageOpen, Printer, Loader2, CheckCircle2, Radar, Edit2, Layers } from 'lucide-react';
 import { useStockTransferReceive } from './hooks/use-stock-transfer-receive';
 import { OrderGroupItem, ProductRow, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
@@ -47,7 +47,9 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
 
   // Reset page when group changes
   React.useEffect(() => {
-    setCurrentPage(1);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+    });
   }, [selectedOrderNo]);
 
   const paginatedItems = selectedGroup?.items.slice(
@@ -224,7 +226,15 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             )}
                             <div className="flex flex-col">
                               <span className="font-bold text-sm group-hover:text-primary transition-colors">{productName}</span>
-                              <span className="text-[10px] text-muted-foreground font-mono">CODE: {product?.product_code || '---'}</span>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                <span className="text-[10px] text-muted-foreground font-mono">CODE: {product?.product_code || '---'}</span>
+                                {item.batch_no && (
+                                  <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono bg-muted/40 gap-1">
+                                    <Layers className="w-2.5 h-2.5 text-primary" />
+                                    Batch: {item.batch_no}
+                                  </Badge>
+                                )}
+                              </div>
                               {item.isLoosePack && (
                                 <span className="text-[9px] bg-sky-500/10 text-sky-600 px-1.5 py-0.5 rounded w-fit mt-1 font-bold flex items-center gap-1">
                                   <Edit2 className="w-2 h-2" /> MANUAL ENTRY

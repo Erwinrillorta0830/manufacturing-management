@@ -33,6 +33,9 @@ export const ScannedItemSchema = z.object({
   unitQty: z.number().min(0, "Quantity cannot be negative"),
   unitPrice: z.number().min(0, "Unit price cannot be negative"),
   totalAmount: z.number().min(0, "Total amount cannot be negative"),
+  source_lot_id: z.number().nullable().optional(),
+  source_inventory_lot_id: z.number().nullable().optional(),
+  batch_no: z.string().nullable().optional(),
 });
 export type ScannedItemValue = z.infer<typeof ScannedItemSchema>;
 
@@ -73,6 +76,8 @@ export const UpdateItemSchema = z.object({
   picked_quantity: z.number().min(0).optional(),
   scanned_quantity: z.number().min(0).optional(),
   received_quantity: z.number().min(0).optional(),
+  destination_lot_id: z.number().nullable().optional(),
+  destination_batch_no: z.string().nullable().optional(),
 });
 export type UpdateItemValue = z.infer<typeof UpdateItemSchema>;
 
@@ -99,6 +104,7 @@ export const UpdateStockTransferSchema = z.object({
   userId: z.number().optional(),
   /** Directus file IDs attached to the receiving transaction. */
   attachments: z.array(z.string()).optional(),
+  destination_lot_id: z.number().nullable().optional(),
 }).superRefine((data, ctx) => {
   const hasItems = data.items && data.items.length > 0;
   const hasIds = data.ids && data.ids.length > 0;

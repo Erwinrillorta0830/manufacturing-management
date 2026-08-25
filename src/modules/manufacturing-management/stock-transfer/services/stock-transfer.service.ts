@@ -9,6 +9,8 @@ import type {
   ProductRow
 } from "../types/stock-transfer.types";
 import { CreateStockTransferSchema, UpdateStockTransferSchema } from "../types/stock-transfer.schema";
+import { createInventoryLot } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
 
 /**
  * Service to orchestrate stock transfer business logic.
@@ -110,24 +112,53 @@ export async function createTransfer(payload: CreateTransferPayload, userId?: nu
     second: "2-digit",
   }).replace(" ", "T");
 
-  // 2. Prepare Directus payloads
-  const insertPayloads: StockTransferInsertPayload[] = validated.scannedItems
-    .filter(item => item.productId > 0)
-    .map(item => ({
-      order_no: orderNo,
-      source_branch: Number(validated.sourceBranch),
-      target_branch: Number(validated.targetBranch),
-      lead_date: validated.leadDate,
-      product_id: item.productId,
-      ordered_quantity: item.unitQty,
-      received_quantity: 0,
-      amount: item.totalAmount,
-      status: "Requested",
-      remarks: item.rfid, // RFID stored in remarks for the request stage
-      date_requested: nowPHT,
-      date_encoded: nowPHT,
-      encoder_id: userId || null,
-    }));
+  // 2. Prepare Directus payloads with FEFO batch allocation if not manually assigned
+  const insertPayloads: StockTransferInsertPayload[] = await Promise.all(
+    validated.scannedItems
+      .filter(item => item.productId > 0)
+      .map(async item => {
+        let batchNo = item.batch_no || null;
+        let sourceLotId = item.source_lot_id || null;
+        let sourceInventoryLotId = item.source_inventory_lot_id || null;
+
+        if (!batchNo) {
+          try {
+            const fefoPlan = await allocateStock({
+              productId: item.productId,
+              branchId: Number(validated.sourceBranch),
+              requestedQuantity: item.unitQty,
+            });
+            if (fefoPlan.allocations.length > 0) {
+              const topAlloc = fefoPlan.allocations[0];
+              batchNo = topAlloc.batch_no;
+              sourceLotId = sourceLotId || topAlloc.lot_id;
+              sourceInventoryLotId = sourceInventoryLotId || topAlloc.inventory_lot_id;
+            }
+          } catch (err) {
+            console.warn("[StockTransfer] FEFO lookup warning:", err);
+          }
+        }
+
+        return {
+          order_no: orderNo,
+          source_branch: Number(validated.sourceBranch),
+          target_branch: Number(validated.targetBranch),
+          lead_date: validated.leadDate,
+          product_id: item.productId,
+          ordered_quantity: item.unitQty,
+          received_quantity: 0,
+          amount: item.totalAmount,
+          status: "Requested",
+          remarks: item.rfid, // RFID stored in remarks for the request stage
+          date_requested: nowPHT,
+          date_encoded: nowPHT,
+          encoder_id: userId || null,
+          source_lot_id: sourceLotId,
+          source_inventory_lot_id: sourceInventoryLotId,
+          batch_no: batchNo,
+        };
+      })
+  );
 
   if (insertPayloads.length === 0) {
     throw new Error("No valid products provided for transfer");
@@ -201,6 +232,37 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
       }))
     );
     await repo.insertStockTransferAttachments(attachmentEntries);
+  }
+
+  // 6. If Received, sync destination inventory lots
+  if (validated.status === "Received" || updates.some(u => u.status === "Received")) {
+    const receivedIds = updates.filter(u => u.status === "Received").map(u => u.id);
+    if (receivedIds.length > 0) {
+      try {
+        const transferRows = await repo.fetchStockTransfersByIds(receivedIds);
+        for (const t of transferRows) {
+          const destLotId = validated.destination_lot_id || t.destination_lot_id;
+          if (destLotId && t.target_branch) {
+            const prodId = typeof t.product_id === "object" ? t.product_id.product_id : t.product_id;
+            const batchNo = t.batch_no || `TRF-${t.order_no}-${t.id}`;
+            await createInventoryLot({
+              lot_id: Number(destLotId),
+              branch_id: Number(t.target_branch),
+              product_id: Number(prodId),
+              batch_no: batchNo,
+              unit_cost: t.amount / (t.received_quantity || t.ordered_quantity || 1),
+              qa_status: "GOOD",
+              status: "ACTIVE",
+              source_type: "STOCK_TRANSFER",
+              source_reference: t.order_no,
+              created_by: validated.userId,
+            }).catch(err => console.warn("[StockTransfer] Warning creating destination inventory lot:", err));
+          }
+        }
+      } catch (err) {
+        console.warn("[StockTransfer] Warning during inventory lot destination sync:", err);
+      }
+    }
   }
 
   return { success: true };

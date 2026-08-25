@@ -75,7 +75,7 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl h-[85vh] p-0 flex flex-col gap-0 overflow-hidden bg-card border-border shadow-2xl">
+      <DialogContent className="!max-w-[95vw] w-[1400px] xl:w-[1550px] 2xl:w-[1700px] h-[90vh] max-h-[95vh] p-0 flex flex-col gap-0 overflow-hidden bg-card border-border shadow-2xl">
         <DialogHeader className="p-6 border-b border-border bg-muted/20">
           <div className="flex items-center justify-between">
             <div className="space-y-1">
@@ -146,7 +146,7 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 pb-8">
                   {products.map((product) => {
                     const imgUrl = getAssetUrl(product.product_image);
 

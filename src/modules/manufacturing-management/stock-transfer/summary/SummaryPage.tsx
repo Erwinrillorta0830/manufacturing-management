@@ -107,7 +107,9 @@ export default function StockTransferSummaryView() {
 
   // Reset page when filters or page size changes
   React.useEffect(() => {
-    setCurrentPage(1);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+    });
   }, [filters, itemsPerPage]);
 
   const totalPages = Math.ceil(filteredGroups.length / itemsPerPage);

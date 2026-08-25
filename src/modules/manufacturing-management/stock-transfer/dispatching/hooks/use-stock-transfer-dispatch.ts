@@ -87,18 +87,20 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
 
     const validOrderNumbers = new Set(base.baseOrderGroups.map(g => g.orderNo));
 
-    setScannedItemsState(prevState => {
-      let hasPurged = false;
-      const cleanState = { ...prevState };
+    queueMicrotask(() => {
+      setScannedItemsState(prevState => {
+        let hasPurged = false;
+        const cleanState = { ...prevState };
 
-      Object.keys(cleanState).forEach(cachedOrderNo => {
-        if (!validOrderNumbers.has(cachedOrderNo)) {
-          delete cleanState[cachedOrderNo];
-          hasPurged = true;
-        }
+        Object.keys(cleanState).forEach(cachedOrderNo => {
+          if (!validOrderNumbers.has(cachedOrderNo)) {
+            delete cleanState[cachedOrderNo];
+            hasPurged = true;
+          }
+        });
+
+        return hasPurged ? cleanState : prevState;
       });
-
-      return hasPurged ? cleanState : prevState;
     });
   }, [base.baseOrderGroups]);
 

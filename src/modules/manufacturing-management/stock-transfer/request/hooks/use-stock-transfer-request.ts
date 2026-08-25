@@ -49,22 +49,29 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
   const [transferStatus, setTransferStatus] = useState('');
   const [orderNo, setOrderNo] = useState('');
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await stockTransferLifecycleService.fetchTransfers();
-      setStockTransfers(res.stockTransfers ?? []);
-      setBranches(res.branches ?? []);
-    } catch (err) {
-      console.error('useStockTransferRequest fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    let isMounted = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const res = await stockTransferLifecycleService.fetchTransfers();
+        if (isMounted) {
+          setStockTransfers(res.stockTransfers ?? []);
+          setBranches(res.branches ?? []);
+        }
+      } catch (err) {
+        console.error('useStockTransferRequest fetch error:', err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const updateQty = useCallback((rfid: string, qty: number) => {
     setScannedItems((prev) =>

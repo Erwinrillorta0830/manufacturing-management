@@ -45,10 +45,38 @@ export function useStockTransferBase({ statuses, autoFetch = true }: UseStockTra
   }, [statusesStr]);
 
   useEffect(() => {
+    let isMounted = true;
     if (autoFetch) {
-      fetchTransfers();
+      const load = async () => {
+        setLoading(true);
+        setFetchError(null);
+        try {
+          const res = await stockTransferLifecycleService.fetchTransfers(statusesStr);
+          if (isMounted) {
+            setStockTransfers(res.stockTransfers ?? []);
+            setBranches(res.branches ?? []);
+          }
+        } catch (err: unknown) {
+          if (isMounted) {
+            const message = err instanceof Error ? err.message : 'Failed to fetch stock transfers.';
+            console.error('[Stock Transfer Base Hook] Fetch Failed:', err);
+            setFetchError(message);
+            toast.error('Network Error', {
+              description: message
+            });
+          }
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
+        }
+      };
+      load();
     }
-  }, [fetchTransfers, autoFetch]);
+    return () => {
+      isMounted = false;
+    };
+  }, [statusesStr, autoFetch]);
 
   const getBranchName = useCallback(
     (id: number | null) => resolveBranchName(id, branches),

@@ -41,7 +41,9 @@ export function StockTransferPrintPreview({
   const [companyData, setCompanyData] = useState<CompanyData | null>(null);
 
   useEffect(() => {
-    setGenerating(open);
+    queueMicrotask(() => {
+      setGenerating(open);
+    });
   }, [open]);
 
   // Fetch company data on mount

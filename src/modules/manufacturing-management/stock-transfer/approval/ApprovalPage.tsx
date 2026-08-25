@@ -75,7 +75,9 @@ export default function StockTransferApprovalView() {
 
   // Reset page when group, search, or page size changes
   React.useEffect(() => {
-    setCurrentPage(1);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+    });
   }, [selectedOrderNo, productSearch, itemsPerPage]);
 
   const formatDate = (dateString: string | null) => {
