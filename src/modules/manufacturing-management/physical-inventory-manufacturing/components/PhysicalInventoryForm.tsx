@@ -1,0 +1,911 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from "react";
+import {
+    MmPhysicalInventorySheet,
+    MmPhysicalInventoryDetail,
+    Branch,
+    ProductType,
+    PriceType,
+    StockType,
+} from "../types";
+import SearchableSelect from "./SearchableSelect";
+import { formatQty, formatMoney } from "./PhysicalInventoryList";
+import { ArrowLeft, Plus, Save, Send, Trash2, Edit3, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag } from "lucide-react";
+
+interface Props {
+    sheet?: MmPhysicalInventorySheet | null;
+    branches: Branch[];
+    productTypes?: ProductType[];
+    priceTypes?: PriceType[];
+    existingSheets?: MmPhysicalInventorySheet[];
+    loading: boolean;
+    onBack: () => void;
+    onSaveHeader: (payload: {
+        branch_id: number;
+        stock_type: StockType;
+        product_type_id?: number | null;
+        price_type_id?: number | null;
+        starting_date: string;
+        cutoff_date: string;
+        remarks: string;
+    }) => Promise<void>;
+    onPopulateSheet?: (productTypeId?: number | null) => Promise<void>;
+    onOpenAddDetailModal: (lotId?: number) => void;
+    onEditDetail: (detail: MmPhysicalInventoryDetail) => void;
+    onRemoveDetail: (detail: MmPhysicalInventoryDetail) => void;
+    onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number) => Promise<void>;
+    onSubmit: () => void;
+    onReturnToDraft?: () => void;
+    onCommit?: () => void;
+}
+
+export default function PhysicalInventoryForm({
+    sheet,
+    branches,
+    productTypes = [],
+    priceTypes = [],
+    existingSheets = [],
+    loading,
+    onBack,
+    onSaveHeader,
+    onPopulateSheet,
+    onOpenAddDetailModal,
+    onEditDetail,
+    onRemoveDetail,
+    onSaveInlineCount,
+    onSubmit,
+    onReturnToDraft,
+    onCommit,
+}: Props) {
+    const isNew = !sheet || !sheet.physical_inventory_id;
+    const isDraft = sheet?.status === "DRAFT" || isNew;
+    const isPendingReview = sheet?.status === "PENDING_REVIEW";
+    const isReadOnly = !isDraft;
+
+    const [branchId, setBranchId] = useState<number>(() => {
+        if (!sheet?.branch_id) return branches[0]?.id || 0;
+        return typeof sheet.branch_id === "object" ? sheet.branch_id.id || 0 : sheet.branch_id;
+    });
+
+    const extractPtId = (val: unknown): number => {
+        if (!val) return 0;
+        if (typeof val === "object" && val !== null) {
+            const obj = val as Record<string, unknown>;
+            return Number(obj.id ?? obj.product_type_id ?? 0);
+        }
+        const num = Number(val);
+        return !isNaN(num) && num > 0 ? num : 0;
+    };
+
+    const extractPriceTypeId = (val: unknown): number => {
+        if (!val) return 0;
+        if (typeof val === "object" && val !== null) {
+            const obj = val as Record<string, unknown>;
+            return Number(obj.price_type_id ?? obj.id ?? 0);
+        }
+        const num = Number(val);
+        return !isNaN(num) && num > 0 ? num : 0;
+    };
+
+    const [productTypeId, setProductTypeId] = useState<number>(() => extractPtId(sheet?.product_type_id));
+    const [priceTypeId, setPriceTypeId] = useState<number>(() => extractPriceTypeId(sheet?.price_type_id));
+
+    const handleProductTypeChange = (newPtId: number) => {
+        setProductTypeId(newPtId);
+        if (newPtId > 0) {
+            const pt = productTypes.find((p) => p.id === newPtId);
+            if (pt?.default_purchase_price_type_id && pt.default_purchase_price_type_id > 0) {
+                setPriceTypeId(pt.default_purchase_price_type_id);
+            }
+        }
+    };
+
+    const formatDateTimeInput = (val: string | null | undefined): string => {
+        if (!val) {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, "0");
+            const day = String(now.getDate()).padStart(2, "0");
+            const hours = String(now.getHours()).padStart(2, "0");
+            const mins = String(now.getMinutes()).padStart(2, "0");
+            return `${year}-${month}-${day}T${hours}:${mins}`;
+        }
+        const str = String(val).trim();
+        if (str.includes("T")) {
+            const parts = str.split("T");
+            const datePart = parts[0];
+            const timePart = parts[1].slice(0, 5);
+            return `${datePart}T${timePart}`;
+        }
+        if (str.includes(" ")) {
+            const parts = str.split(" ");
+            const datePart = parts[0];
+            const timePart = (parts[1] || "00:00").slice(0, 5);
+            return `${datePart}T${timePart}`;
+        }
+        return `${str}T00:00`;
+    };
+
+    const branchHasCommittedOpening = useMemo(() => {
+        if (!branchId || branchId <= 0 || !existingSheets || existingSheets.length === 0) return false;
+        return existingSheets.some((s) => {
+            const bId = typeof s.branch_id === "object" ? s.branch_id?.id : s.branch_id;
+            const isCancelled = s.isCancelled === true || s.isCancelled === 1 || s.status === "CANCELLED";
+            const isCommitted = s.isCommitted === true || s.isCommitted === 1 || String(s.status) === "COMMITTED" || String(s.status) === "POSTED";
+            return (
+                bId === branchId &&
+                s.stock_type === "OPENING" &&
+                !isCancelled &&
+                isCommitted &&
+                s.physical_inventory_id !== sheet?.physical_inventory_id
+            );
+        });
+    }, [existingSheets, branchId, sheet?.physical_inventory_id]);
+
+    const [stockType, setStockType] = useState<StockType>(() => {
+        if (sheet?.stock_type) return sheet.stock_type;
+        return branchHasCommittedOpening ? "REGULAR" : "OPENING";
+    });
+    const [startingDate, setStartingDate] = useState<string>(() => formatDateTimeInput(sheet?.starting_date));
+    const [cutoffDate, setCutoffDate] = useState<string>(() => formatDateTimeInput(sheet?.cutoff_date));
+    const [remarks, setRemarks] = useState<string>(sheet?.remarks || "");
+    const [countsMap, setCountsMap] = useState<Record<number, string>>({});
+    const [viewMode, setViewMode] = useState<"GROUPED" | "FLAT">("GROUPED");
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (sheet) {
+            const bId = typeof sheet.branch_id === "object" ? sheet.branch_id?.id : sheet.branch_id;
+            if (bId) setBranchId(bId);
+            if (sheet.stock_type) setStockType(sheet.stock_type);
+            const ptId = extractPtId(sheet.product_type_id);
+            if (ptId > 0) setProductTypeId(ptId);
+            const prId = extractPriceTypeId(sheet.price_type_id);
+            if (prId > 0) {
+                setPriceTypeId(prId);
+            } else if (priceTypes.length > 0) {
+                setPriceTypeId(priceTypes[0].price_type_id);
+            }
+            if (sheet.starting_date) setStartingDate(formatDateTimeInput(sheet.starting_date));
+            if (sheet.cutoff_date) setCutoffDate(formatDateTimeInput(sheet.cutoff_date));
+            setRemarks(sheet.remarks || "");
+        } else {
+            if (!branchId && branches.length > 0) {
+                setBranchId(branches[0].id);
+            }
+            if (!priceTypeId && priceTypes.length > 0) {
+                setPriceTypeId(priceTypes[0].price_type_id);
+            }
+            if (branchHasCommittedOpening) {
+                setStockType("REGULAR");
+            } else {
+                setStockType("OPENING");
+            }
+        }
+    }, [sheet, branches, branchId, branchHasCommittedOpening, priceTypes, priceTypeId]);
+
+    const handleHeaderSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        if (!branchId || branchId <= 0) {
+            setError("Please select an active Branch.");
+            return;
+        }
+        try {
+            setSaving(true);
+            await onSaveHeader({
+                branch_id: branchId,
+                stock_type: stockType,
+                product_type_id: productTypeId > 0 ? productTypeId : null,
+                price_type_id: priceTypeId > 0 ? priceTypeId : null,
+                starting_date: startingDate,
+                cutoff_date: cutoffDate,
+                remarks: remarks.trim(),
+            });
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to save header";
+            setError(msg);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const details = sheet?.details || [];
+
+    const groupedByLot = React.useMemo(() => {
+        const map = new Map<string, { lotName: string; lotObj: unknown; items: MmPhysicalInventoryDetail[] }>();
+        for (const d of details) {
+            const lName = typeof d.lot_id === "object" && d.lot_id !== null ? (d.lot_id as { lot_name?: string }).lot_name || "Unassigned Lot" : `Lot #${d.lot_id || "N/A"}`;
+            if (!map.has(lName)) {
+                map.set(lName, {
+                    lotName: lName,
+                    lotObj: d.lot_id,
+                    items: [],
+                });
+            }
+            map.get(lName)!.items.push(d);
+        }
+        return Array.from(map.values());
+    }, [details]);
+
+    const getBranchName = (bId: number) => {
+        const found = branches.find((b) => b.id === bId);
+        return found ? found.branch_name : `Branch #${bId}`;
+    };
+
+    const getLotName = (l: unknown) => {
+        if (typeof l === "object" && l !== null) {
+            return (l as { lot_name?: string }).lot_name || "N/A";
+        }
+        return `Lot #${l || "N/A"}`;
+    };
+
+    const getProductCode = (p: unknown) => {
+        if (typeof p === "object" && p !== null) {
+            return (p as { product_code?: string }).product_code || "SKU";
+        }
+        return `Prod #${p || "N/A"}`;
+    };
+
+    const getProductName = (p: unknown) => {
+        if (typeof p === "object" && p !== null) {
+            return (p as { product_name?: string }).product_name || "Product";
+        }
+        return "Product";
+    };
+
+    const getUnitShortcut = (u: unknown, p: unknown) => {
+        if (typeof u === "object" && u !== null && (u as { unit_shortcut?: string }).unit_shortcut) {
+            return (u as { unit_shortcut?: string }).unit_shortcut;
+        }
+        if (typeof p === "object" && p !== null && (p as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut) {
+            return (p as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut;
+        }
+        return "UOM";
+    };
+
+    return (
+        <div className="space-y-6">
+            {/* Top Navigation */}
+            <div className="flex items-center justify-between bg-card p-4 rounded-xl border shadow-xs">
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={onBack}
+                        className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+                    >
+                        <ArrowLeft className="h-5 w-5" />
+                    </button>
+                    <div>
+                        <h2 className="text-lg font-bold text-foreground">
+                            {isNew ? "Create Physical Inventory Sheet" : `Physical Inventory #${sheet?.pi_no}`}
+                        </h2>
+                        <p className="text-xs text-muted-foreground">
+                            {isNew
+                                ? "Onboard opening stock or establish physical count balance reconciliations."
+                                : `Status: ${sheet?.status} | Type: ${sheet?.stock_type}`}
+                        </p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    {isDraft && !isNew && (
+                        <button
+                            type="button"
+                            onClick={onSubmit}
+                            disabled={loading || details.length === 0}
+                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs disabled:opacity-50"
+                        >
+                            <Send className="h-4 w-4" />
+                            Submit for Review
+                        </button>
+                    )}
+
+                    {isPendingReview && onReturnToDraft && (
+                        <button
+                            type="button"
+                            onClick={onReturnToDraft}
+                            disabled={loading}
+                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors shadow-xs"
+                        >
+                            <RotateCcw className="h-4 w-4" />
+                            Return to Draft
+                        </button>
+                    )}
+
+                    {isPendingReview && onCommit && (
+                        <button
+                            type="button"
+                            onClick={onCommit}
+                            disabled={loading || details.length === 0}
+                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs"
+                        >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Commit Inventory
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {error && (
+                <div className="flex items-center gap-2 p-3 text-sm text-rose-800 bg-rose-50 border border-rose-200 rounded-lg dark:bg-rose-950 dark:text-rose-300">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            {/* Header Form */}
+            <form onSubmit={handleHeaderSubmit} className="bg-card border rounded-xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b pb-2">
+                    <h3 className="text-sm font-semibold text-foreground">Header Information</h3>
+                    {productTypeId > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                            <Tag className="h-3 w-3" />
+                            Scope: {productTypes.find((pt) => pt.id === productTypeId)?.name || productTypes.find((pt) => pt.id === productTypeId)?.type_name || `Type #${productTypeId}`}
+                        </span>
+                    )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Branch *</label>
+                        <SearchableSelect
+                            options={branches.map((b) => ({
+                                value: b.id,
+                                label: b.branch_name || b.branchName || `Branch #${b.id}`,
+                                sublabel: b.branch_code || b.branchCode || undefined,
+                            }))}
+                            value={branchId}
+                            onChange={(val) => setBranchId(Number(val))}
+                            placeholder="Select Branch..."
+                            searchPlaceholder="Search branches..."
+                            disabled={isReadOnly || (details.length > 0 && !isNew)}
+                            required
+                        />
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Branch locked while sheet contains detail rows.</p>
+                        )}
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Product Type Filter</label>
+                        <select
+                            value={productTypeId}
+                            onChange={(e) => handleProductTypeChange(Number(e.target.value))}
+                            disabled={isReadOnly || (details.length > 0 && !isNew)}
+                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                        >
+                            <option value={0}>All Product Types (Unfiltered)</option>
+                            {productTypes.map((pt) => (
+                                <option key={pt.id} value={pt.id}>
+                                    {pt.name || pt.type_name || `Type #${pt.id}`}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Price Type Basis *</label>
+                        <select
+                            value={priceTypeId}
+                            onChange={(e) => setPriceTypeId(Number(e.target.value))}
+                            disabled={isReadOnly}
+                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                        >
+                            <option value={0}>Standard Cost / Default Price (0.00)</option>
+                            {priceTypes.map((pt: PriceType) => (
+                                <option key={pt.price_type_id} value={pt.price_type_id}>
+                                    {pt.price_type_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Stock Count Type *</label>
+                        <select
+                            value={stockType}
+                            onChange={(e) => setStockType(e.target.value as StockType)}
+                            disabled={isReadOnly || (details.length > 0 && !isNew) || (isNew && branchHasCommittedOpening)}
+                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                        >
+                            <option value="OPENING" disabled={isNew && branchHasCommittedOpening}>
+                                Opening Inventory (Initial Onboarding) {isNew && branchHasCommittedOpening ? "- Already Committed" : ""}
+                            </option>
+                            <option value="REGULAR">Regular Physical Inventory</option>
+                        </select>
+                        {isNew && branchHasCommittedOpening && (
+                            <p className="text-[10px] text-amber-600 mt-1 font-medium">
+                                Committed Opening Inventory already established for this branch. Stock count type set to Regular.
+                            </p>
+                        )}
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Starting Date & Time *</label>
+                        <input
+                            type="datetime-local"
+                            value={startingDate}
+                            onChange={(e) => setStartingDate(e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                            required
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Cutoff Date & Time *</label>
+                        <input
+                            type="datetime-local"
+                            value={cutoffDate}
+                            onChange={(e) => setCutoffDate(e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                            required
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-semibold text-muted-foreground mb-1">Remarks / Notes</label>
+                    <input
+                        type="text"
+                        placeholder="Add optional notes or audit reference..."
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        disabled={isReadOnly}
+                        className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
+                    />
+                </div>
+
+                {isDraft && (
+                    <div className="flex justify-end pt-2">
+                        <button
+                            type="submit"
+                            disabled={saving}
+                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border rounded-lg transition-colors"
+                        >
+                            <Save className="h-4 w-4" />
+                            {saving ? "Saving Header..." : isNew ? "Create Sheet Header" : "Update Header Info"}
+                        </button>
+                    </div>
+                )}
+            </form>
+
+            {/* Line Items Section */}
+            {!isNew && (
+                <div className="space-y-4">
+                    {/* Header Summary Cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-card border p-3.5 rounded-xl shadow-xs">
+                            <div className="text-xs text-muted-foreground font-medium">Total System Count</div>
+                            <div className="text-lg font-bold font-mono text-foreground mt-0.5">
+                                {formatQty(sheet?.total_system_quantity)}
+                            </div>
+                        </div>
+                        <div className="bg-card border p-3.5 rounded-xl shadow-xs">
+                            <div className="text-xs text-muted-foreground font-medium">Total Physical Count</div>
+                            <div className="text-lg font-bold font-mono text-foreground mt-0.5">
+                                {formatQty(sheet?.total_physical_quantity)}
+                            </div>
+                        </div>
+                        <div className="bg-card border p-3.5 rounded-xl shadow-xs">
+                            <div className="text-xs text-muted-foreground font-medium">Total Variance</div>
+                            <div
+                                className={`text-lg font-bold font-mono mt-0.5 ${
+                                    (sheet?.total_variance || 0) > 0
+                                        ? "text-emerald-600"
+                                        : (sheet?.total_variance || 0) < 0
+                                        ? "text-rose-600"
+                                        : "text-foreground"
+                                }`}
+                            >
+                                {(sheet?.total_variance || 0) > 0 ? `+${formatQty(sheet?.total_variance)}` : formatQty(sheet?.total_variance)}
+                            </div>
+                        </div>
+                        <div className="bg-card border p-3.5 rounded-xl shadow-xs">
+                            <div className="text-xs text-muted-foreground font-medium">Difference Cost</div>
+                            <div className="text-lg font-bold font-mono text-foreground mt-0.5">
+                                {formatMoney(sheet?.total_difference_cost)}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Line Items Container */}
+                    <div className="space-y-4">
+                        {/* Section Header with Actions & View Mode Toggle */}
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-card p-4 rounded-xl border shadow-xs">
+                            <div>
+                                <h3 className="text-sm font-bold text-foreground">Physical Count Line Items</h3>
+                                <p className="text-xs text-muted-foreground">Products, lots, batches, and counted quantities</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
+                                {/* View Mode Switcher */}
+                                <div className="inline-flex items-center p-0.5 bg-muted rounded-lg border text-xs font-medium">
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewMode("GROUPED")}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+                                            viewMode === "GROUPED"
+                                                ? "bg-background text-foreground font-bold shadow-xs"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <LayoutGrid className="h-3.5 w-3.5" />
+                                        Grouped by Lot
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewMode("FLAT")}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
+                                            viewMode === "FLAT"
+                                                ? "bg-background text-foreground font-bold shadow-xs"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <List className="h-3.5 w-3.5" />
+                                        Flat Table
+                                    </button>
+                                </div>
+
+                                {isDraft && (
+                                    <div className="flex items-center gap-2">
+                                        {onPopulateSheet && (
+                                            <button
+                                                type="button"
+                                                onClick={() => onPopulateSheet?.(productTypeId > 0 ? productTypeId : null)}
+                                                disabled={loading || saving}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-sky-800 bg-sky-100 hover:bg-sky-200 border border-sky-300 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800 rounded-lg transition-colors shadow-xs disabled:opacity-50"
+                                                title="Fetch real-time inventory movements & system counts to auto-populate product line items"
+                                            >
+                                                <RotateCcw className="h-3.5 w-3.5" />
+                                                Auto-Populate System Stock
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenAddDetailModal()}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary-foreground bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-xs"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Add Product Count
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {details.length === 0 ? (
+                            <div className="bg-card border rounded-xl p-8 text-center text-muted-foreground shadow-xs">
+                                No line items added yet. Click &quot;Add Product Count&quot; to begin.
+                            </div>
+                        ) : viewMode === "GROUPED" ? (
+                            /* GROUPED BY LOT VIEW */
+                            <div className="space-y-4">
+                                {groupedByLot.map((group) => {
+                                    let lotSys = 0;
+                                    let lotPhys = 0;
+                                    let lotVar = 0;
+                                    let lotDiffCost = 0;
+
+                                    group.items.forEach((d, idx) => {
+                                        const dId = d.physical_inventory_detail_id || d.id || idx;
+                                        const sys = d.system_count || 0;
+                                        const origPhys = d.physical_count || 0;
+                                        const rawInput = countsMap[dId];
+                                        const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
+                                        const varQty = phys - sys;
+                                        const unitCost = d.unit_cost || 0;
+                                        const diffCost = varQty * unitCost;
+
+                                        lotSys += sys;
+                                        lotPhys += phys;
+                                        lotVar += varQty;
+                                        lotDiffCost += diffCost;
+                                    });
+
+                                    const lotVarStyle =
+                                        lotVar > 0
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                            : lotVar < 0
+                                            ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300"
+                                            : "bg-muted/60 text-muted-foreground border-border";
+
+                                    return (
+                                        <div key={group.lotName} className="bg-card border rounded-xl shadow-xs overflow-hidden transition-all hover:shadow-md">
+                                            {/* Lot Section Header */}
+                                            <div className="p-4 border-b bg-muted/40 flex flex-wrap items-center justify-between gap-3">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="p-2 bg-primary/10 text-primary rounded-lg border border-primary/20">
+                                                        <Layers className="h-5 w-5" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="text-sm font-bold text-foreground">{group.lotName}</h4>
+                                                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-primary/15 text-primary">
+                                                                {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-[11px] text-muted-foreground mt-0.5">Manufacturing Storage Lot</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Lot Summary Statistics & Per-Lot Add Action */}
+                                                <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                                                    <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
+                                                        <span className="text-muted-foreground text-[10px] uppercase font-semibold">System:</span>
+                                                        <span className="font-bold">{formatQty(lotSys)}</span>
+                                                    </div>
+                                                    <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
+                                                        <span className="text-muted-foreground text-[10px] uppercase font-semibold">Physical:</span>
+                                                        <span className="font-bold text-foreground">{formatQty(lotPhys)}</span>
+                                                    </div>
+                                                    <div className={`px-2.5 py-1 border rounded-md flex items-center gap-1.5 font-mono font-bold ${lotVarStyle}`}>
+                                                        <span className="text-[10px] uppercase font-semibold">Variance:</span>
+                                                        <span>{lotVar > 0 ? `+${formatQty(lotVar)}` : formatQty(lotVar)}</span>
+                                                    </div>
+                                                    <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
+                                                        <span className="text-muted-foreground text-[10px] uppercase font-semibold">Diff Cost:</span>
+                                                        <span className="font-bold">{formatMoney(lotDiffCost)}</span>
+                                                    </div>
+                                                    {isDraft && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const lId = typeof group.lotObj === "object" && group.lotObj !== null ? (group.lotObj as { lot_id?: number }).lot_id || 0 : Number(group.lotObj || 0);
+                                                                onOpenAddDetailModal(lId > 0 ? lId : undefined);
+                                                            }}
+                                                            className="flex items-center gap-1.5 px-3 py-1 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 transition-colors shadow-xs ml-1"
+                                                            title={`Add a new batch or product count to ${group.lotName}`}
+                                                        >
+                                                            <Plus className="h-3.5 w-3.5" />
+                                                            Add Batch
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Inner Line Items Table */}
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-left text-xs">
+                                                    <thead className="bg-muted/20 border-b font-semibold text-muted-foreground uppercase tracking-wider text-[11px]">
+                                                        <tr>
+                                                            <th className="px-3 py-2">Product Code</th>
+                                                            <th className="px-3 py-2">Product Name</th>
+                                                            <th className="px-3 py-2">Batch #</th>
+                                                            <th className="px-3 py-2">Mfg / Expiry</th>
+                                                            <th className="px-3 py-2">UOM</th>
+                                                            <th className="px-3 py-2">Condition</th>
+                                                            <th className="px-3 py-2 text-right">System</th>
+                                                            <th className="px-3 py-2 text-right">Physical</th>
+                                                            <th className="px-3 py-2 text-right">Variance</th>
+                                                            <th className="px-3 py-2 text-right">Unit Cost</th>
+                                                            <th className="px-3 py-2 text-right">Diff Cost</th>
+                                                            <th className="px-3 py-2">Remarks</th>
+                                                            {isDraft && <th className="px-3 py-2 text-right">Actions</th>}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-border">
+                                                        {group.items.map((d, index) => {
+                                                            const dId = d.physical_inventory_detail_id || d.id || index;
+                                                            const sys = d.system_count || 0;
+                                                            const origPhys = d.physical_count || 0;
+                                                            const rawInput = countsMap[dId];
+                                                            const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
+                                                            const varQty = phys - sys;
+                                                            const unitCost = d.unit_cost || 0;
+                                                            const diffCost = varQty * unitCost;
+
+                                                            const varStyle =
+                                                                varQty > 0
+                                                                    ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                                                                    : varQty < 0
+                                                                    ? "text-rose-600 dark:text-rose-400 font-bold"
+                                                                    : "text-muted-foreground";
+
+                                                            return (
+                                                                <tr key={dId} className="hover:bg-muted/30 transition-colors">
+                                                                    <td className="px-3 py-2.5 font-mono font-semibold">{getProductCode(d.product_id)}</td>
+                                                                    <td className="px-3 py-2.5 font-medium max-w-xs truncate">{getProductName(d.product_id)}</td>
+                                                                    <td className="px-3 py-2.5 font-mono text-primary font-semibold">{d.batch_no || "N/A"}</td>
+                                                                    <td className="px-3 py-2.5 text-[11px] text-muted-foreground">
+                                                                        <div>Mfg: {d.manufacturing_date || "—"}</div>
+                                                                        <div>Exp: {d.expiration_date || "—"}</div>
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 font-semibold text-muted-foreground">{getUnitShortcut(d.unit_id, d.product_id)}</td>
+                                                                    <td className="px-3 py-2.5">
+                                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border">
+                                                                            {d.inventory_condition}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-right font-mono">{formatQty(sys)}</td>
+                                                                    <td className="px-3 py-2.5 text-right font-mono font-bold text-foreground">
+                                                                        {isDraft ? (
+                                                                            <div className="inline-flex items-center justify-end">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    min="0"
+                                                                                    step="1"
+                                                                                    value={rawInput !== undefined ? rawInput : String(Math.round(Number(origPhys || 0)))}
+                                                                                    onChange={(e) => {
+                                                                                        const val = e.target.value;
+                                                                                        setCountsMap((prev) => ({ ...prev, [dId]: val }));
+                                                                                    }}
+                                                                                    onBlur={async () => {
+                                                                                        const valStr = countsMap[dId];
+                                                                                        if (valStr !== undefined) {
+                                                                                            const num = Math.round(Number(valStr));
+                                                                                            if (!isNaN(num) && num >= 0 && num !== Math.round(Number(origPhys || 0))) {
+                                                                                                if (onSaveInlineCount) {
+                                                                                                    await onSaveInlineCount(d, num);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }}
+                                                                                    onKeyDown={(e) => {
+                                                                                        if (e.key === "Enter") {
+                                                                                            (e.target as HTMLInputElement).blur();
+                                                                                        }
+                                                                                    }}
+                                                                                    className="w-24 px-2 py-1 text-right font-mono font-bold text-xs bg-background border border-primary/40 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 shadow-xs"
+                                                                                    placeholder="0"
+                                                                                />
+                                                                            </div>
+                                                                        ) : (
+                                                                            formatQty(phys)
+                                                                        )}
+                                                                    </td>
+                                                                    <td className={`px-3 py-2.5 text-right font-mono ${varStyle}`}>
+                                                                        {varQty > 0 ? `+${formatQty(varQty)}` : formatQty(varQty)}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-right font-mono">{formatMoney(unitCost)}</td>
+                                                                    <td className="px-3 py-2.5 text-right font-mono font-semibold">{formatMoney(diffCost)}</td>
+                                                                    <td className="px-3 py-2.5 max-w-xs truncate text-muted-foreground">{d.remarks || "—"}</td>
+                                                                    {isDraft && (
+                                                                        <td className="px-3 py-2.5 text-right">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => onRemoveDetail(d)}
+                                                                                className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
+                                                                                title="Remove Detail"
+                                                                            >
+                                                                                <Trash2 className="h-3.5 w-3.5" />
+                                                                            </button>
+                                                                        </td>
+                                                                    )}
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            /* FLAT TABLE VIEW */
+                            <div className="bg-card border rounded-xl shadow-xs overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-muted/50 border-b font-semibold text-muted-foreground uppercase tracking-wider">
+                                            <tr>
+                                                <th className="px-3 py-2.5">Lot</th>
+                                                <th className="px-3 py-2.5">Product Code</th>
+                                                <th className="px-3 py-2.5">Product Name</th>
+                                                <th className="px-3 py-2.5">Batch #</th>
+                                                <th className="px-3 py-2.5">Mfg / Expiry</th>
+                                                <th className="px-3 py-2.5">UOM</th>
+                                                <th className="px-3 py-2.5">Condition</th>
+                                                <th className="px-3 py-2.5 text-right">System</th>
+                                                <th className="px-3 py-2.5 text-right">Physical</th>
+                                                <th className="px-3 py-2.5 text-right">Variance</th>
+                                                <th className="px-3 py-2.5 text-right">Unit Cost</th>
+                                                <th className="px-3 py-2.5 text-right">Diff Cost</th>
+                                                <th className="px-3 py-2.5">Remarks</th>
+                                                {isDraft && <th className="px-3 py-2.5 text-right">Actions</th>}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-border">
+                                            {details.map((d, index) => {
+                                                const dId = d.physical_inventory_detail_id || d.id || index;
+                                                const sys = d.system_count || 0;
+                                                const origPhys = d.physical_count || 0;
+                                                const rawInput = countsMap[dId];
+                                                const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
+                                                const varQty = phys - sys;
+                                                const unitCost = d.unit_cost || 0;
+                                                const diffCost = varQty * unitCost;
+
+                                                const varStyle =
+                                                    varQty > 0
+                                                        ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                                                        : varQty < 0
+                                                        ? "text-rose-600 dark:text-rose-400 font-bold"
+                                                        : "text-muted-foreground";
+
+                                                return (
+                                                    <tr key={dId} className="hover:bg-muted/30 transition-colors">
+                                                        <td className="px-3 py-2.5 font-medium">{getLotName(d.lot_id)}</td>
+                                                        <td className="px-3 py-2.5 font-mono font-semibold">{getProductCode(d.product_id)}</td>
+                                                        <td className="px-3 py-2.5 font-medium max-w-xs truncate">{getProductName(d.product_id)}</td>
+                                                        <td className="px-3 py-2.5 font-mono text-primary font-semibold">{d.batch_no || "N/A"}</td>
+                                                        <td className="px-3 py-2.5 text-[11px] text-muted-foreground">
+                                                            <div>Mfg: {d.manufacturing_date || "—"}</div>
+                                                            <div>Exp: {d.expiration_date || "—"}</div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 font-semibold text-muted-foreground">{getUnitShortcut(d.unit_id, d.product_id)}</td>
+                                                        <td className="px-3 py-2.5">
+                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border">
+                                                                {d.inventory_condition}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-right font-mono">{formatQty(sys)}</td>
+                                                        <td className="px-3 py-2.5 text-right font-mono font-bold text-foreground">
+                                                            {isDraft ? (
+                                                                <div className="inline-flex items-center justify-end">
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        step="1"
+                                                                        value={rawInput !== undefined ? rawInput : String(Math.round(Number(origPhys || 0)))}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            setCountsMap((prev) => ({ ...prev, [dId]: val }));
+                                                                        }}
+                                                                        onBlur={async () => {
+                                                                            const valStr = countsMap[dId];
+                                                                            if (valStr !== undefined) {
+                                                                                const num = Math.round(Number(valStr));
+                                                                                if (!isNaN(num) && num >= 0 && num !== Math.round(Number(origPhys || 0))) {
+                                                                                    if (onSaveInlineCount) {
+                                                                                        await onSaveInlineCount(d, num);
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === "Enter") {
+                                                                                (e.target as HTMLInputElement).blur();
+                                                                            }
+                                                                        }}
+                                                                        className="w-24 px-2 py-1 text-right font-mono font-bold text-xs bg-background border border-primary/40 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 shadow-xs"
+                                                                        placeholder="0"
+                                                                    />
+                                                                </div>
+                                                            ) : (
+                                                                formatQty(phys)
+                                                            )}
+                                                        </td>
+                                                        <td className={`px-3 py-2.5 text-right font-mono ${varStyle}`}>
+                                                            {varQty > 0 ? `+${formatQty(varQty)}` : formatQty(varQty)}
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-right font-mono">{formatMoney(unitCost)}</td>
+                                                        <td className="px-3 py-2.5 text-right font-mono font-semibold">{formatMoney(diffCost)}</td>
+                                                        <td className="px-3 py-2.5 max-w-xs truncate text-muted-foreground">{d.remarks || "—"}</td>
+                                                        {isDraft && (
+                                                            <td className="px-3 py-2.5 text-right">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => onRemoveDetail(d)}
+                                                                    className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
+                                                                    title="Remove Detail"
+                                                                >
+                                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                                </button>
+                                                            </td>
+                                                        )}
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
