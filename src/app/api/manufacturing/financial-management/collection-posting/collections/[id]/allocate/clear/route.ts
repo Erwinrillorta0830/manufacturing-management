@@ -11,8 +11,9 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function POST(
     request: Request,
-    { params }: { params: { id: string } }
+    props: { params: Promise<{ id: string }> }
 ) {
+    const params = await props.params;
     try {
         console.log(`Processing allocation clear for collection ${params.id}`);
         

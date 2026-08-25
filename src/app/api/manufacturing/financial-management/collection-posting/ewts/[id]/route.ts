@@ -12,8 +12,9 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function PUT(
     request: Request,
-    { params }: { params: { id: string } }
+    props: { params: Promise<{ id: string }> }
 ) {
+    const params = await props.params;
     try {
         const payload = await request.json();
         
@@ -36,8 +37,9 @@ export async function PUT(
 
 export async function DELETE(
     request: Request,
-    { params }: { params: { id: string } }
+    props: { params: Promise<{ id: string }> }
 ) {
+    const params = await props.params;
     try {
         const url = `${DIRECTUS_URL}/items/collection_details/${params.id}`;
         const res = await fetch(url, { method: "DELETE", headers });

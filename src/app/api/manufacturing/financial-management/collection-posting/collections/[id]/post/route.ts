@@ -12,8 +12,9 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function POST(
     request: Request,
-    { params }: { params: { id: string } }
+    props: { params: Promise<{ id: string }> }
 ) {
+    const params = await props.params;
     try {
         // Post the collection (set isPosted = 1)
         const url = `${DIRECTUS_URL}/items/collection/${params.id}`;
