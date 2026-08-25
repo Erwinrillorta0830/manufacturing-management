@@ -25,8 +25,9 @@ import { usePriceTypes } from "../hooks/usePriceTypes";
 import { usePricingMatrix } from "../hooks/usePricingMatrix";
 
 import PricingFiltersBar from "./PricingFiltersBar";
-import PricingTable from "./PricingTable";
+import PricingMatrixTable from "./PricingMatrixTable";
 import BulkSaveBar from "./BulkSaveBar";
+import { ProductTypeTabBar } from "./ProductTypeTabBar";
 import { PriceChangeBatchDialog } from "./PriceChangeBatchDialog";
 import { CreatePriceChangeBatchDialog } from "../../price-change-request/components/CreatePriceChangeBatchDialog";
 import { SessionExpiredPanel } from "../../shared/SessionExpiredPanel";
@@ -194,7 +195,8 @@ function uniqNumSetFromRows(
     const result = new Set<number>();
 
     for (const row of rows) {
-        const value = Number(row.display?.[key]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const value = Number((row.display as any)?.[key]);
         if (!Number.isNaN(value) && value > 0) {
             result.add(value);
         }
@@ -308,6 +310,36 @@ export default function PricingMatrixView() {
         priceTypes: pt.priceTypes,
         updatedBy: null,
     });
+
+    const defaultTypeId = React.useMemo(() => {
+        if (!lookups.productTypes?.length) return null;
+        const fg = lookups.productTypes.find((t) => t.name.toLowerCase() === "finished goods");
+        return fg?.id ?? lookups.productTypes[0].id;
+    }, [lookups.productTypes]);
+
+    // Initial load default to Finished Goods or first available
+    React.useEffect(() => {
+        if (defaultTypeId !== null && matrix.filters.product_type_ids.length === 0) {
+            matrix.setFilters((prev) => ({
+                ...prev,
+                product_type_ids: [defaultTypeId],
+            }));
+        }
+    }, [defaultTypeId, matrix.filters.product_type_ids.length, matrix.setFilters, matrix]);
+
+    const handleTabChange = React.useCallback((newTypeId: number) => {
+        dirtySummary.discardAll();
+        matrix.setFilters((prev) => ({
+            ...prev,
+            product_type_ids: [newTypeId],
+            show_versions: false,
+        }));
+    }, [dirtySummary, matrix]);
+
+    const isFinishedGoodsActive = React.useMemo(() => {
+        const fg = lookups.productTypes?.find((t) => t.name.toLowerCase() === "finished goods");
+        return fg ? matrix.filters.product_type_ids[0] === fg.id : false;
+    }, [lookups.productTypes, matrix.filters.product_type_ids]);
 
     React.useEffect(() => {
         setLookupFilterInput({
@@ -795,6 +827,13 @@ export default function PricingMatrixView() {
         <div className="flex min-h-0 flex-1 flex-col px-0">
             <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <div className="shrink-0">
+                    <ProductTypeTabBar
+                        productTypes={lookups.productTypes ?? []}
+                        activeProductTypeId={matrix.filters.product_type_ids[0] ?? null}
+                        onTabChange={handleTabChange}
+                        dirtyCount={dirtySummary.dirtyCount}
+                        loading={lookups.loading}
+                    />
                     <PricingFiltersBar
                         filters={matrix.filters}
                         setFilters={matrix.setFilters}
@@ -804,6 +843,7 @@ export default function PricingMatrixView() {
                         units={scopedUnits}
                         suppliers={lookups.suppliers}
                         priceTypes={pt.priceTypes}
+                        showVersionsEnabled={isFinishedGoodsActive}
                     />
                 </div>
 
@@ -858,7 +898,12 @@ export default function PricingMatrixView() {
                 ) : null}
 
                 <div className="flex min-h-0 flex-1 flex-col">
-                    <PricingTable matrix={matrix} dirtyVersion={dirtySummary.dirtyVersion} />
+                    <PricingMatrixTable 
+                        matrix={matrix} 
+                        dirtyVersion={dirtySummary.dirtyVersion} 
+                        showVersions={matrix.filters.show_versions && isFinishedGoodsActive} 
+                        usedUnitIds={new Set((matrix.usedUnits ?? []).map((u) => Number(u.unit_id)))}
+                    />
                 </div>
 
                 <PrintLargeJobConfirmDialog

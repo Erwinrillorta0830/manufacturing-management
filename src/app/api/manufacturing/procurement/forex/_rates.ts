@@ -121,8 +121,12 @@ export async function getForexRateHistory(): Promise<ForexRateHistory[]> {
                         }
                         
                         for (const r of rateHistory) {
-                            if (r.changed_by_user_id && userMap.has(r.changed_by_user_id)) {
-                                r.changed_by_user_name = userMap.get(r.changed_by_user_id);
+                            if (r.changed_by_user_id !== null) {
+                                if (userMap.has(r.changed_by_user_id)) {
+                                    r.changed_by_user_name = userMap.get(r.changed_by_user_id);
+                                } else {
+                                    r.changed_by_user_name = "Deleted User";
+                                }
                             }
                         }
                     } catch (e) {

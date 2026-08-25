@@ -9,6 +9,7 @@ import type {
     Unit,
     UpsertLine,
     Supplier,
+    ProductType,
     PriceChangeRequest,
     CostChangeRequest,
     PriceChangeBatchLineInput,
@@ -61,7 +62,7 @@ export async function getLookups(params?: {
     if (params?.brand_id) sp.set("brand_id", String(params.brand_id));
 
     const qs = sp.toString();
-    return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[] } }>(
+    return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[]; productTypes?: ProductType[] } }>(
         `/api/manufacturing/financial-management/price-control/lookups${qs ? `?${qs}` : ""}`,
     );
 }
@@ -112,6 +113,8 @@ export async function getMatrixPage(params: {
     page?: string;
     page_size?: string;
     pending_product_ids?: string;
+    product_type_ids?: string;
+    show_versions?: "0" | "1";
 }) {
     const sp = new URLSearchParams();
 
@@ -232,6 +235,13 @@ export async function getPricesForProducts(productIds: number[], init?: RequestI
 
 export async function upsertPrices(lines: UpsertLine[]) {
     return http<{ ok: boolean; affected: number }>(`/api/manufacturing/financial-management/price-control/prices-upsert`, {
+        method: "POST",
+        body: JSON.stringify({ lines }),
+    });
+}
+
+export async function upsertVersionPrices(lines: { version_id: number; price_type_id: number; price_per_unit: number | null }[]) {
+    return http<{ ok: boolean; affected: number }>(`/api/manufacturing/financial-management/price-control/version-prices-upsert`, {
         method: "POST",
         body: JSON.stringify({ lines }),
     });

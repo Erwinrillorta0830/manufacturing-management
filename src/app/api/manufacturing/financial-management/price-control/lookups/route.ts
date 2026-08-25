@@ -8,6 +8,7 @@ import {
     getSupplierProductIdsForSuppliers,
 } from "../_directusPaging";
 import { collectCascadeSets } from "../_lookupCascade";
+import { fetchDirectus, directusHeaders } from "../price-change-batches/_batch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -212,7 +213,7 @@ export async function GET(req: NextRequest) {
         if (suppliersOnly) {
             const suppliers = await fetchSuppliers();
             return NextResponse.json({
-                data: { categories: [], brands: [], units: [], suppliers },
+                data: { categories: [], brands: [], units: [], suppliers, productTypes: [] },
             });
         }
 
@@ -221,7 +222,7 @@ export async function GET(req: NextRequest) {
         const categoryId = safeInt(searchParams.get("category_id"));
         const brandId = safeInt(searchParams.get("brand_id"));
 
-        const [categoriesInitial, brandsInitial, unitsInitial, suppliers] = await Promise.all([
+        const [categoriesInitial, brandsInitial, unitsInitial, suppliers, productTypesResult] = await Promise.all([
             fetchAllPages<DirectusCategory>(CATEGORIES, () => {
                 const params = new URLSearchParams();
                 params.set("fields", "category_id,category_name");
@@ -241,7 +242,10 @@ export async function GET(req: NextRequest) {
                 return params;
             }),
             fetchSuppliers(),
+            fetchDirectus<{ data: { id: number; name: string }[] }>(`${DIRECTUS_URL}/items/product_type?limit=-1&fields=id,name&sort=name`, { headers: directusHeaders() }),
         ]);
+
+        const productTypes = productTypesResult.data ?? [];
 
         let categories: DirectusCategory[] = categoriesInitial;
         let brands: DirectusBrand[] = brandsInitial;
@@ -256,7 +260,7 @@ export async function GET(req: NextRequest) {
 
             if (directIds.length === 0) {
                 return NextResponse.json({
-                    data: { categories: [], brands: [], units: [], suppliers },
+                    data: { categories: [], brands: [], units: [], suppliers, productTypes },
                 });
             }
 
@@ -286,7 +290,7 @@ export async function GET(req: NextRequest) {
         }
 
         return NextResponse.json({
-            data: { categories, brands, units, suppliers },
+            data: { categories, brands, units, suppliers, productTypes },
         });
     } catch (error: unknown) {
         return NextResponse.json(

@@ -211,50 +211,22 @@ export async function POST(request: Request) {
             if (disposition === "Not Received") continue;
             const allocationError = receivingLotAllocationError(
                 line.acceptedQuantity,
-                line.acceptedLotAllocations,
-                line.storageLotId,
-                {
-                    batchNumber: line.supplierBatchNumber,
-                    manufacturingDate: line.manufacturingDate,
-                    expirationDate: line.expiryDate
-                }
+                line.acceptedLotAllocations
             );
             if (allocationError) throw new ReceivingPreviewError(`Line ${line.lineId}: ${allocationError}`);
             const rejectedAllocationError = rejectedLotAllocationError(
                 line.rejectedQuantity,
-                line.rejectedLotAllocations,
-                line.storageLotId,
-                {
-                    batchNumber: line.supplierBatchNumber,
-                    manufacturingDate: line.manufacturingDate,
-                    expirationDate: line.expiryDate
-                }
+                line.rejectedLotAllocations
             );
             if (rejectedAllocationError) throw new ReceivingPreviewError(`Line ${line.lineId}: ${rejectedAllocationError}`);
-            if (!line.supplierBatchNumber.trim()) throw new ReceivingPreviewError(`Enter a supplier batch number for line ${line.lineId}.`);
-            if (!line.isPackaging) {
-                if (!line.manufacturingDate) {
-                    line.manufacturingDate = new Date().toISOString().split("T")[0];
-                }
-                if (!line.expiryDate) {
-                    const mfgDateStr = line.manufacturingDate || new Date().toISOString().split("T")[0];
-                    const mfgTime = new Date(mfgDateStr).getTime();
-                    const calculatedExp = new Date(mfgTime + 365 * 24 * 60 * 60 * 1000);
-                    line.expiryDate = calculatedExp.toISOString().split("T")[0];
-                }
-            }
-            if (line.manufacturingDate && line.expiryDate && line.manufacturingDate > line.expiryDate) {
-                throw new ReceivingPreviewError(`Manufacturing date cannot be later than expiry date for line ${line.lineId}.`);
-            }
         }
 
         const requestedLotIds = [...new Set(lines
             .filter(line => line.receivedQuantity > 0)
             .flatMap(line => [
-                ...(line.storageLotId ? [line.storageLotId] : []),
-                ...normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId)
+                ...normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations)
                     .map(allocation => allocation.storageLotId),
-                ...normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId)
+                ...normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations)
                     .map(allocation => allocation.storageLotId)
             ]))];
         const requestedProductIds = [...new Set(lines.map(line => line.productId))];
@@ -401,13 +373,8 @@ export async function POST(request: Request) {
         const productTypesByLot = new Map<number, Set<number>>();
         const normalizedAllocationsByLine = new Map<number, { accepted: ReceivingLotAllocation[]; rejected: ReceivingLotAllocation[] }>();
         for (const line of lines) {
-            const fallbackMetadata = {
-                batchNumber: line.supplierBatchNumber,
-                manufacturingDate: line.manufacturingDate,
-                expirationDate: line.expiryDate
-            };
-            const accepted = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId, fallbackMetadata);
-            const rejected = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId, fallbackMetadata);
+            const accepted = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations);
+            const rejected = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations);
             normalizedAllocationsByLine.set(line.lineId, { accepted, rejected });
             const productAllocation = productAllocationMetadata.get(line.productId);
             if (!productAllocation) throw new ReceivingPreviewError(`Product ${line.productId} must have a Product Type and UOM before inventory allocation.`);

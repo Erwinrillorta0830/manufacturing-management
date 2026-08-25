@@ -7,6 +7,7 @@ export type ParsedProductCatalogQuery = {
     supplierScope: "ALL" | "LINKED_ONLY";
     supplierIdsRaw: string[];
     pendingProductIds: number[];
+    show_versions: boolean;
 };
 
 function toInt(v: string | null, fallback: number) {
@@ -63,6 +64,11 @@ export function parseProductCatalogQuery(searchParams: URLSearchParams): ParsedP
         return single ? [single] : [];
     })();
 
+    const productTypeIds = (() => {
+        const multi = norm(searchParams.get("product_type_ids"));
+        return multi ? splitCsv(multi) : [];
+    })();
+
     const supplierScope = (norm(searchParams.get("supplier_scope")) || "ALL") as "ALL" | "LINKED_ONLY";
 
     const supplierIdsRaw = (() => {
@@ -77,6 +83,7 @@ export function parseProductCatalogQuery(searchParams: URLSearchParams): ParsedP
     const page = Math.max(1, toInt(searchParams.get("page"), 1));
     const pageSize = Math.min(200, Math.max(10, toInt(searchParams.get("page_size"), 50)));
     const pendingProductIds = parseProductIdsList(norm(searchParams.get("pending_product_ids")));
+    const show_versions = norm(searchParams.get("show_versions") || "0") === "1";
 
     return {
         filters: {
@@ -86,11 +93,13 @@ export function parseProductCatalogQuery(searchParams: URLSearchParams): ParsedP
             unitIds,
             activeOnly,
             missingTier,
+            productTypeIds,
         },
         page,
         pageSize,
         supplierScope,
         supplierIdsRaw,
         pendingProductIds,
+        show_versions,
     };
 }

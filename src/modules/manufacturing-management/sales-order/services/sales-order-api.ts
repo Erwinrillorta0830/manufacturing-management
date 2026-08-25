@@ -99,8 +99,9 @@ export async function convertQuotationToSalesOrder(quotationId: number): Promise
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quotationId })
     });
-    return handleResponse(res, "Failed to convert quotation");
+    return handleResponse(res, "Failed to convert quotation to sales order");
 }
+
 
 export async function createSalesOrderDirect(payload: CreateSalesOrderPayload): Promise<{ success: boolean; data?: SalesOrder }> {
     const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
@@ -109,6 +110,15 @@ export async function createSalesOrderDirect(payload: CreateSalesOrderPayload): 
         body: JSON.stringify(payload)
     });
     return handleResponse(res, "Failed to create sales order directly");
+}
+
+export async function updateSalesOrderDraft(orderId: number, payload: CreateSalesOrderPayload): Promise<{ success: boolean }> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-order", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update-draft", orderId, ...payload })
+    });
+    return handleResponse(res, "Failed to update draft sales order");
 }
 
 export async function fetchQuotationPipeline(): Promise<QuotationHeader[]> {

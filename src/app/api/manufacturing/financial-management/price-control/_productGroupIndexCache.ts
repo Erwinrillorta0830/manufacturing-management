@@ -35,6 +35,7 @@ export function buildGroupIndexCacheKey(
         categoryIds: sortedStrings(filters.categoryIds),
         brandIds: sortedStrings(filters.brandIds),
         unitIds: sortedStrings(filters.unitIds),
+        productTypeIds: sortedStrings(filters.productTypeIds),
         activeOnly: filters.activeOnly ?? true,
         missingTier: filters.missingTier ?? false,
         supplierProductIds: sortedSupplierIds(supplierProductIds),

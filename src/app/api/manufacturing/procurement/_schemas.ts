@@ -7,16 +7,14 @@ const nonNegativeNumber = z.coerce.number().finite().nonnegative();
 const acceptedLotAllocationSchema = z.object({
     storage_lot_id: positiveId,
     quantity: nonNegativeNumber,
-    // These fields are optional only for compatibility with older receiving
-    // submissions. New QA Receiving requests populate them per allocation.
-    batch_no: z.string().trim().max(50).optional(),
+    batch_no: z.string().trim().min(1).max(50),
     manufacturing_date: z.string().date().nullable().optional(),
     expiration_date: z.string().date().nullable().optional()
 });
 const rejectedLotAllocationSchema = z.object({
     storage_lot_id: positiveId,
     quantity: nonNegativeNumber,
-    batch_no: z.string().trim().max(50).optional(),
+    batch_no: z.string().trim().min(1).max(50),
     manufacturing_date: z.string().date().nullable().optional(),
     expiration_date: z.string().date().nullable().optional()
 });
@@ -39,10 +37,6 @@ export const receivingLineSchema = z.object({
     quantity_received: nonNegativeNumber,
     quantity_accepted: nonNegativeNumber,
     quantity_rejected: nonNegativeNumber,
-    batch_no: z.string().trim().min(1),
-    lot_id: positiveId,
-    manufacturing_date: z.string().date().nullable().optional(),
-    expiration_date: z.string().date().nullable(),
     rejection_reason: z.string().trim().nullable(),
     qa_status: z.enum(["Passed", "Partially Accepted", "Rejected"]),
     accepted_lot_allocations: z.array(acceptedLotAllocationSchema).default([]),
@@ -63,13 +57,7 @@ export const receivingLineSchema = z.object({
             batchNumber: allocation.batch_no,
             manufacturingDate: allocation.manufacturing_date,
             expirationDate: allocation.expiration_date
-        })),
-        line.lot_id,
-        {
-            batchNumber: line.batch_no,
-            manufacturingDate: line.manufacturing_date,
-            expirationDate: line.expiration_date
-        }
+        }))
     );
     if (allocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["accepted_lot_allocations"], message: allocationMessage });
     const rejectedAllocationMessage = rejectedLotAllocationError(
@@ -80,13 +68,7 @@ export const receivingLineSchema = z.object({
             batchNumber: allocation.batch_no,
             manufacturingDate: allocation.manufacturing_date,
             expirationDate: allocation.expiration_date
-        })),
-        line.lot_id,
-        {
-            batchNumber: line.batch_no,
-            manufacturingDate: line.manufacturing_date,
-            expirationDate: line.expiration_date
-        }
+        }))
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejected_lot_allocations"], message: rejectedAllocationMessage });
 }).transform(line => ({

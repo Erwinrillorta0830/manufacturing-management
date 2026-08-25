@@ -233,16 +233,8 @@ async function persistedResult(
         }
     }
     const expectedMovementCount = input.lines.reduce((count, line) =>
-        count + normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId, {
-            batchNumber: line.supplierBatchNumber,
-            manufacturingDate: line.manufacturingDate,
-            expirationDate: line.expiryDate
-        }).length
-        + normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId, {
-            batchNumber: line.supplierBatchNumber,
-            manufacturingDate: line.manufacturingDate,
-            expirationDate: line.expiryDate
-        }).length, 0);
+        count + normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations).length
+        + normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations).length, 0);
     const movementRows = await movementRowsForCommit(receivingIds, receiptNumbers, expectedMovementCount);
     if (movementRows.length !== expectedMovementCount) {
         throw new CommitError(409, `The purchase order status changed but its inventory movements are incomplete (expected ${expectedMovementCount}, found ${movementRows.length}). Reconciliation is required.`);
@@ -297,13 +289,9 @@ async function persistedResult(
     const finalAllocations: FinalReceivingAllocation[] = [];
     const receivingRecords: FinalReceivingRecord[] = [];
     for (const line of input.lines) {
-        const fallbackMetadata = {
-            batchNumber: line.supplierBatchNumber,
-            manufacturingDate: line.manufacturingDate,
-            expirationDate: line.expiryDate
-        };
-        const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId, fallbackMetadata);
-        const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId, fallbackMetadata);
+        const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations);
+        const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations);
+        const primaryAllocation = acceptedLotAllocations[0] || rejectedLotAllocations[0];
         const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
         const receiving = receivingRows.find(row => row.receipt_no === receiptNo);
         const receivingLineId = Number(receiving?.purchase_order_product_id);
@@ -412,7 +400,7 @@ async function persistedResult(
             receiptNumber: String(receiving.receipt_no),
             branchId: relationId(receiving.branch_id, "id"),
             storageLotId: relationId(receiving.lot_id, "lot_id"),
-            batchNumber: String(receiving.batch_no || line.supplierBatchNumber),
+            batchNumber: String(receiving.batch_no || primaryAllocation?.batchNumber || ""),
             receivedQuantity: Number(receiving.received_quantity || 0),
             rejectedQuantity: Number(receiving.quantity_rejected || 0),
             isOverReceived,
@@ -603,8 +591,6 @@ export async function POST(request: Request) {
                         quantity_received: result.receivedQuantity,
                         quantity_accepted: result.acceptedQuantity,
                         quantity_rejected: result.rejectedQuantity,
-                        batch_no: line.supplierBatchNumber,
-                        lot_id: line.storageLotId || line.acceptedLotAllocations[0]?.storageLotId || line.rejectedLotAllocations[0]?.storageLotId,
                         accepted_lot_allocations: line.acceptedLotAllocations.map(allocation => ({
                             storage_lot_id: allocation.storageLotId,
                             batch_no: allocation.batchNumber,
@@ -624,8 +610,6 @@ export async function POST(request: Request) {
                             actual_reading: line.readings.find(reading => reading.specId === evaluation.specId)?.actualReading || "",
                             is_passed: evaluation.status === "passed"
                         })),
-                        manufacturing_date: line.manufacturingDate,
-                        expiration_date: line.expiryDate,
                         rejection_reason: result.rejectionReason || line.remarks,
                         qa_status: result.acceptedQuantity === 0
                             ? "Rejected"

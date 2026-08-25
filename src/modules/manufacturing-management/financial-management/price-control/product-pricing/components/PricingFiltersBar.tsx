@@ -40,6 +40,8 @@ type Props = {
     units: Unit[];
     suppliers: Supplier[];
     priceTypes: PriceType[];
+
+    showVersionsEnabled: boolean;
 };
 
 type FilterArrayKey = "category_ids" | "brand_ids" | "unit_ids" | "supplier_ids" | "price_type_ids";
@@ -91,7 +93,7 @@ function sortPriceTypes(priceTypes: PriceType[]): PriceType[] {
 }
 
 export function PricingFiltersBar(props: Props) {
-    const { filters, setFilters, resetFilters, categories, brands, units, suppliers, priceTypes } = props;
+    const { filters, setFilters, resetFilters, categories, brands, units, suppliers, priceTypes, showVersionsEnabled } = props;
 
     const selectedSupplierIds = React.useMemo(
         () => getIds(filters, "supplier_ids"),
@@ -401,7 +403,8 @@ export function PricingFiltersBar(props: Props) {
         setLocalUnitIds([]);
         setLocalPriceViewIds([]);
         setAdvancedOpen(true);
-    }, [resetFilters]);
+        setFilters((prev) => ({ ...prev, show_versions: false }));
+    }, [resetFilters, setFilters]);
 
     const commitSupplierIds = React.useCallback(
         (ids: string[]) => {
@@ -507,6 +510,14 @@ export function PricingFiltersBar(props: Props) {
             key: "missing_tier",
             label: "Missing price tiers",
             onRemove: () => setFilters((prev) => ({ ...prev, missing_tier: false })),
+        });
+    }
+
+    if (filters.show_versions) {
+        chips.push({
+            key: "show_versions",
+            label: "Showing versions",
+            onRemove: () => setFilters((prev) => ({ ...prev, show_versions: false })),
         });
     }
 
@@ -646,6 +657,20 @@ export function PricingFiltersBar(props: Props) {
                                     Missing tier
                                 </Label>
                             </div>
+                            {showVersionsEnabled && (
+                                <div className="flex items-center gap-2">
+                                    <Switch
+                                        id="filter-show-versions"
+                                        checked={filters.show_versions}
+                                        onCheckedChange={(checked) =>
+                                            setFilters((prev) => ({ ...prev, show_versions: checked }))
+                                        }
+                                    />
+                                    <Label htmlFor="filter-show-versions" className="cursor-pointer text-sm font-medium">
+                                        Show versions
+                                    </Label>
+                                </div>
+                            )}
                         </div>
                     </FilterField>
                 </div>

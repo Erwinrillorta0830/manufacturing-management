@@ -803,10 +803,6 @@ export default function ShipmentInspectionForm({
                             receivedQty: "",
                             acceptedQty: "",
                             rejectedQty: 0,
-                            batchNumber: "",
-                            lotId: "",
-                            manufacturingDate: "",
-                            expirationDate: "",
                             rejectionReason: "",
                             isPackaging: false
                         };
@@ -1032,33 +1028,6 @@ export default function ShipmentInspectionForm({
                                      );
                                 })()}
 
-                                <div className="pt-1">
-                                    <div className="space-y-1">
-                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                            Server Disposition
-                                        </label>
-                                        <div className={`h-10 rounded-xl border px-3 flex items-center text-[10px] font-extrabold ${
-                                            readOnly
-                                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700"
-                                                : evaluation?.disposition === "Passed"
-                                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700"
-                                                : evaluation?.disposition === "Partially Accepted"
-                                                    ? "bg-amber-500/10 border-amber-500/20 text-amber-700"
-                                                    : evaluation?.disposition === "Rejected"
-                                                        ? "bg-red-500/10 border-red-500/20 text-red-700"
-                                                        : evaluation?.disposition === "Not Received"
-                                                            ? "bg-muted text-muted-foreground"
-                                                            : "bg-muted/40 text-muted-foreground"
-                                        }`}>
-                                            {readOnly
-                                                ? `${line.qa_status || "Received"} - Recorded`
-                                                : evaluation
-                                                    ? `${evaluation.disposition} - Server verified`
-                                                    : "Pending server validation"}
-                                        </div>
-                                    </div>
-                                </div>
-
                                 {receivedVal > 0 && (acceptedVal > 0 || rejectedVal > 0) && (
                                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-3" aria-label="Inventory storage-lot allocations">
                                         <div className="flex items-center justify-between gap-2">
@@ -1142,23 +1111,34 @@ export default function ShipmentInspectionForm({
 
                                 {evaluation && evaluation.routes.length > 0 && (
                                     <div className="border-y py-2.5 flex flex-wrap gap-x-5 gap-y-2" aria-label="Server inventory routes">
-                                        {evaluation.routes.map(route => (
-                                            <div key={`${route.kind}-${route.storageLotId}`} className="flex items-start gap-2 min-w-[220px]">
-                                                {route.kind === "Passed" ? (
-                                                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
-                                                ) : (
-                                                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-600" />
-                                                )}
-                                                <div className="min-w-0">
-                                                    <p className={`text-[10px] font-extrabold ${route.kind === "Passed" ? "text-emerald-700" : "text-red-700"}`}>
-                                                        {route.kind} {route.quantity.toLocaleString()} -&gt; {route.branch.name}
-                                                    </p>
-                                                    <p className="text-[9px] text-muted-foreground truncate">
-                                                        {route.storageLotName} | {route.transactionType.name} | {route.branch.code}
-                                                    </p>
+                                        {evaluation.routes.map((route, routeIndex) => {
+                                            const routeKey = [
+                                                route.kind,
+                                                route.storageLotId,
+                                                route.supplierBatchNumber ?? "",
+                                                route.manufacturingDate ?? "",
+                                                route.expiryDate ?? "",
+                                                routeIndex,
+                                            ].join("-");
+
+                                            return (
+                                                <div key={routeKey} className="flex items-start gap-2 min-w-[220px]">
+                                                    {route.kind === "Passed" ? (
+                                                        <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
+                                                    ) : (
+                                                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-600" />
+                                                    )}
+                                                    <div className="min-w-0">
+                                                        <p className={`text-[10px] font-extrabold ${route.kind === "Passed" ? "text-emerald-700" : "text-red-700"}`}>
+                                                            {route.kind} {route.quantity.toLocaleString()} -&gt; {route.branch.name}
+                                                        </p>
+                                                        <p className="text-[9px] text-muted-foreground truncate">
+                                                            {route.storageLotName} | {route.transactionType.name} | {route.branch.code}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
 
