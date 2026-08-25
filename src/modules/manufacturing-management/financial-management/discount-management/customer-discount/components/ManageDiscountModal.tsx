@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ModalSearchableSelect } from "./ModalSearchableSelect";
 import { Plus, Trash2, Search, FilterX, Printer } from "lucide-react";
 import { Customer, CustomerDiscount, Supplier, Category, DiscountType } from "../types";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -183,7 +183,7 @@ export function ManageDiscountModal({
                 <Search className="h-3 w-3" /> Filters:
               </div>
               
-              <SearchableSelect
+              <ModalSearchableSelect
                 value={filterSupplier}
                 onValueChange={setFilterSupplier}
                 placeholder="Supplier"
@@ -194,7 +194,7 @@ export function ManageDiscountModal({
                 className="w-[180px] h-9"
               />
 
-              <SearchableSelect
+              <ModalSearchableSelect
                 value={filterCategory}
                 onValueChange={setFilterCategory}
                 placeholder="Category"
@@ -205,7 +205,7 @@ export function ManageDiscountModal({
                 className="w-[180px] h-9"
               />
 
-              <SearchableSelect
+              <ModalSearchableSelect
                 value={filterDiscountType}
                 onValueChange={setFilterDiscountType}
                 placeholder="Discount Type"

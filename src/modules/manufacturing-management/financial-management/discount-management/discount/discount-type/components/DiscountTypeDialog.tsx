@@ -58,7 +58,7 @@ export default function DiscountTypeDialog({
    */
   mode?: "view" | "create" | "edit";
 }) {
-  const readOnly = mode === "view";
+  const nameReadOnly = mode === "view";
 
   const form = useForm<FormValues>({
     resolver: zodResolver(discountTypeUpsertSchema) as unknown as Resolver<FormValues, unknown, FormValues>,
@@ -117,7 +117,6 @@ export default function DiscountTypeDialog({
   }, [totals.percent]);
 
   function addLine(lineId: number) {
-    if (readOnly) return;
     setSelected((prev) => {
       const next = [...prev, lineId]; // duplicates allowed
       form.setValue("line_ids", next, { shouldDirty: true });
@@ -126,7 +125,6 @@ export default function DiscountTypeDialog({
   }
 
   function removeAt(idx: number) {
-    if (readOnly) return;
     setSelected((prev) => {
       const next = prev.slice();
       next.splice(idx, 1);
@@ -136,7 +134,6 @@ export default function DiscountTypeDialog({
   }
 
   function move(idx: number, dir: -1 | 1) {
-    if (readOnly) return;
     setSelected((prev) => {
       const next = prev.slice();
       const j = idx + dir;
@@ -150,7 +147,6 @@ export default function DiscountTypeDialog({
   }
 
   async function submit(v: FormValues) {
-    if (readOnly) return;
     try {
       const payload: FormValues = { ...v, line_ids: selected };
       await onSave?.(payload);
@@ -191,8 +187,8 @@ export default function DiscountTypeDialog({
                     <Input
                       placeholder="e.g., No Discount, Promo A"
                       {...field}
-                      disabled={readOnly}
-                      readOnly={readOnly}
+                      disabled={nameReadOnly}
+                      readOnly={nameReadOnly}
                     />
                   </FormControl>
                   <FormMessage />
@@ -224,18 +220,15 @@ export default function DiscountTypeDialog({
                             </Badge>
                           </div>
 
-                          {/* ✅ In VIEW mode: no adding */}
-                          {!readOnly && (
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => addLine(Number(l.id))}
-                              className="h-8 w-8"
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          )}
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => addLine(Number(l.id))}
+                            className="h-8 w-8"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
                         </div>
                       ))}
                       {lineDiscounts.length === 0 && (
@@ -272,40 +265,37 @@ export default function DiscountTypeDialog({
                               {x.code} ({pctLabel(x.percentage)})
                             </Badge>
 
-                            {/* ✅ In VIEW mode: no reorder/remove */}
-                            {!readOnly && (
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="secondary"
-                                  className="h-8 w-8"
-                                  onClick={() => move(idx, -1)}
-                                  disabled={idx === 0}
-                                >
-                                  <ArrowUp className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="secondary"
-                                  className="h-8 w-8"
-                                  onClick={() => move(idx, 1)}
-                                  disabled={idx === selectedLines.length - 1}
-                                >
-                                  <ArrowDown className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="destructive"
-                                  className="h-8 w-8"
-                                  onClick={() => removeAt(idx)}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            )}
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="secondary"
+                                className="h-8 w-8"
+                                onClick={() => move(idx, -1)}
+                                disabled={idx === 0}
+                              >
+                                <ArrowUp className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="secondary"
+                                className="h-8 w-8"
+                                onClick={() => move(idx, 1)}
+                                disabled={idx === selectedLines.length - 1}
+                              >
+                                <ArrowDown className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="destructive"
+                                className="h-8 w-8"
+                                onClick={() => removeAt(idx)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         ))
                       )}
@@ -326,11 +316,14 @@ export default function DiscountTypeDialog({
 
             <Separator />
 
-            {/* ✅ VIEW mode: no Save/Reset/Delete at all */}
-            {readOnly ? (
-              <div className="flex justify-end">
+            {/* ✅ VIEW mode: Save and Close only */}
+            {nameReadOnly ? (
+              <div className="flex justify-end gap-2">
                 <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
                   Close
+                </Button>
+                <Button type="submit">
+                  Save
                 </Button>
               </div>
             ) : (

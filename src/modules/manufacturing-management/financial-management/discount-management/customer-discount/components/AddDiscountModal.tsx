@@ -9,7 +9,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ModalSearchableSelect } from "./ModalSearchableSelect";
 import { Plus } from "lucide-react";
 import { Customer, CustomerDiscount, Supplier, Category, DiscountType } from "../types";
 
@@ -63,7 +63,7 @@ export function AddDiscountModal({
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <label className="text-xs font-bold uppercase text-muted-foreground">Supplier</label>
-            <SearchableSelect
+            <ModalSearchableSelect
               value={supplierId}
               onValueChange={setSupplierId}
               placeholder="Select Supplier"
@@ -73,7 +73,7 @@ export function AddDiscountModal({
 
           <div className="space-y-2">
             <label className="text-xs font-bold uppercase text-muted-foreground">Category</label>
-            <SearchableSelect
+            <ModalSearchableSelect
               value={categoryId}
               onValueChange={setCategoryId}
               placeholder="Select Category"
@@ -83,7 +83,7 @@ export function AddDiscountModal({
 
           <div className="space-y-2">
             <label className="text-xs font-bold uppercase text-muted-foreground">Discount Type</label>
-            <SearchableSelect
+            <ModalSearchableSelect
               value={discountTypeId}
               onValueChange={setDiscountTypeId}
               placeholder="Select Type"

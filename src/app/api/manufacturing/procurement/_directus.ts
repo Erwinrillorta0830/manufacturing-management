@@ -28,6 +28,7 @@ export async function procurementDirectusFetch(path: string, init: RequestInit =
             ...procurementDirectusHeaders(),
             ...(init.headers || {})
         },
-        cache: init.cache || "no-store"
+        cache: init.cache || "no-store",
+        signal: init.signal || AbortSignal.timeout(10000)
     });
 }

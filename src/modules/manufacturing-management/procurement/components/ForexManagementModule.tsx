@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ForexConfig, ForexRateHistory } from "@/app/api/manufacturing/procurement/forex/route";
+import type { ForexConfig, ForexRateHistory } from "@/app/api/manufacturing/procurement/forex/_rates";
 
 export default function ForexManagementModule() {
     const [activeRates, setActiveRates] = useState<ForexConfig[]>([]);
@@ -171,8 +171,13 @@ export default function ForexManagementModule() {
             if (data.rateHistory) setRateHistory(data.rateHistory);
             handleCloseUpdateModal();
         } catch (e) {
-            console.error(e);
-            toast.error((e as Error).message || "Failed to submit exchange rate update");
+            console.error("Forex Rate Submit Error:", e);
+            const errMsg = (e as Error).message;
+            if (errMsg === "Failed to fetch" || errMsg.includes("NetworkError") || errMsg.includes("network timeout")) {
+                toast.error("Network Error: Failed to save exchange rate. Please try again.");
+            } else {
+                toast.error(errMsg || "Failed to submit exchange rate update");
+            }
         } finally {
             setSubmitting(false);
         }
@@ -640,7 +645,7 @@ export default function ForexManagementModule() {
                     <table className="w-full text-left text-xs">
                         <thead className="bg-muted/40 border-b text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                             <tr>
-                                <th className="p-3">Timestamp / Effective</th>
+                                <th className="p-3">Effective Date</th>
                                 <th className="p-3">Currency</th>
                                 <th className="p-3">Previous Rate</th>
                                 <th className="p-3">New Rate</th>
@@ -664,7 +669,7 @@ export default function ForexManagementModule() {
                                     return (
                                         <tr key={log.history_id} className="hover:bg-muted/10 transition-colors">
                                             <td className="p-3 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
-                                                {log.created_at ? new Date(log.created_at).toLocaleString() : log.effective_date}
+                                                {log.effective_date}
                                             </td>
                                             <td className="p-3 font-bold text-foreground">
                                                 <span className="px-2 py-0.5 rounded bg-muted text-[11px] font-mono">
