@@ -11,6 +11,19 @@ export interface SupplierRepresentative {
     updated_at?: string;
 }
 
+export type SupplierType = "TRADE" | "NON-TRADE";
+
+export function normalizeSupplierType(value: unknown): SupplierType | "" {
+    const normalized = String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s_]+/g, "-");
+
+    if (normalized === "TRADE") return "TRADE";
+    if (normalized === "NONTRADE" || normalized === "NON-TRADE") return "NON-TRADE";
+    return "";
+}
+
 export interface Supplier {
     id: number;
     supplier_name: string;
@@ -33,6 +46,7 @@ export interface Supplier {
     is_foreign?: number;
     currency?: string;
     default_currency?: string;
+    supplier_type?: SupplierType | string | null;
     representatives?: SupplierRepresentative[];
 }
 
@@ -65,6 +79,7 @@ export interface SupplierCurrencyOption {
 export interface SupplierFormState {
     supplier_name: string;
     supplier_shortcut: string;
+    supplier_type: SupplierType | "";
     tin_number: string;
     phone_number: string;
     email_address: string;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Supplier, SupplierRepresentative, SupplierFormState, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, RegisterRawMaterialPayload, PackagingVariant, ShipmentData, LineItem } from "../types";
+import { normalizeSupplierType, Supplier, SupplierRepresentative, SupplierFormState, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, RegisterRawMaterialPayload, PackagingVariant, ShipmentData, LineItem } from "../types";
 import type { ShipmentFormState, ManifestLineFormItem } from "../components/IncomingShipments";
 import {
     fetchSuppliers,
@@ -71,6 +71,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
     const [supplierForm, setSupplierForm] = useState<SupplierFormState>({
         supplier_name: "",
         supplier_shortcut: "",
+        supplier_type: "",
         tin_number: "",
         phone_number: "",
         email_address: "",
@@ -342,6 +343,12 @@ export function useProcurement(defaultTab: string = "suppliers") {
             toast.error("Supplier Code/Shortcut is required");
             return;
         }
+        const supplierType = normalizeSupplierType(supplierForm.supplier_type);
+        if (!supplierType) {
+            setSupplierError("Vendor Classification is required");
+            toast.error("Vendor Classification is required");
+            return;
+        }
         if (!supplierForm.address.trim()) {
             setSupplierError("Business Street Address is required");
             toast.error("Business Street Address is required");
@@ -412,6 +419,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             const payload = {
                 ...supplierForm,
                 country,
+                supplier_type: supplierType,
                 is_foreign: isForeignVal,
                 currency: currVal,
                 default_currency: currVal,
@@ -432,6 +440,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
             setSupplierForm({
                 supplier_name: "",
                 supplier_shortcut: "",
+                supplier_type: "",
                 tin_number: "",
                 phone_number: "",
                 email_address: "",
@@ -481,6 +490,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         setSupplierForm({
             supplier_name: supplier.supplier_name || "",
             supplier_shortcut: supplier.supplier_shortcut || "",
+            supplier_type: normalizeSupplierType(supplier.supplier_type),
             tin_number: supplier.tin_number || "",
             phone_number: supplier.phone_number || "",
             email_address: supplier.email_address || "",

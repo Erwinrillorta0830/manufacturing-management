@@ -1,11 +1,13 @@
 import { DIRECTUS_URL, headers } from "../_directus";
 import { 
-    DirectusProductPerSupplier 
+    DirectusProductPerSupplier,
+    normalizeSupplierType
 } from "@/modules/manufacturing-management/procurement/types";
 import type {
     LinkedProductPageResponse,
     SupplierPageResponse,
-    SupplierStatusCounts
+    SupplierStatusCounts,
+    SupplierType
 } from "@/modules/manufacturing-management/procurement/types";
 import {
     PHILIPPINES_COUNTRY,
@@ -50,6 +52,21 @@ export class SupplierCurrencyValidationError extends Error {
         super(message);
         this.name = "SupplierCurrencyValidationError";
     }
+}
+
+export class SupplierTypeValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "SupplierTypeValidationError";
+    }
+}
+
+function requireSupplierType(value: unknown): SupplierType {
+    const supplierType = normalizeSupplierType(value);
+    if (!supplierType) {
+        throw new SupplierTypeValidationError("Vendor Classification must be Trade or Non-Trade.");
+    }
+    return supplierType;
 }
 
 function toBoolean(value: unknown): boolean {
@@ -115,6 +132,7 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
     const isForeignBool = toBoolean(supplier.is_foreign ?? supplier.isForeign);
     const rawCountry = typeof supplier.country === "string" ? supplier.country : "";
     const country = normalizeSupplierCountry(rawCountry) || (rawCountry.trim() ? rawCountry : PHILIPPINES_COUNTRY);
+    const supplierType = normalizeSupplierType(supplier.supplier_type);
     const isNonPH = isForeignCountry(country);
     const rawCurrency = String(supplier.currency || supplier.default_currency || "").trim().toUpperCase();
     const isForeignNum = (isForeignBool || isNonPH || rawCurrency !== "" && rawCurrency !== "PHP" || Number(supplier.is_foreign) === 1) ? 1 : 0;
@@ -125,6 +143,7 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
         isActive: toBoolean(supplier.isActive),
         nonBuy: toBoolean(supplier.nonBuy),
         country,
+        supplier_type: supplierType || null,
         is_foreign: isForeignNum,
         currency: resolvedCurrency || undefined,
         default_currency: resolvedCurrency || undefined,
@@ -294,6 +313,8 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
         const hasIsActive = Object.prototype.hasOwnProperty.call(details, "isActive");
         const country = canonicalizeSupplierCountry(details.country);
         details.country = country;
+        const supplierType = requireSupplierType(details.supplier_type);
+        details.supplier_type = supplierType;
         const resolved = await resolveSupplierCurrency(details, country);
 
         details.is_foreign = resolved.isForeign;
@@ -305,7 +326,7 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
         // Populate database-required fields that aren't exposed in the UI form
         const payload = {
             ...details,
-            supplier_type: "TRADE",
+            supplier_type: supplierType,
             date_added: await getTodayDateString(),
             isActive: hasIsActive && !toBoolean(details.isActive) ? 0 : 1
         };
@@ -358,12 +379,14 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
     try {
         const url = `${DIRECTUS_URL}/items/suppliers/${supplierId}`;
         const { representatives, ...details } = supplierData;
+        const hasSupplierType = Object.prototype.hasOwnProperty.call(details, "supplier_type");
         const hasCountry = Object.prototype.hasOwnProperty.call(details, "country");
         const hasForeign = Object.prototype.hasOwnProperty.call(details, "is_foreign");
         const hasCurrency = Object.prototype.hasOwnProperty.call(details, "currency");
         const hasDefaultCurrency = Object.prototype.hasOwnProperty.call(details, "default_currency");
         const country = hasCountry ? canonicalizeSupplierCountry(details.country) : undefined;
         if (hasCountry) details.country = country;
+        if (hasSupplierType) details.supplier_type = requireSupplierType(details.supplier_type);
 
         if (hasCountry || hasForeign || hasCurrency || hasDefaultCurrency) {
             if (!hasCurrency && !hasDefaultCurrency) {

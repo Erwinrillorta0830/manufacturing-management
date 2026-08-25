@@ -7,6 +7,7 @@ import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry } from "../supplier-coun
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../purchase-order/commercial-terms";
+import { toast } from "sonner";
 
 export interface SupplierFormModalProps {
     isOpen: boolean;
@@ -14,6 +15,7 @@ export interface SupplierFormModalProps {
     supplierForm: SupplierFormState;
     setSupplierForm: React.Dispatch<React.SetStateAction<SupplierFormState>>;
     supplierError?: string | null;
+    onValidationError?: (message: string | null) => void;
     isEditingSupplier?: boolean;
     onCreateSupplier: (e: React.FormEvent) => void;
 }
@@ -32,6 +34,7 @@ export default function SupplierFormModal({
     supplierForm,
     setSupplierForm,
     supplierError,
+    onValidationError,
     isEditingSupplier = false,
     onCreateSupplier
 }: SupplierFormModalProps) {
@@ -366,6 +369,30 @@ export default function SupplierFormModal({
                                     >
                                         <option value="active">Active</option>
                                         <option value="inactive">Inactive</option>
+                                    </select>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label htmlFor="supplier-classification" className="text-[11px] font-semibold text-muted-foreground">
+                                        Vendor Classification <span className="text-red-500">*</span>
+                                    </label>
+                                    <select
+                                        id="supplier-classification"
+                                        required
+                                        aria-required="true"
+                                        value={supplierForm.supplier_type}
+                                        onChange={e => setSupplierForm({ ...supplierForm, supplier_type: e.target.value as SupplierFormState["supplier_type"] })}
+                                        onInvalid={event => {
+                                            event.preventDefault();
+                                            const message = "Vendor Classification is required";
+                                            onValidationError?.(message);
+                                            toast.error(message);
+                                        }}
+                                        className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold"
+                                    >
+                                        <option value="">-- Select Classification --</option>
+                                        <option value="TRADE">Trade</option>
+                                        <option value="NON-TRADE">Non-Trade</option>
                                     </select>
                                 </div>
 

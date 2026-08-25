@@ -32,6 +32,7 @@ interface SuppliersDirectoryProps {
     supplierForm: SupplierFormState;
     setSupplierForm: React.Dispatch<React.SetStateAction<SupplierFormState>>;
     supplierError?: string | null;
+    onValidationError?: (message: string | null) => void;
     isEditingSupplier?: boolean;
     onStartEditSupplier?: (supplier: Supplier) => void;
     onCreateSupplier: (e: React.FormEvent) => void;
@@ -56,6 +57,7 @@ export default function SuppliersDirectory({
     supplierForm,
     setSupplierForm,
     supplierError,
+    onValidationError,
     isEditingSupplier = false,
     onStartEditSupplier,
     onCreateSupplier,
@@ -735,6 +737,7 @@ export default function SuppliersDirectory({
                 supplierForm={supplierForm}
                 setSupplierForm={setSupplierForm}
                 supplierError={supplierError}
+                onValidationError={onValidationError}
                 isEditingSupplier={isEditingSupplier}
                 onCreateSupplier={onCreateSupplier}
             />
