@@ -32,7 +32,6 @@ interface Props {
     }) => Promise<void>;
     onPopulateSheet?: (productTypeId?: number | null) => Promise<void>;
     onOpenAddDetailModal: (lotId?: number) => void;
-    onEditDetail: (detail: MmPhysicalInventoryDetail) => void;
     onRemoveDetail: (detail: MmPhysicalInventoryDetail) => void;
     onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number) => Promise<void>;
     onSubmit: () => void;
@@ -51,7 +50,6 @@ export default function PhysicalInventoryForm({
     onSaveHeader,
     onPopulateSheet,
     onOpenAddDetailModal,
-    onEditDetail: _onEditDetail,
     onRemoveDetail,
     onSaveInlineCount,
     onSubmit,

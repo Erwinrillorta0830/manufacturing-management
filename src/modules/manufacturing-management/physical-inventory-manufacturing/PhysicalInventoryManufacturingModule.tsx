@@ -448,10 +448,6 @@ export default function PhysicalInventoryManufacturingModule() {
                         setPreselectedLotId(lotId);
                         setIsDetailModalOpen(true);
                     }}
-                    onEditDetail={(d) => {
-                        setEditingDetail(d);
-                        setIsDetailModalOpen(true);
-                    }}
                     onRemoveDetail={handleRemoveDetail}
                     onSaveInlineCount={handleSaveInlineCount}
                     onSubmit={() => handleSubmitSheet()}
