@@ -36,6 +36,24 @@ export interface Supplier {
     representatives?: SupplierRepresentative[];
 }
 
+export type SupplierEvaluationGrade = "A+" | "A" | "B" | "C" | "F";
+
+export interface SupplierEvaluationInput {
+    supplier_id: number;
+    delivery_rating: number;
+    quality_rating: number;
+    price_rating: number;
+    compliance_rating: number;
+    feedback_notes: string;
+}
+
+export interface SupplierEvaluation extends SupplierEvaluationInput {
+    id: number;
+    overall_score: number;
+    grade: SupplierEvaluationGrade;
+    evaluated_at: string;
+}
+
 export interface SupplierCurrencyOption {
     forex_id: number;
     currency_code: string;
