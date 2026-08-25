@@ -1111,23 +1111,34 @@ export default function ShipmentInspectionForm({
 
                                 {evaluation && evaluation.routes.length > 0 && (
                                     <div className="border-y py-2.5 flex flex-wrap gap-x-5 gap-y-2" aria-label="Server inventory routes">
-                                        {evaluation.routes.map(route => (
-                                            <div key={`${route.kind}-${route.storageLotId}`} className="flex items-start gap-2 min-w-[220px]">
-                                                {route.kind === "Passed" ? (
-                                                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
-                                                ) : (
-                                                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-600" />
-                                                )}
-                                                <div className="min-w-0">
-                                                    <p className={`text-[10px] font-extrabold ${route.kind === "Passed" ? "text-emerald-700" : "text-red-700"}`}>
-                                                        {route.kind} {route.quantity.toLocaleString()} -&gt; {route.branch.name}
-                                                    </p>
-                                                    <p className="text-[9px] text-muted-foreground truncate">
-                                                        {route.storageLotName} | {route.transactionType.name} | {route.branch.code}
-                                                    </p>
+                                        {evaluation.routes.map((route, routeIndex) => {
+                                            const routeKey = [
+                                                route.kind,
+                                                route.storageLotId,
+                                                route.supplierBatchNumber ?? "",
+                                                route.manufacturingDate ?? "",
+                                                route.expiryDate ?? "",
+                                                routeIndex,
+                                            ].join("-");
+
+                                            return (
+                                                <div key={routeKey} className="flex items-start gap-2 min-w-[220px]">
+                                                    {route.kind === "Passed" ? (
+                                                        <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
+                                                    ) : (
+                                                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-600" />
+                                                    )}
+                                                    <div className="min-w-0">
+                                                        <p className={`text-[10px] font-extrabold ${route.kind === "Passed" ? "text-emerald-700" : "text-red-700"}`}>
+                                                            {route.kind} {route.quantity.toLocaleString()} -&gt; {route.branch.name}
+                                                        </p>
+                                                        <p className="text-[9px] text-muted-foreground truncate">
+                                                            {route.storageLotName} | {route.transactionType.name} | {route.branch.code}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
 

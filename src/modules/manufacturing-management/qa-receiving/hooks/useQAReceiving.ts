@@ -1073,7 +1073,6 @@ export function useQAReceiving() {
             }
         } catch (error) {
             toast.error((error as Error).message || "Failed to force-receive the purchase order.");
-            throw error;
         } finally {
             setForceReceivedSubmitting(false);
         }
