@@ -195,7 +195,8 @@ function uniqNumSetFromRows(
     const result = new Set<number>();
 
     for (const row of rows) {
-        const value = Number(row.display?.[key]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const value = Number((row.display as any)?.[key]);
         if (!Number.isNaN(value) && value > 0) {
             result.add(value);
         }
@@ -324,7 +325,7 @@ export default function PricingMatrixView() {
                 product_type_ids: [defaultTypeId],
             }));
         }
-    }, [defaultTypeId, matrix.filters.product_type_ids.length, matrix.setFilters]);
+    }, [defaultTypeId, matrix.filters.product_type_ids.length, matrix.setFilters, matrix]);
 
     const handleTabChange = React.useCallback((newTypeId: number) => {
         dirtySummary.discardAll();

@@ -68,6 +68,7 @@ const defaultFilters: PricingFilters = {
 };
 
 export function usePricingMatrix(args: {
+    onSelectionChange?: (selected: Record<string, unknown>[]) => void;
     categoriesById: Map<number, string>;
     brandsById: Map<number, string>;
     unitsById: Map<number, string>;
@@ -189,8 +190,8 @@ export function usePricingMatrix(args: {
 
             const usedFallback: Unit[] = Array.from(unitIds).map((id) => ({
                 unit_id: id,
-                unit_name: unitsById.get(id) ?? null,
-                unit_shortcut: unitsById.get(id) ?? null,
+                unit_name: unitsById.get(id) ?? "",
+                unit_shortcut: unitsById.get(id) ?? "",
             }));
 
             setUsedUnits(used.length ? used : usedFallback);
@@ -212,7 +213,7 @@ export function usePricingMatrix(args: {
 
                 for (const [key, value] of prev) {
                     if (key.startsWith("v:")) {
-                        if (dirty.has(key as any)) {
+                        if (dirtyRef.current.has(key as DirtyKey)) {
                             nextPending.set(key, value);
                         }
                     } else {

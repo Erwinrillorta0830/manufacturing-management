@@ -23,7 +23,7 @@ export async function POST(request: Request) {
             remarks: payload.remarks,
             isPosted: false,
             isCancelled: false,
-            totalAmount: payload.cashBuckets?.reduce((sum: number, b: any) => sum + (b.amount || 0), 0) || 0
+            totalAmount: payload.cashBuckets?.reduce((sum: number, b: Record<string, unknown>) => sum + ((b.amount as number) || 0), 0) || 0
         };
 
         const colRes = await fetch(`${DIRECTUS_URL}/items/collection`, { 
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
         // 2. Create details & denominations
         if (payload.cashBuckets && payload.cashBuckets.length > 0) {
-            const detailsPromises = payload.cashBuckets.map(async (bucket: any) => {
+            const detailsPromises = payload.cashBuckets.map(async (bucket: Record<string, unknown>) => {
                 const detailData = {
                     collection_id: collectionId,
                     type: bucket.coaId,

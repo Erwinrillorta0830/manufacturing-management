@@ -28,6 +28,7 @@ export async function GET(request: Request) {
         const data = await res.json();
         const items = data.data || [];
         
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedItems = items.map((item: any) => {
             const isPosted = item.isPosted === true || item.isPosted === 1 || item.isPosted === "1";
             const isCancelled = item.isCancelled === true || item.isCancelled === 1 || item.isCancelled === "1";

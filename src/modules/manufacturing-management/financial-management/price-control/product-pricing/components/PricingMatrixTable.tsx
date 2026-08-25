@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef } from "react";
+import React from "react";
 import type { 
     MatrixRow, 
     PendingCellRequest, 
@@ -28,9 +28,9 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { AlertCircle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw } from "lucide-react";
-import { isListTierKey, resolveVisibleTierKeys, tierLabelForTierKey } from "../utils/pivot";
+import { resolveVisibleTierKeys } from "../utils/pivot";
 import PriceCell from "./PriceCell";
-import { getVisibleMatrixPriceTypes, getVisibleMatrixUnits, matrixPriceTypeColor, priceTypeTierKey } from "../../product-printables/utils/matrixDisplay";
+import { getVisibleMatrixUnits, matrixPriceTypeColor, priceTypeTierKey } from "../../product-printables/utils/matrixDisplay";
 
 function toNum(v: unknown, fallback: number) {
     const n = typeof v === "number" ? v : Number(v);
@@ -110,8 +110,6 @@ type Props = {
     usedUnitIds: Set<number>;
 };
 
-type SetCellHandler = (productId: number, tier: ProductTierKey) => (raw: string) => void;
-type SetVersionCellHandler = (versionId: number, priceTypeId: number, versionName: string, base: number | null) => (raw: string) => void;
 
 export default function PricingMatrixTable({ 
     matrix, 
@@ -162,40 +160,6 @@ export default function PricingMatrixTable({
 
     const canPrev = !loading && page > 1 && totalGroups > 0;
     const canNext = !loading && page < totalPages && totalGroups > 0;
-
-    const setCellHandlersRef = useRef(new Map<string, (raw: string) => void>());
-    const setVersionCellHandlersRef = useRef(new Map<string, (raw: string) => void>());
-
-    useEffect(() => {
-        setCellHandlersRef.current.clear();
-        setVersionCellHandlersRef.current.clear();
-    }, [matrix.setCell, matrix.setVersionCell, page, pageSize]);
-
-    const getSetCellHandler = useCallback<SetCellHandler>(
-        (productId, tier) => {
-            const key = `${productId}:${tier}`;
-            let handler = setCellHandlersRef.current.get(key);
-            if (!handler) {
-                handler = (raw: string) => matrix.setCell(productId, tier, raw);
-                setCellHandlersRef.current.set(key, handler);
-            }
-            return handler;
-        },
-        [matrix],
-    );
-
-    const getSetVersionCellHandler = useCallback<SetVersionCellHandler>(
-        (versionId, priceTypeId, versionName, base) => {
-            const key = `${versionId}:${priceTypeId}`;
-            let handler = setVersionCellHandlersRef.current.get(key);
-            if (!handler) {
-                handler = (raw: string) => matrix.setVersionCell(versionId, priceTypeId, versionName, base, raw);
-                setVersionCellHandlersRef.current.set(key, handler);
-            }
-            return handler;
-        },
-        [matrix],
-    );
 
     if (loading && rows.length === 0) {
         return (
@@ -373,7 +337,7 @@ export default function PricingMatrixTable({
                                                             pendingRequest={matrix.getPendingRequest(variantProductId, "LIST")}
                                                             dirty={matrix.isDirty(variantProductId, "LIST")}
                                                             error={toErrorString(matrix.getError(variantProductId, "LIST"))}
-                                                            onChange={getSetCellHandler(variantProductId, "LIST")}
+                                                            onChange={(raw) => matrix.setCell(variantProductId, "LIST", raw)}
                                                         />
                                                     </TableCell>
                                                 );
@@ -406,7 +370,7 @@ export default function PricingMatrixTable({
                                                                 pendingRequest={matrix.getPendingRequest(variantProductId, ptSuffix)}
                                                                 dirty={matrix.isDirty(variantProductId, ptSuffix)}
                                                                 error={toErrorString(matrix.getError(variantProductId, ptSuffix))}
-                                                                onChange={getSetCellHandler(variantProductId, ptSuffix)}
+                                                                onChange={(raw) => matrix.setCell(variantProductId, ptSuffix, raw)}
                                                             />
                                                         </TableCell>
                                                     );
@@ -448,7 +412,6 @@ export default function PricingMatrixTable({
                                             )}
 
                                             {activePriceTypes.map((pt) => {
-                                                const ptSuffix = priceTypeTierKey(pt);
                                                 return (
                                                     <React.Fragment key={`v-cells-${pt.price_type_id}`}>
                                                         {visibleUnits.length > 0 ? visibleUnits.map((u) => {
@@ -467,7 +430,7 @@ export default function PricingMatrixTable({
                                                                         pendingRequest={matrix.getVersionPendingRequest(version.version_id, pt.price_type_id)}
                                                                         dirty={matrix.isVersionDirty(version.version_id, pt.price_type_id)}
                                                                         error={toErrorString(matrix.getVersionError(version.version_id, pt.price_type_id))}
-                                                                        onChange={getSetVersionCellHandler(version.version_id, pt.price_type_id, version.version_name, base)}
+                                                                        onChange={(raw) => matrix.setVersionCell(version.version_id, pt.price_type_id, version.version_name, base, raw)}
                                                                     />
                                                                 </TableCell>
                                                             );

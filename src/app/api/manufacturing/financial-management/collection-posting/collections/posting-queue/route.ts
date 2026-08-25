@@ -22,6 +22,7 @@ export async function GET(request: Request) {
         const data = await res.json();
         const items = data.data || [];
         
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedItems = items.map((item: any) => ({
             ...item,
             id: item.id,

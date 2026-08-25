@@ -39,6 +39,7 @@ interface PouchDetailResponse {
     remarks: string;
     cashBuckets: {
         tempId: string;
+        denominationId?: number;
         paymentMethodId?: number;
         coaId: number;
         bankId: number | null;

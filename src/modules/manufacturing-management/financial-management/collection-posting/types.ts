@@ -64,7 +64,7 @@ export interface CollectionSummary {
     docNo: string;
     date: string;
     encodedDate: string;
-    collectedBy: any;
+    collectedBy?: unknown;
     salesmanCode: string;
     salesmanName: string;
     amount: number;

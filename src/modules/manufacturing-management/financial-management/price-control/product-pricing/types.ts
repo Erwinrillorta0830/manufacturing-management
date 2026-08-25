@@ -10,8 +10,8 @@ export type Category = { category_id: number; category_name: string };
 export type Brand = { brand_id: number; brand_name: string };
 export type Unit = {
     unit_id: number;
-    unit_name: string | null;
-    unit_shortcut: string | null;
+    unit_name: string;
+    unit_shortcut: string;
     order?: number | null;
 };
 
@@ -54,6 +54,13 @@ export type ProductRow = {
               product_name?: string | null;
           }
         | null;
+    product_code?: string | null;
+    product_name?: string | null;
+    product_category?: number | string | null;
+    product_brand?: number | string | null;
+    barcode?: string | null;
+    parent_id?: number | string | null;
+    __group_id?: number | string | null;
     version_id?: number | string | null;
     price_type_id?: number | null;
     unit_of_measurement: number | null;

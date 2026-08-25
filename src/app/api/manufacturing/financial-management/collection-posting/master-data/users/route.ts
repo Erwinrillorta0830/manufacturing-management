@@ -26,7 +26,7 @@ export async function GET() {
         const data = await res.json();
         const items = data.data || [];
         
-        const mappedUsers = items.map((u: any) => ({
+        const mappedUsers = items.map((u: Record<string, unknown>) => ({
             id: u.user_id || u.id,
             firstName: u.user_fname || u.first_name,
             lastName: u.user_lname || u.last_name,

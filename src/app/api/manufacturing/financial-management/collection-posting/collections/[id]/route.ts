@@ -31,14 +31,14 @@ export async function GET(
 
         let denominations = [];
         if (details.length > 0) {
-            const detailIds = details.map((d: any) => d.id).join(",");
+            const detailIds = details.map((d: Record<string, unknown>) => d.id).join(",");
             const denomUrl = `${DIRECTUS_URL}/items/collection_details_denomination?filter[collection_detail_id][_in]=${detailIds}`;
             const denomRes = await fetch(denomUrl, { headers, cache: "no-store" });
             if (denomRes.ok) denominations = (await denomRes.json()).data || [];
         }
 
-        const cashBuckets = details.map((d: any) => {
-            const denom = denominations.find((x: any) => x.collection_detail_id === d.id);
+        const cashBuckets = details.map((d: Record<string, unknown>) => {
+            const denom = denominations.find((x: Record<string, unknown>) => x.collection_detail_id === d.id);
             return {
                 tempId: denom ? `cash-${denom.denomination_id}` : `detail-${d.id}`,
                 coaId: d.type,
@@ -84,7 +84,7 @@ export async function PUT(
             collection_receipt_no: payload.crNo,
             collection_date: payload.collectionDate,
             remarks: payload.remarks,
-            totalAmount: payload.cashBuckets?.reduce((sum: number, b: any) => sum + (b.amount || 0), 0) || 0
+            totalAmount: payload.cashBuckets?.reduce((sum: number, b: Record<string, unknown>) => sum + ((b.amount as number) || 0), 0) || 0
         };
 
         const colRes = await fetch(`${DIRECTUS_URL}/items/collection/${id}`, { 
@@ -98,7 +98,7 @@ export async function PUT(
         if (existingDetailsRes.ok) {
             const existingDetails = (await existingDetailsRes.json()).data || [];
             if (existingDetails.length > 0) {
-                const deleteKeys = existingDetails.map((d: any) => d.id);
+                const deleteKeys = existingDetails.map((d: Record<string, unknown>) => d.id);
                 await fetch(`${DIRECTUS_URL}/items/collection_details`, {
                     method: "DELETE", headers, body: JSON.stringify(deleteKeys)
                 });
@@ -107,7 +107,7 @@ export async function PUT(
 
         // Insert new details
         if (payload.cashBuckets && payload.cashBuckets.length > 0) {
-            const detailsPromises = payload.cashBuckets.map(async (bucket: any) => {
+            const detailsPromises = payload.cashBuckets.map(async (bucket: Record<string, unknown>) => {
                 const detailData = {
                     collection_id: id,
                     type: bucket.coaId,

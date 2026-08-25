@@ -73,11 +73,12 @@ export default function CashieringMasterList({
         return col.status || "Draft";
     };
 
-    const getCollectedBy = (val: any) => {
+    const getCollectedBy = (val: unknown) => {
         if (val === null || val === undefined) return "N/A";
         if (typeof val === 'object') {
-            const fname = val.user_fname || val.firstName || "";
-            const lname = val.user_lname || val.lastName || "";
+            const v = val as Record<string, unknown>;
+            const fname = v.user_fname || v.firstName || "";
+            const lname = v.user_lname || v.lastName || "";
             const name = `${fname} ${lname}`.trim();
             return name || "N/A";
         }

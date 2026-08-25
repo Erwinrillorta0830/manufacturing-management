@@ -18,7 +18,7 @@ async function deleteByCollectionId(collectionName: string, id: string) {
     if (!getRes.ok) return;
     
     const data = await getRes.json();
-    const ids = data.data?.map((item: any) => item.id) || [];
+    const ids = data.data?.map((item: Record<string, unknown>) => item.id) || [];
     
     // 2. Delete if IDs exist
     if (ids.length > 0) {
@@ -50,9 +50,9 @@ export async function POST(
         // 2. Map and Insert New Allocations
         const allocations = payload.allocations || [];
         
-        const invoicesPayload: any[] = [];
-        const memosPayload: any[] = [];
-        const returnsPayload: any[] = [];
+        const invoicesPayload: Record<string, unknown>[] = [];
+        const memosPayload: Record<string, unknown>[] = [];
+        const returnsPayload: Record<string, unknown>[] = [];
         
         // Fallback linked_by to 1 if not provided by payload/session
         const linkedBy = payload.collectedBy || 1;
