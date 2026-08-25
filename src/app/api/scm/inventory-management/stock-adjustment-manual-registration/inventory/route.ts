@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
-import { stockAdjustmentManualService } from "@/modules/manufacturing-management/stock-adjustment-manual-registration/services/stock-adjustment-manual-service";
-import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-manual-registration/utils/error-handler";
+import { stockAdjustmentManualService } from "@/modules/manufacturing-management/stock-adjustment-registration/services/stock-adjustment-manual-service";
+import { handleApiError } from "@/modules/manufacturing-management/stock-adjustment-registration/utils/error-handler";
 
 export async function GET(request: NextRequest) {
   try {

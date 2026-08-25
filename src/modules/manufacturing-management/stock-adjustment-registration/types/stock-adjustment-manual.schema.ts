@@ -55,6 +55,14 @@ export const StockAdjustmentManualItemSchema = z.object({
   category_name: z.string().nullable().optional(),
   unit_order: z.number().nullable().optional(),
   db_id: z.number().optional(),
+  // Lot & Batch Tracking
+  lot_id: z.number().nullable().optional(),
+  lot_name: z.string().nullable().optional(),
+  inventory_lot_id: z.number().nullable().optional(),
+  batch_no: z.string().nullable().optional(),
+  manufacturing_date: z.string().nullable().optional(),
+  expiry_date: z.string().nullable().optional(),
+  qa_status: z.enum(["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"]).optional(),
 });
 export type StockAdjustmentManualItem = z.infer<typeof StockAdjustmentManualItemSchema>;
 

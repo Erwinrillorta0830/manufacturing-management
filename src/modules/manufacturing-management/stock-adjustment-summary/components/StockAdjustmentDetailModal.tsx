@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StockAdjustmentDetailView } from "@/modules/manufacturing-management/stock-adjustment-registration/components/StockAdjustmentDetailView";
+import { StockAdjustmentDetailView } from "@/modules/manufacturing-management/stock-adjustment-posting/components/StockAdjustmentDetailView";
 import { X } from "lucide-react";
 
 interface StockAdjustmentDetailModalProps {

@@ -1,13 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { StockAdjustmentManualForm } from "@/modules/manufacturing-management/stock-adjustment-manual-registration/components/forms/StockAdjustmentManualForm";
+import { StockAdjustmentManualForm } from "./components/forms/StockAdjustmentManualForm";
 
 interface StockAdjustmentManualRegistrationModuleProps {
   userFullName?: string;
 }
 
-export default function StockAdjustmentManualRegistrationModule({
+export function StockAdjustmentRegistrationModule({
   userFullName
 }: StockAdjustmentManualRegistrationModuleProps) {
   const router = useRouter();
@@ -26,3 +26,5 @@ export default function StockAdjustmentManualRegistrationModule({
     </div>
   );
 }
+
+export default StockAdjustmentRegistrationModule;

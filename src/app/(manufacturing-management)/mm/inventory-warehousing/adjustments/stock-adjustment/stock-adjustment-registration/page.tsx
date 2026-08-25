@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
-import StockAdjustmentRegistrationModule from "@/modules/manufacturing-management/stock-adjustment-registration/StockAdjustmentRegistrationModule";
+import StockAdjustmentManualRegistrationModule from "@/modules/manufacturing-management/stock-adjustment-registration/StockAdjustmentManualRegistrationModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +69,7 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     };
 }
 
-export default async function StockAdjustmentRegistrationPage(props: {
+export default async function StockAdjustmentManualRegistrationPage(props: {
     params: Promise<Record<string, string | string[] | undefined>>;
     searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
@@ -101,7 +101,7 @@ export default async function StockAdjustmentRegistrationPage(props: {
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Stock Adjustment Registration
+                                        Stock Adjustment Manual Registration
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -115,7 +115,7 @@ export default async function StockAdjustmentRegistrationPage(props: {
             </header>
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
-                <StockAdjustmentRegistrationModule />
+                <StockAdjustmentManualRegistrationModule userFullName={headerUser.name} />
             </main>
         </div>
     );

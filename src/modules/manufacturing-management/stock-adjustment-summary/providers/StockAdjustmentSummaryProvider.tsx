@@ -117,8 +117,31 @@ export function StockAdjustmentSummaryProvider({ children }: { children: React.R
   }, [search, branchId, type]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    let isMounted = true;
+    const loadAdjustments = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await stockAdjustmentSummaryApi.fetchAdjustments({
+          search,
+          branchId,
+          type
+        });
+        if (isMounted) setRawData(data);
+      } catch (err) {
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : "Failed to load summary details");
+          toast.error("Failed to load summary details");
+        }
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+    loadAdjustments();
+    return () => {
+      isMounted = false;
+    };
+  }, [search, branchId, type]);
 
   // Client-side filtered data calculation (for Status, Supplier and Date Range)
   const filteredData = useMemo(() => {

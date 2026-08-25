@@ -20,10 +20,17 @@ import {
   Paperclip,
   AlertCircle,
   Printer,
+  Layers,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Badge } from "@/components/ui/badge";
+import {
+  LotBatchSelectionModal,
+  type LotBatchSelectionResult,
+} from "@/modules/manufacturing-management/shared/components/LotBatchSelectionModal";
+import { StockAllocationModal } from "@/modules/manufacturing-management/shared/components/StockAllocationModal";
+import type { StockAllocationPlan } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import {
   StockAdjustmentManualFormSchema,
   StockAdjustmentManualFormValues,
@@ -82,7 +89,9 @@ interface ProductTableRowProps {
   control: Control<StockAdjustmentManualFormValues>;
   onRemove: (index: number) => void;
   setValue: UseFormSetValue<StockAdjustmentManualFormValues>;
+  onOpenLotBatch?: (index: number) => void;
   isReadOnly?: boolean;
+  type?: "IN" | "OUT";
 }
 
 const ProductTableRow = React.memo(function ProductTableRow({
@@ -90,7 +99,9 @@ const ProductTableRow = React.memo(function ProductTableRow({
   control,
   onRemove,
   setValue,
+  onOpenLotBatch,
   isReadOnly = false,
+  type = "IN",
 }: ProductTableRowProps) {
   const product_name = useWatch({ control, name: `items.${index}.product_name` });
   const product_code = useWatch({ control, name: `items.${index}.product_code` });
@@ -98,6 +109,10 @@ const ProductTableRow = React.memo(function ProductTableRow({
   const quantity = useWatch({ control, name: `items.${index}.quantity` });
   const costPerUnit = useWatch({ control, name: `items.${index}.cost_per_unit` });
   const brandName = useWatch({ control, name: `items.${index}.brand_name` });
+  const lotId = useWatch({ control, name: `items.${index}.lot_id` });
+  const lotName = useWatch({ control, name: `items.${index}.lot_name` });
+  const batchNo = useWatch({ control, name: `items.${index}.batch_no` });
+  const qaStatus = useWatch({ control, name: `items.${index}.qa_status` });
 
   const { errors } = useFormState({ control });
   const rowError = Array.isArray(errors.items)
@@ -121,7 +136,61 @@ const ProductTableRow = React.memo(function ProductTableRow({
       <td className="p-3 min-w-[250px]">
         <div className="flex flex-col">
           <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
-          <span className="text-[10px] text-muted-foreground font-mono mt-0.5">{product_code}</span>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] text-muted-foreground font-mono">{product_code || "N/A"}</span>
+            {type === "OUT" ? (
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  onClick={() => onOpenLotBatch?.(index)}
+                  className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20"
+                >
+                  <Layers className="w-2.5 h-2.5 text-emerald-600" />
+                  AUTO — FEFO {batchNo ? `(${batchNo})` : ''}
+                </Badge>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLotBatch?.(index)}
+                    className="text-[10px] text-primary hover:underline font-semibold"
+                  >
+                    [View Allocation]
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                {batchNo ? (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 cursor-pointer hover:border-primary/50"
+                    onClick={() => onOpenLotBatch?.(index)}
+                  >
+                    <Layers className="w-2.5 h-2.5 text-primary" />
+                    {batchNo} ({lotName || `Lot #${lotId || '—'}`})
+                  </Badge>
+                ) : (
+                  !isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenLotBatch?.(index)}
+                      className="text-[10px] text-primary/80 hover:text-primary underline flex items-center gap-0.5"
+                    >
+                      <Layers className="w-2.5 h-2.5" /> + Lot/Batch
+                    </button>
+                  )
+                )}
+                {qaStatus && (
+                  <Badge
+                    variant={qaStatus === "GOOD" ? "outline" : qaStatus === "DAMAGED" ? "destructive" : "secondary"}
+                    className="text-[9px] py-0 h-3.5 px-1 font-mono"
+                  >
+                    {qaStatus}
+                  </Badge>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </td>
       <td className="p-3">
@@ -294,7 +363,47 @@ export function StockAdjustmentManualForm({
   const [supplierSearch, setSupplierSearch] = useState("");
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
+  const [activeLotBatchIndex, setActiveLotBatchIndex] = useState<number | null>(null);
   const [companyData, setCompanyData] = useState<CompanyData | null>(null);
+
+  const handleOpenLotBatchModal = (index: number) => {
+    setActiveLotBatchIndex(index);
+    setLotBatchModalOpen(true);
+  };
+
+  const handleApplyLotBatch = (result: LotBatchSelectionResult) => {
+    if (activeLotBatchIndex !== null && activeLotBatchIndex >= 0) {
+      form.setValue(`items.${activeLotBatchIndex}.lot_id`, result.lot_id);
+      form.setValue(`items.${activeLotBatchIndex}.lot_name`, result.lot_name);
+      form.setValue(`items.${activeLotBatchIndex}.inventory_lot_id`, result.inventory_lot_id);
+      form.setValue(`items.${activeLotBatchIndex}.batch_no`, result.batch_no);
+      form.setValue(`items.${activeLotBatchIndex}.manufacturing_date`, result.manufacturing_date);
+      form.setValue(`items.${activeLotBatchIndex}.expiry_date`, result.expiry_date);
+      form.setValue(`items.${activeLotBatchIndex}.qa_status`, result.qa_status);
+      if (result.unit_cost) {
+        form.setValue(`items.${activeLotBatchIndex}.cost_per_unit`, result.unit_cost);
+      }
+    }
+  };
+
+  const handleApplyAllocation = (plan: StockAllocationPlan) => {
+    if (activeLotBatchIndex !== null && activeLotBatchIndex >= 0) {
+      if (plan.allocations.length > 0) {
+        const primary = plan.allocations[0];
+        form.setValue(`items.${activeLotBatchIndex}.lot_id`, primary.lot_id);
+        form.setValue(`items.${activeLotBatchIndex}.lot_name`, primary.lot_name);
+        form.setValue(`items.${activeLotBatchIndex}.inventory_lot_id`, primary.inventory_lot_id);
+        form.setValue(`items.${activeLotBatchIndex}.batch_no`, plan.allocations.map(a => a.batch_no).join(', '));
+        form.setValue(`items.${activeLotBatchIndex}.manufacturing_date`, primary.manufacturing_date);
+        form.setValue(`items.${activeLotBatchIndex}.expiry_date`, primary.expiry_date);
+        form.setValue(`items.${activeLotBatchIndex}.qa_status`, primary.qa_status);
+        if (primary.unit_cost) {
+          form.setValue(`items.${activeLotBatchIndex}.cost_per_unit`, primary.unit_cost);
+        }
+      }
+    }
+  };
 
   useEffect(() => {
     const fetchCompanyData = async () => {
@@ -694,14 +803,22 @@ export function StockAdjustmentManualForm({
   useEffect(() => {
     if (watchedBranchId && branches.length > 0) {
       const found = branches.find(b => b.id === Number(watchedBranchId));
-      if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+      if (found) {
+        queueMicrotask(() => {
+          setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+        });
+      }
     }
   }, [watchedBranchId, branches]);
 
   useEffect(() => {
     if (watchedSupplierId && suppliers.length > 0) {
       const found = suppliers.find(s => s.id === Number(watchedSupplierId));
-      if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+      if (found) {
+        queueMicrotask(() => {
+          setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+        });
+      }
     }
   }, [watchedSupplierId, suppliers]);
 
@@ -1022,7 +1139,9 @@ export function StockAdjustmentManualForm({
   // Ensure current page is valid when filtering changes total pages
   useEffect(() => {
     if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
+      queueMicrotask(() => {
+        setCurrentPage(totalPages);
+      });
     }
   }, [totalPages, currentPage]);
 
@@ -1115,7 +1234,12 @@ export function StockAdjustmentManualForm({
         )}
       </div>
 
-      <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-6">
+      <form
+        onSubmit={(e) => {
+          form.handleSubmit(onSubmit, onInvalid)(e);
+        }}
+        className="space-y-6"
+      >
         <Card className="border-border shadow-sm bg-card">
           <CardHeader className="bg-card border-b border-border py-4 px-6">
             <CardTitle className="text-base font-bold text-foreground">
@@ -1458,6 +1582,8 @@ export function StockAdjustmentManualForm({
                           control={form.control}
                           onRemove={(idx) => setDeletingIndex(idx)}
                           setValue={form.setValue}
+                          onOpenLotBatch={handleOpenLotBatchModal}
+                          type={form.watch("type")}
                           isReadOnly={isReadOnly}
                         />
                       ))
@@ -1576,6 +1702,41 @@ export function StockAdjustmentManualForm({
           initialSelectedItems={form.getValues("items")}
           onConfirm={handleConfirmModalItems}
         />
+
+        {/* For Stock OUT: Stock Allocation Modal (FEFO / Manual) */}
+        {form.watch("type") === "OUT" ? (
+          <StockAllocationModal
+            open={lotBatchModalOpen}
+            onOpenChange={setLotBatchModalOpen}
+            branchId={Number(watchedBranchId) || 0}
+            productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : 0}
+            productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : ''}
+            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
+            uomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
+            onConfirm={handleApplyAllocation}
+          />
+        ) : (
+          /* For Stock IN: Batch & Lot Assignment Modal */
+          <LotBatchSelectionModal
+            open={lotBatchModalOpen}
+            onOpenChange={setLotBatchModalOpen}
+            branchId={Number(watchedBranchId) || undefined}
+            productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : undefined}
+            productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : undefined}
+            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
+            mode="CREATE_OR_ASSIGN"
+            initialValues={activeLotBatchIndex !== null ? {
+              lot_id: form.watch(`items.${activeLotBatchIndex}.lot_id`) || undefined,
+              inventory_lot_id: form.watch(`items.${activeLotBatchIndex}.inventory_lot_id`) || undefined,
+              batch_no: form.watch(`items.${activeLotBatchIndex}.batch_no`) || '',
+              manufacturing_date: form.watch(`items.${activeLotBatchIndex}.manufacturing_date`),
+              expiry_date: form.watch(`items.${activeLotBatchIndex}.expiry_date`),
+              unit_cost: form.watch(`items.${activeLotBatchIndex}.cost_per_unit`) || undefined,
+              qa_status: form.watch(`items.${activeLotBatchIndex}.qa_status`) || 'GOOD',
+            } : undefined}
+            onConfirm={handleApplyLotBatch}
+          />
+        )}
 
         <div className="flex items-center justify-end gap-3 pb-8">
           {onCancel ? (
