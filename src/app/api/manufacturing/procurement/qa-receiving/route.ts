@@ -44,6 +44,66 @@ interface DirectusPurchaseOrderMin {
     datetime: string;
 }
 
+interface AllocationProductContext {
+    productId: number;
+    productTypeId: number;
+    categoryType: PurchaseOrderCategoryType;
+    uomId: number;
+}
+
+function relationNumber(value: unknown, keys: string[]): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of keys) {
+            const nested = relationNumber(record[key], keys);
+            if (nested !== null) return nested;
+        }
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function loadAllocationProduct(productId: number): Promise<AllocationProductContext> {
+    const response = await fetch(
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) throw new Error(`Directus error loading product allocation metadata: ${response.status}`);
+    const product = (await response.json()).data as Record<string, unknown> | undefined;
+    const productTypeId = relationNumber(product?.product_type, ["product_type_id", "type_id", "id"]);
+    const uomId = relationNumber(product?.unit_of_measurement, ["unit_id", "id"]);
+    if (!productTypeId || !uomId) throw new Error("The selected product must have a Product Type and UOM before inventory allocation.");
+    const categoryTypes = await resolveProductCategoryTypes([productId]);
+    const categoryType = categoryTypes.get(productId);
+    if (!categoryType) throw new Error("The selected product has no valid Product Type classification.");
+    return { productId, productTypeId, categoryType, uomId };
+}
+
+function lotNumber(value: unknown): number | null {
+    return relationNumber(value, ["lot_id", "id"]);
+}
+
+function unitNumber(value: unknown): number | null {
+    return relationNumber(value, ["unit_id", "id"]);
+}
+
+function productTypeNumber(value: unknown): number | null {
+    return relationNumber(value, ["inventory_type_id", "product_type_id", "type_id", "id"]);
+}
+
+function finiteCapacity(value: unknown): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function dateOnly(value: unknown): string | null {
+    const text = String(value ?? "").trim();
+    return text ? text.slice(0, 10) : null;
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -68,40 +128,91 @@ export async function GET(request: Request) {
             return NextResponse.json(json.data);
         }
 
-        if (action === "lots") {
-            const res = await fetch(
-                `${DIRECTUS_URL}/items/lots?fields=lot_id,lot_name,max_batch_capacity&sort=lot_name&limit=-1`,
+        if (action === "lots" || action === "batches") {
+            if (!parsedProductId) {
+                return NextResponse.json({ error: "productId is required for lot and batch lookups." }, { status: 400 });
+            }
+            const product = await loadAllocationProduct(parsedProductId);
+            let requestedLotId: number | undefined;
+            if (action === "batches") {
+                const parsedLotId = Number(searchParams.get("lotId"));
+                if (!Number.isSafeInteger(parsedLotId) || parsedLotId <= 0) {
+                    return NextResponse.json({ error: "lotId must be a positive integer for batch lookups." }, { status: 400 });
+                }
+                requestedLotId = parsedLotId;
+            }
+
+            const lotFilter = requestedLotId
+                ? `&filter[lot_id][_eq]=${requestedLotId}`
+                : "";
+            const lotsResponse = await fetch(
+                `${DIRECTUS_URL}/items/lots?fields=*&sort=lot_name&limit=-1${lotFilter}`,
                 { headers, cache: "no-store" }
             );
-            if (!res.ok) throw new Error(`Directus error loading storage lots: ${res.status}`);
-            const lots = ((await res.json()).data || []) as Array<Record<string, unknown>>;
-            const lotIds = lots.map(lot => Number(lot.lot_id)).filter(id => Number.isSafeInteger(id) && id > 0);
+            if (!lotsResponse.ok) throw new Error(`Directus error loading storage lots: ${lotsResponse.status}`);
+            const lots = ((await lotsResponse.json()).data || []) as Array<Record<string, unknown>>;
+            const lotIds = lots.map(lot => lotNumber(lot.lot_id)).filter((id): id is number => id !== null);
             const inventoryResponse = lotIds.length > 0
                 ? await fetch(
-                    `${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,quantity&limit=-1`,
+                    `${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,product_id,batch_no,quantity,manufacturing_date,expiry_date&limit=-1`,
                     { headers, cache: "no-store" }
                 )
                 : null;
             if (inventoryResponse && !inventoryResponse.ok) {
                 throw new Error(`Directus error loading storage-lot occupancy: ${inventoryResponse.status}`);
             }
-            const occupiedByLot = sumMovementQuantitiesByLot(
-                ((inventoryResponse ? (await inventoryResponse.json()).data : []) || []) as Array<Record<string, unknown>>
-            );
-            return NextResponse.json(lots.map(lot => {
-                const lotId = Number(lot.lot_id);
-                const maxBatchCapacity = lot.max_batch_capacity === null || lot.max_batch_capacity === undefined || lot.max_batch_capacity === ""
-                    ? null
-                    : Number(lot.max_batch_capacity);
-                const occupiedQuantity = occupiedByLot.get(lotId) || 0;
-                return {
+            const movementRows = ((inventoryResponse ? (await inventoryResponse.json()).data : []) || []) as Array<Record<string, unknown>>;
+            const occupiedByLot = sumMovementQuantitiesByLot(movementRows);
+
+            if (action === "batches") {
+                const lot = lots[0];
+                if (!lot) return NextResponse.json({ error: "The selected storage lot does not exist." }, { status: 404 });
+                const lotId = lotNumber(lot.lot_id) as number;
+                const capacity = finiteCapacity(lot.max_batch_capacity);
+                const occupied = Math.max(0, occupiedByLot.get(lotId) || 0);
+                const lotTypeId = productTypeNumber(lot.inventory_type_id);
+                const lotUomId = unitNumber(lot.unit_id);
+                const isEmptyUnassigned = !lotTypeId && occupied <= 0;
+                if (lotUomId !== product.uomId || (!isEmptyUnassigned && lotTypeId !== product.productTypeId) || !capacity || capacity - occupied <= 0) {
+                    return NextResponse.json({ error: "The selected storage lot is not compatible with this product." }, { status: 409 });
+                }
+                const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
+                for (const movement of movementRows.filter(row => lotNumber(row.lot_id) === lotId && relationNumber(row.product_id, ["product_id", "id"]) === product.productId)) {
+                    const batchNumber = String(movement.batch_no ?? "").trim();
+                    if (!batchNumber) continue;
+                    const existing = batches.get(batchNumber.toLowerCase());
+                    batches.set(batchNumber.toLowerCase(), {
+                        batchNumber,
+                        manufacturingDate: existing?.manufacturingDate || dateOnly(movement.manufacturing_date),
+                        expirationDate: existing?.expirationDate || dateOnly(movement.expiry_date)
+                    });
+                }
+                return NextResponse.json([...batches.values()].sort((a, b) => a.batchNumber.localeCompare(b.batchNumber)));
+            }
+
+            const eligibleLots = lots.flatMap(lot => {
+                const lotId = lotNumber(lot.lot_id);
+                if (!lotId) return [];
+                const capacity = finiteCapacity(lot.max_batch_capacity);
+                const occupiedQuantity = Math.max(0, occupiedByLot.get(lotId) || 0);
+                const remainingCapacity = capacity === null ? null : Math.max(0, capacity - occupiedQuantity);
+                const lotTypeId = productTypeNumber(lot.inventory_type_id);
+                const uomId = unitNumber(lot.unit_id);
+                const isEmptyUnassigned = !lotTypeId && occupiedQuantity <= 0;
+                const compatibleType = lotTypeId === product.productTypeId || isEmptyUnassigned;
+                if (uomId !== product.uomId || !compatibleType || remainingCapacity === null || remainingCapacity <= 0) return [];
+                return [{
                     ...lot,
+                    inventory_type_id: lotTypeId,
+                    unit_id: uomId,
+                    product_type_id: product.productTypeId,
+                    product_category_type: product.categoryType,
                     occupiedQuantity,
-                    availableQuantity: maxBatchCapacity !== null && Number.isFinite(maxBatchCapacity)
-                        ? Math.max(0, maxBatchCapacity - occupiedQuantity)
-                        : null
-                };
-            }));
+                    availableQuantity: remainingCapacity,
+                    remainingCapacity
+                }];
+            });
+            return NextResponse.json(eligibleLots);
         }
 
         const getMovementsAndResolveMetadata = async (filterKey: "product_id" | "branch_id", filterVal: number) => {

@@ -104,7 +104,7 @@ async function movementRowsForCommit(
 ) {
     if (expectedMovementCount === 0) return [];
 
-    const movementFields = "movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,version_id";
+    const movementFields = "movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id";
     const sourceIdParams = new URLSearchParams({
         "filter[source_document_id][_in]": receivingIds.join(","),
         fields: movementFields,
@@ -233,8 +233,16 @@ async function persistedResult(
         }
     }
     const expectedMovementCount = input.lines.reduce((count, line) =>
-        count + normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId).length
-        + normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId).length, 0);
+        count + normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId, {
+            batchNumber: line.supplierBatchNumber,
+            manufacturingDate: line.manufacturingDate,
+            expirationDate: line.expiryDate
+        }).length
+        + normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId, {
+            batchNumber: line.supplierBatchNumber,
+            manufacturingDate: line.manufacturingDate,
+            expirationDate: line.expiryDate
+        }).length, 0);
     const movementRows = await movementRowsForCommit(receivingIds, receiptNumbers, expectedMovementCount);
     if (movementRows.length !== expectedMovementCount) {
         throw new CommitError(409, `The purchase order status changed but its inventory movements are incomplete (expected ${expectedMovementCount}, found ${movementRows.length}). Reconciliation is required.`);
@@ -289,8 +297,13 @@ async function persistedResult(
     const finalAllocations: FinalReceivingAllocation[] = [];
     const receivingRecords: FinalReceivingRecord[] = [];
     for (const line of input.lines) {
-        const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId);
-        const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId);
+        const fallbackMetadata = {
+            batchNumber: line.supplierBatchNumber,
+            manufacturingDate: line.manufacturingDate,
+            expirationDate: line.expiryDate
+        };
+        const acceptedLotAllocations = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations, line.storageLotId, fallbackMetadata);
+        const rejectedLotAllocations = normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations, line.storageLotId, fallbackMetadata);
         const receiptNo = receiptNumberForLine(receivingTicketNumber, line.lineId);
         const receiving = receivingRows.find(row => row.receipt_no === receiptNo);
         const receivingLineId = Number(receiving?.purchase_order_product_id);
@@ -307,12 +320,14 @@ async function persistedResult(
                 kind: "Passed" as const,
                 quantity: allocation.quantity,
                 storageLotId: allocation.storageLotId,
+                batchNumber: allocation.batchNumber,
                 passed: true
             })),
             ...rejectedLotAllocations.map(allocation => ({
                 kind: "Rejected" as const,
                 quantity: allocation.quantity,
                 storageLotId: allocation.storageLotId,
+                batchNumber: allocation.batchNumber,
                 passed: false
             }))
         ];
@@ -323,6 +338,7 @@ async function persistedResult(
                 return (route.passed ? branchId === input.destinationBranchId : branchId !== input.destinationBranchId)
                     && Number(row.quantity) === route.quantity
                     && relationId(row.lot_id, "lot_id") === route.storageLotId
+                    && String(row.batch_no || "").trim().toLowerCase() === route.batchNumber.trim().toLowerCase()
                     && String(row.source_document_no || "") === receiptNo;
             });
             if (matches.length !== 1) {
@@ -352,7 +368,10 @@ async function persistedResult(
                 branchId,
                 transactionTypeId: relationId(movement.transaction_type_id, "transaction_type_id"),
                 sourceDocumentNo: receiptNo,
-                quantity: route.quantity
+                quantity: route.quantity,
+                batchNumber: String(movement.batch_no || route.batchNumber),
+                manufacturingDate: movement.manufacturing_date ? String(movement.manufacturing_date) : null,
+                expirationDate: movement.expiry_date ? String(movement.expiry_date) : null
             });
         }
 
@@ -588,10 +607,16 @@ export async function POST(request: Request) {
                         lot_id: line.storageLotId || line.acceptedLotAllocations[0]?.storageLotId || line.rejectedLotAllocations[0]?.storageLotId,
                         accepted_lot_allocations: line.acceptedLotAllocations.map(allocation => ({
                             storage_lot_id: allocation.storageLotId,
+                            batch_no: allocation.batchNumber,
+                            manufacturing_date: allocation.manufacturingDate,
+                            expiration_date: allocation.expirationDate,
                             quantity: allocation.quantity
                         })),
                         rejected_lot_allocations: line.rejectedLotAllocations.map(allocation => ({
                             storage_lot_id: allocation.storageLotId,
+                            batch_no: allocation.batchNumber,
+                            manufacturing_date: allocation.manufacturingDate,
+                            expiration_date: allocation.expirationDate,
                             quantity: allocation.quantity
                         })),
                         qa_results: result.evaluations.map(evaluation => ({
