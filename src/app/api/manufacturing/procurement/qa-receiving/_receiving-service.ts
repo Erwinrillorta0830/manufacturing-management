@@ -368,7 +368,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const lineIds = lineItemUpdates.map(item => item.line_id);
         if (new Set(lineIds).size !== lineIds.length) throw new ReceivingError("Duplicate purchase-order lines are not allowed.", 400);
         const requestedLotIds = [...new Set(lineItemUpdates.flatMap(item => [
-            item.lot_id,
             ...item.accepted_lot_allocations.map(allocation => allocation.storage_lot_id),
             ...item.rejected_lot_allocations.map(allocation => allocation.storage_lot_id)
         ]))];
@@ -416,7 +415,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!replacementDispositionId && receiptType === "full" && missingLineIds.length > 0) {
             throw new ReceivingError(`Full receipt requires every purchase-order line to be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
-        if (lineItemUpdates.some(item => item.lot_id && !validLotIds.has(item.lot_id))) throw new ReceivingError("One or more storage lots do not exist.", 400);
         if (lineItemUpdates.some(item => item.accepted_lot_allocations.some(allocation => !validLotIds.has(allocation.storage_lot_id)))) {
             throw new ReceivingError("One or more accepted inventory storage lots do not exist.", 400);
         }
@@ -431,11 +429,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]));
         const incomingByLot = new Map<number, number>();
         for (const item of lineItemUpdates) {
-            const fallbackMetadata = {
-                batchNumber: item.batch_no,
-                manufacturingDate: item.manufacturing_date,
-                expirationDate: item.expiration_date
-            };
             for (const allocation of normalizeReceivingLotAllocations(
                 Number(item.quantity_accepted),
                 item.accepted_lot_allocations.map(value => ({
@@ -444,9 +437,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     batchNumber: value.batch_no,
                     manufacturingDate: value.manufacturing_date,
                     expirationDate: value.expiration_date
-                })),
-                item.lot_id,
-                fallbackMetadata
+                }))
             )) {
                 incomingByLot.set(allocation.storageLotId, (incomingByLot.get(allocation.storageLotId) || 0) + allocation.quantity);
             }
@@ -458,9 +449,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     batchNumber: value.batch_no,
                     manufacturingDate: value.manufacturing_date,
                     expirationDate: value.expiration_date
-                })),
-                item.lot_id,
-                fallbackMetadata
+                }))
             )) {
                 incomingByLot.set(allocation.storageLotId, (incomingByLot.get(allocation.storageLotId) || 0) + allocation.quantity);
             }
@@ -592,58 +581,36 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
                 throw new ReceivingError(`Remarks are required for the quantity discrepancy on product ${productId}.`, 400);
             }
-            if (declaredAccepted > 0 && categoryType !== "PACKAGING" && !item.expiration_date) {
-                const shelfLifeDays = Number(product.product_shelf_life || 365);
-                const mfgDateStr = item.manufacturing_date || receiptDate;
-                const mfgTime = new Date(mfgDateStr).getTime();
-                if (!isNaN(mfgTime)) {
-                    const calculatedExp = new Date(mfgTime + shelfLifeDays * 24 * 60 * 60 * 1000);
-                    item.expiration_date = calculatedExp.toISOString().split("T")[0];
-                } else {
-                    throw new ReceivingError(`Expiration date is required for product ${productId}.`, 400);
-                }
-            }
-            if (item.expiration_date && !evaluateShelfLife(receiptDate, item.expiration_date, Number(product.product_shelf_life || 0)).valid) {
-                throw new ReceivingError(`Expiry date must be after the receipt date for product ${productId}.`, 400);
-            }
-
             // unit_price is the stored PHP base cost. Taxes, discounts, and
             // withholding are line totals and must not be converted back into
             // a unit cost for receiving or landed-cost allocation.
             const baseUnitCost = Number(poLine.unit_price || 0);
             const accepted = received - rejected;
-            const fallbackMetadata = {
-                batchNumber: item.batch_no,
-                manufacturingDate: item.manufacturing_date,
-                expirationDate: item.expiration_date
-            };
+            const acceptedAllocationDrafts = item.accepted_lot_allocations.map(allocation => ({
+                storageLotId: allocation.storage_lot_id,
+                quantity: allocation.quantity,
+                batchNumber: allocation.batch_no,
+                manufacturingDate: allocation.manufacturing_date,
+                expirationDate: allocation.expiration_date
+            }));
             const acceptedLotAllocations = normalizeReceivingLotAllocations(
                 accepted,
-                item.accepted_lot_allocations.map(allocation => ({
-                    storageLotId: allocation.storage_lot_id,
-                    quantity: allocation.quantity,
-                    batchNumber: allocation.batch_no,
-                    manufacturingDate: allocation.manufacturing_date,
-                    expirationDate: allocation.expiration_date
-                })),
-                item.lot_id,
-                fallbackMetadata
+                acceptedAllocationDrafts
             );
-            const allocationError = receivingLotAllocationError(accepted, acceptedLotAllocations, item.lot_id, fallbackMetadata);
+            const allocationError = receivingLotAllocationError(accepted, acceptedAllocationDrafts);
             if (allocationError) throw new ReceivingError(`${allocationError} Product ${productId}.`, 400);
+            const rejectedAllocationDrafts = item.rejected_lot_allocations.map(allocation => ({
+                storageLotId: allocation.storage_lot_id,
+                quantity: allocation.quantity,
+                batchNumber: allocation.batch_no,
+                manufacturingDate: allocation.manufacturing_date,
+                expirationDate: allocation.expiration_date
+            }));
             const rejectedLotAllocations = normalizeRejectedLotAllocations(
                 rejected,
-                item.rejected_lot_allocations.map(allocation => ({
-                    storageLotId: allocation.storage_lot_id,
-                    quantity: allocation.quantity,
-                    batchNumber: allocation.batch_no,
-                    manufacturingDate: allocation.manufacturing_date,
-                    expirationDate: allocation.expiration_date
-                })),
-                item.lot_id,
-                fallbackMetadata
+                rejectedAllocationDrafts
             );
-            const rejectedAllocationError = rejectedLotAllocationError(rejected, rejectedLotAllocations, item.lot_id, fallbackMetadata);
+            const rejectedAllocationError = rejectedLotAllocationError(rejected, rejectedAllocationDrafts);
             if (rejectedAllocationError) throw new ReceivingError(`${rejectedAllocationError} Product ${productId}.`, 400);
             for (const allocation of [...acceptedLotAllocations, ...rejectedLotAllocations]) {
                 if (!allocation.batchNumber.trim()) {
@@ -654,6 +621,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }
                 if (allocation.manufacturingDate && allocation.expirationDate && allocation.manufacturingDate > allocation.expirationDate) {
                     throw new ReceivingError(`Manufacturing Date cannot be later than Expiry Date for product ${productId}.`, 400);
+                }
+                if (allocation.expirationDate && !evaluateShelfLife(receiptDate, allocation.expirationDate, Number(product.product_shelf_life || 0)).valid) {
+                    throw new ReceivingError(`Expiry date must be after the receipt date for product ${productId}.`, 400);
                 }
                 const lot = lotRows.find(row => Number(row.lot_id) === allocation.storageLotId);
                 if (!lot) throw new ReceivingError(`Storage lot ${allocation.storageLotId} does not exist.`, 400);
@@ -676,8 +646,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }
                 uomByLot.set(allocation.storageLotId, productUomId);
             }
-            const primaryLotId = item.lot_id || acceptedLotAllocations[0]?.storageLotId || rejectedLotAllocations[0]?.storageLotId;
-            if (!primaryLotId) throw new ReceivingError(`A storage lot is required for product ${productId}.`, 400);
+            const primaryAllocation = acceptedLotAllocations[0] || rejectedLotAllocations[0];
+            if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${productId}.`, 400);
             return {
                 item,
                 poLine,
@@ -689,7 +659,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 baseUnitCost,
                 acceptedLotAllocations,
                 rejectedLotAllocations,
-                primaryLotId,
                 categoryType,
                 weightBreakdown,
                 remainingQuantity: overDelivery.remainingQuantity,
@@ -824,9 +793,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             commitPhase = "receiving";
             for (const line of prepared) {
                 const allocation = allocations.get(line.item.line_id)!;
+                const primaryAllocation = line.acceptedLotAllocations[0] || line.rejectedLotAllocations[0];
+                if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
                 const receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, { method: "POST", headers, body: JSON.stringify({
-                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: line.item.batch_no, lot_id: line.primaryLotId,
-                    expiry_date: line.item.expiration_date, received_quantity: line.received, unit_price: line.baseUnitCost,
+                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, lot_id: primaryAllocation.storageLotId,
+                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCost,
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,

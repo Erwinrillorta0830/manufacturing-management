@@ -803,10 +803,6 @@ export default function ShipmentInspectionForm({
                             receivedQty: "",
                             acceptedQty: "",
                             rejectedQty: 0,
-                            batchNumber: "",
-                            lotId: "",
-                            manufacturingDate: "",
-                            expirationDate: "",
                             rejectionReason: "",
                             isPackaging: false
                         };
@@ -1031,33 +1027,6 @@ export default function ShipmentInspectionForm({
                                          </div>
                                      );
                                 })()}
-
-                                <div className="pt-1">
-                                    <div className="space-y-1">
-                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                            Server Disposition
-                                        </label>
-                                        <div className={`h-10 rounded-xl border px-3 flex items-center text-[10px] font-extrabold ${
-                                            readOnly
-                                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700"
-                                                : evaluation?.disposition === "Passed"
-                                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700"
-                                                : evaluation?.disposition === "Partially Accepted"
-                                                    ? "bg-amber-500/10 border-amber-500/20 text-amber-700"
-                                                    : evaluation?.disposition === "Rejected"
-                                                        ? "bg-red-500/10 border-red-500/20 text-red-700"
-                                                        : evaluation?.disposition === "Not Received"
-                                                            ? "bg-muted text-muted-foreground"
-                                                            : "bg-muted/40 text-muted-foreground"
-                                        }`}>
-                                            {readOnly
-                                                ? `${line.qa_status || "Received"} - Recorded`
-                                                : evaluation
-                                                    ? `${evaluation.disposition} - Server verified`
-                                                    : "Pending server validation"}
-                                        </div>
-                                    </div>
-                                </div>
 
                                 {receivedVal > 0 && (acceptedVal > 0 || rejectedVal > 0) && (
                                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-3" aria-label="Inventory storage-lot allocations">
