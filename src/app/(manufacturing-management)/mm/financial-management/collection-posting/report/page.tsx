@@ -13,7 +13,7 @@ import {NavUser} from "@/components/shared/app-sidebar/nav-user";
 import {cookies} from "next/headers";
 
 // 🚀 IMPORT THE NEW MODULE
-import CollectionReport from "@/modules/financial-management/treasury/collection/report/CollectionReportModule";
+import CollectionReport from "@/modules/manufacturing-management/financial-management/collection-posting/report/CollectionReportModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

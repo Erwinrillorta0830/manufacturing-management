@@ -80,13 +80,13 @@ export function useCollectionReport() {
         try {
             const [data, profileResult, salesmenResult] = await Promise.all([
                 fetchProvider.get<CollectionSummaryReportDto>(
-                    `/api/fm/treasury/collections/report?startDate=${startDate}&endDate=${endDate}`
+                    `/api/manufacturing/financial-management/collection-posting/collections/report?startDate=${startDate}&endDate=${endDate}`
                 ),
                 fetchCompanyProfile().catch((error: unknown) => {
                     console.warn("Company profile is unavailable for Collection Report", error);
                     return { profile: null, status: "error" as const };
                 }),
-                fetchProvider.get<CollectionReportSalesman[]>("/api/fm/treasury/salesmen").catch((error: unknown) => {
+                fetchProvider.get<CollectionReportSalesman[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").catch((error: unknown) => {
                     console.warn("Salesman lookup is unavailable for Collection Report", error);
                     return [];
                 }),
@@ -98,7 +98,7 @@ export function useCollectionReport() {
                 setSalesmen(salesmenResult ?? []);
             }
         } catch (error) {
-            console.error("Failed to load collection report:", error);
+            console.error("Failed to load collection report:", error instanceof Error ? error.message : error);
             if (requestId === requestSequence.current) {
                 setCompanyProfile(null);
                 setCompanyProfileStatus("error");

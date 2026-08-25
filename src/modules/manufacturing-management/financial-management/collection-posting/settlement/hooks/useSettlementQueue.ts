@@ -44,7 +44,7 @@ export function useSettlementQueue(
             }).toString();
 
             const result = await fetchProvider.getOrThrow<PaginatedQueueResponse>(
-                `/api/fm/treasury/collections/settlement-queue?${qs}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/settlement-queue?${qs}`,
                 {signal: controller.signal},
             );
             if (controller.signal.aborted || requestVersion.current !== version) return;
@@ -67,7 +67,7 @@ export function useSettlementQueue(
     }, [fetchQueue]);
 
     useEffect(() => {
-        fetchProvider.get<UserDto[]>("/api/fm/treasury/users")
+        fetchProvider.get<UserDto[]>("/api/manufacturing/financial-management/collection-posting/master-data/users")
             .then(res => setUsers(res || []))
             .catch(console.error);
     }, []);

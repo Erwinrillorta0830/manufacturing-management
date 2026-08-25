@@ -159,7 +159,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
             setIsSearching(true);
             try {
                 const data = await fetchProvider.getOrThrow<UnpaidInvoiceSearchResponse>(
-                    `/api/fm/treasury/collections/search-unpaid?query=${encodeURIComponent(searchQuery.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50`,
+                    `/api/manufacturing/financial-management/collection-posting/collections/search-unpaid?query=${encodeURIComponent(searchQuery.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50`,
                     {signal: controller.signal, timeoutMs: 12_000}
                 );
                 const cleanResults = (data?.items || []).filter(inv => !cartInvoices.some(cartInv => cartInv.id === inv.id));
@@ -194,7 +194,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
 
         try {
             const data = await fetchProvider.getOrThrow<UnpaidInvoiceSearchResponse>(
-                `/api/fm/treasury/collections/search-unpaid?query=${encodeURIComponent(searchQuery.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50&cursor=${encodeURIComponent(String(searchCursor))}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/search-unpaid?query=${encodeURIComponent(searchQuery.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50&cursor=${encodeURIComponent(String(searchCursor))}`,
                 {signal: controller.signal, timeoutMs: 12_000}
             );
             const cleanResults = (data?.items || []).filter(inv => !cartInvoices.some(cartInv => cartInv.id === inv.id));
@@ -224,7 +224,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
     useEffect(() => {
         if (autoAddInvoiceNo && !isPosted && !autoAdded && cartInvoices.length >= 0) {
             fetchProvider.getOrThrow<UnpaidInvoiceSearchResponse>(
-                `/api/fm/treasury/collections/search-unpaid?query=${encodeURIComponent(autoAddInvoiceNo.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50`,
+                `/api/manufacturing/financial-management/collection-posting/collections/search-unpaid?query=${encodeURIComponent(autoAddInvoiceNo.trim())}&pouchId=${encodeURIComponent(String(id))}&limit=50`,
                 {timeoutMs: 12_000}
             ).then((res) => {
                 const found = res?.items?.find(inv => inv.invoiceNo === autoAddInvoiceNo);

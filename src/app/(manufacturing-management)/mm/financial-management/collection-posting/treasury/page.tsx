@@ -13,7 +13,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
 // 🚀 IMPORT THE NEW MODULE
-import TreasuryPostingDashboard from "@/modules/financial-management/treasury/collection/posting/TreasuryPostingDashboard";
+import TreasuryPostingDashboard from "@/modules/manufacturing-management/financial-management/collection-posting/posting/TreasuryPostingDashboard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

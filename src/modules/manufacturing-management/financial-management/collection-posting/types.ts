@@ -64,12 +64,16 @@ export interface CollectionSummary {
     docNo: string;
     date: string;
     encodedDate: string;
-    collectedBy: string;
+    collectedBy: any;
     salesmanCode: string;
     salesmanName: string;
     amount: number;
     appliedAmount: number;
     status: string;
+    isPosted?: boolean | number;
+    isCancelled?: boolean | number;
+    crNo?: string;
+    remarks?: string;
 }
 
 export interface PaginatedCollectionResponse {
@@ -100,6 +104,14 @@ export interface CashBucketDto {
     checkNo?: string;
     checkDate?: string;
     tempId?: string;
+    denominationId?: number;
+    quantity?: number;
+    coaId?: number;
+    paymentMethodId?: number;
+    bankId?: number;
+    customerCode?: string | null;
+    invoiceId?: number | null;
+    chequeDate?: string | null;
 }
 
 export interface CashieringRequestDto {

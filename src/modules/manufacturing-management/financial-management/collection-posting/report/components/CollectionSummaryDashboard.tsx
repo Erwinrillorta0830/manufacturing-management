@@ -140,7 +140,7 @@ export default function CollectionSummaryDashboard() {
         setPrintingPouchId(pouch.id);
         try {
             const rawPouch = await fetchProvider.get<RawTreasuryPouch>(
-                `/api/fm/treasury/collections/${pouch.id}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/${pouch.id}`,
             );
             if (!rawPouch) {
                 throw new Error("Collection details could not be loaded.");
@@ -288,7 +288,7 @@ export default function CollectionSummaryDashboard() {
                             </div>
                             <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-live="polite">
-                                    Showing {visiblePouches.length} of {reportData.pouches.length}
+                                    Showing {visiblePouches?.length || 0} of {reportData?.pouches?.length || 0}
                                 </span>
                                 <Popover>
                                     <PopoverTrigger asChild>

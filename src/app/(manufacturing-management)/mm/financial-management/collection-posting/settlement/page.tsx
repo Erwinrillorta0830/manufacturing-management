@@ -13,7 +13,7 @@ import {NavUser} from "@/components/shared/app-sidebar/nav-user";
 import {cookies} from "next/headers";
 
 // 🚀 IMPORT THE NEW MODULE
-import SettlementModule from "@/modules/financial-management/treasury/collection/settlement/CollectionSettlementModule";
+import SettlementModule from "@/modules/manufacturing-management/financial-management/collection-posting/settlement/CollectionSettlementModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

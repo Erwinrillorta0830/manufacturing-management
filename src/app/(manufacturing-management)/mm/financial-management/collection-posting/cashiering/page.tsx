@@ -13,7 +13,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import {cookies} from "next/headers";
 
 // 🚀 IMPORT THE NEW MODULE
-import CashieringModule from "@/modules/financial-management/treasury/collection/cashiering/CollectionCashieringModule";
+import CashieringModule from "@/modules/manufacturing-management/financial-management/collection-posting/cashiering/CollectionCashieringModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

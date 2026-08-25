@@ -66,6 +66,25 @@ export default function CashieringMasterList({
         );
     }
 
+    const getStatus = (col: CollectionSummary) => {
+        if (col.isCancelled === true || col.isCancelled === 1) return "Cancelled";
+        if (col.isPosted === true || col.isPosted === 1) return "Posted";
+        if (col.isPosted === false || col.isPosted === 0) return "Draft";
+        return col.status || "Draft";
+    };
+
+    const getCollectedBy = (val: any) => {
+        if (val === null || val === undefined) return "N/A";
+        if (typeof val === 'object') {
+            const fname = val.user_fname || val.firstName || "";
+            const lname = val.user_lname || val.lastName || "";
+            const name = `${fname} ${lname}`.trim();
+            return name || "N/A";
+        }
+        const strVal = String(val).trim();
+        return strVal !== '' ? strVal : "N/A";
+    };
+
     return (
         <div className="rounded-md border border-border bg-card overflow-hidden">
             <Table>
@@ -193,7 +212,7 @@ export default function CashieringMasterList({
                                         {safeEncodedDate ? format(safeEncodedDate, "MMM dd, yyyy h:mm a") : "---"}
                                     </TableCell>
                                     <TableCell className="text-sm text-foreground">
-                                        {col.collectedBy || "N/A"}
+                                        {getCollectedBy(col.collectedBy)}
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex flex-col">
@@ -206,19 +225,19 @@ export default function CashieringMasterList({
                                             variant="outline"
                                             className={cn(
                                                 "text-[10px] uppercase font-bold",
-                                                col.status === "Draft"
+                                                getStatus(col) === "Draft"
                                                     ? "border-amber-500/50 text-amber-600 bg-amber-50/50 dark:bg-amber-900/20"
                                                     : "border-emerald-500/50 text-emerald-600 bg-emerald-50/50 dark:bg-emerald-900/20"
                                             )}
                                         >
-                                            {col.status}
+                                            {getStatus(col)}
                                         </Badge>
                                     </TableCell>
                                     <TableCell className="text-right font-bold text-sm text-foreground tracking-tight">
                                         ₱{safeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                     </TableCell>
                                     <TableCell className="text-right">
-                                        {col.status === "Draft" ? (
+                                        {getStatus(col) === "Draft" ? (
                                             <Button
                                                 type="button"
                                                 variant="ghost"

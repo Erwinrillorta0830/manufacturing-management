@@ -96,7 +96,7 @@ export const fetchProvider = {
         try {
             return await fetchProvider.getOrThrow<T>(url, options);
         } catch (error) {
-            console.error(`[fetchProvider] GET ${url} failed:`, error);
+            console.error(`[fetchProvider] GET ${url} failed:`, error instanceof Error ? error.message : error);
             return null;
         }
     },
@@ -122,7 +122,7 @@ export const fetchProvider = {
             const textData = await response.text();
             return textData as unknown as T;
         } catch (error) {
-            console.error(`[fetchProvider] POST ${url} failed:`, error);
+            console.error(`[fetchProvider] POST ${url} failed:`, error instanceof Error ? error.message : error);
             throw error;
         }
     },
@@ -142,7 +142,7 @@ export const fetchProvider = {
 
             return parseJsonResponse<T>(response);
         } catch (error) {
-            console.error(`[fetchProvider] PUT ${url} failed:`, error);
+            console.error(`[fetchProvider] PUT ${url} failed:`, error instanceof Error ? error.message : error);
             throw error;
         }
     },
@@ -161,7 +161,7 @@ export const fetchProvider = {
 
             return parseJsonResponse<T>(response);
         } catch (error) {
-            console.error(`[fetchProvider] DELETE ${url} failed:`, error);
+            console.error(`[fetchProvider] DELETE ${url} failed:`, error instanceof Error ? error.message : error);
             return null;
         }
     },

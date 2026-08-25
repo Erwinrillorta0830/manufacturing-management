@@ -172,7 +172,7 @@ export function useCashiering(
             if (listQuery.dateTo) query.set("dateTo", listQuery.dateTo);
 
             const collectionsData = await fetchProvider.getOrThrow<PaginatedCollectionResponse>(
-                `/api/fm/treasury/collections/unposted?${query.toString()}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/unposted?${query.toString()}`,
                 {signal: controller.signal},
             );
             if (controller.signal.aborted || listRequestVersion.current !== version) return;
@@ -186,7 +186,7 @@ export function useCashiering(
 
         } catch (error) {
             if (controller.signal.aborted || listRequestVersion.current !== version) return;
-            console.error("Failed to fetch cashiering collections:", error);
+            console.error("Failed to fetch cashiering collections:", error instanceof Error ? error.message : error);
             setListError(getListErrorMessage(error));
         } finally {
             if (listRequestVersion.current === version) setIsLoading(false);
@@ -209,7 +209,7 @@ export function useCashiering(
 
     useEffect(() => {
         let cancelled = false;
-        void fetchProvider.get<Salesman[]>("/api/fm/treasury/salesmen").then(data => {
+        void fetchProvider.get<Salesman[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").then(data => {
             if (!cancelled && data) setSalesmen(data);
         });
         return () => {
@@ -225,12 +225,12 @@ export function useCashiering(
             setIsLookupsLoading(true);
             try {
                 const [banksData, denomData, coasData, pmData, custData, usersData] = await Promise.all([
-                    fetchProvider.get<Bank[]>("/api/fm/treasury/bank-names"),
-                    fetchProvider.get<Denomination[]>("/api/fm/treasury/denominations"),
-                    fetchProvider.get<COA[]>("/api/fm/treasury/coas"),
-                    fetchProvider.get<PaymentMethod[]>("/api/fm/treasury/payment-methods"),
-                    fetchProvider.get<Customer[]>("/api/fm/treasury/customers"),
-                    fetchProvider.get<UserDto[]>("/api/fm/treasury/users"),
+                    fetchProvider.get<Bank[]>("/api/manufacturing/financial-management/collection-posting/master-data/banks"),
+                    fetchProvider.get<Denomination[]>("/api/manufacturing/financial-management/collection-posting/master-data/denominations"),
+                    fetchProvider.get<COA[]>("/api/manufacturing/financial-management/collection-posting/master-data/coas"),
+                    fetchProvider.get<PaymentMethod[]>("/api/manufacturing/financial-management/collection-posting/master-data/payment-methods"),
+                    fetchProvider.get<Customer[]>("/api/manufacturing/financial-management/collection-posting/master-data/customers"),
+                    fetchProvider.get<UserDto[]>("/api/manufacturing/financial-management/collection-posting/master-data/users"),
                 ]);
 
                 const data: ModalLookupData = {
@@ -294,7 +294,7 @@ export function useCashiering(
         setRouteInvoices([]);
         setSubmissionError(null);
         void fetchProvider.getOrThrow<UnpaidInvoice[]>(
-            `/api/fm/treasury/collections/unpaid-invoices?${query.toString()}`,
+            `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
             {signal: controller.signal, timeoutMs: 15_000},
         ).then(data => {
             if (!cancelled) {
@@ -303,7 +303,7 @@ export function useCashiering(
             }
         }).catch(error => {
             if (cancelled || controller.signal.aborted) return;
-            console.error("Failed to load route invoices", error);
+            console.error("Failed to load route invoices", error instanceof Error ? error.message : error);
             setRouteInvoices([]);
             setSubmissionError("Could not load unpaid invoices. Please retry.");
         });
@@ -331,7 +331,7 @@ export function useCashiering(
             const [lookupData, pouch] = await Promise.all([
                 loadModalLookups(),
                 fetchProvider.getOrThrow<PouchDetailResponse>(
-                    `/api/fm/treasury/collections/${id}`,
+                    `/api/manufacturing/financial-management/collection-posting/collections/${id}`,
                     {signal: controller.signal, timeoutMs: 15_000},
                 ),
             ]);
@@ -350,8 +350,8 @@ export function useCashiering(
                 const newDenoms: Record<number, number> = lookupData.denominationMaster.reduce<Record<number, number>>((acc, d) => ({ ...acc, [d.id]: 0 }), {});
 
                 pouch.cashBuckets?.filter((b) => b.coaId === 1).forEach((bucket) => {
-                    const denomId = parseInt(bucket.tempId.replace("cash-", ""));
-                    if (!isNaN(denomId)) newDenoms[denomId] = bucket.quantity;
+                    const denomId = bucket.denominationId || parseInt(bucket.tempId?.replace("cash-", "") || "");
+                    if (!isNaN(denomId) && bucket.quantity) newDenoms[denomId] = bucket.quantity;
                 });
 
                 setDenominations(newDenoms);
@@ -382,7 +382,7 @@ export function useCashiering(
                             currentPouchId: String(id),
                         });
                         const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
-                            `/api/fm/treasury/collections/unpaid-invoices?${query.toString()}`,
+                            `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                             {signal: controller.signal, timeoutMs: 15_000},
                         );
                         if (!controller.signal.aborted && invoiceRequestVersion.current === requestVersion) {
@@ -390,14 +390,14 @@ export function useCashiering(
                         }
                     } catch (error) {
                         if (controller.signal.aborted || invoiceRequestVersion.current !== requestVersion) return;
-                        console.error("Could not preload invoices for customer", {customerId: cId, error});
+                        console.error("Could not preload invoices for customer", {customerId: cId, error: error instanceof Error ? error.message : error});
                         setSubmissionError("Some customer invoices could not be loaded. Please retry the customer selection.");
                     }
                 }));
             }
         } catch (err) {
             if (!controller.signal.aborted && invoiceRequestVersion.current === requestVersion) {
-                console.error("Hydration Error:", err);
+                console.error("Hydration Error:", err instanceof Error ? err.message : err);
                 setSubmissionError("Could not load pouch details. Please retry.");
             }
         } finally {
@@ -449,13 +449,13 @@ export function useCashiering(
                     ...(editingId ? { currentPouchId: String(editingId) } : {}),
                 });
                 const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
-                    `/api/fm/treasury/collections/unpaid-invoices?${query.toString()}`,
+                    `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                     {timeoutMs: 15_000},
                 );
                 setCustomerInvoices(prev => ({ ...prev, [customerId]: data || [] }));
                 setSubmissionError(null);
             } catch (err) {
-                console.error("Failed to load customer invoices", err);
+                console.error("Failed to load customer invoices", err instanceof Error ? err.message : err);
                 setSubmissionError("Could not load unpaid invoices for the selected customer. Please retry.");
             }
         }
@@ -538,6 +538,7 @@ export function useCashiering(
             cashBuckets: [
                 ...denominationMaster.filter(d => (denominations[d.id] || 0) > 0).map(d => ({
                     tempId: `cash-${d.id}`,
+                    denominationId: d.id,
                     coaId: 1,
                     amount: d.amount * denominations[d.id],
                     quantity: denominations[d.id],
@@ -561,7 +562,7 @@ export function useCashiering(
         };
 
         try {
-            const url = editingId ? `/api/fm/treasury/collections/${editingId}` : "/api/fm/treasury/collections/receive";
+            const url = editingId ? `/api/manufacturing/financial-management/collection-posting/collections/${editingId}` : "/api/manufacturing/financial-management/collection-posting/collections/receive";
             const res = editingId
                 ? await fetchProvider.put<string>(url, payload, {timeoutMs: 35_000})
                 : await fetchProvider.post<string>(url, payload, {timeoutMs: 35_000});
@@ -578,7 +579,7 @@ export function useCashiering(
                 }
             }
         } catch (error) {
-            console.error("Submission Error:", error);
+            console.error("Submission Error:", error instanceof Error ? error.message : error);
             setSubmissionError(getSubmissionErrorMessage(error));
         } finally {
             setIsSubmitting(false);

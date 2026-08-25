@@ -19,30 +19,48 @@ export type Supplier = {
     id: number;
     supplier_name: string;
     supplier_shortcut: string | null;
-    isActive: number;
+};
+
+export type ProductType = {
+    id: number;
+    name: string;
+};
+
+export type VersionPriceEntry = {
+    price_type_id: number;
+    cost_per_unit: number;
+    price_per_unit: number;
+};
+
+export type ManufacturingVersion = {
+    version_id: number;
+    product_id: number;
+    version_name: string;
+    base_quantity: number;
+    uom_id: number;
+    expected_yield_percentage: number | null;
+    status: string;
+    is_primary: boolean;
+    prices: Record<number, VersionPriceEntry>;
 };
 
 export type ProductRow = {
-    product_id: number;
-    parent_id?: number | null;
-
-    product_code: string | null;
-    barcode: string | null;
-    product_name: string;
-    isActive: number;
-
-    product_category: number | null;
-    product_brand: number | null;
+    product_id?:
+        | number
+        | string
+        | {
+              product_id?: number | string | null;
+              product_code?: string | null;
+              product_name?: string | null;
+          }
+        | null;
+    version_id?: number | string | null;
+    price_type_id?: number | null;
     unit_of_measurement: number | null;
-
-    // cached mirrors in products table
     price_per_unit: number | null;
-    priceA: number | null;
-    priceB: number | null;
-    priceC: number | null;
-    priceD: number | null;
-    priceE: number | null;
     cost_per_unit: number | null;
+    isActive: number | null;
+    versions?: ManufacturingVersion[];
 };
 
 /** `"LIST"` or a numeric `price_type_id` string */
@@ -82,6 +100,21 @@ export type MatrixRow = {
     brand_name: string | null;
 };
 
+export type FilterState = {
+    q: string;
+    category_ids: string[];
+    brand_ids: string[];
+    unit_ids: string[];
+    supplier_ids: string[];
+    supplier_scope: "ALL" | "LINKED_ONLY";
+    active_only: boolean;
+    missing_tier: boolean;
+    product_type_ids: number[];
+    show_versions: boolean;
+    page: number;
+    total_pages: number;
+};
+
 export type PricingFilters = {
     q: string;
 
@@ -101,6 +134,9 @@ export type PricingFilters = {
     price_view: PriceViewMode;
     price_type_ids: number[];
     show_list_price: boolean;
+
+    product_type_ids: number[];
+    show_versions: boolean;
 };
 
 export type UpsertLine = {
@@ -115,6 +151,7 @@ export type UpsertLine = {
 export type PriceChangeRequest = {
     id: number;
     product_id: number | { product_id: number };
+    version_id?: number | null;
     price_type_id: number | { price_type_id: number };
     proposed_price: number;
     status: string;
@@ -124,6 +161,7 @@ export type PriceChangeRequest = {
 
 export type PriceChangeBatchLineInput = {
     product_id: number;
+    version_id?: number | null;
     price_type_id: number;
     current_price: number | null;
     proposed_price: number;
@@ -170,6 +208,7 @@ export type DirtyPreviewLine = {
 export type CostChangeRequest = {
     id: number;
     product_id: number | { product_id: number };
+    version_id?: number | null;
     proposed_cost: number;
     current_cost: number | null;
     status: string;

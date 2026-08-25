@@ -203,7 +203,7 @@ export function usePosting() {
 
         try {
             const data = await fetchProvider.getOrThrow<PostingQueuePageResponse>(
-                `/api/fm/treasury/collections/posting-queue?${params.toString()}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/posting-queue?${params.toString()}`,
                 {signal: controller.signal},
             );
 
@@ -241,7 +241,7 @@ export function usePosting() {
             setIsOptionsLoading(true);
             try {
                 const data = await fetchProvider.getOrThrow<PostingQueueOptions>(
-                    "/api/fm/treasury/collections/posting-queue/options",
+                    "/api/manufacturing/financial-management/collection-posting/collections/posting-queue/options",
                     {signal: controller.signal},
                 );
                 if (!controller.signal.aborted && data) {
@@ -300,7 +300,7 @@ export function usePosting() {
 
         try {
             const details = await fetchProvider.getOrThrow<Partial<TreasuryPouchDetail>>(
-                `/api/fm/treasury/collections/${id}`,
+                `/api/manufacturing/financial-management/collection-posting/collections/${id}`,
                 {signal: controller.signal},
             );
             if (controller.signal.aborted) return;
@@ -327,7 +327,7 @@ export function usePosting() {
 
         setIsPosting(true);
         try {
-            await fetchProvider.post(`/api/fm/treasury/collections/${id}/post`, {});
+            await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${id}/post`, {});
             alert(`Pouch ${docNo} has been successfully posted to the General Ledger!`);
             setIsReviewSheetOpen(false);
             await fetchQueue();

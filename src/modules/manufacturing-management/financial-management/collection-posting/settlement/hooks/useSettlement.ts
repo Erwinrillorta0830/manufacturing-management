@@ -150,10 +150,10 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
 
             // 🚀 Strictly typing the users array
             const [pouch, salesmen, fetchedFindings, fetchedUsers, profileResult] = await Promise.all([
-                fetchProvider.get<RawTreasuryPouch>(`/api/fm/treasury/collections/${pouchId}`),
-                fetchProvider.get<RawSalesman[]>("/api/fm/treasury/salesmen"),
-                fetchProvider.get<GeneralFinding[]>("/api/fm/treasury/collections/findings").catch(() => []),
-                fetchProvider.get<UserDto[]>("/api/fm/treasury/users").catch(() => []),
+                fetchProvider.get<RawTreasuryPouch>(`/api/manufacturing/financial-management/collection-posting/collections/${pouchId}`),
+                fetchProvider.get<RawSalesman[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen"),
+                fetchProvider.get<GeneralFinding[]>("/api/manufacturing/financial-management/collection-posting/findings").catch(() => []),
+                fetchProvider.get<UserDto[]>("/api/manufacturing/financial-management/collection-posting/master-data/users").catch(() => []),
                 fetchCompanyProfile().catch(() => ({ profile: null, status: "error" as const })),
             ]);
 
@@ -254,12 +254,12 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             const [memosResult, returnsResult] = await Promise.allSettled([
                 page === 1
                     ? fetchProvider.getOrThrow<RawMemoOrReturn[]>(
-                        `/api/fm/treasury/memos/available?${customerQuery}`,
+                        `/api/manufacturing/financial-management/collection-posting/memos/available?${customerQuery}`,
                         {signal: controller.signal},
                     )
                     : Promise.resolve<RawMemoOrReturn[] | null>([]),
                 fetchProvider.getOrThrow<PaginatedRawReturnResponse>(
-                    `/api/fm/treasury/returns/available?${customerQuery}&currentPouchId=${encodeURIComponent(String(pouchId))}&page=${page}&size=25`,
+                    `/api/manufacturing/financial-management/collection-posting/returns/available?${customerQuery}&currentPouchId=${encodeURIComponent(String(pouchId))}&page=${page}&size=25`,
                     {signal: controller.signal},
                 ),
             ]);
@@ -347,7 +347,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
     useEffect(() => {
         if (!salesmanId || !dispatchDate) return;
         setIsLoadingPlans(true);
-        fetchProvider.get<DispatchPlan[]>(`/api/fm/treasury/collections/dispatch-plans?salesmanId=${salesmanId}&date=${dispatchDate}`)
+        fetchProvider.get<DispatchPlan[]>(`/api/manufacturing/financial-management/collection-posting/dispatch-plans?salesmanId=${salesmanId}&date=${dispatchDate}`)
             .then(data => setDispatchPlans(data || []))
             .catch(err => console.error("Failed to load dispatch plans", err))
             .finally(() => setIsLoadingPlans(false));
@@ -362,8 +362,8 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 ? `&customerCode=${encodeURIComponent(activeInvoice.customerCode)}`
                 : "";
             const endpoint = type === "MEMO"
-                ? `/api/fm/treasury/memos/search?documentNo=${safeDocNo}${customerQuery}`
-                : `/api/fm/treasury/returns/search?documentNo=${safeDocNo}&currentPouchId=${encodeURIComponent(String(pouchId))}${customerQuery}`;
+                ? `/api/manufacturing/financial-management/collection-posting/memos/search?documentNo=${safeDocNo}${customerQuery}`
+                : `/api/manufacturing/financial-management/collection-posting/returns/search?documentNo=${safeDocNo}&currentPouchId=${encodeURIComponent(String(pouchId))}${customerQuery}`;
 
             const data = await fetchProvider.get<RawMemoOrReturn>(endpoint);
             if (!data || !isSameCustomer(data, activeInvoice)) return false;
@@ -495,7 +495,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
 
         setIsClearing(true);
         try {
-            await fetchProvider.post(`/api/fm/treasury/collections/${pouchId}/allocate/clear`, {});
+            await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${pouchId}/allocate/clear`, {});
             setPendingEdits({});
             setPendingDeletions([]);
             await fetchData();
@@ -514,7 +514,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
     const loadDispatchPlanInvoices = async (planId: number) => {
         setIsLoadingRoute(true);
         try {
-            const data = await fetchProvider.get<UnpaidInvoice[]>(`/api/fm/treasury/collections/dispatch-plan-invoices?planId=${planId}&currentPouchId=${encodeURIComponent(String(pouchId))}`);
+            const data = await fetchProvider.get<UnpaidInvoice[]>(`/api/manufacturing/financial-management/collection-posting/dispatch-plans/invoices?planId=${planId}&currentPouchId=${encodeURIComponent(String(pouchId))}`);
             if (!data || data.length === 0) {
                 toast.info("No additional pending invoices found for this specific Dispatch Plan.");
                 return;
@@ -548,7 +548,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         if (!salesmanId || !collectionDate) return toast.error("Cannot load route: Missing Salesman ID or Date.");
         setIsLoadingRoute(true);
         try {
-            const data = await fetchProvider.get<UnpaidInvoice[]>(`/api/fm/treasury/collections/route-invoices?salesmanId=${encodeURIComponent(String(salesmanId))}&date=${encodeURIComponent(collectionDate)}&currentPouchId=${encodeURIComponent(String(pouchId))}`);
+            const data = await fetchProvider.get<UnpaidInvoice[]>(`/api/manufacturing/financial-management/collection-posting/invoices/route?salesmanId=${encodeURIComponent(String(salesmanId))}&date=${encodeURIComponent(collectionDate)}&currentPouchId=${encodeURIComponent(String(pouchId))}`);
             if (!data || data.length === 0) {
                 toast.info("No additional pending invoices found for this route on or before " + collectionDate);
                 return;
@@ -714,15 +714,15 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         try {
             for (const [, editInfo] of Object.entries(pendingEdits)) {
                 const endpoint = editInfo.type === "EWT"
-                    ? `/api/fm/treasury/ewts/${editInfo.dbId}`
-                    : `/api/fm/treasury/adjustments/${editInfo.dbId}`;
+                    ? `/api/manufacturing/financial-management/collection-posting/ewts/${editInfo.dbId}`
+                    : `/api/manufacturing/financial-management/collection-posting/adjustments/${editInfo.dbId}`;
                 await fetchProvider.put(endpoint, editInfo.payload);
             }
 
             for (const delInfo of pendingDeletions) {
                 const endpoint = delInfo.type === "EWT"
-                    ? `/api/fm/treasury/ewts/${delInfo.dbId}`
-                    : `/api/fm/treasury/adjustments/${delInfo.dbId}`;
+                    ? `/api/manufacturing/financial-management/collection-posting/ewts/${delInfo.dbId}`
+                    : `/api/manufacturing/financial-management/collection-posting/adjustments/${delInfo.dbId}`;
                 await fetchProvider.delete(endpoint);
             }
 
@@ -751,7 +751,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 }
             });
 
-            await fetchProvider.post(`/api/fm/treasury/collections/${pouchId}/allocate/partial`, {
+            await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${pouchId}/allocate/partial`, {
                 collectedBy: collectedBy || undefined,
                 crNo: crNo || undefined,
                 newAdjustments,
@@ -800,16 +800,16 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             // 1. Process all pending edits in database
             for (const [, editInfo] of Object.entries(pendingEdits)) {
                 const endpoint = editInfo.type === "EWT"
-                    ? `/api/fm/treasury/ewts/${editInfo.dbId}`
-                    : `/api/fm/treasury/adjustments/${editInfo.dbId}`;
+                    ? `/api/manufacturing/financial-management/collection-posting/ewts/${editInfo.dbId}`
+                    : `/api/manufacturing/financial-management/collection-posting/adjustments/${editInfo.dbId}`;
                 await fetchProvider.put(endpoint, editInfo.payload);
             }
 
             // 2. Process all pending deletions in database
             for (const delInfo of pendingDeletions) {
                 const endpoint = delInfo.type === "EWT"
-                    ? `/api/fm/treasury/ewts/${delInfo.dbId}`
-                    : `/api/fm/treasury/adjustments/${delInfo.dbId}`;
+                    ? `/api/manufacturing/financial-management/collection-posting/ewts/${delInfo.dbId}`
+                    : `/api/manufacturing/financial-management/collection-posting/adjustments/${delInfo.dbId}`;
                 await fetchProvider.delete(endpoint);
             }
 
@@ -853,7 +853,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 allocations: persistentAllocations
             };
 
-            await fetchProvider.post(`/api/fm/treasury/collections/${pouchId}/allocate`, payload);
+            await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${pouchId}/allocate`, payload);
             toast.success("Settlement successfully committed to the ledger!");
             await fetchData();
             return true;

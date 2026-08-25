@@ -561,7 +561,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                                         >
                                                                                             <span>{inv.invoiceNo}</span>
                                                                                             <span
-                                                                                                className="text-orange-600">₱{inv.remainingBalance.toLocaleString()}</span>
+                                                                                                className="text-orange-600">₱{(inv.remainingBalance || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
                                                                                         </CommandItem>
                                                                                     );
                                                                                 })}

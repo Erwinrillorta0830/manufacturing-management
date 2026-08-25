@@ -18,7 +18,7 @@ export function KpiCards({ data }: { data: CollectionSummaryReportDto }) {
                     </div>
                     <span className="text-2xl font-black font-mono tracking-tight text-foreground z-10">
                         {/* 🚀 FIXED: maximumFractionDigits: 2 prevents .483 */}
-                        ₱{data.globalCash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        ₱{(data?.globalCash || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                     </span>
                 </CardContent>
             </Card>
@@ -32,7 +32,7 @@ export function KpiCards({ data }: { data: CollectionSummaryReportDto }) {
                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Total Checks</span>
                     </div>
                     <span className="text-2xl font-black font-mono tracking-tight text-foreground z-10">
-                        ₱{data.globalChecks.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        ₱{(data?.globalChecks || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                     </span>
                 </CardContent>
             </Card>
@@ -46,7 +46,7 @@ export function KpiCards({ data }: { data: CollectionSummaryReportDto }) {
                         <span className="text-[10px] font-black uppercase tracking-widest text-primary/80">Net Invoices Settled</span>
                     </div>
                     <span className="text-2xl font-black font-mono tracking-tight text-primary z-10">
-                        ₱{data.globalNetInvoice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        ₱{(data?.globalNetInvoice || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                     </span>
                 </CardContent>
             </Card>
