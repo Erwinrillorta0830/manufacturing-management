@@ -1,4 +1,4 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult } from "../types";
 
 export interface QuarantineDispositionResponse {
     stock: QuarantineStock[];
@@ -33,10 +33,22 @@ export async function fetchBranches(signal?: AbortSignal): Promise<Branch[]> {
     return res.json();
 }
 
-export async function fetchStorageLots(signal?: AbortSignal): Promise<StorageLot[]> {
-    const res = await fetch("/api/manufacturing/qa-receiving?action=lots", { signal });
+export async function fetchStorageLots(productId: number, signal?: AbortSignal): Promise<StorageLot[]> {
+    const res = await fetch(`/api/manufacturing/qa-receiving?action=lots&productId=${encodeURIComponent(productId)}`, { signal });
     if (!res.ok) throw new Error("Failed to load storage lots");
     return res.json();
+}
+
+export async function fetchStorageLotBatches(productId: number, lotId: number, signal?: AbortSignal): Promise<StorageLotBatch[]> {
+    const params = new URLSearchParams({
+        action: "batches",
+        productId: String(productId),
+        lotId: String(lotId)
+    });
+    const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to load storage-lot batches");
+    return Array.isArray(body) ? body : [];
 }
 
 export async function fetchShipmentDetails(shipmentId: number, signal?: AbortSignal): Promise<ShipmentLineItem[]> {
@@ -71,8 +83,20 @@ export async function previewReceivingQa(payload: {
         acceptedQuantity: number;
         rejectedQuantity: number;
         storageLotId: number | null;
-        acceptedLotAllocations: Array<{ storageLotId: number; quantity: number }>;
-        rejectedLotAllocations: Array<{ storageLotId: number; quantity: number }>;
+        acceptedLotAllocations: Array<{
+            storageLotId: number;
+            batchNumber: string;
+            manufacturingDate: string | null;
+            expirationDate: string | null;
+            quantity: number;
+        }>;
+        rejectedLotAllocations: Array<{
+            storageLotId: number;
+            batchNumber: string;
+            manufacturingDate: string | null;
+            expirationDate: string | null;
+            quantity: number;
+        }>;
         supplierBatchNumber: string;
         manufacturingDate: string | null;
         expiryDate: string | null;

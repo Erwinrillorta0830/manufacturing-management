@@ -39,20 +39,6 @@ export async function GET() {
         console.error("[Auto-Registration] Failed to check/register Lot Management module:", err);
     }
 
-    // Sync Directus schema: ensure obsolete inventory_type_id field metadata is removed and cache cleared
-    try {
-        await fetch(`${DIRECTUS_URL}/fields/lots/inventory_type_id`, {
-            method: "DELETE",
-            headers
-        }).catch(() => null);
-        await fetch(`${DIRECTUS_URL}/utils/cache/clear`, {
-            method: "POST",
-            headers
-        }).catch(() => null);
-    } catch {
-        // Ignore if already deleted
-    }
-
     // Main fetch
     try {
         const fields = "*";
