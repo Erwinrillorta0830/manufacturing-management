@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { extractId, roundQty, roundMoney, recalculateHeaderTotals, parseBooleanFlag, resolveBatchPrices } from "../../helper";
+import { extractId, roundQty, recalculateHeaderTotals, parseBooleanFlag, resolveBatchPrices } from "../../helper";
 import { fetchSpringMovements, aggregateMovementsToItems, AggregatedMovementItem } from "../../movements-helper";
 
 export const runtime = "nodejs";
@@ -52,10 +52,8 @@ export async function POST(_request: NextRequest, context: RouteParams) {
         const headerPriceTypeId = extractId(sheet.price_type_id);
         const priceTypeId = bodyPriceTypeId > 0 ? bodyPriceTypeId : headerPriceTypeId;
 
-        const isOpening = sheet.stock_type === "OPENING";
-
         // 2. Fetch Spring movements
-        let movements = await fetchSpringMovements(branchId, productTypeId);
+        const movements = await fetchSpringMovements(branchId, productTypeId);
         let items: AggregatedMovementItem[] = aggregateMovementsToItems(movements);
 
         // Resolve valid product_ids belonging to productTypeId from Directus catalog

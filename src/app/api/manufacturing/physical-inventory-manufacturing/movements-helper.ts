@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers as directusHeaders } from "@/app/api/manufacturing/directus-api";
-import { extractId, roundQty, roundMoney } from "./helper";
+import { roundQty, roundMoney } from "./helper";
 
 const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
 
@@ -66,7 +66,7 @@ export async function fetchSpringMovements(branchId: number, productTypeId?: num
             try {
                 const cookieStore = await cookies();
                 token = cookieStore.get("vos_access_token")?.value;
-            } catch (e) {
+            } catch {
                 // Ignore if cookies store unavailable outside request context
             }
         }

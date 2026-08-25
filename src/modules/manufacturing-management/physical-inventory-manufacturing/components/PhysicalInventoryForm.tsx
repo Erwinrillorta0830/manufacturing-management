@@ -11,7 +11,7 @@ import {
 } from "../types";
 import SearchableSelect from "./SearchableSelect";
 import { formatQty, formatMoney } from "./PhysicalInventoryList";
-import { ArrowLeft, Plus, Save, Send, Trash2, Edit3, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag } from "lucide-react";
+import { ArrowLeft, Plus, Save, Send, Trash2, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag } from "lucide-react";
 
 interface Props {
     sheet?: MmPhysicalInventorySheet | null;
@@ -51,7 +51,7 @@ export default function PhysicalInventoryForm({
     onSaveHeader,
     onPopulateSheet,
     onOpenAddDetailModal,
-    onEditDetail,
+    onEditDetail: _onEditDetail,
     onRemoveDetail,
     onSaveInlineCount,
     onSubmit,
@@ -212,7 +212,7 @@ export default function PhysicalInventoryForm({
         }
     };
 
-    const details = sheet?.details || [];
+    const details = useMemo(() => sheet?.details || [], [sheet?.details]);
 
     const groupedByLot = React.useMemo(() => {
         const map = new Map<string, { lotName: string; lotObj: unknown; items: MmPhysicalInventoryDetail[] }>();
@@ -229,11 +229,6 @@ export default function PhysicalInventoryForm({
         }
         return Array.from(map.values());
     }, [details]);
-
-    const getBranchName = (bId: number) => {
-        const found = branches.find((b) => b.id === bId);
-        return found ? found.branch_name : `Branch #${bId}`;
-    };
 
     const getLotName = (l: unknown) => {
         if (typeof l === "object" && l !== null) {
