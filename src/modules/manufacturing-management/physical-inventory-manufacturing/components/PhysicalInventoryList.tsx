@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { MmPhysicalInventorySheet, Branch, ProductType } from "../types";
 import {
     Search,
@@ -79,7 +79,7 @@ export default function PhysicalInventoryList({
         return { total, drafts, pending, committed };
     }, [sheets]);
 
-    const getProductTypeName = (s: MmPhysicalInventorySheet): string => {
+    const getProductTypeName = useCallback((s: MmPhysicalInventorySheet): string => {
         const pt = s.product_type_id;
         if (!pt) return "All Product Types";
 
@@ -101,16 +101,16 @@ export default function PhysicalInventoryList({
             return `Type #${targetId}`;
         }
         return "All Product Types";
-    };
+    }, [productTypes]);
 
-    const getBranchName = (b: unknown): string => {
+    const getBranchName = useCallback((b: unknown): string => {
         if (typeof b === "object" && b !== null) {
             const obj = b as { branch_name?: string; branchName?: string };
             return obj.branch_name || obj.branchName || "N/A";
         }
         const found = branches.find((item) => item.id === Number(b));
         return found ? (found.branch_name || found.branchName || `Branch #${b}`) : `Branch #${b || "N/A"}`;
-    };
+    }, [branches]);
 
     const getEncoderName = (e: unknown): string => {
         if (typeof e === "object" && e !== null) {
@@ -152,7 +152,7 @@ export default function PhysicalInventoryList({
 
             return true;
         });
-    }, [sheets, search, branchFilter, productTypeFilter, stockTypeFilter, statusFilter, branches, productTypes]);
+    }, [sheets, search, branchFilter, productTypeFilter, stockTypeFilter, statusFilter, getBranchName, getProductTypeName]);
 
     const getStatusBadge = (status: string) => {
         switch (status) {

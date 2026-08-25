@@ -48,11 +48,16 @@ export default function SearchableSelect({
         return labelMatch || sublabelMatch;
     });
 
+    const handleClose = () => {
+        setIsOpen(false);
+        setSearchTerm("");
+    };
+
     // Close popover when clicking outside
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
             if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
+                handleClose();
             }
         }
         document.addEventListener("mousedown", handleClickOutside);
@@ -62,17 +67,16 @@ export default function SearchableSelect({
     // Auto-focus search input when opening
     useEffect(() => {
         if (isOpen) {
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 searchInputRef.current?.focus();
             }, 50);
-        } else {
-            setSearchTerm("");
+            return () => clearTimeout(timer);
         }
     }, [isOpen]);
 
     const handleSelect = (optValue: string | number) => {
         onChange(optValue);
-        setIsOpen(false);
+        handleClose();
     };
 
     return (

@@ -285,14 +285,14 @@ export async function fetchMasterBranches(): Promise<Branch[]> {
         const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
         if (!res.ok) return [];
         const json = await res.json();
-        const list = Array.isArray(json) ? json : (json.data || json.branches || []);
-        return list.map((b: any) => ({
-            id: b.id,
-            branch_name: b.branch_name || b.branchName || `Branch #${b.id}`,
-            branchName: b.branchName || b.branch_name || `Branch #${b.id}`,
-            branch_code: b.branch_code || b.branchCode || "",
-            branchCode: b.branchCode || b.branch_code || "",
-            isActive: b.isActive ?? 1,
+        const list: Array<Record<string, unknown>> = Array.isArray(json) ? json : (json.data || json.branches || []);
+        return list.map((b) => ({
+            id: Number(b.id || 0),
+            branch_name: String(b.branch_name || b.branchName || `Branch #${b.id}`),
+            branchName: String(b.branchName || b.branch_name || `Branch #${b.id}`),
+            branch_code: String(b.branch_code || b.branchCode || ""),
+            branchCode: String(b.branchCode || b.branch_code || ""),
+            isActive: typeof b.isActive === "boolean" || typeof b.isActive === "number" ? b.isActive : 1,
         }));
     } catch (e) {
         console.error("Error fetching branches:", e);
@@ -333,12 +333,12 @@ export async function fetchMasterUnits(): Promise<Unit[]> {
         const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
         if (res.ok) {
             const json = await res.json();
-            const list = Array.isArray(json) ? json : (json.data || []);
+            const list: Array<Record<string, unknown>> = Array.isArray(json) ? json : (json.data || []);
             if (list.length > 0) {
-                return list.map((u: any) => ({
-                    unit_id: u.unit_id || u.unitId || u.id,
-                    unit_name: u.unit_name || u.unitName || `Unit #${u.unit_id || u.unitId}`,
-                    unit_shortcut: u.unit_shortcut || u.unitShortcut || u.unit_name || u.unitName || "",
+                return list.map((u) => ({
+                    unit_id: Number(u.unit_id || u.unitId || u.id || 0),
+                    unit_name: String(u.unit_name || u.unitName || `Unit #${u.unit_id || u.unitId}`),
+                    unit_shortcut: String(u.unit_shortcut || u.unitShortcut || u.unit_name || u.unitName || ""),
                 }));
             }
         }
@@ -346,10 +346,11 @@ export async function fetchMasterUnits(): Promise<Unit[]> {
         const mdRes = await fetch(`${API_BASE}/master-data`, { cache: "no-store" });
         if (mdRes.ok) {
             const mdJson = await mdRes.json();
-            return (mdJson.data?.units || []).map((u: any) => ({
-                unit_id: u.unit_id || u.unitId || u.id,
-                unit_name: u.unit_name || u.unitName || `Unit #${u.unit_id || u.unitId}`,
-                unit_shortcut: u.unit_shortcut || u.unitShortcut || u.unit_name || u.unitName || "",
+            const rawUnits: Array<Record<string, unknown>> = mdJson.data?.units || [];
+            return rawUnits.map((u) => ({
+                unit_id: Number(u.unit_id || u.unitId || u.id || 0),
+                unit_name: String(u.unit_name || u.unitName || `Unit #${u.unit_id || u.unitId}`),
+                unit_shortcut: String(u.unit_shortcut || u.unitShortcut || u.unit_name || u.unitName || ""),
             }));
         }
         return [];
