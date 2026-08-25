@@ -132,10 +132,6 @@ export interface InspectionRow {
     receivedQty: number | string;
     acceptedQty: number | string;
     rejectedQty: number;
-    batchNumber: string;
-    lotId: string;
-    manufacturingDate: string;
-    expirationDate: string;
     rejectionReason: string;
     isPackaging: boolean;
     acceptedLotAllocations: ReceivingLotAllocationInput[];
@@ -214,7 +210,6 @@ export interface ReceivingCommitPayload {
         receivedQuantity: number;
         acceptedQuantity: number;
         rejectedQuantity: number;
-        storageLotId: number | null;
         acceptedLotAllocations: Array<{
             storageLotId: number;
             batchNumber: string;
@@ -229,9 +224,6 @@ export interface ReceivingCommitPayload {
             expirationDate: string | null;
             quantity: number;
         }>;
-        supplierBatchNumber: string;
-        manufacturingDate: string | null;
-        expiryDate: string | null;
         remarks: string | null;
         isPackaging: boolean;
         readings: Array<{ specId: number; actualReading: string }>;

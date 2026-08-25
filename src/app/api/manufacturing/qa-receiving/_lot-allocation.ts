@@ -1,12 +1,9 @@
-export interface ReceivingLotAllocationMetadata {
+export interface ReceivingLotAllocationDraft {
+    storageLotId: number;
+    quantity: number;
     batchNumber?: unknown;
     manufacturingDate?: unknown;
     expirationDate?: unknown;
-}
-
-export interface ReceivingLotAllocationDraft extends ReceivingLotAllocationMetadata {
-    storageLotId: number;
-    quantity: number;
     batch_no?: unknown;
     manufacturing_date?: unknown;
     expiration_date?: unknown;
@@ -29,52 +26,28 @@ function dateValue(value: unknown): string | null {
     return valueText || null;
 }
 
-function allocationMetadata(
-    allocation: ReceivingLotAllocationMetadata & Record<string, unknown>,
-    fallback: ReceivingLotAllocationMetadata = {}
-): ReceivingLotAllocationMetadata {
-    return {
-        batchNumber: allocation.batchNumber ?? allocation.batch_no ?? fallback.batchNumber,
-        manufacturingDate: allocation.manufacturingDate ?? allocation.manufacturing_date ?? fallback.manufacturingDate ?? null,
-        expirationDate: allocation.expirationDate ?? allocation.expiration_date ?? fallback.expirationDate ?? null
-    };
-}
-
-function normalizeAllocation(
-    allocation: ReceivingLotAllocationDraft,
-    fallback: ReceivingLotAllocationMetadata = {}
-): ReceivingLotAllocation {
-    const metadata = allocationMetadata(allocation as unknown as ReceivingLotAllocationMetadata & Record<string, unknown>, fallback);
+function normalizeAllocation(allocation: ReceivingLotAllocationDraft): ReceivingLotAllocation {
     return {
         storageLotId: Number(allocation.storageLotId),
-        batchNumber: text(metadata.batchNumber),
-        manufacturingDate: dateValue(metadata.manufacturingDate),
-        expirationDate: dateValue(metadata.expirationDate),
+        batchNumber: text(allocation.batchNumber ?? allocation.batch_no),
+        manufacturingDate: dateValue(allocation.manufacturingDate ?? allocation.manufacturing_date),
+        expirationDate: dateValue(allocation.expirationDate ?? allocation.expiration_date),
         quantity: Number(allocation.quantity)
     };
 }
 
 export function normalizeReceivingLotAllocations(
     acceptedQuantity: number,
-    allocations: readonly ReceivingLotAllocationDraft[] | undefined,
-    fallbackStorageLotId: number | null,
-    fallbackMetadata: ReceivingLotAllocationMetadata = {}
+    allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (acceptedQuantity <= 0) return [];
-    if (allocations && allocations.length > 0) {
-        return allocations.map(allocation => normalizeAllocation(allocation));
-    }
-    return fallbackStorageLotId
-        ? [normalizeAllocation({ storageLotId: fallbackStorageLotId, quantity: acceptedQuantity }, fallbackMetadata)]
-        : [];
+    return (allocations || []).map(normalizeAllocation);
 }
 
 function allocationError(
     quantity: number,
     allocations: readonly ReceivingLotAllocationDraft[] | undefined,
-    fallbackStorageLotId: number | null,
-    disposition: "accepted" | "rejected",
-    fallbackMetadata: ReceivingLotAllocationMetadata = {}
+    disposition: "accepted" | "rejected"
 ): string | null {
     if (quantity <= 0) {
         return allocations && allocations.length > 0
@@ -82,9 +55,7 @@ function allocationError(
             : null;
     }
 
-    const normalized = disposition === "accepted"
-        ? normalizeReceivingLotAllocations(quantity, allocations, fallbackStorageLotId, fallbackMetadata)
-        : normalizeRejectedLotAllocations(quantity, allocations, fallbackStorageLotId, fallbackMetadata);
+    const normalized = (allocations || []).map(normalizeAllocation);
     if (normalized.length === 0) return `Select at least one storage lot for ${disposition} inventory.`;
 
     const seen = new Set<string>();
@@ -115,35 +86,24 @@ function allocationError(
 
 export function receivingLotAllocationError(
     acceptedQuantity: number,
-    allocations: readonly ReceivingLotAllocationDraft[],
-    fallbackStorageLotId: number | null,
-    fallbackMetadata: ReceivingLotAllocationMetadata = {}
+    allocations: readonly ReceivingLotAllocationDraft[]
 ): string | null {
-    return allocationError(acceptedQuantity, allocations, fallbackStorageLotId, "accepted", fallbackMetadata);
+    return allocationError(acceptedQuantity, allocations, "accepted");
 }
 
 export function normalizeRejectedLotAllocations(
     rejectedQuantity: number,
-    allocations: readonly ReceivingLotAllocationDraft[] | undefined,
-    fallbackStorageLotId: number | null,
-    fallbackMetadata: ReceivingLotAllocationMetadata = {}
+    allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (rejectedQuantity <= 0) return [];
-    if (allocations && allocations.length > 0) {
-        return allocations.map(allocation => normalizeAllocation(allocation));
-    }
-    return fallbackStorageLotId
-        ? [normalizeAllocation({ storageLotId: fallbackStorageLotId, quantity: rejectedQuantity }, fallbackMetadata)]
-        : [];
+    return (allocations || []).map(normalizeAllocation);
 }
 
 export function rejectedLotAllocationError(
     rejectedQuantity: number,
-    allocations: readonly ReceivingLotAllocationDraft[],
-    fallbackStorageLotId: number | null,
-    fallbackMetadata: ReceivingLotAllocationMetadata = {}
+    allocations: readonly ReceivingLotAllocationDraft[]
 ): string | null {
-    return allocationError(rejectedQuantity, allocations, fallbackStorageLotId, "rejected", fallbackMetadata);
+    return allocationError(rejectedQuantity, allocations, "rejected");
 }
 
 export function allocationKey(allocation: ReceivingLotAllocation): string {
