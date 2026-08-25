@@ -29,6 +29,7 @@ import { useCardsColumnsPerRow } from "../hooks/useCardsColumnsPerRow";
 type VariantProduct = {
     product_id: number | string | null | undefined;
     unit_of_measurement?: number | string | null;
+    versions?: import("../types").ManufacturingVersion[];
 };
 
 type MatrixVariant = {
@@ -83,6 +84,7 @@ type PricingMatrixLike = {
 type Props = {
     matrix: PricingMatrixLike;
     dirtyVersion?: number;
+    showVersions?: boolean;
 };
 
 type ViewMode = "table" | "cards";
@@ -311,6 +313,7 @@ function ProductBlockPriceTable(props: {
     tiers: ProductTierKey[];
     units: Unit[];
     getSetCellHandler: SetCellHandler;
+    showVersions?: boolean;
 }) {
     const { matrix, row, tiers, units, getSetCellHandler } = props;
     const variantsByUnitId = row.variantsByUnitId ?? {};
@@ -392,6 +395,32 @@ function ProductBlockPriceTable(props: {
                             </tr>
                         );
                     })}
+                    {props.showVersions &&
+                        Object.values(variantsByUnitId).map((v) => {
+                            const versions = v.product.versions;
+                            if (!versions || versions.length === 0) return null;
+                            return versions.map((version) => (
+                                <tr key={`ver-${version.version_id}`} className="border-b last:border-b-0 bg-muted/10">
+                                    <th className="px-3 py-2 text-left align-middle text-xs font-semibold text-muted-foreground border-slate-200">
+                                        <span className="block truncate">
+                                            ↳ {version.version_name} {version.is_primary ? "(Primary)" : ""}
+                                        </span>
+                                    </th>
+                                    {printableUnits.map((unit) => {
+                                        const isMatchingUom = Number(unit.unit_id) === Number(version.uom_id);
+                                        return (
+                                            <td key={`ver-${version.version_id}-${unit.unit_id}`} className="border-l px-2 py-2 align-middle text-right border-slate-200">
+                                                {isMatchingUom ? (
+                                                    <span className="text-muted-foreground">Read-only prices not populated</span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">-</span>
+                                                )}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ));
+                        })}
                 </tbody>
             </table>
         </div>
@@ -404,6 +433,7 @@ const ProductGroupBlockRow = React.memo(function ProductGroupBlockRow(props: {
     tiers: ProductTierKey[];
     usedUnits: Unit[];
     getSetCellHandler: SetCellHandler;
+    showVersions?: boolean;
 }) {
     const { matrix, row, tiers, usedUnits, getSetCellHandler } = props;
     const display = row.display ?? {};
@@ -426,6 +456,7 @@ const ProductGroupBlockRow = React.memo(function ProductGroupBlockRow(props: {
                     tiers={tiers}
                     units={rowUnits}
                     getSetCellHandler={getSetCellHandler}
+                    showVersions={props.showVersions}
                 />
             </div>
         </article>
@@ -438,6 +469,7 @@ const ProductGroupCardRow = React.memo(function ProductGroupCardRow(props: {
     tiers: ProductTierKey[];
     usedUnits: Unit[];
     getSetCellHandler: SetCellHandler;
+    showVersions?: boolean;
 }) {
     const { matrix, row, tiers, usedUnits, getSetCellHandler } = props;
     const display = row.display ?? {};
@@ -502,6 +534,23 @@ const ProductGroupCardRow = React.memo(function ProductGroupCardRow(props: {
                     ];
                 })}
             </div>
+            
+            {props.showVersions && rowUnits.length > 0 && (
+                <div className="mt-3 pt-3 border-t">
+                    <div className="text-xs font-medium text-muted-foreground mb-2">Versions</div>
+                    {rowUnits.flatMap((unit) => {
+                        const variant = row.variantsByUnitId?.[String(unit.unit_id)];
+                        if (!variant || !variant.product.versions || variant.product.versions.length === 0) return null;
+                        
+                        return variant.product.versions.map((version) => (
+                            <div key={`c-ver-${version.version_id}`} className="flex justify-between items-center text-xs py-1">
+                                <span className="text-muted-foreground truncate max-w-[150px]">↳ {version.version_name}</span>
+                                <span className="text-muted-foreground">Read-only</span>
+                            </div>
+                        ));
+                    })}
+                </div>
+            )}
         </article>
     );
 });
@@ -515,6 +564,7 @@ function PricingProductBlocks(props: {
     totalGroups: number;
     getSetCellHandler: SetCellHandler;
     listKey: string;
+    showVersions?: boolean;
 }) {
     const { matrix, rows, tiers, usedUnits, loading, totalGroups, getSetCellHandler, listKey } = props;
     const hasLoadError = Boolean(matrix.error);
@@ -542,6 +592,7 @@ function PricingProductBlocks(props: {
                     tiers={tiers}
                     usedUnits={usedUnits}
                     getSetCellHandler={getSetCellHandler}
+                    showVersions={props.showVersions}
                 />
             )}
         />
@@ -557,6 +608,7 @@ function PricingCards(props: {
     totalGroups: number;
     getSetCellHandler: SetCellHandler;
     listKey: string;
+    showVersions?: boolean;
 }) {
     const { matrix, rows, tiers, usedUnits, loading, totalGroups, getSetCellHandler, listKey } = props;
     const columnsPerRow = useCardsColumnsPerRow();
@@ -594,6 +646,7 @@ function PricingCards(props: {
                             tiers={tiers}
                             usedUnits={usedUnits}
                             getSetCellHandler={getSetCellHandler}
+                            showVersions={props.showVersions}
                         />
                     ))}
                     {Array.from({ length: Math.max(0, columnsPerRow - chunk.length) }).map((_, i) => (
@@ -605,7 +658,7 @@ function PricingCards(props: {
     );
 }
 
-export default function PricingTable({ matrix, dirtyVersion = 0 }: Props) {
+export default function PricingTable({ matrix, dirtyVersion = 0, showVersions = false }: Props) {
     const usedUnits: Unit[] = Array.isArray(matrix.usedUnits) ? matrix.usedUnits : [];
 
     const tiers = React.useMemo(
@@ -779,6 +832,7 @@ export default function PricingTable({ matrix, dirtyVersion = 0 }: Props) {
                         totalGroups={totalGroups}
                         getSetCellHandler={getSetCellHandler}
                         listKey={listKey}
+                        showVersions={showVersions}
                     />
                 ) : (
                     <PricingCards
@@ -790,6 +844,7 @@ export default function PricingTable({ matrix, dirtyVersion = 0 }: Props) {
                         totalGroups={totalGroups}
                         getSetCellHandler={getSetCellHandler}
                         listKey={listKey}
+                        showVersions={showVersions}
                     />
                 )}
             </div>

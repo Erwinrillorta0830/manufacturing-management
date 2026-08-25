@@ -11,6 +11,19 @@ export interface SupplierRepresentative {
     updated_at?: string;
 }
 
+export type SupplierType = "TRADE" | "NON-TRADE";
+
+export function normalizeSupplierType(value: unknown): SupplierType | "" {
+    const normalized = String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s_]+/g, "-");
+
+    if (normalized === "TRADE") return "TRADE";
+    if (normalized === "NONTRADE" || normalized === "NON-TRADE") return "NON-TRADE";
+    return "";
+}
+
 export interface Supplier {
     id: number;
     supplier_name: string;
@@ -33,7 +46,26 @@ export interface Supplier {
     is_foreign?: number;
     currency?: string;
     default_currency?: string;
+    supplier_type?: SupplierType | string | null;
     representatives?: SupplierRepresentative[];
+}
+
+export type SupplierEvaluationGrade = "A+" | "A" | "B" | "C" | "F";
+
+export interface SupplierEvaluationInput {
+    supplier_id: number;
+    delivery_rating: number;
+    quality_rating: number;
+    price_rating: number;
+    compliance_rating: number;
+    feedback_notes: string;
+}
+
+export interface SupplierEvaluation extends SupplierEvaluationInput {
+    id: number;
+    overall_score: number;
+    grade: SupplierEvaluationGrade;
+    evaluated_at: string;
 }
 
 export interface SupplierCurrencyOption {
@@ -47,6 +79,7 @@ export interface SupplierCurrencyOption {
 export interface SupplierFormState {
     supplier_name: string;
     supplier_shortcut: string;
+    supplier_type: SupplierType | "";
     tin_number: string;
     phone_number: string;
     email_address: string;

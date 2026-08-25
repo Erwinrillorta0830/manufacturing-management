@@ -24,6 +24,7 @@ export const PCR = DETAILS;
 const PCR_FIELDS = [
     "request_id",
     "product_id",
+    "version_id",
     "price_type_id",
     "current_price",
     "proposed_price",
@@ -59,6 +60,7 @@ type DirectusList<T> = { data?: T[] };
 export type PcrRow = {
     request_id?: number | string | null;
     product_id?: number | string | { product_id?: number | string | null } | null;
+    version_id?: number | string | { version_id?: number | string | null; version_name?: string | null } | null;
     price_type_id?: number | string | { price_type_id?: number | string | null } | null;
     current_price?: number | string | null;
     proposed_price?: number | string | null;
@@ -267,6 +269,50 @@ export async function applyProposedPrice(args: {
     }
 
     invalidateGroupIndexCacheOnCatalogChange();
+}
+
+export async function applyProposedVersionPrice(args: {
+    userId: number;
+    productId: number;
+    versionId: number;
+    priceTypeId: number;
+    proposedPrice: number;
+}) {
+    const { versionId, priceTypeId, proposedPrice } = args;
+    const validProposedPrice = assertValidPriceValue(proposedPrice, "proposed_price");
+
+    const existingParams = new URLSearchParams();
+    existingParams.set("limit", "1");
+    existingParams.set("fields", "version_price_id");
+    existingParams.set("filter[version_id][_eq]", String(versionId));
+    existingParams.set("filter[price_type_id][_eq]", String(priceTypeId));
+
+    const existingJson = await fetchDirectus<{ data: { version_price_id?: number | string | null }[] }>(
+        `${mustBase()}/items/product_version_prices?${existingParams.toString()}`
+    );
+
+    const existingId = Number(existingJson.data?.[0]?.version_price_id);
+    const hasExistingId = Number.isFinite(existingId) && existingId > 0;
+
+    const payload = {
+        version_id: versionId,
+        price_type_id: priceTypeId,
+        price_per_unit: validProposedPrice,
+    };
+
+    if (hasExistingId) {
+        await fetchDirectus(`${mustBase()}/items/product_version_prices/${existingId}`, {
+            method: "PATCH",
+            headers: directusHeaders(),
+            body: JSON.stringify(payload),
+        });
+    } else {
+        await fetchDirectus(`${mustBase()}/items/product_version_prices`, {
+            method: "POST",
+            headers: directusHeaders(),
+            body: JSON.stringify(payload),
+        });
+    }
 }
 
 export async function approveOneOrphanPriceRequest(

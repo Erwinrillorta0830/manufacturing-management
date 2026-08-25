@@ -14,8 +14,8 @@ function toPriceTypes(priceTypes: PriceTypeOption[]): PriceType[] {
 function toUnits(units: UnitOption[]): Unit[] {
     return units.map((unit) => ({
         unit_id: unit.unit_id,
-        unit_name: unit.unit_name ?? null,
-        unit_shortcut: unit.unit_shortcut ?? null,
+        unit_name: unit.unit_name ?? "",
+        unit_shortcut: unit.unit_shortcut ?? "",
         order: unit.order ?? null,
     }));
 }

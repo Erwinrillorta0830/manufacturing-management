@@ -208,10 +208,14 @@ interface DirectusInventoryMovement {
     quantity?: number | string | null;
     batch_no?: string | null;
     manufacturing_date?: string | null;
+    expiry_date?: string | null;
 }
 
 interface ReceivingLotAllocationSnapshot {
     storage_lot_id: number;
+    batch_number: string;
+    manufacturing_date: string | null;
+    expiration_date: string | null;
     quantity: number;
 }
 
@@ -291,18 +295,28 @@ function movementRelationId(value: unknown, key: string): number {
 
 function sumMovementAllocations(
     movements: DirectusInventoryMovement[],
-    branchId: number | null
+    branchId: number | null,
+    mode: "match" | "exclude" = "match"
 ): ReceivingLotAllocationSnapshot[] {
-    const quantities = new Map<number, number>();
+    const quantities = new Map<string, ReceivingLotAllocationSnapshot>();
     for (const movement of movements) {
         const movementBranchId = movementRelationId(movement.branch_id, "id");
-        if (!Number.isSafeInteger(movementBranchId) || (branchId !== null && movementBranchId !== branchId)) continue;
+        if (!Number.isSafeInteger(movementBranchId) || branchId === null) continue;
+        if (mode === "match" && movementBranchId !== branchId) continue;
+        if (mode === "exclude" && movementBranchId === branchId) continue;
         const storageLotId = movementRelationId(movement.lot_id, "lot_id");
         const quantity = Number(movement.quantity || 0);
         if (!Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
-        quantities.set(storageLotId, (quantities.get(storageLotId) || 0) + quantity);
+        const batchNumber = String(movement.batch_no || "").trim();
+        const manufacturingDate = movement.manufacturing_date ? String(movement.manufacturing_date).slice(0, 10) : null;
+        const expirationDate = movement.expiry_date ? String(movement.expiry_date).slice(0, 10) : null;
+        const key = `${storageLotId}:${batchNumber.toLowerCase()}:${manufacturingDate || ""}:${expirationDate || ""}`;
+        const current = quantities.get(key);
+        quantities.set(key, current
+            ? { ...current, quantity: current.quantity + quantity }
+            : { storage_lot_id: storageLotId, batch_number: batchNumber, manufacturing_date: manufacturingDate, expiration_date: expirationDate, quantity });
     }
-    return [...quantities.entries()].map(([storage_lot_id, quantity]) => ({ storage_lot_id, quantity }));
+    return [...quantities.values()];
 }
 
 function relationId(value: unknown, key: string): number | null {
@@ -728,7 +742,7 @@ export async function fetchShipmentLineItems(
         if (receivingIds.length > 0) {
             const movementParams = new URLSearchParams({
                 "filter[source_document_id][_in]": receivingIds.join(","),
-                fields: "source_document_id,product_id,lot_id,branch_id,quantity,batch_no,manufacturing_date",
+                fields: "source_document_id,product_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
                 limit: "-1"
             });
             const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
@@ -834,19 +848,11 @@ export async function fetchShipmentLineItems(
                 latestReceiptMovements,
                 Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null
             );
-            const latestRejectedByLot = new Map<number, number>();
-            if (Number.isSafeInteger(latestReceiptBranchId)) {
-                for (const movement of latestReceiptMovements) {
-                    const movementBranchId = movementRelationId(movement.branch_id, "id");
-                    if (movementBranchId === latestReceiptBranchId) continue;
-                    const storageLotId = movementRelationId(movement.lot_id, "lot_id");
-                    const quantity = Number(movement.quantity || 0);
-                    if (Number.isSafeInteger(storageLotId) && storageLotId > 0 && Number.isFinite(quantity) && quantity > 0) {
-                        latestRejectedByLot.set(storageLotId, (latestRejectedByLot.get(storageLotId) || 0) + quantity);
-                    }
-                }
-            }
-            const rejectedAllocations = [...latestRejectedByLot.entries()].map(([storage_lot_id, quantity]) => ({ storage_lot_id, quantity }));
+            const rejectedAllocations = sumMovementAllocations(
+                latestReceiptMovements,
+                Number.isSafeInteger(latestReceiptBranchId) ? latestReceiptBranchId : null,
+                "exclude"
+            );
             const latestMovementWithDate = latestReceiptMovements.find(row => Boolean(row.manufacturing_date));
             const latestReceivedQuantity = Number(latestReceipt?.received_quantity || 0);
             const latestRejectedQuantity = Number(latestReceipt?.quantity_rejected || 0);

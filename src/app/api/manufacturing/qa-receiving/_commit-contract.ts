@@ -14,11 +14,17 @@ const quantity = z.number().finite().nonnegative();
 const optionalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable();
 const acceptedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
-    quantity
+    quantity,
+    batchNumber: z.string().trim().min(1).max(50),
+    manufacturingDate: optionalDate.optional(),
+    expirationDate: optionalDate.optional()
 });
 const rejectedLotAllocation = z.object({
     storageLotId: z.number().int().positive(),
-    quantity
+    quantity,
+    batchNumber: z.string().trim().min(1).max(50),
+    manufacturingDate: optionalDate.optional(),
+    expirationDate: optionalDate.optional()
 });
 
 export const receivingCommitLineSchema = z.object({
@@ -27,12 +33,8 @@ export const receivingCommitLineSchema = z.object({
     receivedQuantity: quantity,
     acceptedQuantity: quantity,
     rejectedQuantity: quantity,
-    storageLotId: z.number().int().positive().nullable(),
     acceptedLotAllocations: z.array(acceptedLotAllocation).default([]),
     rejectedLotAllocations: z.array(rejectedLotAllocation).default([]),
-    supplierBatchNumber: z.string().max(50),
-    manufacturingDate: optionalDate,
-    expiryDate: optionalDate,
     remarks: z.string().max(255).nullable(),
     isPackaging: z.boolean(),
     readings: z.array(z.object({
@@ -44,16 +46,35 @@ export const receivingCommitLineSchema = z.object({
     if (message) context.addIssue({ code: z.ZodIssueCode.custom, path: ["receivedQuantity"], message });
     const allocationMessage = receivingLotAllocationError(
         line.acceptedQuantity,
-        line.acceptedLotAllocations,
-        line.storageLotId
+        line.acceptedLotAllocations
     );
     if (allocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["acceptedLotAllocations"], message: allocationMessage });
     const rejectedAllocationMessage = rejectedLotAllocationError(
         line.rejectedQuantity,
-        line.rejectedLotAllocations,
-        line.storageLotId
+        line.rejectedLotAllocations
     );
     if (rejectedAllocationMessage) context.addIssue({ code: z.ZodIssueCode.custom, path: ["rejectedLotAllocations"], message: rejectedAllocationMessage });
+    for (const [field, allocations] of [
+        ["acceptedLotAllocations", line.acceptedLotAllocations],
+        ["rejectedLotAllocations", line.rejectedLotAllocations]
+    ] as const) {
+        for (const allocation of allocations) {
+            if (!line.isPackaging && (!allocation.manufacturingDate || !allocation.expirationDate)) {
+                context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: [field],
+                    message: "Manufacturing and expiry dates are required for raw materials and finished goods."
+                });
+            }
+            if (allocation.manufacturingDate && allocation.expirationDate && allocation.manufacturingDate > allocation.expirationDate) {
+                context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: [field],
+                    message: "Manufacturing Date cannot be later than Expiry Date."
+                });
+            }
+        }
+    }
 }).transform(line => ({
     ...line,
     rejectedQuantity: deriveRejectedQuantity(line.receivedQuantity, line.acceptedQuantity)
@@ -117,6 +138,9 @@ export interface FinalReceivingMovement {
     transactionTypeId: number;
     sourceDocumentNo: string;
     quantity: number;
+    batchNumber: string;
+    manufacturingDate: string | null;
+    expirationDate: string | null;
 }
 
 export interface FinalReceivingAllocation {

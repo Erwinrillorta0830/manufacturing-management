@@ -13,6 +13,8 @@ import {
     fetchLinkedProducts,
     fetchLinkedProductsPage,
     fetchSupplierPage,
+    fetchLatestSupplierEvaluation,
+    saveSupplierEvaluation,
     saveSupplierCatalogUpdates,
     isSupplierActive,
     isSupplierNonBuy,
@@ -30,6 +32,7 @@ interface SuppliersDirectoryProps {
     supplierForm: SupplierFormState;
     setSupplierForm: React.Dispatch<React.SetStateAction<SupplierFormState>>;
     supplierError?: string | null;
+    onValidationError?: (message: string | null) => void;
     isEditingSupplier?: boolean;
     onStartEditSupplier?: (supplier: Supplier) => void;
     onCreateSupplier: (e: React.FormEvent) => void;
@@ -54,6 +57,7 @@ export default function SuppliersDirectory({
     supplierForm,
     setSupplierForm,
     supplierError,
+    onValidationError,
     isEditingSupplier = false,
     onStartEditSupplier,
     onCreateSupplier,
@@ -85,6 +89,7 @@ export default function SuppliersDirectory({
     const [loadingLinkedProductPage, setLoadingLinkedProductPage] = useState(false);
     const [loadingLinkedProducts, setLoadingLinkedProducts] = useState(false);
     const [savingCatalogUpdates, setSavingCatalogUpdates] = useState(false);
+    const supplierPageRequestId = useRef(0);
     const linkedProductRequestId = useRef(0);
     const previousActiveSupplierId = useRef<number | null>(null);
 
@@ -104,10 +109,10 @@ export default function SuppliersDirectory({
         pageSize: number,
         nextSearch: string,
         nextStatus: SupplierStatusFilter,
-        nextForeign: SupplierForeignFilter
+        nextForeign: SupplierForeignFilter,
+        requestId: number,
+        signal: AbortSignal
     ) => {
-        setLoadingSuppliers(true);
-        setSupplierPageError(null);
         try {
             const data = await fetchSupplierPage({
                 page,
@@ -115,7 +120,8 @@ export default function SuppliersDirectory({
                 search: nextSearch,
                 status: nextStatus,
                 foreign: nextForeign
-            });
+            }, signal);
+            if (signal.aborted || requestId !== supplierPageRequestId.current) return;
             setSupplierPageData(data);
             if (data.pagination.totalPages < page) {
                 setSupplierPage(data.pagination.totalPages);
@@ -124,20 +130,52 @@ export default function SuppliersDirectory({
                 ? previous
                 : (data.data[0]?.id ?? null));
         } catch (error) {
+            if (signal.aborted || requestId !== supplierPageRequestId.current) return;
             console.error(error);
             setSupplierPageError((error as Error).message || "Failed to load suppliers");
             setSupplierPageData(previous => ({ ...previous, data: [] }));
         } finally {
-            setLoadingSuppliers(false);
+            if (requestId === supplierPageRequestId.current) {
+                setLoadingSuppliers(false);
+            }
         }
     }, []);
 
     useEffect(() => {
+        const requestId = supplierPageRequestId.current + 1;
+        supplierPageRequestId.current = requestId;
+        const controller = new AbortController();
+
+        setLoadingSuppliers(true);
+        setSupplierPageError(null);
+        setSupplierPageData(previous => ({
+            ...previous,
+            data: [],
+            pagination: {
+                page: supplierPage,
+                pageSize: supplierPageSize,
+                total: 0,
+                totalPages: 1
+            }
+        }));
+        setSelectedSupplierId(null);
+
         const timer = window.setTimeout(() => {
-            void loadSupplierPage(supplierPage, supplierPageSize, search, statusFilter, foreignFilter);
+            void loadSupplierPage(
+                supplierPage,
+                supplierPageSize,
+                search,
+                statusFilter,
+                foreignFilter,
+                requestId,
+                controller.signal
+            );
         }, search.trim() ? 250 : 0);
 
-        return () => window.clearTimeout(timer);
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
     }, [foreignFilter, loadSupplierPage, search, statusFilter, supplierPage, supplierPageSize, supplierRefreshKey]);
 
     const loadLinkedProductPage = useCallback(async (
@@ -699,6 +737,7 @@ export default function SuppliersDirectory({
                 supplierForm={supplierForm}
                 setSupplierForm={setSupplierForm}
                 supplierError={supplierError}
+                onValidationError={onValidationError}
                 isEditingSupplier={isEditingSupplier}
                 onCreateSupplier={onCreateSupplier}
             />
@@ -707,6 +746,8 @@ export default function SuppliersDirectory({
                 isOpen={isEvaluationOpen}
                 onClose={() => setIsEvaluationOpen(false)}
                 supplier={activeSupplier || null}
+                onLoadEvaluation={fetchLatestSupplierEvaluation}
+                onSaveEvaluation={saveSupplierEvaluation}
             />
 
             <SupplierCatalogMatrixModal

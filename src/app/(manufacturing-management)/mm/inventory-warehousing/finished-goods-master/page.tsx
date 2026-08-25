@@ -98,7 +98,7 @@ export default async function FinishedGoodsPage() {
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                  <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Inventory Warehousing</BreadcrumbLink>
+                                    <BreadcrumbLink href="#">Inventory & Warehousing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 

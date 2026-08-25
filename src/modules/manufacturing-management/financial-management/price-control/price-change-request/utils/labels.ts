@@ -21,7 +21,14 @@ export function productLabel(r: PriceChangeRequestRow | CostChangeRequestRow) {
         const name =
             typeof product.product_name === "string" ? product.product_name : String(product.product_name ?? "");
 
-        return [code, name].filter(Boolean).join(" - ");
+        let fullLabel = [code, name].filter(Boolean).join(" - ");
+        
+        // Show version name if present
+        if (typeof product.version_name === "string" && product.version_name.trim()) {
+            fullLabel += ` (${product.version_name.trim()})`;
+        }
+        
+        return fullLabel;
     }
 
     return `Product #${r.product_id}`;

@@ -1,32 +1,23 @@
 import React, { useState, useEffect } from "react";
-import { Supplier } from "../types";
+import { Supplier, SupplierEvaluation, SupplierEvaluationInput } from "../types";
+import { calculateSupplierEvaluationScore } from "../supplier-evaluation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Award, Star, CheckCircle2, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
-
-export interface SupplierEvaluation {
-    supplier_id: number;
-    delivery_rating: number; // 1 to 5
-    quality_rating: number; // 1 to 5
-    price_rating: number; // 1 to 5
-    compliance_rating: number; // 1 to 5
-    overall_score: number; // calculated percentage 0-100%
-    grade: "A+" | "A" | "B" | "C" | "F";
-    feedback_notes: string;
-    evaluated_at: string;
-}
 
 export interface SupplierEvaluationModalProps {
     isOpen: boolean;
     onClose: () => void;
     supplier: Supplier | null;
-    onSaveEvaluation?: (evaluation: SupplierEvaluation) => void;
+    onLoadEvaluation: (supplierId: number, signal?: AbortSignal) => Promise<SupplierEvaluation | null>;
+    onSaveEvaluation: (evaluation: SupplierEvaluationInput) => Promise<SupplierEvaluation>;
 }
 
 export default function SupplierEvaluationModal({
     isOpen,
     onClose,
     supplier,
+    onLoadEvaluation,
     onSaveEvaluation
 }: SupplierEvaluationModalProps) {
     const [deliveryRating, setDeliveryRating] = useState(5);
@@ -35,52 +26,68 @@ export default function SupplierEvaluationModal({
     const [complianceRating, setComplianceRating] = useState(5);
     const [notes, setNotes] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const [isLoadingEvaluation, setIsLoadingEvaluation] = useState(false);
+    const [evaluationError, setEvaluationError] = useState<string | null>(null);
+    const supplierId = supplier?.id;
 
     useEffect(() => {
-        if (isOpen) {
-            setDeliveryRating(5);
-            setQualityRating(5);
-            setPriceRating(4);
-            setComplianceRating(5);
-            setNotes("");
-        }
-    }, [isOpen]);
+        if (!isOpen || supplierId === undefined) return;
+
+        const controller = new AbortController();
+        setDeliveryRating(5);
+        setQualityRating(5);
+        setPriceRating(4);
+        setComplianceRating(5);
+        setNotes("");
+        setEvaluationError(null);
+        setIsLoadingEvaluation(true);
+
+        onLoadEvaluation(supplierId, controller.signal)
+            .then(evaluation => {
+                if (controller.signal.aborted || !evaluation) return;
+                setDeliveryRating(evaluation.delivery_rating);
+                setQualityRating(evaluation.quality_rating);
+                setPriceRating(evaluation.price_rating);
+                setComplianceRating(evaluation.compliance_rating);
+                setNotes(evaluation.feedback_notes || "");
+            })
+            .catch(error => {
+                if (controller.signal.aborted) return;
+                console.error(error);
+                setEvaluationError("The latest evaluation could not be loaded. You can still record a new evaluation.");
+                toast.error("Failed to load supplier evaluation");
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setIsLoadingEvaluation(false);
+            });
+
+        return () => controller.abort();
+    }, [isOpen, onLoadEvaluation, supplierId]);
 
     if (!supplier) return null;
 
-    const calculateScore = () => {
-        const avg = (deliveryRating + qualityRating + priceRating + complianceRating) / 4;
-        const percentage = Math.round((avg / 5) * 100);
-        let grade: "A+" | "A" | "B" | "C" | "F" = "F";
-        if (percentage >= 95) grade = "A+";
-        else if (percentage >= 85) grade = "A";
-        else if (percentage >= 70) grade = "B";
-        else if (percentage >= 50) grade = "C";
-        return { percentage, grade };
-    };
-
-    const { percentage: overallScore, grade } = calculateScore();
+    const { overall_score: overallScore, grade } = calculateSupplierEvaluationScore({
+        delivery_rating: deliveryRating,
+        quality_rating: qualityRating,
+        price_rating: priceRating,
+        compliance_rating: complianceRating
+    });
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
         try {
-            const evalData: SupplierEvaluation = {
+            const evaluationInput: SupplierEvaluationInput = {
                 supplier_id: supplier.id,
                 delivery_rating: deliveryRating,
                 quality_rating: qualityRating,
                 price_rating: priceRating,
                 compliance_rating: complianceRating,
-                overall_score: overallScore,
-                grade,
-                feedback_notes: notes,
-                evaluated_at: new Date().toISOString()
+                feedback_notes: notes
             };
 
-            if (onSaveEvaluation) {
-                await onSaveEvaluation(evalData);
-            }
-            toast.success(`Performance evaluation for ${supplier.supplier_name} saved (Grade: ${grade})`);
+            const savedEvaluation = await onSaveEvaluation(evaluationInput);
+            toast.success(`Performance evaluation for ${supplier.supplier_name} saved (Grade: ${savedEvaluation.grade})`);
             onClose();
         } catch (err) {
             console.error(err);
@@ -99,6 +106,7 @@ export default function SupplierEvaluationModal({
                         key={star}
                         type="button"
                         onClick={() => onChange(star)}
+                        disabled={isLoadingEvaluation || isSaving}
                         className={`p-1 rounded transition-colors ${
                             star <= value ? "text-amber-500 fill-amber-500" : "text-muted-foreground/40 hover:text-amber-400"
                         }`}
@@ -142,6 +150,17 @@ export default function SupplierEvaluationModal({
                             </button>
                         </div>
 
+                        {isLoadingEvaluation && (
+                            <p className="text-xs text-muted-foreground" role="status">
+                                Loading the latest saved evaluation...
+                            </p>
+                        )}
+                        {evaluationError && (
+                            <p className="text-xs text-amber-700" role="alert">
+                                {evaluationError}
+                            </p>
+                        )}
+
                         {/* Overall Score Badge */}
                         <div className="flex items-center justify-between p-4 bg-primary/5 border border-primary/20 rounded-2xl">
                             <div className="space-y-1">
@@ -181,6 +200,7 @@ export default function SupplierEvaluationModal({
                                     placeholder="Enter performance feedback, defect history, or contract audit remarks..."
                                     value={notes}
                                     onChange={(e) => setNotes(e.target.value)}
+                                    disabled={isLoadingEvaluation || isSaving}
                                     className="w-full rounded-xl border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-medium min-h-[80px]"
                                 />
                             </div>
@@ -195,7 +215,7 @@ export default function SupplierEvaluationModal({
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={isSaving}
+                                    disabled={isSaving || isLoadingEvaluation}
                                     className="bg-primary text-primary-foreground font-bold text-xs px-5 py-2 rounded-xl hover:bg-primary/95 transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                                 >
                                     <CheckCircle2 className="h-4 w-4" />

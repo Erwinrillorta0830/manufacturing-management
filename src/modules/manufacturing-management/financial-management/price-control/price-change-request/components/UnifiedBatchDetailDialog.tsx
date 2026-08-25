@@ -123,6 +123,7 @@ function LineTable({
                             <TableCell className="min-w-[280px] max-w-[420px] align-top">
                                 <div className="whitespace-normal break-words leading-snug font-medium">
                                     {line.product_name || `Product #${line.product_id}`}
+                                    {line.version_name ? ` (${line.version_name.trim()})` : null}
                                 </div>
                                 {line.product_code ? (
                                     <div className="whitespace-normal break-words text-xs text-muted-foreground">

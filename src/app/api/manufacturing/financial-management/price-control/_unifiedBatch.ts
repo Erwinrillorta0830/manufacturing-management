@@ -19,7 +19,7 @@ import {
     COST_DETAILS,
     getCostDetails,
 } from "./cost-change-batches/_batch";
-import { applyProposedPrice } from "./price-change-requests/_actions";
+import { applyProposedPrice, applyProposedVersionPrice } from "./price-change-requests/_actions";
 import { patchProductCostField } from "./cost-change-requests/_actions";
 import { assertValidProposedCost, isInvalidProposedCostError } from "./cost-change-requests/_costValidation";
 import {
@@ -36,6 +36,7 @@ type DetailRow = {
     request_id?: number | string | null;
     header_id?: number | string | null;
     product_id?: unknown;
+    version_id?: unknown;
     price_type_id?: unknown;
     current_price?: number | string | null;
     proposed_price?: number | string | null;
@@ -151,12 +152,16 @@ function mapPriceLine(line: DetailRow): UnifiedBatchLine {
     const current = numberOrNull(line.current_price);
     const proposed = numberOrNull(line.proposed_price);
     const delta = current !== null && proposed !== null ? proposed - current : null;
+    
+    const versionName = productValue(line.version_id, "version_name");
+    const productName = productValue(line.product_id, "product_name");
+    const displayName = versionName ? `${productName} (${versionName})` : productName;
 
     return {
         request_id: pickId(line.request_id),
         kind: "price_type",
         product_id: detailProductId(line),
-        product_name: productValue(line.product_id, "product_name"),
+        product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
         unit_name: productUom(line.product_id),
         price_type_id: detailPriceTypeId(line),
@@ -180,11 +185,15 @@ function mapCostLine(line: DetailRow): UnifiedBatchLine {
     const proposed = numberOrNull(line.proposed_cost);
     const delta = current !== null && proposed !== null ? proposed - current : null;
 
+    const versionName = productValue(line.version_id, "version_name");
+    const productName = productValue(line.product_id, "product_name");
+    const displayName = versionName ? `${productName} (${versionName})` : productName;
+
     return {
         request_id: pickId(line.request_id),
         kind: "list_cost",
         product_id: detailProductId(line),
-        product_name: productValue(line.product_id, "product_name"),
+        product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
         unit_name: productUom(line.product_id),
         current_cost: current,
@@ -312,8 +321,8 @@ async function fetchApplicationRows(collection: string, headerId: number): Promi
     const params = new URLSearchParams();
     params.set("limit", "-1");
     const fields = collection === PRICE_DETAILS
-        ? "request_id,header_id,product_id,price_type_id,current_price,proposed_price,status,effective_at,application_status,application_lock_id,application_started_at,application_attempts,application_error"
-        : "request_id,header_id,product_id,current_cost,proposed_cost,status,effective_at,application_status,application_lock_id,application_started_at,application_attempts,application_error";
+        ? "request_id,header_id,product_id,version_id,version_id.version_name,product_id.product_name,product_id.product_code,product_id.unit_of_measurement.unit_shortcut,product_id.unit_of_measurement.unit_name,price_type_id,price_type_id.price_type_name,current_price,proposed_price,status,effective_at,application_status,application_lock_id,application_started_at,application_attempts,application_error"
+        : "request_id,header_id,product_id,version_id,version_id.version_name,product_id.product_name,product_id.product_code,product_id.unit_of_measurement.unit_shortcut,product_id.unit_of_measurement.unit_name,current_cost,proposed_cost,status,effective_at,application_status,application_lock_id,application_started_at,application_attempts,application_error";
     params.set(
         "fields",
         fields,
@@ -585,13 +594,24 @@ async function applyUnifiedDetails(headerId: number, userId: number) {
                 userId,
                 claimFields: ["current_price"],
                 apply: async (claimedRow) => {
-                    await applyProposedPrice({
-                        userId,
-                        productId: detailProductId(claimedRow),
-                        priceTypeId: detailPriceTypeId(claimedRow),
-                        currentPrice: claimedRow.current_price,
-                        proposedPrice: Number(claimedRow.proposed_price),
-                    });
+                    const versionId = pickId(claimedRow.version_id);
+                    if (versionId) {
+                        await applyProposedVersionPrice({
+                            userId,
+                            productId: detailProductId(claimedRow),
+                            versionId: versionId,
+                            priceTypeId: detailPriceTypeId(claimedRow),
+                            proposedPrice: Number(claimedRow.proposed_price),
+                        });
+                    } else {
+                        await applyProposedPrice({
+                            userId,
+                            productId: detailProductId(claimedRow),
+                            priceTypeId: detailPriceTypeId(claimedRow),
+                            currentPrice: claimedRow.current_price,
+                            proposedPrice: Number(claimedRow.proposed_price),
+                        });
+                    }
                 },
             });
             if (outcome.state === "applied") applied += 1;

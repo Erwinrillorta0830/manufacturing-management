@@ -39,6 +39,16 @@ const conditionOptions = [
   { label: "Discontinued", value: "Discontinued" },
 ];
 
+const assetTypeOptions = [
+  { label: "Administrative", value: "Administrative" },
+  { label: "Production", value: "Production" },
+];
+
+const depreciationOptions = [
+  { label: "Straight Line", value: "Straight Line" },
+  { label: "Units of Production", value: "Units of Production" },
+];
+
 interface DataTableProps<TData extends AssetTableData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   columnFilters: ColumnFiltersState;
@@ -151,6 +161,22 @@ export function AssetDataTable<TData extends AssetTableData, TValue>({
           />
         )}
 
+        {table.getColumn("asset_type") && (
+          <DataTableFacetedFilter
+            column={table.getColumn("asset_type")}
+            title="Asset Type"
+            options={assetTypeOptions}
+          />
+        )}
+
+        {table.getColumn("depreciation_method") && (
+          <DataTableFacetedFilter
+            column={table.getColumn("depreciation_method")}
+            title="Depreciation"
+            options={depreciationOptions}
+          />
+        )}
+
         {table.getColumn("condition") && (
           <DataTableFacetedFilter
             column={table.getColumn("condition")}
@@ -200,7 +226,17 @@ export function AssetDataTable<TData extends AssetTableData, TValue>({
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className="cursor-pointer hover:bg-muted/40 transition-colors"
+                  title="Click to view asset details"
+                  onClick={() => {
+                    const meta = table.options.meta as Record<string, unknown>;
+                    if (typeof meta?.onView === "function") {
+                      (meta.onView as (asset: TData) => void)(row.original);
+                    }
+                  }}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
                       {flexRender(

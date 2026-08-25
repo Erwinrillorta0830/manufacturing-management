@@ -104,7 +104,7 @@ export default function AssetManagementModulePage() {
             <Settings className="h-5 w-5 text-primary animate-spin" style={{ animationDuration: "25s" }} /> Asset &amp; Equipment Management
           </h2>
           <p className="text-xs text-muted-foreground mt-1 font-medium">
-            Track operational factory floor machinery, costs, lifespans, physical conditions, and straight-line depreciation.
+            Track operational factory floor machinery, costs, lifespans, physical conditions, and multi-method asset depreciation.
           </p>
         </div>
         <div className="flex items-center gap-2">
