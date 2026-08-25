@@ -948,12 +948,6 @@ export function useQAReceiving() {
 
             if (received === 0) continue;
 
-            // Expiration rule for raw materials
-            if (!row.isPackaging && !row.expirationDate && accepted > 0) {
-                toast.error(`Expiration Date is mandatory for Raw Material: ${name}`);
-                return;
-            }
-
             if (rejected > 0 && (!row.rejectionReason || !row.rejectionReason.trim())) {
                 toast.error(`Remarks are mandatory for ${name} because there is a rejected quantity (${rejected} units).`);
                 return;
