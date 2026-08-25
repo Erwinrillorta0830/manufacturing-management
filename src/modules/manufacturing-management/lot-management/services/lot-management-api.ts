@@ -1,4 +1,30 @@
-import { Lot, CreateLotPayload, UpdateLotPayload, UnitOfMeasure } from "../types";
+import {
+    Lot,
+    CreateLotPayload,
+    UpdateLotPayload,
+    UnitOfMeasure,
+    Batch,
+    CreateBatchPayload,
+    UpdateBatchPayload,
+    Branch,
+    ProductItem
+} from "../types";
+
+export async function fetchBranches(): Promise<Branch[]> {
+    const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("Failed to fetch branches lookup from BFF");
+    }
+    return await res.json();
+}
+
+export async function fetchProducts(): Promise<ProductItem[]> {
+    const res = await fetch("/api/manufacturing/lots/products", { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("Failed to fetch products lookup from BFF");
+    }
+    return await res.json();
+}
 
 export async function fetchLots(): Promise<Lot[]> {
     const res = await fetch(`/api/manufacturing/lots?_t=${Date.now()}`, { cache: "no-store" });
@@ -57,6 +83,61 @@ export async function fetchUoms(): Promise<UnitOfMeasure[]> {
     const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
     if (!res.ok) {
         throw new Error("Failed to fetch UOM lookup from BFF");
+    }
+    return await res.json();
+}
+
+// ─── Batch API Functions ─────────────────────────────────────────────
+
+export async function fetchBatches(lotId?: number): Promise<Batch[]> {
+    const query = lotId ? `?lotId=${lotId}&_t=${Date.now()}` : `?_t=${Date.now()}`;
+    const res = await fetch(`/api/manufacturing/lots/batches${query}`, { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("Failed to fetch batches from BFF");
+    }
+    return await res.json();
+}
+
+export async function createBatch(payload: CreateBatchPayload): Promise<{ success: boolean; data: Batch }> {
+    const res = await fetch("/api/manufacturing/lots/batches", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to register batch via BFF");
+    }
+    return await res.json();
+}
+
+export async function updateBatch(
+    batchId: number,
+    payload: UpdateBatchPayload
+): Promise<{ success: boolean; data: Batch }> {
+    const res = await fetch(`/api/manufacturing/lots/batches/${batchId}`, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Failed to update batch ${batchId} via BFF`);
+    }
+    return await res.json();
+}
+
+export async function deleteBatch(batchId: number): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/manufacturing/lots/batches/${batchId}`, {
+        method: "DELETE"
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Failed to delete batch ${batchId} via BFF`);
     }
     return await res.json();
 }

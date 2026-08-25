@@ -11,8 +11,28 @@ export async function PATCH(
 ) {
     try {
         const { id } = await params;
+        const batchId = Number(id);
+        if (isNaN(batchId)) {
+            return NextResponse.json({ error: "Invalid batch ID" }, { status: 400 });
+        }
+
         const body = await request.json();
-        const { lot_name, max_batch_capacity, branch_id, description, status } = body;
+        const {
+            batch_no,
+            batch_number,
+            lot_id,
+            branch_id,
+            product_id,
+            manufacturing_date,
+            expiry_date,
+            expiration_date,
+            unit_cost,
+            qa_status,
+            status,
+            source_type,
+            source_reference,
+            remarks
+        } = body;
 
         let userId: number | null = null;
         try {
@@ -30,51 +50,38 @@ export async function PATCH(
                 }
             }
         } catch (err) {
-            console.error("Error parsing user token in PATCH lot route:", err);
+            console.error("Error parsing token in PATCH batch:", err);
         }
 
-        const updatePayload: Record<string, unknown> = {
+        const updateBody: Record<string, unknown> = {
             updated_by: userId ? Number(userId) : 1
         };
 
-        if (lot_name !== undefined) {
-            if (typeof lot_name !== "string" || !lot_name.trim()) {
-                return NextResponse.json(
-                    { error: "lot_name must be a non-empty string" },
-                    { status: 400 }
-                );
-            }
-            updatePayload.lot_name = lot_name.trim();
+        const finalNo = (batch_no || batch_number || "").trim();
+        if (finalNo) updateBody.batch_no = finalNo;
+        if (lot_id) updateBody.lot_id = Number(lot_id);
+        if (branch_id) updateBody.branch_id = Number(branch_id);
+        if (product_id) updateBody.product_id = Number(product_id);
+        if (manufacturing_date !== undefined) updateBody.manufacturing_date = manufacturing_date || null;
+        if (expiry_date !== undefined || expiration_date !== undefined) {
+            updateBody.expiry_date = expiry_date || expiration_date || null;
         }
+        if (unit_cost !== undefined) updateBody.unit_cost = Number(unit_cost);
+        if (qa_status !== undefined) updateBody.qa_status = String(qa_status).toUpperCase();
+        if (status !== undefined) updateBody.status = String(status).toUpperCase();
+        if (source_type !== undefined) updateBody.source_type = source_type ? String(source_type).trim() : null;
+        if (source_reference !== undefined) updateBody.source_reference = source_reference ? String(source_reference).trim() : null;
+        if (remarks !== undefined) updateBody.remarks = remarks ? String(remarks).trim() : null;
 
-        if (max_batch_capacity !== undefined) {
-            if (typeof max_batch_capacity !== "number" || max_batch_capacity <= 0) {
-                return NextResponse.json(
-                    { error: "max_batch_capacity must be a positive number greater than 0" },
-                    { status: 400 }
-                );
-            }
-            updatePayload.max_batch_capacity = max_batch_capacity;
-        }
-
-        if (branch_id !== undefined) updatePayload.branch_id = Number(branch_id);
-        if (description !== undefined) updatePayload.description = description ? String(description).trim() : null;
-        if (status !== undefined) updatePayload.status = String(status).toUpperCase();
-
-        const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
-        if (rawUnitId !== undefined) {
-            updatePayload.unit_id = rawUnitId === null || rawUnitId === "" ? null : Number(rawUnitId);
-        }
-
-        const res = await fetch(`${DIRECTUS_URL}/items/mm_lots/${id}`, {
+        const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${batchId}`, {
             method: "PATCH",
             headers,
-            body: JSON.stringify(updatePayload)
+            body: JSON.stringify(updateBody)
         });
 
         if (!res.ok) {
             const errTxt = await res.text();
-            let errMsg = `Directus mm_lots update failed: ${res.status}`;
+            let errMsg = `Directus mm_inventory_lots update failed: ${res.status}`;
             try {
                 const errJson = JSON.parse(errTxt);
                 if (errJson.errors && errJson.errors.length > 0) {
@@ -87,9 +94,9 @@ export async function PATCH(
         const resJson = await res.json();
         return NextResponse.json({ success: true, data: resJson.data });
     } catch (e) {
-        console.error("API Error updating lot:", e);
+        console.error("API Error updating batch:", e);
         return NextResponse.json(
-            { error: (e as { message?: string }).message || "Failed to update lot" },
+            { error: (e as { message?: string }).message || "Failed to update batch" },
             { status: 500 }
         );
     }
@@ -101,15 +108,19 @@ export async function DELETE(
 ) {
     try {
         const { id } = await params;
+        const batchId = Number(id);
+        if (isNaN(batchId)) {
+            return NextResponse.json({ error: "Invalid batch ID" }, { status: 400 });
+        }
 
-        const res = await fetch(`${DIRECTUS_URL}/items/mm_lots/${id}`, {
+        const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${batchId}`, {
             method: "DELETE",
             headers
         });
 
         if (!res.ok) {
             const errTxt = await res.text();
-            let errMsg = `Directus mm_lots delete failed: ${res.status}`;
+            let errMsg = `Directus mm_inventory_lots delete failed: ${res.status}`;
             try {
                 const errJson = JSON.parse(errTxt);
                 if (errJson.errors && errJson.errors.length > 0) {
@@ -121,9 +132,9 @@ export async function DELETE(
 
         return NextResponse.json({ success: true });
     } catch (e) {
-        console.error("API Error deleting lot:", e);
+        console.error("API Error deleting batch:", e);
         return NextResponse.json(
-            { error: (e as { message?: string }).message || "Failed to delete lot" },
+            { error: (e as { message?: string }).message || "Failed to delete batch" },
             { status: 500 }
         );
     }

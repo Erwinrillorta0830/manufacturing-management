@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
-import { Lot, UnitOfMeasure } from "../types";
+import { Lot, UnitOfMeasure, Branch } from "../types";
 import {
     Dialog,
     DialogContent,
@@ -13,6 +13,13 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchableUomSelect } from "./SearchableUomSelect";
 import { Button } from "@/components/ui/button";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/select";
 
 interface LotFormDialogProps {
     isOpen: boolean;
@@ -21,17 +28,20 @@ interface LotFormDialogProps {
     editingLot: Lot | null;
     formData: {
         lotName: string;
+        branchId: number | "";
         uomId: number | "";
         maxBatchCapacity: string;
     };
     formErrors?: {
         lotName?: boolean;
+        branchId?: boolean;
         uomId?: boolean;
         maxBatchCapacity?: boolean;
     };
     isDuplicateLotName?: boolean;
     onFormChange: (field: string, value: string | number) => void;
     uoms: UnitOfMeasure[];
+    branches?: Branch[];
     saving: boolean;
 }
 
@@ -45,6 +55,7 @@ export default function LotFormDialog({
     isDuplicateLotName = false,
     onFormChange,
     uoms,
+    branches = [],
     saving
 }: LotFormDialogProps) {
     const selectedUom = React.useMemo(() => {
@@ -59,14 +70,14 @@ export default function LotFormDialog({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-            <DialogContent className="sm:max-w-[425px]" showCloseButton={false}>
+            <DialogContent className="sm:max-w-[440px]" showCloseButton={false}>
                 <form onSubmit={handleFormSubmit} className="space-y-4">
                     <DialogHeader>
-                        <DialogTitle>{editingLot ? "Edit Lot" : "Add New Lot"}</DialogTitle>
+                        <DialogTitle>{editingLot ? "Edit Lot Location" : "Add New Lot Location"}</DialogTitle>
                         <DialogDescription>
                             {editingLot
                                 ? "Update the storage lot details."
-                                : "Register a new warehouse storage location."}
+                                : "Register a new warehouse storage location with branch assignment."}
                         </DialogDescription>
                     </DialogHeader>
 
@@ -92,7 +103,38 @@ export default function LotFormDialog({
                             )}
                         </div>
 
-                        {/* Unit of Measure (UOM) with Searchbar & Smooth Scroll */}
+                        {/* Branch Selection */}
+                        <div className="space-y-1">
+                            <Label htmlFor="branchId">
+                                Branch Location <span className="text-destructive">*</span>
+                            </Label>
+                            <Select
+                                value={formData.branchId !== "" ? String(formData.branchId) : ""}
+                                onValueChange={(val) => onFormChange("branchId", Number(val))}
+                                disabled={saving}
+                            >
+                                <SelectTrigger className={`bg-background ${formErrors.branchId ? "border-destructive ring-destructive/20" : ""}`}>
+                                    <SelectValue placeholder="Select branch location..." />
+                                </SelectTrigger>
+                                <SelectContent className="bg-popover border border-border max-h-[220px]">
+                                    {branches.map((b) => (
+                                        <SelectItem key={b.id} value={String(b.id)}>
+                                            <div className="flex items-center justify-between gap-3 w-full">
+                                                <span className="font-semibold">{b.branchName}</span>
+                                                <span className="text-xs text-muted-foreground font-mono">({b.branchCode})</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {formErrors.branchId && (
+                                <p className="text-[11px] text-destructive font-medium mt-1">
+                                    Branch selection is required.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Unit of Measure (UOM) */}
                         <div className="space-y-1">
                             <Label htmlFor="uomId">
                                 Unit of Measure (UOM) <span className="text-destructive">*</span>
