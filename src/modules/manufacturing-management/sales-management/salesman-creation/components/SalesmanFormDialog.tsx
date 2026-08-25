@@ -180,11 +180,18 @@ export function SalesmanFormDialog(props: Props) {
   const selectableBarangays = React.useMemo(() => getBarangays(cityCode), [cityCode, getBarangays]);
 
 
-  const companies: CompanyRow[] = lookups.companies ?? [];
-  const suppliers: SupplierRow[] = lookups.suppliers ?? [];
-  const divisions: DivisionRow[] = lookups.divisions ?? [];
-  const operations: OperationRow[] = lookups.operations ?? [];
-  const branches: BranchRow[] = lookups.branches ?? [];
+  const companies: CompanyRow[] = React.useMemo(() => lookups.companies ?? [], [lookups.companies]);
+  const suppliers: SupplierRow[] = React.useMemo(() => lookups.suppliers ?? [], [lookups.suppliers]);
+  const divisions: DivisionRow[] = React.useMemo(() => lookups.divisions ?? [], [lookups.divisions]);
+  const operations: OperationRow[] = React.useMemo(() => lookups.operations ?? [], [lookups.operations]);
+  const allBranches: BranchRow[] = React.useMemo(() => lookups.branches ?? [], [lookups.branches]);
+
+  const isBadBranch = React.useCallback((b: BranchRow) => Number(b.isBadStock) === 1 || Number(b.isReturn) === 1, []);
+  const branches = React.useMemo(() => allBranches.filter((b) => !isBadBranch(b)), [allBranches, isBadBranch]);
+  const badBranches = React.useMemo(() => {
+    const filtered = allBranches.filter((b) => isBadBranch(b));
+    return filtered.length > 0 ? filtered : allBranches;
+  }, [allBranches, isBadBranch]);
 
   const handleSave = async () => {
     const name = salesmanName.trim();
@@ -506,7 +513,14 @@ export function SalesmanFormDialog(props: Props) {
             <Label>Branch <span className="text-destructive">*</span></Label>
             <Select
               value={branchId ? String(branchId) : ""}
-              onValueChange={(v) => setBranchId(v ? Number(v) : null)}
+              onValueChange={(v) => {
+                const num = v ? Number(v) : null;
+                setBranchId(num);
+                const selected = branches.find((b) => b.id === num);
+                if (selected?.bad_stock_branch_id) {
+                  setBadBranchId(selected.bad_stock_branch_id);
+                }
+              }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select branch" className="truncate" />
@@ -531,7 +545,7 @@ export function SalesmanFormDialog(props: Props) {
                 <SelectValue placeholder="Select bad branch" className="truncate" />
               </SelectTrigger>
               <SelectContent className="max-h-80">
-                {branches.map((b) => (
+                {badBranches.map((b) => (
                   <SelectItem key={b.id} value={String(b.id)}>
                     {b.branch_name}
                   </SelectItem>

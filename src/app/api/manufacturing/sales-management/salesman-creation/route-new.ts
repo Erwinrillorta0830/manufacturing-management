@@ -56,6 +56,8 @@ interface Branch {
     branch_name: string;
     branch_code: string;
     isReturn?: number | null;
+    isBadStock?: number | null;
+    bad_stock_branch_id?: number | null;
 }
 
 interface Operation {
@@ -163,12 +165,14 @@ async function buildSalesmanRelations() {
             new Map(salesmenSorted.map((s) => [s.employee_id, s])).values()
         );
 
-        const regularBranches = branches.filter((b) => b.isReturn === 0 || b.isReturn === null);
-        const badBranches = branches.filter((b) => b.isReturn === 1);
+        const isBad = (b: Branch) => Number(b.isBadStock) === 1 || Number(b.isReturn) === 1;
+        const regularBranches = branches.filter((b) => !isBad(b));
+        const badBranches = branches.filter((b) => isBad(b));
 
         const userMap = new Map(users.map(u => [u.user_id, u]));
         const divisionMap = new Map(divisions.map(d => [d.division_id, d]));
-        const branchMap = new Map(regularBranches.map(b => [b.id, b]));
+        const allBranchMap = new Map(branches.map(b => [b.id, b]));
+        const regularBranchMap = new Map(regularBranches.map(b => [b.id, b]));
         const badBranchMap = new Map(badBranches.map(b => [b.id, b]));
         const operationMap = new Map(operations.map(o => [o.id, o]));
         const priceTypeMap = new Map(priceTypes.map(p => [p.price_type_id, p]));
@@ -177,8 +181,8 @@ async function buildSalesmanRelations() {
             ...salesman,
             employee: salesman.employee_id ? userMap.get(salesman.employee_id) ?? null : null,
             division: salesman.division_id ? divisionMap.get(salesman.division_id) ?? null : null,
-            branch: salesman.branch_code ? branchMap.get(salesman.branch_code) ?? null : null,
-            bad_branch: salesman.bad_branch_code ? badBranchMap.get(salesman.bad_branch_code) ?? null : null,
+            branch: salesman.branch_code ? (regularBranchMap.get(salesman.branch_code) ?? allBranchMap.get(salesman.branch_code) ?? null) : null,
+            bad_branch: salesman.bad_branch_code ? (badBranchMap.get(salesman.bad_branch_code) ?? allBranchMap.get(salesman.bad_branch_code) ?? null) : null,
             operation_details: salesman.operation ? operationMap.get(salesman.operation) ?? null : null,
             price_type_details: salesman.price_type_id ? priceTypeMap.get(salesman.price_type_id) ?? null : null,
         }));

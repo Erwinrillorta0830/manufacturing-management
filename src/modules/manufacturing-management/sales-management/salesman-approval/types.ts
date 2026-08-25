@@ -45,6 +45,8 @@ export interface Branch {
     branch_code: string;
     branch_description?: string;
     isReturn?: number;
+    isBadStock?: number;
+    bad_stock_branch_id?: number | null;
 }
 
 export interface Operation {

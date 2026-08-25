@@ -531,7 +531,13 @@ export function SalesmanApprovalDialog({
                                             <SearchableSelect
                                                 placeholder="Select branch"
                                                 value={field.value}
-                                                onValueChange={field.onChange}
+                                                onValueChange={(val) => {
+                                                    field.onChange(val);
+                                                    const selectedBranch = branches.find((b) => b.id.toString() === val);
+                                                    if (selectedBranch?.bad_stock_branch_id) {
+                                                        form.setValue("bad_branch_code", selectedBranch.bad_stock_branch_id.toString());
+                                                    }
+                                                }}
                                                 options={branches.map((branch) => ({
                                                     value: branch.id.toString(),
                                                     label: branch.branch_name,

@@ -85,6 +85,8 @@ export type BranchRow = {
   branch_code?: string | null;
   isActive?: 0 | 1 | number | null;
   isReturn?: 0 | 1 | number | null;
+  isBadStock?: 0 | 1 | number | null;
+  bad_stock_branch_id?: number | null;
 };
 
 export type QrPaymentTypeRow = {
