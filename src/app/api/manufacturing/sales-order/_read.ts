@@ -11,7 +11,7 @@ export const SALES_ORDER_FIELDS = [
 
 export const SALES_ORDER_DETAIL_FIELDS = [
     "detail_id", "order_id", "bom_version_id", "product_id", "unit_price", "ordered_quantity", "net_amount",
-    "allocated_quantity", "allocated_amount"
+    "allocated_quantity", "allocated_amount", "discount_amount", "discount_type", "gross_amount"
 ].join(",");
 
 export type DirectusReader = (collection: string, params: URLSearchParams) => Promise<{ data: Row[]; meta?: { filter_count?: number } }>;

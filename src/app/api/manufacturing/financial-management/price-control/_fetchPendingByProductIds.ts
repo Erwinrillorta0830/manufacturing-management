@@ -15,6 +15,7 @@ export type PendingPcrRow = {
               product_name?: string | null;
           }
         | null;
+    version_id?: number | string | null;
     price_type_id?:
         | number
         | string
@@ -40,6 +41,7 @@ export type PendingCcrRow = {
               product_name?: string | null;
           }
         | null;
+    version_id?: number | string | null;
     proposed_cost?: number | string | null;
     status?: string | null;
     effective_at?: string | null;
@@ -79,6 +81,7 @@ export async function fetchPendingPcrByProductIds(
 
     const fields = [
         "product_id",
+        "version_id",
         "price_type_id",
         "proposed_price",
         "product_id.product_id",
@@ -89,6 +92,7 @@ export async function fetchPendingPcrByProductIds(
     ].join(",");
     const legacyFields = [
         "product_id",
+        "version_id",
         "price_type_id",
         "proposed_price",
         "product_id.product_id",
@@ -139,8 +143,8 @@ export async function fetchPendingCcrByProductIds(
 ): Promise<PendingCcrRow[]> {
     if (productIds.length === 0) return [];
 
-    const fields = ["product_id", "proposed_cost", "product_id.product_id", "status", "effective_at", "application_status"].join(",");
-    const legacyFields = ["product_id", "proposed_cost", "product_id.product_id", "status"].join(",");
+    const fields = ["product_id", "version_id", "proposed_cost", "product_id.product_id", "status", "effective_at", "application_status"].join(",");
+    const legacyFields = ["product_id", "version_id", "proposed_cost", "product_id.product_id", "status"].join(",");
 
     const batches = chunkArray(productIds, IN_CHUNK_SIZE);
     const results = await Promise.all(

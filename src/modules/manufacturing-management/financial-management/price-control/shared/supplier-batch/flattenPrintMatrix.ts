@@ -82,7 +82,7 @@ export function flattenPrintMatrixRows(
                 barcode: product.barcode ?? null,
                 product_name: product.product_name ?? "",
                 group_id: row.group_id,
-                parent_id: product.parent_id ?? null,
+                parent_id: product.parent_id ? Number(product.parent_id) : null,
                 unit_id: unitId,
                 current_list_cost: Number.isFinite(currentListCost) ? currentListCost : null,
                 currentByPriceTypeId,
@@ -176,7 +176,7 @@ export function flattenListCostMatrixRows(rows: MatrixRow[]): FlatListCostProduc
                 barcode: product.barcode ?? null,
                 product_name: product.product_name ?? "",
                 group_id: row.group_id,
-                parent_id: product.parent_id ?? null,
+                parent_id: product.parent_id ? Number(product.parent_id) : null,
                 unit_id: product.unit_of_measurement ?? null,
                 current_list_cost: Number.isFinite(current) ? current : null,
             });
