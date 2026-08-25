@@ -1,96 +1,111 @@
-export interface ReceivingLotAllocation {
+export interface ReceivingLotAllocationDraft {
     storageLotId: number;
     quantity: number;
+    batchNumber?: unknown;
+    manufacturingDate?: unknown;
+    expirationDate?: unknown;
+    batch_no?: unknown;
+    manufacturing_date?: unknown;
+    expiration_date?: unknown;
+}
+
+export interface ReceivingLotAllocation {
+    storageLotId: number;
+    batchNumber: string;
+    manufacturingDate: string | null;
+    expirationDate: string | null;
+    quantity: number;
+}
+
+function text(value: unknown): string {
+    return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+}
+
+function dateValue(value: unknown): string | null {
+    const valueText = text(value);
+    return valueText || null;
+}
+
+function normalizeAllocation(allocation: ReceivingLotAllocationDraft): ReceivingLotAllocation {
+    return {
+        storageLotId: Number(allocation.storageLotId),
+        batchNumber: text(allocation.batchNumber ?? allocation.batch_no),
+        manufacturingDate: dateValue(allocation.manufacturingDate ?? allocation.manufacturing_date),
+        expirationDate: dateValue(allocation.expirationDate ?? allocation.expiration_date),
+        quantity: Number(allocation.quantity)
+    };
 }
 
 export function normalizeReceivingLotAllocations(
     acceptedQuantity: number,
-    allocations: readonly ReceivingLotAllocation[] | undefined,
-    fallbackStorageLotId: number | null
+    allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (acceptedQuantity <= 0) return [];
-    if (allocations && allocations.length > 0) return allocations.map(allocation => ({ ...allocation }));
-    return fallbackStorageLotId
-        ? [{ storageLotId: fallbackStorageLotId, quantity: acceptedQuantity }]
-        : [];
+    return (allocations || []).map(normalizeAllocation);
+}
+
+function allocationError(
+    quantity: number,
+    allocations: readonly ReceivingLotAllocationDraft[] | undefined,
+    disposition: "accepted" | "rejected"
+): string | null {
+    if (quantity <= 0) {
+        return allocations && allocations.length > 0
+            ? `${disposition[0].toUpperCase()}${disposition.slice(1)}-lot allocations are not allowed when ${disposition} quantity is zero.`
+            : null;
+    }
+
+    const normalized = (allocations || []).map(normalizeAllocation);
+    if (normalized.length === 0) return `Select at least one storage lot for ${disposition} inventory.`;
+
+    const seen = new Set<string>();
+    let total = 0;
+    for (const allocation of normalized) {
+        if (!Number.isSafeInteger(allocation.storageLotId) || allocation.storageLotId <= 0) {
+            return `Every ${disposition}-lot allocation must reference a valid storage lot.`;
+        }
+        if (!allocation.batchNumber) {
+            return `Every ${disposition}-lot allocation must include a batch number.`;
+        }
+        if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) {
+            return `Every ${disposition}-lot allocation must have a positive quantity.`;
+        }
+        const key = allocationKey(allocation);
+        if (seen.has(key)) {
+            return `A storage lot and batch can only appear once in the ${disposition} allocation.`;
+        }
+        seen.add(key);
+        total += allocation.quantity;
+    }
+
+    if (Math.abs(total - quantity) > 1e-9) {
+        return `${disposition[0].toUpperCase()}${disposition.slice(1)}-lot allocations (${total}) must equal ${disposition} quantity (${quantity}).`;
+    }
+    return null;
 }
 
 export function receivingLotAllocationError(
     acceptedQuantity: number,
-    allocations: readonly ReceivingLotAllocation[],
-    fallbackStorageLotId: number | null
+    allocations: readonly ReceivingLotAllocationDraft[]
 ): string | null {
-    if (acceptedQuantity <= 0) {
-        return allocations.length > 0 ? "Accepted-lot allocations are not allowed when accepted quantity is zero." : null;
-    }
-
-    const normalized = normalizeReceivingLotAllocations(acceptedQuantity, allocations, fallbackStorageLotId);
-    if (normalized.length === 0) return "Select at least one storage lot for accepted inventory.";
-
-    const seen = new Set<number>();
-    let total = 0;
-    for (const allocation of normalized) {
-        if (!Number.isSafeInteger(allocation.storageLotId) || allocation.storageLotId <= 0) {
-            return "Every accepted-lot allocation must reference a valid storage lot.";
-        }
-        if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) {
-            return "Every accepted-lot allocation must have a positive quantity.";
-        }
-        if (seen.has(allocation.storageLotId)) {
-            return "A storage lot can only appear once in the accepted allocation.";
-        }
-        seen.add(allocation.storageLotId);
-        total += allocation.quantity;
-    }
-
-    if (Math.abs(total - acceptedQuantity) > 1e-9) {
-        return `Accepted-lot allocations (${total}) must equal accepted quantity (${acceptedQuantity}).`;
-    }
-    return null;
+    return allocationError(acceptedQuantity, allocations, "accepted");
 }
 
 export function normalizeRejectedLotAllocations(
     rejectedQuantity: number,
-    allocations: readonly ReceivingLotAllocation[] | undefined,
-    fallbackStorageLotId: number | null
+    allocations: readonly ReceivingLotAllocationDraft[] | undefined
 ): ReceivingLotAllocation[] {
     if (rejectedQuantity <= 0) return [];
-    if (allocations && allocations.length > 0) return allocations.map(allocation => ({ ...allocation }));
-    return fallbackStorageLotId
-        ? [{ storageLotId: fallbackStorageLotId, quantity: rejectedQuantity }]
-        : [];
+    return (allocations || []).map(normalizeAllocation);
 }
 
 export function rejectedLotAllocationError(
     rejectedQuantity: number,
-    allocations: readonly ReceivingLotAllocation[],
-    fallbackStorageLotId: number | null
+    allocations: readonly ReceivingLotAllocationDraft[]
 ): string | null {
-    if (rejectedQuantity <= 0) {
-        return allocations.length > 0 ? "Rejected-lot allocations are not allowed when rejected quantity is zero." : null;
-    }
+    return allocationError(rejectedQuantity, allocations, "rejected");
+}
 
-    const normalized = normalizeRejectedLotAllocations(rejectedQuantity, allocations, fallbackStorageLotId);
-    if (normalized.length === 0) return "Select at least one storage lot for rejected inventory.";
-
-    const seen = new Set<number>();
-    let total = 0;
-    for (const allocation of normalized) {
-        if (!Number.isSafeInteger(allocation.storageLotId) || allocation.storageLotId <= 0) {
-            return "Every rejected-lot allocation must reference a valid storage lot.";
-        }
-        if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) {
-            return "Every rejected-lot allocation must have a positive quantity.";
-        }
-        if (seen.has(allocation.storageLotId)) {
-            return "A storage lot can only appear once in the rejected allocation.";
-        }
-        seen.add(allocation.storageLotId);
-        total += allocation.quantity;
-    }
-
-    if (Math.abs(total - rejectedQuantity) > 1e-9) {
-        return `Rejected-lot allocations (${total}) must equal rejected quantity (${rejectedQuantity}).`;
-    }
-    return null;
+export function allocationKey(allocation: ReceivingLotAllocation): string {
+    return `${allocation.storageLotId}:${allocation.batchNumber.trim().toLowerCase()}`;
 }

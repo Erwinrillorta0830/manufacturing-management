@@ -11,9 +11,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
-// ✅ Wire the finished goods module
-import FinishedGoodsModule from "@/modules/manufacturing-management/finished-goods/FinishedGoodsModule";
-
+// Wire the VOS AssetManagementModulePage component
+import ItemManagementModule from "@/modules/manufacturing-management/item-management/ItemManagementModule";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -67,12 +66,11 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     return {
         name,
         email: email || "",
-        avatar: "",
+        avatar: "/avatars/shadcn.jpg",
     };
 }
 
-export default async function FinishedGoodsPage() {
-    // ✅ Next.js 16: cookies() is async
+export default async function AssetsPage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
 
@@ -94,17 +92,16 @@ export default async function FinishedGoodsPage() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Manufacturing Management</BreadcrumbLink>
+                                    <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Inventory & Warehousing</BreadcrumbLink>
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="#">Master Data</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
-                                
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Finished Goods Master
+                                        Item Management
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -119,7 +116,7 @@ export default async function FinishedGoodsPage() {
 
             {/* Scrollable Content wrapper */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
-                <FinishedGoodsModule />
+                <ItemManagementModule />
             </main>
         </div>
     );
