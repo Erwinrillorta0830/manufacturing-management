@@ -65,11 +65,6 @@ export function useMaterialStaging() {
                 setBranches(res.branches || []);
                 if (res.stats) setStats(res.stats);
 
-                // Auto-select first Job Order if none selected
-                if (!selectedJobOrderId && res.data.length > 0) {
-                    setSelectedJobOrderId(res.data[0].job_order_id);
-                }
-
                 if (showToast) {
                     toast.success("Material staging data refreshed");
                 }
@@ -82,7 +77,7 @@ export function useMaterialStaging() {
         } finally {
             setLoading(false);
         }
-    }, [selectedBranchId, searchQuery, selectedJobOrderId]);
+    }, [selectedBranchId, searchQuery]);
 
     useEffect(() => {
         loadData();
@@ -129,11 +124,23 @@ export function useMaterialStaging() {
         });
     }, [jobOrders, selectedStatusFilter, onlyShortages, searchQuery]);
 
+    // Keep the detail pane synchronized with the currently visible queue.
+    useEffect(() => {
+        const selectedIsVisible = selectedJobOrderId !== null &&
+            filteredJobOrders.some((jo) => jo.job_order_id === selectedJobOrderId);
+        const nextSelectedJobOrderId = selectedIsVisible
+            ? selectedJobOrderId
+            : filteredJobOrders[0]?.job_order_id ?? null;
+
+        if (nextSelectedJobOrderId !== selectedJobOrderId) {
+            setSelectedJobOrderId(nextSelectedJobOrderId);
+        }
+    }, [filteredJobOrders, selectedJobOrderId]);
+
     // Active selected Job Order object
     const selectedJobOrder = useMemo(() => {
-        if (!selectedJobOrderId) return filteredJobOrders[0] || null;
-        return jobOrders.find((j) => j.job_order_id === selectedJobOrderId) || filteredJobOrders[0] || null;
-    }, [jobOrders, filteredJobOrders, selectedJobOrderId]);
+        return filteredJobOrders.find((j) => j.job_order_id === selectedJobOrderId) || filteredJobOrders[0] || null;
+    }, [filteredJobOrders, selectedJobOrderId]);
 
     // Handler to open transfer modal
     const handleOpenTransferModal = useCallback((

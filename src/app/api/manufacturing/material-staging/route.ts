@@ -372,11 +372,26 @@ export async function GET(request: Request) {
         }
 
         if (search) {
-            filtered = filtered.filter((j: { job_order_no: string; product_name: string; product_code: string; primary_work_center_name: string }) =>
+            filtered = filtered.filter((j: {
+                job_order_no?: string;
+                product_name?: string;
+                product_code?: string;
+                primary_work_center_name?: string;
+                materials?: Array<{
+                    product_name?: string;
+                    product_code?: string;
+                    allocations?: Array<{ batch_no?: string }>;
+                }>;
+            }) =>
                 j.job_order_no?.toLowerCase().includes(search) ||
                 j.product_name?.toLowerCase().includes(search) ||
                 j.product_code?.toLowerCase().includes(search) ||
-                j.primary_work_center_name?.toLowerCase().includes(search)
+                j.primary_work_center_name?.toLowerCase().includes(search) ||
+                j.materials?.some((m) =>
+                    m.product_name?.toLowerCase().includes(search) ||
+                    m.product_code?.toLowerCase().includes(search) ||
+                    m.allocations?.some((a) => a.batch_no?.toLowerCase().includes(search))
+                )
             );
         }
 
