@@ -384,7 +384,7 @@ export async function handleGET(request: Request) {
             const reservationsMap = new Map<number, any[]>();
             if (jomIds.length > 0) {
                 try {
-                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=id,jo_material_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
+                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
                     const resRes = await fetch(reservationsUrl, { headers });
                     if (resRes.ok) {
                         const reservations = (await resRes.json()).data || [];
@@ -569,9 +569,16 @@ export async function handleGET(request: Request) {
                         const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
                         const netAvailable = Math.max(0, physicalQty - alreadyReserved);
 
-                        const matchedRes = matReservations.find((mr: any) => mr.batch_no === lotNum);
-                        const reservationId = matchedRes ? (matchedRes.id || matchedRes.jo_material_reservation_id) : null;
-                        const reservedQtyForThisLot = matchedRes ? Number(matchedRes.reserved_quantity || 0) : 0;
+                        const normalizedLotNo = String(lotNum || "").trim();
+                        const matchingReservations = matReservations.filter((mr: any) =>
+                            String(mr.batch_no || "").trim() === normalizedLotNo
+                        );
+                        const matchedRes = matchingReservations[0];
+                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id) : null;
+                        const reservedQtyForThisLot = matchingReservations.reduce(
+                            (total: number, reservation: any) => total + Number(reservation.reserved_quantity || 0),
+                            0
+                        );
 
                         return {
                             receipt_id: recId,
@@ -584,7 +591,7 @@ export async function handleGET(request: Request) {
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };
-                    }).filter((c: any) => c.available > 0 || matReservations.some((mr: any) => mr.batch_no === c.lot_no));
+                    }).filter((c: any) => c.available > 0 || c.reservation_id !== null);
 
                     // Format multi-lot text if reservations exist
                     if (matReservations.length > 0) {
