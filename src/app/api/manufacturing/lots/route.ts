@@ -43,11 +43,7 @@ export async function GET() {
     try {
         const fields = "*";
         const timestamp = Date.now();
-        const [res, usersRes, unitsRes] = await Promise.all([
-            fetch(
-                `${DIRECTUS_URL}/items/lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}&_t=${timestamp}`,
-                { headers, cache: "no-store" }
-            ),
+        const [usersRes, unitsRes] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`,
                 { headers, cache: "no-store" }
@@ -58,8 +54,13 @@ export async function GET() {
             ).catch(() => null)
         ]);
 
+        const res = await fetch(
+            `${DIRECTUS_URL}/items/mm_lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}&_t=${timestamp}`,
+            { headers, cache: "no-store" }
+        );
+
         if (!res.ok) {
-            throw new Error(`Directus failed to fetch lots: ${res.status}`);
+            throw new Error(`Directus failed to fetch mm_lots: ${res.status}`);
         }
 
         const json = await res.json();
@@ -101,7 +102,6 @@ export async function GET() {
                 if (!isNaN(num)) uomId = num;
             }
 
-            // Always cross-reference with unitsList to guarantee resolved name/shortcut
             if (uomId !== null) {
                 const matchedUnit = unitsList.find((u) => Number((u as { unit_id?: number; id?: number }).unit_id ?? (u as { unit_id?: number; id?: number }).id) === Number(uomId));
                 if (matchedUnit) {
@@ -141,10 +141,13 @@ export async function GET() {
             return {
                 lotId: Number(row.lot_id),
                 lotName: String(row.lot_name || ""),
+                branchId: Number(row.branch_id || 1),
                 uomId,
                 uomName,
                 uomShortcut,
                 maxBatchCapacity: Number(row.max_batch_capacity || 0),
+                description: row.description ? String(row.description) : undefined,
+                status: (row.status as "ACTIVE" | "CLOSED" | "INACTIVE") || "ACTIVE",
                 createdAt: String(row.created_at || ""),
                 updatedAt: String(row.updated_at || ""),
                 createdBy,
@@ -182,7 +185,7 @@ export async function POST(request: Request) {
             );
         }
 
-        // Get logged in user ID from secure access token cookie
+        // Resolve logged in user ID from token or fallback to active user in Directus
         let userId: number | null = null;
         try {
             const cookieStore = await cookies();
@@ -202,12 +205,28 @@ export async function POST(request: Request) {
             console.error("Error parsing user token in POST lot route:", err);
         }
 
-        // Check for duplicate lot name (case-insensitive)
+        // Fetch a valid user_id if token parsing didn't find one
+        if (!userId) {
+            try {
+                const uRes = await fetch(`${DIRECTUS_URL}/items/user?limit=1&fields=user_id`, { headers, cache: "no-store" });
+                if (uRes.ok) {
+                    const uData = await uRes.json();
+                    if (uData.data && uData.data.length > 0) {
+                        userId = Number(uData.data[0].user_id);
+                    }
+                }
+            } catch (err) {
+                console.error("Error resolving fallback user_id:", err);
+            }
+        }
+
+        // Check for duplicate lot name in mm_lots
         const duplicateCheckRes = await fetch(
-            `${DIRECTUS_URL}/items/lots?limit=-1&fields=lot_name`,
+            `${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_name`,
             { headers, cache: "no-store" }
-        );
-        if (duplicateCheckRes.ok) {
+        ).catch(() => null);
+
+        if (duplicateCheckRes && duplicateCheckRes.ok) {
             const duplicateJson = await duplicateCheckRes.json();
             const existingLots = duplicateJson.data || [];
             const isDuplicate = existingLots.some(
@@ -222,51 +241,37 @@ export async function POST(request: Request) {
             }
         }
 
-        const utcIsoString = new Date().toISOString();
-
         const postBody: Record<string, unknown> = {
             lot_name: lot_name.trim(),
-            max_batch_capacity,
-            created_by: userId ? Number(userId) : 24, // Fallback to seed user ID 24 if no active token
-            updated_by: userId ? Number(userId) : 24,
-            created_at: utcIsoString,
-            updated_at: utcIsoString
+            branch_id: body.branch_id ? Number(body.branch_id) : 1,
+            unit_id: rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "" ? Number(rawUnitId) : 1,
+            max_batch_capacity: Number(max_batch_capacity),
+            status: body.status || "ACTIVE",
+            created_by: userId ? Number(userId) : 1
         };
 
-        if (rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "") {
-            postBody.unit_id = Number(rawUnitId);
-        }
+        if (body.description) postBody.description = String(body.description).trim();
 
-        let res = await fetch(`${DIRECTUS_URL}/items/lots`, {
+        const res = await fetch(`${DIRECTUS_URL}/items/mm_lots`, {
             method: "POST",
             headers,
             body: JSON.stringify(postBody)
         });
 
-        // If Directus fails because unit_id is named uom_id in schema, retry with uom_id
-        if (!res.ok && postBody.unit_id !== undefined) {
+        if (!res.ok) {
             const errTxt = await res.text();
-            if (errTxt.includes("unit_id")) {
-                postBody.uom_id = postBody.unit_id;
-                delete postBody.unit_id;
-                res = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(postBody)
-                });
-            }
-            if (!res.ok) {
-                throw new Error(`Directus failed to create lot: ${res.status} - ${errTxt}`);
-            }
-        } else if (!res.ok) {
-            const errTxt = await res.text();
-            throw new Error(`Directus failed to create lot: ${res.status} - ${errTxt}`);
+            let errMsg = `Directus mm_lots create failed: ${res.status}`;
+            try {
+                const errJson = JSON.parse(errTxt);
+                if (errJson.errors && errJson.errors.length > 0) {
+                    errMsg = errJson.errors[0].message || errMsg;
+                }
+            } catch {}
+            return NextResponse.json({ error: errMsg }, { status: res.status });
         }
 
         const resJson = await res.json();
-        const saved = resJson.data;
-
-        return NextResponse.json({ success: true, data: saved });
+        return NextResponse.json({ success: true, data: resJson.data });
     } catch (e) {
         console.error("API Error creating lot:", e);
         return NextResponse.json(

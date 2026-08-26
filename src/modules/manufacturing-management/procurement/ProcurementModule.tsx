@@ -45,6 +45,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         supplierForm,
         setSupplierForm,
         supplierError,
+        setSupplierError,
         isEditingSupplier,
         handleStartEditSupplier,
         shipmentForm,
@@ -128,6 +129,7 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         supplierForm={supplierForm}
                         setSupplierForm={setSupplierForm}
                         supplierError={supplierError}
+                        onValidationError={setSupplierError}
                         isEditingSupplier={isEditingSupplier}
                         onStartEditSupplier={handleStartEditSupplier}
                         onCreateSupplier={handleCreateSupplier}
