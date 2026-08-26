@@ -232,6 +232,7 @@ export async function GET(request: Request) {
         if (action === "matching-template") {
             const taskName = searchParams.get("taskName") || "";
             const productId = searchParams.get("productId") || "";
+            const requestedTemplateId = Number(searchParams.get("templateId") || 0);
 
             const [templatesRes, parametersRes] = await Promise.all([
                 fetch(`${DIRECTUS_URL}/items/quality_inspection_templates?limit=-1`, { headers, cache: "no-store" }),
@@ -245,20 +246,40 @@ export async function GET(request: Request) {
             const templates = (await templatesRes.json()).data || [];
             const parameters = (await parametersRes.json()).data || [];
 
-            let matchedTpl = templates.find((tpl: any) => 
-                tpl.is_active && 
-                taskName.toLowerCase().includes(tpl.template_name.toLowerCase())
-            );
+            const isActiveTemplate = (tpl: any): boolean => {
+                if (tpl.is_active === true || tpl.is_active === 1) return true;
+                const normalized = String(tpl.is_active ?? "").trim().toLowerCase();
+                return normalized === "1" || normalized === "true" || normalized === "yes";
+            };
 
-            if (!matchedTpl) {
-                matchedTpl = templates.find((tpl: any) => tpl.is_active);
+            let matchedTpl = null;
+            if (requestedTemplateId > 0) {
+                matchedTpl = templates.find((tpl: any) =>
+                    isActiveTemplate(tpl) && Number(tpl.template_id || tpl.id) === requestedTemplateId
+                );
+                if (!matchedTpl) {
+                    return NextResponse.json(
+                        { error: `QA template ${requestedTemplateId} was not found or is inactive.` },
+                        { status: 404 }
+                    );
+                }
+            } else {
+                matchedTpl = templates.find((tpl: any) =>
+                    isActiveTemplate(tpl) &&
+                    taskName.toLowerCase().includes(String(tpl.template_name || "").toLowerCase())
+                );
+
+                if (!matchedTpl) {
+                    matchedTpl = templates.find((tpl: any) => isActiveTemplate(tpl));
+                }
             }
 
             if (!matchedTpl) {
                 return NextResponse.json({ template: null, parameters: [] });
             }
 
-            const tplParams = parameters.filter((param: any) => param.template_id === matchedTpl.template_id);
+            const matchedTemplateId = Number(matchedTpl.template_id || matchedTpl.id);
+            const tplParams = parameters.filter((param: any) => Number(param.template_id || param.template?.template_id || param.template?.id) === matchedTemplateId);
             return NextResponse.json({
                 template: matchedTpl,
                 parameters: tplParams

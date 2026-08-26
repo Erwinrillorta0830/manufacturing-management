@@ -405,7 +405,7 @@ export function useProductionWorkflow() {
             setQaInspectorId(taskOps[0] ? String(taskOps[0].user_id) : "");
             
             try {
-                const data = await fetchQATemplate(task.name, selectedJobOrder.product_id);
+                const data = await fetchQATemplate(task.name, selectedJobOrder.product_id, task.qa_template_id);
                 setQaTemplate(data.template);
                 
                 let params = data.parameters || [];
@@ -503,6 +503,8 @@ export function useProductionWorkflow() {
                     body: JSON.stringify({
                         taskId: selectedTask.id,
                         taskPatch: {
+                            status: "Completed",
+                            completed_at: new Date().toISOString(),
                             actual_run_hours: operatorsSummary.total_hours
                         }
                     })
