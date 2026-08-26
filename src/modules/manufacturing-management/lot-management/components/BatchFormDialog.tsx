@@ -88,9 +88,6 @@ export default function BatchFormDialog({
                             </DialogTitle>
                             <DialogDescription className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
                                 <span>Assign batch inventory records to storage racks with quality tracking</span>
-                                <span className="font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-primary/20">
-                                    mm_inventory_lots
-                                </span>
                             </DialogDescription>
                         </div>
                     </div>
@@ -353,12 +350,12 @@ export default function BatchFormDialog({
                 </div>
 
                 {/* Footer Toolbar */}
-                <DialogFooter className="p-4 px-6 bg-muted/20 border-t border-border/60 flex items-center justify-between">
+                <DialogFooter className="p-4 px-6 bg-muted/20 border-t border-border/60 flex items-center !justify-between">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground hidden sm:flex">
                         <Info className="h-4 w-4 text-primary" />
                         <span>Updates storage rack occupancy &amp; lot statistics automatically.</span>
                     </div>
-                    <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+                    <div className="flex items-center gap-2.5 w-full sm:w-auto  ">
                         <Button variant="outline" size="sm" onClick={onClose} disabled={saving} className="h-9 px-4">
                             Cancel
                         </Button>

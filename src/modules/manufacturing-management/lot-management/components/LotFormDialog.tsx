@@ -12,14 +12,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchableUomSelect } from "./SearchableUomSelect";
+import { SearchableBranchSelect } from "./SearchableBranchSelect";
 import { Button } from "@/components/ui/button";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select";
 
 interface LotFormDialogProps {
     isOpen: boolean;
@@ -108,25 +102,14 @@ export default function LotFormDialog({
                             <Label htmlFor="branchId">
                                 Branch Location <span className="text-destructive">*</span>
                             </Label>
-                            <Select
-                                value={formData.branchId !== "" ? String(formData.branchId) : ""}
-                                onValueChange={(val) => onFormChange("branchId", Number(val))}
+                            <SearchableBranchSelect
+                                branches={branches}
+                                value={formData.branchId}
+                                onValueChange={(val) => onFormChange("branchId", val)}
                                 disabled={saving}
-                            >
-                                <SelectTrigger className={`bg-background ${formErrors.branchId ? "border-destructive ring-destructive/20" : ""}`}>
-                                    <SelectValue placeholder="Select branch location..." />
-                                </SelectTrigger>
-                                <SelectContent className="bg-popover border border-border max-h-[220px]">
-                                    {branches.map((b) => (
-                                        <SelectItem key={b.id} value={String(b.id)}>
-                                            <div className="flex items-center justify-between gap-3 w-full">
-                                                <span className="font-semibold">{b.branchName}</span>
-                                                <span className="text-xs text-muted-foreground font-mono">({b.branchCode})</span>
-                                            </div>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                                hasError={!!formErrors.branchId}
+                                placeholder="Select branch location..."
+                            />
                             {formErrors.branchId && (
                                 <p className="text-[11px] text-destructive font-medium mt-1">
                                     Branch selection is required.

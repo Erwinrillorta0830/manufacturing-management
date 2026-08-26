@@ -241,8 +241,8 @@ export default function WarehouseRackView({
                             </div>
 
                             {/* Rack Footer */}
-                            <div className="px-4 py-2 border-t border-border/50 bg-card flex items-center justify-between text-[11px] text-muted-foreground">
-                                <span>Shelf Ref: #{lot.lotId}</span>
+                            <div className="px-4 py-2 border-t border-border/50 bg-card flex items-center justify-end text-[11px] text-muted-foreground">
+                                {/* <span>Shelf Ref: #{lot.lotId}</span> */}
                                 <span>By: {lot.createdBy || "System"}</span>
                             </div>
                         </div>
