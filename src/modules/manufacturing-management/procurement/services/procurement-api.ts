@@ -1,4 +1,4 @@
-import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, LinkedProductPageResponse, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse, SupplierCatalogUpdatePayload, SupplierCatalogUpdateResult, SupplierPageResponse } from "../types";
+import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, LinkedProductPageResponse, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse, SupplierCatalogUpdatePayload, SupplierCatalogUpdateResult, SupplierPageResponse, SupplierEvaluation, SupplierEvaluationInput } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
@@ -83,7 +83,7 @@ export async function fetchSuppliers(status: SupplierStatusFilter = "active"): P
     return handleResponse(res, "Failed to fetch suppliers");
 }
 
-export async function fetchSupplierPage(query: SupplierDirectoryQuery): Promise<SupplierPageResponse> {
+export async function fetchSupplierPage(query: SupplierDirectoryQuery, signal?: AbortSignal): Promise<SupplierPageResponse> {
     const params = new URLSearchParams({
         status: query.status,
         search: query.search,
@@ -91,7 +91,7 @@ export async function fetchSupplierPage(query: SupplierDirectoryQuery): Promise<
         page: String(query.page),
         pageSize: String(query.pageSize)
     });
-    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers?${params.toString()}`);
+    const res = await fetchWithSessionRetry(`/api/manufacturing/procurement/suppliers?${params.toString()}`, { signal });
     return handleResponse(res, "Failed to fetch supplier page") as Promise<SupplierPageResponse>;
 }
 
@@ -99,6 +99,30 @@ export async function fetchActiveSupplierCurrencies(): Promise<SupplierCurrencyO
     const res = await fetchWithSessionRetry("/api/manufacturing/procurement/supplier-currencies");
     const body = await handleResponse(res, "Failed to fetch active supplier currencies");
     return Array.isArray(body?.currencies) ? body.currencies : [];
+}
+
+export async function fetchLatestSupplierEvaluation(
+    supplierId: number,
+    signal?: AbortSignal
+): Promise<SupplierEvaluation | null> {
+    const res = await fetchWithSessionRetry(
+        `/api/manufacturing/procurement/suppliers/evaluations?supplierId=${encodeURIComponent(supplierId)}`,
+        { signal }
+    );
+    const body = await handleResponse(res, "Failed to load supplier evaluation");
+    return body?.evaluation ?? null;
+}
+
+export async function saveSupplierEvaluation(
+    evaluation: SupplierEvaluationInput
+): Promise<SupplierEvaluation> {
+    const res = await fetchWithSessionRetry("/api/manufacturing/procurement/suppliers/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(evaluation)
+    });
+    const body = await handleResponse(res, "Failed to save supplier evaluation");
+    return body.evaluation as SupplierEvaluation;
 }
 
 export async function createSupplier(supplierData: Partial<Supplier>): Promise<unknown> {

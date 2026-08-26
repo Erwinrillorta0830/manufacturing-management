@@ -195,15 +195,17 @@ export default function SupplierTable({
                     })
                 )}
             </div>
-            <PaginationFooter
-                page={page}
-                pageSize={pageSize}
-                total={totalSuppliers}
-                totalPages={totalPages}
-                onPageChange={onPageChange}
-                onPageSizeChange={onPageSizeChange}
-                itemLabel="suppliers"
-            />
+            {!loading && !error && (
+                <PaginationFooter
+                    page={page}
+                    pageSize={pageSize}
+                    total={totalSuppliers}
+                    totalPages={totalPages}
+                    onPageChange={onPageChange}
+                    onPageSizeChange={onPageSizeChange}
+                    itemLabel="suppliers"
+                />
+            )}
         </div>
     );
 }
