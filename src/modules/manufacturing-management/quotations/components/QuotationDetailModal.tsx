@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, ArrowRight, X } from "lucide-react";
 import { Customer, QuotationHeader, QuotationSnapshotNode } from "../types";
@@ -23,182 +24,66 @@ export function QuotationDetailModal({
     reviseQuotation,
     loadQuotes
 }: QuotationDetailModalProps) {
-    const [converting, setConverting] = useState(false);
-    const [showConfirmModal, setShowConfirmModal] = useState(false);
-    
-    // Sub-form overlay state for Sales Order fields
-    const [showSOFieldsForm, setShowSOFieldsForm] = useState(false);
-    const [poNo, setPoNo] = useState("");
-    const [dueDate, setDueDate] = useState("");
-    const [deliveryDate, setDeliveryDate] = useState("");
-    const [paymentTerms, setPaymentTerms] = useState("");
-    const [soRemarks, setSoRemarks] = useState("");
-    const [discountAmount, setDiscountAmount] = useState("");
-    const [paymentTermsList, setPaymentTermsList] = useState<{ id: number; payment_name: string; payment_days: number | null }[]>([]);
+    const router = useRouter();
+    const [rejecting, setRejecting] = useState(false);
+    const [routing, setRouting] = useState(false);
 
-    const [salesmanId, setSalesmanId] = useState("");
-    const [salesmanSearch, setSalesmanSearch] = useState("");
-    const [isSalesmanFocused, setIsSalesmanFocused] = useState(false);
-    const [salesmenList, setSalesmenList] = useState<{ id: number; salesman_name: string; salesman_code: string; branch_code?: number }[]>([]);
-
-    const [supplierId, setSupplierId] = useState("");
-    const [supplierSearch, setSupplierSearch] = useState("");
-    const [isSupplierFocused, setIsSupplierFocused] = useState(false);
-    const [suppliersList, setSuppliersList] = useState<{ id: number; supplier_name: string }[]>([]);
-
-    const [branchId, setBranchId] = useState("");
-    const [branchSearch, setBranchSearch] = useState("");
-    const [isBranchFocused, setIsBranchFocused] = useState(false);
-    const [branchesList, setBranchesList] = useState<{ id: number; branch_name: string; branch_code: string }[]>([]);
-
-    useEffect(() => {
-        if (showSOFieldsForm) {
-            fetch("/api/manufacturing/payment-terms")
-                .then(res => res.ok ? res.json() : [])
-                .then(data => setPaymentTermsList(data))
-                .catch(err => console.error("Error loading payment terms:", err));
-
-            fetch("/api/manufacturing/salesman")
-                .then(res => res.ok ? res.json() : [])
-                .then(data => setSalesmenList(data))
-                .catch(err => console.error("Error loading salesmen:", err));
-
-            fetch("/api/manufacturing/procurement/suppliers")
-                .then(res => res.ok ? res.json() : [])
-                .then(data => setSuppliersList(data))
-                .catch(err => console.error("Error loading suppliers:", err));
-
-            fetch("/api/manufacturing/procurement/qa-receiving?action=branches")
-                .then(res => res.ok ? res.json() : [])
-                .then(data => setBranchesList(data))
-                .catch(err => console.error("Error loading branches:", err));
-        }
-    }, [showSOFieldsForm]);
-
-    const filteredSalesmen = salesmenList.filter(s => 
-        s.salesman_name.toLowerCase().includes(salesmanSearch.toLowerCase()) ||
-        s.salesman_code.toLowerCase().includes(salesmanSearch.toLowerCase())
-    );
-
-    const filteredSuppliers = suppliersList.filter(s => 
-        s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase())
-    );
-
-    const filteredBranches = branchesList.filter(b => 
-        b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
-        b.branch_code.toLowerCase().includes(branchSearch.toLowerCase())
-    );
-
-    const calculateAndSetDueDate = (delDateStr: string, termIdStr: string, termsList: typeof paymentTermsList) => {
-        if (!delDateStr) {
-            setDueDate("");
-            return;
-        }
-
-        const term = termsList.find(t => String(t.id) === termIdStr);
-        if (!term || term.payment_days === null || term.payment_days === undefined) {
-            setDueDate(delDateStr);
-        } else {
-            const date = new Date(delDateStr);
-            date.setDate(date.getDate() + Number(term.payment_days));
-            const yyyy = date.getFullYear();
-            const mm = String(date.getMonth() + 1).padStart(2, '0');
-            const dd = String(date.getDate()).padStart(2, '0');
-            setDueDate(`${yyyy}-${mm}-${dd}`);
-        }
-    };
-
-    const handleDeliveryDateChange = (val: string) => {
-        setDeliveryDate(val);
-        calculateAndSetDueDate(val, paymentTerms, paymentTermsList);
-    };
-
-    const handlePaymentTermChange = (val: string) => {
-        setPaymentTerms(val);
-        calculateAndSetDueDate(deliveryDate, val, paymentTermsList);
-    };
-
-    const handlePreSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!poNo.trim()) {
-            toast.error("Purchase Order Number (PO No.) is required");
-            return;
-        }
-        if (!deliveryDate) {
-            toast.error("Delivery Date is required");
-            return;
-        }
-        if (!paymentTerms) {
-            toast.error("Payment Terms is required");
-            return;
-        }
-        if (!supplierId) {
-            toast.error("Supplier is required");
-            return;
-        }
-        if (!branchId) {
-            toast.error("Production Branch is required");
-            return;
-        }
-        setShowConfirmModal(true);
-    };
-
-    const handleConvertToSalesOrder = async () => {
+    const handleRejectProject = async () => {
         if (!selectedQuote) return;
+        if (!window.confirm("Are you sure you want to reject this quote?")) return;
         
-        setConverting(true);
+        setRejecting(true);
         try {
-            const res = await fetch("/api/manufacturing/sales-order", {
-                method: "POST",
+            const res = await fetch("/api/manufacturing/finished-goods/quotes", {
+                method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    quotationId: selectedQuote.id,
-                    poNo: poNo.trim(),
-                    dueDate: dueDate || undefined,
-                    deliveryDate: deliveryDate || undefined,
-                    paymentTerms: paymentTerms ? parseInt(paymentTerms) : undefined,
-                    remarks: soRemarks.trim() || undefined,
-                    discountAmount: discountAmount ? parseFloat(discountAmount) : undefined,
-                    salesmanId: salesmanId ? parseInt(salesmanId) : undefined,
-                    supplierId: supplierId ? parseInt(supplierId) : undefined,
-                    branchId: branchId ? parseInt(branchId) : undefined
+                    quoteId: selectedQuote.id,
+                    status: "Rejected"
                 })
             });
-
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.error || "Failed to convert quote to sales order.");
-            }
-
-            toast.success(`Successfully converted to Sales Order: ${data.order_no}`);
-            setIsDetailModalOpen(false);
-            setShowSOFieldsForm(false);
-            setShowConfirmModal(false);
             
-            // Reset fields
-            setPoNo("");
-            setDueDate("");
-            setDeliveryDate("");
-            setPaymentTerms("");
-            setSoRemarks("");
-            setDiscountAmount("");
-            setSalesmanId("");
-            setSalesmanSearch("");
-            setSupplierId("");
-            setSupplierSearch("");
-            setBranchId("");
-            setBranchSearch("");
-
-            if (loadQuotes) {
-                loadQuotes();
-            }
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to reject quote");
+            
+            toast.success("Quote rejected successfully");
+            setIsDetailModalOpen(false);
+            if (loadQuotes) loadQuotes();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
             console.error(e);
-            toast.error(e.message || "Failed to convert quote");
-            setShowConfirmModal(false);
+            toast.error(e.message || "Failed to reject quote");
         } finally {
-            setConverting(false);
+            setRejecting(false);
+        }
+    };
+
+    const handleApproveAndRoute = () => {
+        if (!selectedQuote) return;
+        setRouting(true);
+        try {
+            const payload = {
+                customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null 
+                    ? (selectedQuote.customer_id as any).id 
+                    : selectedQuote.customer_id,
+                quoteId: selectedQuote.id,
+                quoteNumber: selectedQuote.quote_number,
+                snapshots: snapshots.map(s => ({
+                    productId: s.product_id,
+                    versionId: s.version_id,
+                    productName: s.node_name,
+                    quantity: s.quantity,
+                    uom: s.uom,
+                    frozenBaseCost: s.frozen_unit_cost_php,
+                    agreedTargetPrice: s.frozen_total_cost_php
+                }))
+            };
+            sessionStorage.setItem("pending_so_conversion", JSON.stringify(payload));
+            router.push("/mm/sales-order");
+        } catch (e) {
+            console.error(e);
+            toast.error("Failed to route to Sales Order module");
+            setRouting(false);
         }
     };
 
@@ -219,15 +104,34 @@ export function QuotationDetailModal({
                         <p className="text-xs text-muted-foreground">Quote Number: <strong className="text-foreground">{selectedQuote.quote_number}</strong> | Status: <span className="font-bold text-primary">{selectedQuote.status || "Draft"}</span></p>
                     </div>
                     <div className="flex items-center gap-2">
-                        {selectedQuote.status !== "Converted to SO" && (
-                            <button
-                                disabled={converting}
-                                onClick={() => setShowSOFieldsForm(true)}
-                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 animate-pulse"
-                            >
-                                Approve & Convert to SO
-                                <ArrowRight className="h-3 w-3" />
-                            </button>
+                        {selectedQuote.status !== "Converted to SO" && selectedQuote.status !== "Rejected" && (
+                            <>
+                                <button
+                                    disabled={rejecting || routing}
+                                    onClick={handleRejectProject}
+                                    className="bg-destructive hover:bg-destructive/90 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 disabled:opacity-50"
+                                >
+                                    {rejecting && <Loader2 className="h-3 w-3 animate-spin" />}
+                                    Reject Project
+                                </button>
+                                <button
+                                    disabled={rejecting || routing}
+                                    onClick={handleApproveAndRoute}
+                                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 animate-pulse"
+                                >
+                                    {routing ? (
+                                        <>
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                            Routing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            Approve & Convert to SO
+                                            <ArrowRight className="h-3 w-3" />
+                                        </>
+                                    )}
+                                </button>
+                            </>
                         )}
                         <button
                             onClick={() => {
@@ -248,55 +152,50 @@ export function QuotationDetailModal({
                 </div>
 
                 {/* Summary Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-b bg-card">
-                    <div className="rounded-lg border bg-muted/5 p-3">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase block">Customer Account</span>
-                        <span className="text-xs font-bold text-foreground block truncate">
-                            {(selectedQuote.customer_id && typeof selectedQuote.customer_id === "object") 
-                                ? `${(selectedQuote.customer_id as Customer).customer_name} (${(selectedQuote.customer_id as Customer).customer_code})`
-                                : `Cust ID: ${selectedQuote.customer_id}`}
-                        </span>
-                    </div>
-                    <div className="rounded-lg border bg-muted/5 p-3">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase block">Production Cost (Total)</span>
-                        <span className="text-xs font-bold text-foreground block">
-                            {formatCurrency(simulatedCost)}
-                        </span>
-                    </div>
-                    <div className="rounded-lg border bg-muted/5 p-3">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase block">Agreed Quote Price</span>
-                        <span className="text-xs font-bold text-primary block">
-                            {formatCurrency(sellingPrice)}
-                        </span>
-                    </div>
-                    <div className="rounded-lg border bg-muted/5 p-3">
-                        <span className="text-[10px] font-bold text-muted-foreground uppercase block">Estimated Net Margin</span>
-                        <span className={`text-xs font-bold block ${netMargin >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {formatCurrency(netMargin)} ({marginPct.toFixed(1)}%)
-                        </span>
-                    </div>
-                </div>
-
-                {/* Snapshot Contents */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="flex-1 overflow-y-auto p-6 bg-background space-y-6">
                     {loadingSnapshots ? (
-                        <div className="flex justify-center items-center py-20 text-muted-foreground text-xs">
-                            Loading snapshot cost sheets...
+                        <div className="flex justify-center items-center h-32">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
                         </div>
                     ) : (
                         <div className="space-y-6">
-                            {/* Material costs list */}
-                            <div>
-                                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">Frozen Quotation Product Rules</span>
-                                <div className="border rounded-lg overflow-hidden bg-card">
-                                    <table className="w-full border-collapse text-left text-xs">
-                                        <thead className="bg-muted/40 border-b">
+                            <div className="grid grid-cols-4 gap-4">
+                                <div className="rounded-lg border bg-card p-4 flex flex-col justify-center items-center shadow-sm">
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Simulated Cost (₱)</span>
+                                    <span className="text-xl font-extrabold text-foreground font-mono">{formatCurrency(simulatedCost)}</span>
+                                </div>
+                                <div className="rounded-lg border bg-card p-4 flex flex-col justify-center items-center shadow-sm">
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Target Price (₱)</span>
+                                    <span className="text-xl font-extrabold text-primary font-mono">{formatCurrency(sellingPrice)}</span>
+                                </div>
+                                <div className="rounded-lg border bg-card p-4 flex flex-col justify-center items-center shadow-sm">
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Net Margin (₱)</span>
+                                    <span className={`text-xl font-extrabold font-mono ${netMargin >= 0 ? 'text-emerald-600' : 'text-destructive'}`}>
+                                        {formatCurrency(netMargin)}
+                                    </span>
+                                </div>
+                                <div className="rounded-lg border bg-card p-4 flex flex-col justify-center items-center shadow-sm">
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Margin %</span>
+                                    <span className={`text-xl font-extrabold font-mono ${marginPct >= 0 ? 'text-emerald-600' : 'text-destructive'}`}>
+                                        {marginPct.toFixed(2)}%
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border shadow-sm overflow-hidden">
+                                <div className="bg-muted/30 px-4 py-3 border-b flex items-center justify-between">
+                                    <h4 className="text-sm font-bold text-foreground">Frozen Quotation Items</h4>
+                                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{snapshots.length} item(s)</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-muted/20 text-muted-foreground font-bold">
                                             <tr>
-                                                <th className="p-2.5 font-semibold text-muted-foreground">Product Name</th>
-                                                <th className="p-2.5 font-semibold text-muted-foreground text-right">Quantity</th>
-                                                <th className="p-2.5 font-semibold text-muted-foreground">UOM</th>
-                                                <th className="p-2.5 font-semibold text-muted-foreground text-right">Frozen Base Cost</th>
-                                                <th className="p-2.5 font-semibold text-muted-foreground text-right">Agreed Target Price</th>
+                                                <th className="p-2.5 uppercase">Product / Node Name</th>
+                                                <th className="p-2.5 text-right uppercase">Qty</th>
+                                                <th className="p-2.5 uppercase">UOM</th>
+                                                <th className="p-2.5 text-right uppercase">Unit Cost (₱)</th>
+                                                <th className="p-2.5 text-right uppercase">Ext Cost (₱)</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
@@ -313,330 +212,14 @@ export function QuotationDetailModal({
                                                     </tr>
                                                 );
                                             })}
-                                            {snapshots.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={5} className="p-4 text-center text-muted-foreground">No frozen item records found in snapshot.</td>
-                                                </tr>
-                                            )}
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
-
-                            {/* Remarks section */}
-                            {selectedQuote.remarks && (
-                                <div className="rounded-lg border bg-muted/5 p-4 space-y-1">
-                                    <span className="text-xs font-bold text-muted-foreground uppercase block">Quotation Remarks / Notes</span>
-                                    <p className="text-xs text-foreground italic">&quot;{selectedQuote.remarks}&quot;</p>
-                                </div>
-                            )}
                         </div>
                     )}
                 </div>
             </div>
-
-            {/* Sales Order Required Fields Sub-Form Popup Overlay */}
-            {showSOFieldsForm && (
-                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 text-foreground">
-                        {/* Header */}
-                        <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/30">
-                            <div>
-                                <h3 className="text-sm font-bold text-foreground">Convert to Sales Order</h3>
-                                <p className="text-[10px] text-muted-foreground mt-0.5">Please provide required details to create the Sales Order.</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setShowSOFieldsForm(false)}
-                                className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted"
-                            >
-                                <X className="h-4 w-4" />
-                            </button>
-                        </div>
-
-                        {/* Form Body */}
-                        <form onSubmit={handlePreSubmit} className="p-6 space-y-4 flex-1 overflow-y-auto custom-scrollbar">
-                            {/* PO Number */}
-                            <div>
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                    PO Number <span className="text-destructive">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    required
-                                    placeholder="e.g. PO-992384"
-                                    value={poNo}
-                                    onChange={e => setPoNo(e.target.value)}
-                                    className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono transition-all"
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                {/* Delivery Date */}
-                                <div>
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                        Delivery Date <span className="text-destructive">*</span>
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={deliveryDate}
-                                        onChange={e => handleDeliveryDateChange(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
-                                    />
-                                </div>
-
-                                {/* Due Date */}
-                                <div>
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                        Due Date
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={dueDate}
-                                        onChange={e => setDueDate(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
-                                    />
-                                </div>
-
-                                {/* Payment Terms Selector */}
-                                <div>
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                        Payment Terms <span className="text-destructive">*</span>
-                                    </label>
-                                    <select
-                                        value={paymentTerms}
-                                        onChange={e => handlePaymentTermChange(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3.5 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
-                                    >
-                                        <option value="" className="bg-background">Select Term...</option>
-                                        {paymentTermsList.map(term => (
-                                            <option key={term.id} value={term.id} className="bg-background">
-                                                {term.payment_name} {term.payment_days !== null ? `(${term.payment_days} days)` : "(COD/Immediate)"}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                {/* Discount Amount */}
-                                <div>
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                        Discount Amount (₱)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        placeholder="e.g. 1500"
-                                        value={discountAmount}
-                                        onChange={e => setDiscountAmount(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-4 pt-2">
-                                {/* Searchable Salesman */}
-                                <div className="space-y-1.5 relative">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block">
-                                        Salesman
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Type to search salesman..."
-                                        value={salesmanSearch}
-                                        onFocus={() => setIsSalesmanFocused(true)}
-                                        onBlur={() => setTimeout(() => setIsSalesmanFocused(false), 200)}
-                                        onChange={(e) => setSalesmanSearch(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-semibold"
-                                    />
-                                    {isSalesmanFocused && (
-                                        <div className="absolute z-50 left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border bg-popover shadow-xl divide-y divide-border">
-                                            {filteredSalesmen.map(s => (
-                                                <button
-                                                    type="button"
-                                                    key={s.id}
-                                                    onClick={() => {
-                                                        setSalesmanId(String(s.id));
-                                                        setSalesmanSearch(`${s.salesman_name} (${s.salesman_code})`);
-                                                        setIsSalesmanFocused(false);
-                                                        // Auto-select branch if salesman has branch_code
-                                                        if (s.branch_code) {
-                                                            const matchBranch = branchesList.find(b => b.id === s.branch_code);
-                                                            if (matchBranch) {
-                                                                 setBranchId(String(matchBranch.id));
-                                                                 setBranchSearch(`${matchBranch.branch_name} (${matchBranch.branch_code})`);
-                                                            } else {
-                                                                 setBranchId(String(s.branch_code));
-                                                                 setBranchSearch(`Branch ID ${s.branch_code}`);
-                                                            }
-                                                        }
-                                                    }}
-                                                    className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground text-foreground transition-colors"
-                                                >
-                                                    {s.salesman_name} ({s.salesman_code})
-                                                </button>
-                                            ))}
-                                            {filteredSalesmen.length === 0 && (
-                                                <div className="p-2 text-xs text-muted-foreground text-center">No salesmen found</div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Searchable Supplier */}
-                                <div className="space-y-1.5 relative">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block">
-                                        Supplier <span className="text-destructive">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Type to search supplier..."
-                                        value={supplierSearch}
-                                        onFocus={() => setIsSupplierFocused(true)}
-                                        onBlur={() => setTimeout(() => setIsSupplierFocused(false), 200)}
-                                        onChange={(e) => setSupplierSearch(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-semibold"
-                                    />
-                                    {isSupplierFocused && (
-                                        <div className="absolute z-50 left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border bg-popover shadow-xl divide-y divide-border">
-                                            {filteredSuppliers.map(s => (
-                                                <button
-                                                    type="button"
-                                                    key={s.id}
-                                                    onClick={() => {
-                                                        setSupplierId(String(s.id));
-                                                        setSupplierSearch(s.supplier_name);
-                                                        setIsSupplierFocused(false);
-                                                    }}
-                                                    className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground text-foreground transition-colors"
-                                                >
-                                                    {s.supplier_name}
-                                                </button>
-                                            ))}
-                                            {filteredSuppliers.length === 0 && (
-                                                <div className="p-2 text-xs text-muted-foreground text-center">No suppliers found</div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Searchable Target Branch */}
-                                <div className="space-y-1.5 relative">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block">
-                                        Production Branch <span className="text-destructive">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Type to search branch..."
-                                        value={branchSearch}
-                                        onFocus={() => setIsBranchFocused(true)}
-                                        onBlur={() => setTimeout(() => setIsBranchFocused(false), 200)}
-                                        onChange={(e) => setBranchSearch(e.target.value)}
-                                        className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-semibold"
-                                    />
-                                    {isBranchFocused && (
-                                        <div className="absolute z-50 left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border bg-popover shadow-xl divide-y divide-border">
-                                            {filteredBranches.map(b => (
-                                                <button
-                                                    type="button"
-                                                    key={b.id}
-                                                    onClick={() => {
-                                                        setBranchId(String(b.id));
-                                                        setBranchSearch(`${b.branch_name} (${b.branch_code})`);
-                                                        setIsBranchFocused(false);
-                                                    }}
-                                                    className="w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground text-foreground transition-colors"
-                                                >
-                                                    {b.branch_name} ({b.branch_code})
-                                                </button>
-                                            ))}
-                                            {filteredBranches.length === 0 && (
-                                                <div className="p-2 text-xs text-muted-foreground text-center">No branches found</div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Remarks */}
-                            <div>
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide block mb-1">
-                                    Remarks / Internal Notes
-                                </label>
-                                <textarea
-                                    rows={2}
-                                    placeholder="Add any special instructions or terms..."
-                                    value={soRemarks}
-                                    onChange={e => setSoRemarks(e.target.value)}
-                                    className="w-full rounded-lg border border-input px-3 py-2 text-xs bg-background text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
-                                />
-                            </div>
-
-                            {/* Footer Buttons */}
-                            <div className="flex justify-end gap-2 border-t pt-4 mt-6">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowSOFieldsForm(false)}
-                                    className="px-4 py-2 text-xs font-semibold rounded-lg border hover:bg-muted text-foreground transition-all"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={converting}
-                                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-4 py-2 transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                    {converting ? (
-                                        <>
-                                            <Loader2 className="h-3 w-3 animate-spin" />
-                                            Converting...
-                                        </>
-                                    ) : (
-                                        "Approve & Create SO"
-                                    )}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {showConfirmModal && (
-                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col p-6 animate-in zoom-in-95 duration-200 text-foreground space-y-4">
-                        <div className="space-y-2">
-                            <h4 className="text-sm font-bold text-foreground">Confirm Conversion</h4>
-                            <p className="text-xs text-muted-foreground">
-                                Are you sure you want to convert this quote into a Sales Order? <strong className="text-destructive block mt-1">Warning: All prices, product rules, and quantities will be frozen and strictly non-editable once generated.</strong>
-                            </p>
-                        </div>
-                        <div className="flex justify-end gap-2 pt-2 border-t">
-                            <button
-                                type="button"
-                                disabled={converting}
-                                onClick={() => setShowConfirmModal(false)}
-                                className="px-3.5 py-1.5 text-xs font-semibold rounded-lg border hover:bg-muted text-foreground transition-all disabled:opacity-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                disabled={converting}
-                                onClick={() => handleConvertToSalesOrder()}
-                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg px-3.5 py-1.5 transition-all shadow-md flex items-center gap-1.5"
-                            >
-                                {converting ? (
-                                    <>
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                        Converting...
-                                    </>
-                                ) : (
-                                    "Confirm & Generate"
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

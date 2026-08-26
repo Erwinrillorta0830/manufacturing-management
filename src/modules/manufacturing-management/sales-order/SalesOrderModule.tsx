@@ -42,6 +42,22 @@ export default function SalesOrderModule() {
     } = useSalesOrder();
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [prefillPayload, setPrefillPayload] = useState<any | null>(null);
+
+    React.useEffect(() => {
+        const raw = sessionStorage.getItem("pending_so_conversion");
+        if (raw) {
+            try {
+                const payload = JSON.parse(raw);
+                sessionStorage.removeItem("pending_so_conversion");
+                setPrefillPayload(payload);
+                setIsCreateModalOpen(true);
+            } catch {
+                // ignore invalid payload
+            }
+        }
+    }, []);
  
     return (
         <div className="space-y-6">
@@ -122,8 +138,12 @@ export default function SalesOrderModule() {
 
             <CreateSalesOrderModal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
+                onClose={() => {
+                    setIsCreateModalOpen(false);
+                    setPrefillPayload(null);
+                }}
                 onSubmit={handleCreateSalesOrderDirect}
+                prefillPayload={prefillPayload}
             />
         </div>
     );
