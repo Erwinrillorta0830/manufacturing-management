@@ -458,7 +458,7 @@ export async function GET(request: Request) {
                 }))
             ]);
 
-            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult, userResult] = await Promise.all([
+            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult, userResult, discountTypeResult] = await Promise.all([
                 optionalRead("branches", new URLSearchParams({
                     "filter[isActive][_eq]": "1",
                     fields: "id,branch_name",
@@ -472,7 +472,7 @@ export async function GET(request: Request) {
                 })),
                 optionalRead("salesman", new URLSearchParams({
                     "filter[isActive][_eq]": "true",
-                    fields: "id,salesman_name,employee_id",
+                    fields: "id,salesman_name,salesman_code,employee_id",
                     limit: "-1",
                     sort: "salesman_name"
                 })),
@@ -490,6 +490,10 @@ export async function GET(request: Request) {
                     fields: "user_id,user_fname,user_lname",
                     limit: "-1",
                     sort: "user_fname"
+                })),
+                optionalRead("discount_type", new URLSearchParams({
+                    fields: "id,discount_type,total_percent",
+                    limit: "-1"
                 }))
             ]);
 
@@ -543,7 +547,8 @@ export async function GET(request: Request) {
                 salesmen: salesmanResult.data || [],
                 users: userResult.data || [],
                 suppliers: supplierResult.data || [],
-                productTypes: productTypeResult.data || []
+                productTypes: productTypeResult.data || [],
+                discountTypes: discountTypeResult.data || []
             });
         }
 
@@ -814,12 +819,14 @@ export async function POST(request: Request) {
                 order_no: orderNo,
                 po_no: poNo,
                 customer_code: customerCode,
-                order_status: "Draft",
+                order_status: body.submitForApproval ? "For Approval" : "Draft",
                 total_amount: totalAmount,
                 discount_amount: 0,
                 net_amount: totalAmount - totalDiscount,
                 remarks: remarks || `Directly Created Sales Order.`,
-                created_date: systemTimestamp,
+                created_date: localCreatedDate,
+                draft_at: body.submitForApproval ? null : localCreatedDate,
+                for_approval_at: body.submitForApproval ? localCreatedDate : null,
                 created_by: encoderId,
                 delivery_date: deliveryDate || null,
                 due_date: dueDate || null,
@@ -934,12 +941,14 @@ export async function POST(request: Request) {
             order_no: orderNo,
             po_no: poNo,
             customer_code: customerCode,
-            order_status: "Draft", // Start as Draft to edit quantities
+            order_status: body.submitForApproval ? "For Approval" : "Draft", // Start as Draft or Submit
             total_amount: quoteTotal,
             discount_amount: discountAmount,
             net_amount: quoteTotal - discountAmount,
             remarks: remarks || `Converted 1:1 from Quote ${quote.quote_number}.`,
-            created_date: systemTimestamp,
+            created_date: localCreatedDate,
+            draft_at: body.submitForApproval ? null : localCreatedDate,
+            for_approval_at: body.submitForApproval ? localCreatedDate : null,
             created_by: encoderId,
             delivery_date: deliveryDate || null,
             due_date: dueDate || null,
@@ -1051,7 +1060,7 @@ export async function PATCH(request: Request) {
 
         const detailParams = new URLSearchParams({
             "filter[order_id][_eq]": String(orderId),
-            fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount",
+            fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount,product_id,created_date",
             limit: "-1"
         });
         const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
@@ -1067,7 +1076,7 @@ export async function PATCH(request: Request) {
             }
 
             const headerPayload = {
-                customer_code: body.customerId ? undefined : undefined, // Customer doesn't change typically, but wait, the payload has customerId?
+                customer_code: body.customerId ? undefined : undefined,
                 po_no: body.poNo,
                 delivery_date: body.deliveryDate || null,
                 due_date: body.dueDate || null,
@@ -1076,8 +1085,20 @@ export async function PATCH(request: Request) {
                 branch_id: body.branchId ? Number(body.branchId) : null,
                 remarks: body.remarks || null,
                 discount_amount: body.discountAmount || 0,
+                modified_by: user.id,
+                modified_date: localCreatedDate,
+                order_status: body.submitForApproval ? "For Approval" : "Draft",
+                for_approval_at: body.submitForApproval ? localCreatedDate : undefined
             };
             
+            // Map old detail created_dates by product_id
+            const oldDetailsMap = new Map<number, string[]>();
+            for (const od of allDetails) {
+                const pid = Number(od.product_id);
+                if (!oldDetailsMap.has(pid)) oldDetailsMap.set(pid, []);
+                if (od.created_date) oldDetailsMap.get(pid)!.push(od.created_date);
+            }
+
             // Calculate new totals
             const items = body.items || [];
             let newTotal = 0;
@@ -1087,8 +1108,14 @@ export async function PATCH(request: Request) {
                 const discount = Number(item.discount_amount || 0);
                 const net = qty * price - discount;
                 newTotal += (qty * price);
+                
+                const pid = Number(item.product_id);
+                const mappedCreatedDate = (oldDetailsMap.has(pid) && oldDetailsMap.get(pid)!.length > 0)
+                    ? oldDetailsMap.get(pid)!.shift()
+                    : localCreatedDate;
+
                 return {
-                    product_id: item.product_id,
+                    product_id: pid,
                     bom_version_id: item.bom_version_id || null,
                     ordered_quantity: qty,
                     unit_price: price,
@@ -1099,7 +1126,8 @@ export async function PATCH(request: Request) {
                     allocated_quantity: 0,
                     served_quantity: 0,
                     allocated_amount: 0,
-                    created_date: localCreatedDate,
+                    created_date: mappedCreatedDate,
+                    modified_date: localCreatedDate,
                     order_id: orderId
                 };
             });
@@ -1159,7 +1187,7 @@ export async function PATCH(request: Request) {
                 }
             }
             
-            return NextResponse.json({ success: true, order_status: "Draft" });
+            return NextResponse.json({ success: true, order_status: body.submitForApproval ? "For Approval" : "Draft" });
         }
 
         if ("orderStatus" in body) {

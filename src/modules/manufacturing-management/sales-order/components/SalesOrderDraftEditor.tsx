@@ -61,11 +61,7 @@ const singularUnitName = (name: string): string => {
 };
 
 const formatUomLabel = (product: any, products: any[]): string => {
-    const isParent = Boolean(product.is_parent);
-    const parentProd = products.find(p => Number(p.product_id) === Number(product.parent_product_id));
-    if (isParent || !parentProd) return `1 ${singularUnitName(product.base_unit_of_measure)}`;
-    const count = Number(product.unit_count) || 1;
-    return `${count} ${product.base_unit_of_measure}${count > 1 ? "s" : ""} / ${product.unit_type || "Unit"}`;
+    return String(product.unit_name || product.unit_shortcut || "Unit");
 };
 
 export function SalesOrderDraftEditor({
@@ -75,6 +71,7 @@ export function SalesOrderDraftEditor({
     onCancel
 }: SalesOrderDraftEditorProps) {
     const [submitting, setSubmitting] = useState(false);
+    const [submitMode, setSubmitMode] = useState<"draft" | "approval">("draft");
     const poInputRef = useRef<HTMLInputElement>(null);
 
     // Lookups
@@ -107,7 +104,7 @@ export function SalesOrderDraftEditor({
 
     const [customerOverrides, setCustomerOverrides] = useState<Record<number, number>>({});
     const [versionStates, setVersionStates] = useState<Record<number, VersionState>>({});
-    const [confirmingAction, setConfirmingAction] = useState<"save" | "cancel" | null>(null);
+    const [confirmingAction, setConfirmingAction] = useState<"draft" | "approval" | "cancel" | null>(null);
     const nextLineIdRef = useRef(1);
     const versionRequestRef = useRef(0);
 
@@ -246,7 +243,7 @@ export function SalesOrderDraftEditor({
         try {
             const customer = customers.find(c => String(c.id) === cId);
             if (!customer?.customer_code) return { discountType: null, discountAmount: 0, discountPercent: 0 };
-            const res = await fetch(`/api/manufacturing/financial-management/discount-management/customer-discounting/pricing?customerCode=${customer.customer_code}&productId=${pId}&basePrice=${basePrice}`);
+            const res = await fetch(`/api/manufacturing/sales-order/pricing?customerCode=${customer.customer_code}&productId=${pId}&basePrice=${basePrice}`);
             if (res.ok) {
                 const data = await res.json();
                 const discountAmount = typeof data.finalPrice === 'number' && typeof basePrice === 'number' ? basePrice - data.finalPrice : 0;
@@ -386,7 +383,7 @@ export function SalesOrderDraftEditor({
         e.preventDefault();
         if (lookupError || customers.length === 0 || products.length === 0) return toast.error("Lookups not loaded.");
         if (!validateForm()) return;
-        setConfirmingAction("save");
+        setConfirmingAction(submitMode);
     };
 
     const confirmSubmit = async () => {
@@ -418,7 +415,8 @@ export function SalesOrderDraftEditor({
                         discount_percent: item.discount_percent,
                         bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || null) : null
                     };
-                })
+                }),
+                submitForApproval: submitMode === "approval"
             });
             await onSave();
             toast.success("Sales order updated successfully.");
@@ -702,8 +700,11 @@ export function SalesOrderDraftEditor({
                     </div>
                     <div className="flex justify-end gap-2">
                         <button type="button" onClick={() => setConfirmingAction("cancel")} disabled={submitting} className="h-9 rounded-md border bg-background px-4 text-xs font-semibold transition-colors hover:bg-muted cursor-pointer">Cancel</button>
-                        <button type="submit" disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
-                            <Save className="h-3.5 w-3.5" /> Save Changes
+                        <button type="submit" onClick={() => setSubmitMode("draft")} disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-muted hover:bg-muted/80 text-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
+                            Save as Draft
+                        </button>
+                        <button type="submit" onClick={() => setSubmitMode("approval")} disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
+                            <Save className="h-3.5 w-3.5" /> Submit for Approval
                         </button>
                     </div>
                 </div>
@@ -713,16 +714,16 @@ export function SalesOrderDraftEditor({
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
                     <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95">
                         <div className="flex flex-col items-center text-center space-y-3">
-                            <div className={`p-3 rounded-full ${confirmingAction === "save" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
-                                {confirmingAction === "save" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
+                            <div className={`p-3 rounded-full ${(confirmingAction === "draft" || confirmingAction === "approval") ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                                {confirmingAction === "draft" || confirmingAction === "approval" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
                             </div>
                             <div>
                                 <h3 className="text-lg font-bold text-foreground">
-                                    {confirmingAction === "save" ? "Confirm Save" : "Discard Changes?"}
+                                    {confirmingAction === "draft" ? "Confirm Save Draft" : confirmingAction === "approval" ? "Confirm Submission" : "Discard Changes?"}
                                 </h3>
                                 <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-                                    {confirmingAction === "save"
-                                        ? "Are you sure you want to save these changes? This will update the drafted sales order."
+                                    {confirmingAction === "draft" || confirmingAction === "approval"
+                                        ? `Are you sure you want to ${confirmingAction === "draft" ? "save these changes as a draft" : "submit this sales order for approval"}?`
                                         : "Are you sure you want to discard your unsaved changes? This action cannot be undone."}
                                 </p>
                             </div>
@@ -734,18 +735,18 @@ export function SalesOrderDraftEditor({
                                 disabled={submitting}
                                 className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm font-semibold transition-colors hover:bg-muted cursor-pointer"
                             >
-                                {confirmingAction === "save" ? "Cancel" : "Keep Editing"}
+                                {confirmingAction === "draft" || confirmingAction === "approval" ? "Cancel" : "Keep Editing"}
                             </button>
                             <button
                                 type="button"
-                                onClick={confirmingAction === "save" ? confirmSubmit : () => { setConfirmingAction(null); onCancel(); }}
+                                onClick={confirmingAction === "draft" || confirmingAction === "approval" ? confirmSubmit : () => { setConfirmingAction(null); onCancel(); }}
                                 disabled={submitting}
                                 className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors flex items-center justify-center gap-2 cursor-pointer ${
-                                    confirmingAction === "save" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
+                                    confirmingAction === "draft" || confirmingAction === "approval" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
                                 }`}
                             >
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                {confirmingAction === "save" ? "Confirm Save" : "Discard"}
+                                {confirmingAction === "draft" ? "Save Draft" : confirmingAction === "approval" ? "Submit" : "Discard"}
                             </button>
                         </div>
                     </div>

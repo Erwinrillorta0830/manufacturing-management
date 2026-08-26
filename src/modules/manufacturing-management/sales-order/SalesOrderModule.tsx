@@ -75,35 +75,29 @@ export default function SalesOrderModule() {
  
             {/* Main Content Pane */}
             <div className="space-y-6">
-                {loading ? (
-                    <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground">
-                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        <span className="text-xs">Loading orders...</span>
-                    </div>
-                ) : (
-                    <ActiveSalesOrdersTable
-                        salesOrders={salesOrders}
-                        updatingStatusId={updatingStatusId}
-                        viewOrderDetails={viewOrderDetails}
-                        handleApproveOrder={handleApproveOrder}
-                        currentPage={currentPage}
-                        setCurrentPage={setCurrentPage}
-                        searchQuery={searchQuery}
-                        setSearchQuery={setSearchQuery}
-                        statusFilter={statusFilter}
-                        setStatusFilter={setStatusFilter}
-                        customerCodeFilter={customerCodeFilter}
-                        setCustomerCodeFilter={setCustomerCodeFilter}
-                        dateFromFilter={dateFromFilter}
-                        setDateFromFilter={setDateFromFilter}
-                        dateToFilter={dateToFilter}
-                        setDateToFilter={setDateToFilter}
-                        totalCount={totalCount}
-                        totalPages={totalPages}
-                        limit={limit}
-                        setLimit={setLimit}
-                    />
-                )}
+                <ActiveSalesOrdersTable
+                    salesOrders={salesOrders}
+                    loading={loading}
+                    updatingStatusId={updatingStatusId}
+                    viewOrderDetails={viewOrderDetails}
+                    handleApproveOrder={handleApproveOrder}
+                    currentPage={currentPage}
+                    setCurrentPage={setCurrentPage}
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    statusFilter={statusFilter}
+                    setStatusFilter={setStatusFilter}
+                    customerCodeFilter={customerCodeFilter}
+                    setCustomerCodeFilter={setCustomerCodeFilter}
+                    dateFromFilter={dateFromFilter}
+                    setDateFromFilter={setDateFromFilter}
+                    dateToFilter={dateToFilter}
+                    setDateToFilter={setDateToFilter}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    limit={limit}
+                    setLimit={setLimit}
+                />
             </div>
 
             {/* Modal - details view */}

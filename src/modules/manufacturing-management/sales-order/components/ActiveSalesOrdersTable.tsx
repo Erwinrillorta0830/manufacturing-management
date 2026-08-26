@@ -6,6 +6,7 @@ import { formatCurrency } from "@/lib/utils";
 
 interface ActiveSalesOrdersTableProps {
     salesOrders: SalesOrder[];
+    loading?: boolean;
     updatingStatusId: number | null;
     viewOrderDetails: (so: SalesOrder) => void;
     handleApproveOrder: (orderId: number) => void;
@@ -31,6 +32,7 @@ interface ActiveSalesOrdersTableProps {
 
 export function ActiveSalesOrdersTable({
     salesOrders,
+    loading,
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
     updatingStatusId,
     viewOrderDetails,
@@ -215,7 +217,7 @@ export function ActiveSalesOrdersTable({
                 </div>
             </div>
 
-            {salesOrders.length === 0 ? (
+            {salesOrders.length === 0 && !loading ? (
                 <div className="text-center p-16 border rounded-2xl bg-card shadow-xs border-dashed border-border">
                     <DollarSign className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
                     <h4 className="text-sm font-bold text-foreground">No Sales Orders Found</h4>
@@ -250,13 +252,33 @@ export function ActiveSalesOrdersTable({
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order No</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Customer</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order Date</th>
-                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Selling Total</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Gross Total</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Discount</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Net Amount</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-center">Status</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-center">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                                {salesOrders.map(so => (
+                                {loading ? (
+                                    Array.from({ length: 5 }).map((_, i) => (
+                                        <tr key={`skeleton-${i}`} className="animate-pulse hover:bg-transparent">
+                                            <td className="p-4"><div className="h-4 w-24 bg-muted rounded"></div></td>
+                                            <td className="p-4">
+                                                <div className="flex flex-col gap-1.5">
+                                                    <div className="h-4 w-32 bg-muted rounded"></div>
+                                                    <div className="h-3 w-20 bg-muted/50 rounded"></div>
+                                                </div>
+                                            </td>
+                                            <td className="p-4"><div className="h-4 w-20 bg-muted rounded"></div></td>
+                                            <td className="p-4"><div className="h-4 w-20 bg-muted rounded ml-auto"></div></td>
+                                            <td className="p-4"><div className="h-4 w-20 bg-muted rounded ml-auto"></div></td>
+                                            <td className="p-4"><div className="h-4 w-20 bg-muted rounded ml-auto"></div></td>
+                                            <td className="p-4"><div className="h-5 w-20 bg-muted rounded-full mx-auto"></div></td>
+                                            <td className="p-4"><div className="h-7 w-24 bg-muted rounded-lg mx-auto"></div></td>
+                                        </tr>
+                                    ))
+                                ) : salesOrders.map(so => (
                                     <tr key={so.order_id} className="hover:bg-muted/50 transition-colors">
                                         <td className="p-4 font-extrabold text-foreground">{so.order_no}</td>
                                         <td className="p-4 font-semibold text-foreground">
@@ -274,6 +296,12 @@ export function ActiveSalesOrdersTable({
                                         </td>
                                         <td className="p-4 text-right font-black text-foreground text-sm font-mono">
                                             {formatCurrency(so.total_amount)}
+                                        </td>
+                                        <td className="p-4 text-right font-black text-destructive text-sm font-mono">
+                                            {so.discount_amount ? `-${formatCurrency(so.discount_amount)}` : "-"}
+                                        </td>
+                                        <td className="p-4 text-right font-black text-primary text-sm font-mono">
+                                            {formatCurrency(so.net_amount)}
                                         </td>
                                         <td className="p-4 text-center">
                                             <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
