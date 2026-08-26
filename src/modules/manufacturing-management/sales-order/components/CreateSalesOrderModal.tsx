@@ -30,6 +30,7 @@ interface CreateSalesOrderModalProps {
     onClose: () => void;
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
     onSubmit: (payload: CreateSalesOrderPayload) => Promise<any>;
+    prefillPayload?: any | null;
 }
 
 interface DirectOrderItem {
@@ -103,7 +104,8 @@ function formatUomLabel(product: any, products: any[]) {
 export function CreateSalesOrderModal({
     isOpen,
     onClose,
-    onSubmit
+    onSubmit,
+    prefillPayload
 }: CreateSalesOrderModalProps) {
     const [submitting, setSubmitting] = useState(false);
     const poInputRef = useRef<HTMLInputElement>(null);
@@ -314,6 +316,37 @@ export function CreateSalesOrderModal({
         };
     }, [isOpen]);
 
+    useEffect(() => {
+        if (!isOpen || !prefillPayload || loadingLookups || products.length === 0 || customers.length === 0) return;
+
+        // Auto-populate customer
+        if (prefillPayload.customer) {
+            handleCustomerChange(String(prefillPayload.customer));
+        }
+
+        // Auto-populate items
+        if (prefillPayload.snapshots && Array.isArray(prefillPayload.snapshots)) {
+            const newItems: DirectOrderItem[] = [];
+            prefillPayload.snapshots.forEach((snap: any) => {
+                if (snap.productId) {
+                    newItems.push({
+                        line_id: nextLineIdRef.current++,
+                        parent_product_id: Number(snap.productId),
+                        product_id: Number(snap.productId),
+                        quantity: Number(snap.quantity) || 1,
+                        unit_price: Number(snap.frozenBaseCost) || 0,
+                        bom_version_id: snap.versionId ? Number(snap.versionId) : undefined
+                    });
+                } else {
+                    toast.warning(`Skipped autofill for ${snap.productName} - no product ID provided.`);
+                }
+            });
+            if (newItems.length > 0) {
+                setItems(newItems);
+            }
+        }
+    }, [isOpen, prefillPayload, loadingLookups, products.length, customers.length]);
+
     const fetchLineDiscount = async (cId: string, pId: number, basePrice: number) => {
         if (!cId || !pId) return { discountType: null, discountAmount: 0 };
         try {
@@ -348,7 +381,7 @@ export function CreateSalesOrderModal({
         setCustomerId(value);
         setFormErrors(previous => ({ ...previous, customerId: undefined }));
         const customer = customers.find(item => String(item.id) === value);
-        const defaultPaymentTermId = Number(customer?.payment_term_id);
+        const defaultPaymentTermId = Number(customer?.payment_term);
         const hasConfiguredTerm = Number.isSafeInteger(defaultPaymentTermId)
             && defaultPaymentTermId > 0
             && paymentTerms.some(term => Number(term.id) === defaultPaymentTermId);
