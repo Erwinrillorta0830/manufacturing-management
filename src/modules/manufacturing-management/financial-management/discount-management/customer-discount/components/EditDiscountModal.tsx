@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -12,53 +12,61 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { ModalSearchableSelect } from "./ModalSearchableSelect";
-import { Plus } from "lucide-react";
-import { Customer, CustomerDiscount, Supplier, Category, DiscountType } from "../types";
+import { Save } from "lucide-react";
+import { CustomerDiscount, Supplier, Category, DiscountType } from "../types";
 
-interface AddDiscountModalProps {
+interface EditDiscountModalProps {
   isOpen: boolean;
   onClose: () => void;
-  customer: Customer | null;
+  discount: CustomerDiscount | null;
   suppliers: Supplier[];
   categories: Category[];
   discountTypes: DiscountType[];
-  onAdd: (data: Partial<CustomerDiscount>) => Promise<void>;
+  onEdit: (data: Partial<CustomerDiscount> & { id: number }) => Promise<void>;
 }
 
-export function AddDiscountModal({
+export function EditDiscountModal({
   isOpen,
   onClose,
-  customer,
+  discount,
   suppliers,
   categories,
   discountTypes,
-  onAdd,
-}: AddDiscountModalProps) {
+  onEdit,
+}: EditDiscountModalProps) {
   const [productType, setProductType] = useState<"raw" | "finished">("raw");
   const [supplierId, setSupplierId] = useState<string>("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [discountTypeId, setDiscountTypeId] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const handleAdd = async () => {
+  useEffect(() => {
+    if (isOpen && discount) {
+      const sId = typeof discount.supplier_id === 'object' ? discount.supplier_id?.id : discount.supplier_id;
+      const cId = typeof discount.category_id === 'object' ? discount.category_id?.category_id : discount.category_id;
+      const dtId = typeof discount.discount_type === 'object' ? discount.discount_type?.id : discount.discount_type;
+      
+      setProductType(sId ? "raw" : "finished");
+      setSupplierId(sId ? String(sId) : "");
+      setCategoryId(cId ? String(cId) : "");
+      setDiscountTypeId(dtId ? String(dtId) : "");
+    }
+  }, [isOpen, discount]);
+
+  const handleEdit = async () => {
     if (isSaving) return;
-    if (!customer || !discountTypeId) return;
+    if (!discount || !discountTypeId) return;
     if (productType === "raw" && !supplierId) return;
     
     try {
       setIsSaving(true);
-      await onAdd({
-      customer_code: customer.customer_code,
-      supplier_id: productType === "finished" ? null : parseInt(supplierId),
-      category_id: categoryId ? parseInt(categoryId) : undefined,
-      discount_type: parseInt(discountTypeId),
-    });
+      await onEdit({
+        id: discount.id,
+        supplier_id: productType === "finished" ? null : parseInt(supplierId),
+        category_id: categoryId ? parseInt(categoryId) : undefined,
+        discount_type: parseInt(discountTypeId),
+      });
 
-      // Reset fields and close
-      setProductType("raw");
-      setSupplierId("");
-      setCategoryId("");
-      setDiscountTypeId("");
       onClose();
     } finally {
       setIsSaving(false);
@@ -73,16 +81,12 @@ export function AddDiscountModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!open) {
-        setProductType("raw");
-        setSupplierId("");
-        setCategoryId("");
-        setDiscountTypeId("");
         onClose();
       }
     }}>
       <DialogContent className="max-w-md" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Add Customer Discount</DialogTitle>
+          <DialogTitle>Edit Customer Discount</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -99,12 +103,12 @@ export function AddDiscountModal({
               className="flex items-center gap-4"
             >
               <div className="flex items-center space-x-2">
-                <RadioGroupItem value="raw" id="raw-materials" />
-                <Label htmlFor="raw-materials" className="font-normal cursor-pointer">Raw Materials / Packaging</Label>
+                <RadioGroupItem value="raw" id="edit-raw-materials" />
+                <Label htmlFor="edit-raw-materials" className="font-normal cursor-pointer">Raw Materials / Packaging</Label>
               </div>
               <div className="flex items-center space-x-2">
-                <RadioGroupItem value="finished" id="finished-goods" />
-                <Label htmlFor="finished-goods" className="font-normal cursor-pointer">Finished Goods</Label>
+                <RadioGroupItem value="finished" id="edit-finished-goods" />
+                <Label htmlFor="edit-finished-goods" className="font-normal cursor-pointer">Finished Goods</Label>
               </div>
             </RadioGroup>
           </div>
@@ -146,15 +150,9 @@ export function AddDiscountModal({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => {
-            setProductType("raw");
-            setSupplierId("");
-            setCategoryId("");
-            setDiscountTypeId("");
-            onClose();
-          }} disabled={isSaving}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
           <Button 
-            onClick={handleAdd} 
+            onClick={handleEdit} 
             className="gap-2"
             disabled={isSaveDisabled}
           >
@@ -165,7 +163,7 @@ export function AddDiscountModal({
               </span>
             ) : (
               <span className="flex items-center gap-2">
-                <Plus className="h-4 w-4" /> Save Discount
+                <Save className="h-4 w-4" /> Save Changes
               </span>
             )}
           </Button>

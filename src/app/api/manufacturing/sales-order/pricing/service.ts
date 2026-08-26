@@ -168,8 +168,16 @@ export async function resolveCustomerDiscountPrice(input: SalesOrderPricingInput
       }
       
       // 2. Evaluate Supplier Match
-      if (ruleSup && !supplierIds.includes(ruleSup)) {
-          continue; // Rule requires a specific supplier, but it doesn't match this product.
+      if (ruleSup) {
+          if (!supplierIds.includes(ruleSup)) {
+              continue; // Rule requires a specific supplier, but it doesn't match this product.
+          }
+      } else {
+          // ruleSup is null. This means it is a Finished Goods discount.
+          // It MUST ONLY apply to products that are Finished Goods (i.e. have no suppliers).
+          if (supplierIds.length > 0) {
+              continue; // Product is a raw material, so this Finished Goods discount doesn't apply.
+          }
       }
       
       // 3. Rule is valid for this product! Calculate its specificity score.

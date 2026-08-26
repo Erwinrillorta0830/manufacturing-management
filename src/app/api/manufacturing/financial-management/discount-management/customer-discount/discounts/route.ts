@@ -49,7 +49,43 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    // Create the record
+    // Check for existing active discount with the same scope
+    let filterString = `filter[customer_code][_eq]=${body.customer_code}&filter[deleted_at][_null]=true`;
+    if (body.supplier_id) {
+      filterString += `&filter[supplier_id][_eq]=${body.supplier_id}`;
+    } else {
+      filterString += `&filter[supplier_id][_null]=true`;
+    }
+    if (body.category_id) {
+      filterString += `&filter[category_id][_eq]=${body.category_id}`;
+    } else {
+      filterString += `&filter[category_id][_null]=true`;
+    }
+
+    const existingRes = await fetchDirectus("supplier_category_discount_per_customer", "GET", null, filterString);
+    if (existingRes.data && existingRes.data.length > 0) {
+      // Soft delete existing records
+      for (const existing of existingRes.data) {
+        await fetchDirectus(`supplier_category_discount_per_customer/${existing.id}`, "PATCH", {
+          deleted_at: new Date().toISOString(),
+          deleted_by: body.created_by || null,
+          updated_by: body.created_by || null,
+        });
+        
+        // Log deletion
+        await fetchDirectus("customer_discount_log", "POST", {
+          discount_record_id: existing.id,
+          action_type: "DELETE",
+          customer_code: existing.customer_code,
+          discount_type: existing.discount_type,
+          supplier_id: existing.supplier_id,
+          category_id: existing.category_id,
+          changed_by_user_id: body.created_by || null,
+        });
+      }
+    }
+
+    // Create the new record
     const res = await fetchDirectus("supplier_category_discount_per_customer", "POST", body);
     const newRecord = res.data;
 
@@ -96,6 +132,7 @@ export async function DELETE(request: NextRequest) {
     await fetchDirectus(`supplier_category_discount_per_customer/${id}`, "PATCH", {
       deleted_at: new Date().toISOString(),
       deleted_by: userId ? Number(userId) : null,
+      updated_by: userId ? Number(userId) : null,
     });
 
     // 3. Log the deletion
@@ -112,6 +149,44 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("DELETE Error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal Server Error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, updated_by, ...updateData } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    // Update the record
+    const res = await fetchDirectus(`supplier_category_discount_per_customer/${id}`, "PATCH", {
+      ...updateData,
+      updated_by: updated_by ? Number(updated_by) : null,
+      updated_at: new Date().toISOString()
+    });
+    const updatedRecord = res.data;
+
+    // Log the action
+    await fetchDirectus("customer_discount_log", "POST", {
+      discount_record_id: updatedRecord.id,
+      action_type: "UPDATE",
+      customer_code: updatedRecord.customer_code,
+      discount_type: updatedRecord.discount_type,
+      supplier_id: updatedRecord.supplier_id,
+      category_id: updatedRecord.category_id,
+      changed_by_user_id: updated_by ? Number(updated_by) : null,
+    });
+
+    return NextResponse.json(updatedRecord);
+  } catch (error) {
+    console.error("PATCH Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal Server Error" },
       { status: 500 }
