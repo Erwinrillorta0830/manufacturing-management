@@ -18,7 +18,7 @@ export type JobOrderStatus =
     | "On Hold"
     | "Cancelled";
 
-export type ReservationStatus = "SOFT" | "HARD";
+export type ReservationStatus = "SOFT" | "HARD" | "PARTIAL";
 
 export interface Branch {
     id: number;

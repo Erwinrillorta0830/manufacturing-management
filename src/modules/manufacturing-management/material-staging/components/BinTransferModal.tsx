@@ -116,6 +116,8 @@ function BinTransferFormContent({
     const currentLot = material.allocations.find((l) => l.batch_no === selectedBatchNo) || lot || material.allocations[0];
     const availableOnHand = currentLot?.on_hand_lot_quantity ?? material.on_hand_quantity;
     const remainingToStage = Math.max(0, material.required_quantity - material.staged_quantity);
+    const isPartiallyStaged = material.reservation_status === "PARTIAL";
+    const currentReservationStatus = lot?.reservation_status || material.reservation_status;
 
     const handleSetMaxQuantity = () => {
         if (remainingToStage > 0) {
@@ -198,7 +200,7 @@ function BinTransferFormContent({
                                     </div>
                                 </div>
                                 <Badge variant={material.is_staged ? "default" : "secondary"} className={material.is_staged ? "bg-emerald-500 text-white" : "bg-amber-500/10 text-amber-500 border-amber-500/20"}>
-                                    {material.is_staged ? "STAGED (HARD)" : "PENDING (SOFT)"}
+                                    {material.is_staged ? "STAGED (HARD)" : isPartiallyStaged ? "PARTIALLY STAGED" : "PENDING (SOFT)"}
                                 </Badge>
                             </div>
 
@@ -364,7 +366,7 @@ function BinTransferFormContent({
                             <div className="space-y-0.5">
                                 <span className="font-semibold block">Automatic Status Conversion</span>
                                 <p className="text-[11px] text-muted-foreground">
-                                    Confirming transfer will move stock to <code className="font-mono text-foreground font-semibold">{targetBin}</code> and convert allocation status from <strong className="text-amber-500">SOFT</strong> to <strong className="text-emerald-500">HARD (RESERVED / READY FOR FLOOR)</strong>.
+                                    Confirming transfer will move stock to <code className="font-mono text-foreground font-semibold">{targetBin}</code> and convert the staging reservation from <strong className="text-amber-500">{currentReservationStatus}</strong> to <strong className="text-emerald-500">HARD (RESERVED / READY FOR FLOOR)</strong>.
                                 </p>
                             </div>
                         </div>
