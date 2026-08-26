@@ -315,17 +315,19 @@ export async function POST(request: Request) {
             true
         );
 
-        let onHandStock = 0;
-        let batchStock = 0;
+        let branchOnHandStock = 0;
+        let branchBatchStock = 0;
         movements.forEach((movement) => {
             const quantity = Number(movement.quantity || 0);
-            onHandStock += quantity;
-            if (String(movement.batch_no || "").trim().toLowerCase() === data.batch_no.trim().toLowerCase()) {
-                batchStock += quantity;
+            if (Number(movement.branch_id) === branchId) {
+                branchOnHandStock += quantity;
+                if (String(movement.batch_no || "").trim().toLowerCase() === data.batch_no.trim().toLowerCase()) {
+                    branchBatchStock += quantity;
+                }
             }
         });
 
-        const availableStock = batchStock > 0 ? batchStock : onHandStock;
+        const availableStock = Math.max(0, branchBatchStock > 0 ? branchBatchStock : branchOnHandStock);
         if (availableStock < data.transfer_quantity && !data.override_negative) {
             const shortageQty = Math.max(0, data.transfer_quantity - availableStock);
             return NextResponse.json(
@@ -348,12 +350,18 @@ export async function POST(request: Request) {
         const branchMovements = movements.filter((movement) =>
             Number(movement.branch_id) === branchId && Number(movement.lot_id) > 0
         );
+        // A negative override may intentionally stage stock that is not currently
+        // present in the Job Order branch. The movement still needs a valid lot
+        // foreign key, so use an existing product lot only for that authorized path.
+        const lotMovements = data.override_negative
+            ? movements.filter((movement) => Number(movement.lot_id) > 0)
+            : branchMovements;
         const requestedBatch = data.batch_no.trim().toLowerCase();
-        const exactBatchMovement = branchMovements
+        const exactBatchMovement = lotMovements
             .filter((movement) => String(movement.batch_no || "").trim().toLowerCase() === requestedBatch)
             .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0))[0];
-        const requestedLotMovement = branchMovements.find((movement) => Number(movement.lot_id) === data.lot_id);
-        const fallbackLotMovement = [...branchMovements]
+        const requestedLotMovement = lotMovements.find((movement) => Number(movement.lot_id) === data.lot_id);
+        const fallbackLotMovement = [...lotMovements]
             .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0))[0];
         const resolvedLotId = Number(
             exactBatchMovement?.lot_id ||
@@ -362,7 +370,12 @@ export async function POST(request: Request) {
             0
         );
         if (!resolvedLotId) {
-            throw new TransferError("No valid inventory lot exists for this product and Job Order branch.", 400);
+            throw new TransferError(
+                data.override_negative
+                    ? "No valid inventory lot exists for this product to record the negative override."
+                    : "No valid inventory lot exists for this product and Job Order branch.",
+                400
+            );
         }
 
         const allocFilter = encodeURIComponent(JSON.stringify({

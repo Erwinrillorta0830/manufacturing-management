@@ -30,6 +30,7 @@ interface DirectusAllocation {
     batch_no?: string;
     allocated_quantity?: number;
     reserved_quantity?: number;
+    staged_quantity?: number;
     staging_bin?: string;
     reservation_status?: string;
     override_negative?: boolean;
@@ -279,6 +280,7 @@ export async function GET(request: Request) {
                     batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
                     reserved_quantity: Number(res.reserved_quantity || 0),
+                    staged_quantity: Number(stagingMovement?.quantity || 0),
                     staging_bin: stagingMovement?.stagingBin || "MAIN-STORE",
                     reservation_status: isHard ? "HARD" : "SOFT",
                     override_negative: Boolean(stagingMovement?.negativeOverride),
@@ -343,13 +345,14 @@ export async function GET(request: Request) {
                     const resStatus = (al.reservation_status === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING")) ? "HARD" : "SOFT";
                     const isStaged = resStatus === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING");
                     const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
+                    const stagedQty = Number(al.staged_quantity || 0);
 
                     return {
                         allocation_id: al.allocation_id || al.id,
                         lot_id: al.lot_id || 0,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
-                        staged_quantity: isStaged ? allocQty : 0,
+                        staged_quantity: isStaged ? (stagedQty > 0 ? stagedQty : allocQty) : 0,
                         expiry_date: lotMeta?.expiry_date || null,
                         qa_status: lotMeta?.qa_status || "Passed",
                         reservation_status: resStatus as "SOFT" | "HARD",
