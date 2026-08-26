@@ -151,7 +151,7 @@ export function SalesOrderDraftEditor({
     }, [customerId]);
 
     useEffect(() => {
-        const productIds = [...new Set(items.map(item => Number(item.product_id)).filter(Boolean))];
+        const productIds = [...new Set(items.map(item => Number(item.parent_product_id)).filter(Boolean))];
         const requestId = ++versionRequestRef.current;
         const controller = new AbortController();
         if (productIds.length === 0) {
@@ -186,7 +186,7 @@ export function SalesOrderDraftEditor({
             setVersionStates(Object.fromEntries(results.filter(Boolean) as Array<readonly [number, VersionState]>));
         });
         return () => controller.abort();
-    }, [items.map(item => item.product_id).join(","), customerOverrides]);
+    }, [items.map(item => item.parent_product_id).join(","), customerOverrides]);
 
     useEffect(() => {
         setLoadingLookups(true);
@@ -362,8 +362,9 @@ export function SalesOrderDraftEditor({
                 seenProductIds.add(item.product_id);
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
                 const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                if (typeObj?.name === 'Finished Goods') {
-                    const versionState = versionStates[item.product_id];
+                const isFinishedGood = typeObj?.name === 'Finished Goods';
+                if (isFinishedGood) {
+                    const versionState = versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
                     if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
                 }
@@ -413,7 +414,7 @@ export function SalesOrderDraftEditor({
                         discount_type: item.discount_type,
                         discount_amount: item.discount_amount,
                         discount_percent: item.discount_percent,
-                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || null) : null
+                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
                     };
                 }),
                 submitForApproval: submitMode === "approval"
@@ -642,12 +643,12 @@ export function SalesOrderDraftEditor({
                                             </td>
                                             <td className="block p-0 md:table-cell md:p-3 overflow-visible md:min-w-[14rem]">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                {Number(item.product_id) > 0 && versionStates[item.product_id]?.versions?.length ? (
-                                                    versionStates[item.product_id]?.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                        : versionStates[item.product_id]?.status === "resolved" ? (
-                                                            <select value={item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
-                                                                {versionStates[item.product_id]?.versions?.map((v: any) => (
-                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {Number(v.version_id) === versionStates[item.product_id]?.defaultVersionId ? "(Default)" : ""}</option>
+                                                {Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.versions?.length ? (
+                                                    versionStates[item.parent_product_id]?.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                        : versionStates[item.parent_product_id]?.status === "resolved" ? (
+                                                            <select value={item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
+                                                                {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
+                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}</option>
                                                                 ))}
                                                             </select>
                                                         ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
