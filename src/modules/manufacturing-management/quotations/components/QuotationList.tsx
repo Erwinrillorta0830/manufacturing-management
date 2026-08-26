@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
-    FileText, Plus, Eye, History, ShieldAlert,
+    FileText, Plus, ShieldAlert,
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
     Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X
 } from "lucide-react";
@@ -22,7 +22,6 @@ interface QuotationListProps {
     loadingQuotes: boolean;
     loadQuotes: () => void;
     viewQuoteDetails: (quote: QuotationHeader) => void;
-    reviseQuotation: (quote: QuotationHeader) => void;
     allProjects: ProjectPortfolioItem[];
     customers: Customer[];
     handleSearchCustomers: (search: string) => void;
@@ -36,7 +35,6 @@ export function QuotationList({
     loadingQuotes,
     loadQuotes,
     viewQuoteDetails,
-    reviseQuotation,
     allProjects,
     customers,
     handleSearchCustomers,

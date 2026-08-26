@@ -30,7 +30,6 @@ interface CreateSalesOrderModalProps {
     onClose: () => void;
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
     onSubmit: (payload: CreateSalesOrderPayload) => Promise<any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     prefillPayload?: any | null;
 }
 

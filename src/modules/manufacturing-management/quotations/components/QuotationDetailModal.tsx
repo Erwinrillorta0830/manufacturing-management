@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, ArrowRight, X } from "lucide-react";
-import { Customer, QuotationHeader, QuotationSnapshotNode } from "../types";
+import { Loader2, ArrowRight } from "lucide-react";
+import { QuotationHeader, QuotationSnapshotNode } from "../types";
 import { formatCurrency } from "@/lib/utils";
 
 interface QuotationDetailModalProps {
@@ -64,7 +64,7 @@ export function QuotationDetailModal({
         try {
             const payload = {
                 customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null 
-                    ? (selectedQuote.customer_id as any).id 
+                    ? (selectedQuote.customer_id as {id: number}).id 
                     : selectedQuote.customer_id,
                 quoteId: selectedQuote.id,
                 quoteNumber: selectedQuote.quote_number,
