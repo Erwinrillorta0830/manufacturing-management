@@ -27,6 +27,27 @@ async function getUserIdFromSession(): Promise<number> {
     return 24;
 }
 
+async function requireDirectusWriteData(response: Response, label: string): Promise<any> {
+    const responseText = await response.text();
+    let payload: any = null;
+
+    try {
+        payload = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        throw new Error(`${label} failed with HTTP ${response.status}: ${responseText || "No response body"}`);
+    }
+
+    if (!payload || payload.data === undefined || payload.data === null) {
+        throw new Error(`${label} returned no data from Directus.`);
+    }
+
+    return payload.data;
+}
+
 // GET handler: Fetches yield ledger logs, rejection reasons, or status history
 export async function GET(request: Request) {
     try {
@@ -125,17 +146,17 @@ export async function POST(request: Request) {
         }
         const branchId = Number(joData.branch_id);
         const jobOrderNo = joData.job_order_no || `JO-${joId}`;
-        const targetQuantity = Number(joData.target_quantity || joData.quantity || 0);
-        const currentCompletedQty = Number(joData.completed_quantity || joData.actual_quantity_produced || 0);
+        const targetQuantity = Number(joData.target_quantity ?? joData.quantity ?? 0);
         const currentRejectedQty = Number(joData.rejected_quantity || 0);
 
         // Fetch all existing yield logs for this Job Order to compute accumulated yield
         const existingYieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${joId}&limit=-1`, { headers, cache: "no-store" });
-        let accumulatedYield = 0;
-        if (existingYieldRes.ok) {
-            const existingYieldData = await existingYieldRes.json();
-            accumulatedYield = (existingYieldData.data || []).reduce((sum: number, log: any) => sum + Number(log.yield_quantity || 0), 0);
+        if (!existingYieldRes.ok) {
+            throw new Error(`Failed to fetch existing yield ledger for Job Order ${joId}: ${await existingYieldRes.text()}`);
         }
+
+        const existingYieldData = await existingYieldRes.json();
+        const accumulatedYield = (existingYieldData.data || []).reduce((sum: number, log: any) => sum + Number(log.yield_quantity || 0), 0);
 
         if (accumulatedYield + goodYield > targetQuantity * 1.05) {
             return NextResponse.json({ 
@@ -269,7 +290,8 @@ export async function POST(request: Request) {
         }
 
         // 3. Insert new row into manufacturing_job_order_yield_ledger table
-        const finalBatchNo = batchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
+        const requestedBatchNo = typeof batchNo === "string" ? batchNo.trim() : "";
+        const finalBatchNo = requestedBatchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
         const ledgerPayload = {
             job_order_id: Number(joId),
             shift_name: shiftName,
@@ -287,11 +309,7 @@ export async function POST(request: Request) {
             body: JSON.stringify(ledgerPayload)
         });
 
-        if (!ledgerRes.ok) {
-            throw new Error("Failed to insert into manufacturing_job_order_yield_ledger database table: " + await ledgerRes.text());
-        }
-
-        const ledgerData = (await ledgerRes.json()).data;
+        const ledgerData = await requireDirectusWriteData(ledgerRes, "Yield ledger insert");
         const ledgerId = ledgerData.ledger_id || ledgerData.id;
 
         // 4. Insert QA Parameters/Yield Log into manufacturing_job_order_qa_records
@@ -537,58 +555,74 @@ export async function POST(request: Request) {
             remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName} | Lot: ${finalBatchNo}`
         };
 
-        await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
+        const finishedMovementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
             method: "POST",
             headers,
             body: JSON.stringify(finishedMovementPayload)
         });
+        await requireDirectusWriteData(finishedMovementRes, "Finished-goods inventory movement insert");
 
         // 7. UPDATE JOB ORDER ACCUMULATED COMPLETED QUANTITY, REJECTED QUANTITY, AND STATUS
-        const newCompletedQty = currentCompletedQty + goodYield;
+        const newCompletedQty = accumulatedYield + goodYield;
         const newRejectedQty = currentRejectedQty + scrapUnits;
         const isJobFullyFinished = newCompletedQty >= targetQuantity;
 
+        // completed_quantity is the shift-run aggregate. Keep
+        // actual_quantity_produced owned by finished-goods receiving; this
+        // Directus field contains legacy nulls and rejects production-run writes.
         const joUpdatePayload: Record<string, any> = {
             completed_quantity: newCompletedQty,
-            actual_quantity_produced: newCompletedQty,
             rejected_quantity: newRejectedQty,
             modified_by: effectiveEncoderId,
             modified_at: manilaTimestamp
         };
 
         if (isJobFullyFinished) {
-            joUpdatePayload.status = "Finished";
+            joUpdatePayload.status = "Completed";
         } else if (joData.status !== "In Progress" && joData.status !== "Ongoing") {
             joUpdatePayload.status = "In Progress";
         }
 
-        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, {
+        const expectedStatus = isJobFullyFinished
+            ? "Completed"
+            : (joData.status === "In Progress" || joData.status === "Ongoing" ? joData.status : "In Progress");
+
+        // Keep the PATCH response unscoped. This Directus instance rejects scoped
+        // update responses when other records in the collection contain nulls in
+        // actual_quantity_produced, even though the target Job Order is valid.
+        const joUpdateRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify(joUpdatePayload)
         });
 
-        // 8. RECORD IN MANUFACTURING_JOB_ORDER_STATUS_HISTORY IF COMPLETED OR TRANSITIONED
-        if (isJobFullyFinished && joData.status !== "Finished" && joData.status !== "Completed") {
-            try {
-                const statusHistoryPayload = {
-                    job_order_id: Number(joId),
-                    work_center_id: joData.primary_work_center_id || null,
-                    previous_status: joData.status,
-                    status: "Finished",
-                    changed_by: effectiveEncoderId,
-                    changed_at: manilaTimestamp,
-                    remarks: `Job Order completed. Target ${targetQuantity.toLocaleString()} pcs reached with final shift run (${goodYield} pcs).`
-                };
+        const updatedJoData = await requireDirectusWriteData(joUpdateRes, "Job Order completion update");
+        const persistedCompletedQuantity = Number(updatedJoData.completed_quantity);
+        const hasExpectedCompletedQuantity = Number.isFinite(persistedCompletedQuantity)
+            && Math.abs(persistedCompletedQuantity - newCompletedQty) < 0.000001;
+        const persistedStatus = String(updatedJoData.status || "");
 
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(statusHistoryPayload)
-                });
-            } catch (histErr) {
-                console.error("Error creating completion status history:", histErr);
-            }
+        if (!hasExpectedCompletedQuantity || persistedStatus !== expectedStatus) {
+            throw new Error(`Job Order ${jobOrderNo} did not persist the expected completion state.`);
+        }
+
+        // 8. RECORD IN MANUFACTURING_JOB_ORDER_STATUS_HISTORY IF COMPLETED OR TRANSITIONED
+        if (isJobFullyFinished && joData.status !== "Completed") {
+            const statusHistoryPayload = {
+                job_order_id: Number(joId),
+                old_status: joData.status,
+                new_status: "Completed",
+                changed_by: effectiveEncoderId,
+                changed_at: manilaTimestamp,
+                remarks: `Job Order completed. Target ${targetQuantity.toLocaleString()} pcs reached with final shift run (${goodYield} pcs).`
+            };
+
+            const historyRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(statusHistoryPayload)
+            });
+            await requireDirectusWriteData(historyRes, "Finished status-history insert");
         }
 
         return NextResponse.json({ 
