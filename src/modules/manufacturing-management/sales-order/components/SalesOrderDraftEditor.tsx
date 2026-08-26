@@ -52,15 +52,7 @@ const isStandardBOMVersion = (version: any): boolean => {
     return name.includes("standard") && !name.includes("custom");
 };
 
-const singularUnitName = (name: string): string => {
-    if (!name) return "";
-    const lower = name.toLowerCase();
-    if (lower.endsWith("ies")) return name.slice(0, -3) + "y";
-    if (lower.endsWith("s")) return name.slice(0, -1);
-    return name;
-};
-
-const formatUomLabel = (product: any, products: any[]): string => {
+const formatUomLabel = (product: any): string => {
     return String(product.unit_name || product.unit_shortcut || "Unit");
 };
 
@@ -611,7 +603,7 @@ export function SalesOrderDraftEditor({
                                     const parentProd = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
                                     const uomProd = products.find(p => Number(p.product_id) === Number(item.product_id));
                                     return (parentProd ? `${parentProd.product_name} ${parentProd.product_code || ""}`.toLowerCase().includes(query) : false) ||
-                                        (uomProd ? formatUomLabel(uomProd, products).toLowerCase().includes(query) : false);
+                                        (uomProd ? formatUomLabel(uomProd).toLowerCase().includes(query) : false);
                                 });
                                 if (filteredItems.length === 0) return <tr className="block md:table-row"><td colSpan={9} className="py-8 text-center text-muted-foreground italic font-semibold">No products match your search.</td></tr>;
                                 return filteredItems.map(item => {
@@ -628,7 +620,7 @@ export function SalesOrderDraftEditor({
                                     const uomOptions = products.filter(p => Number(p.parent_product_id) === Number(item.parent_product_id))
                                         .filter(p => Number(p.product_id) === Number(item.product_id) || !otherSelectedVariantIds.includes(Number(p.product_id)))
                                         .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
-                                        .map(p => ({ value: String(p.product_id), label: formatUomLabel(p, products) }));
+                                        .map(p => ({ value: String(p.product_id), label: formatUomLabel(p) }));
                                     return (
                                         <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
                                             <td className="block p-0 md:table-cell md:p-3 overflow-visible md:w-48">

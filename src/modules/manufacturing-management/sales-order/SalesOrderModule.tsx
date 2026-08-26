@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { RefreshCw, Loader2, Plus } from "lucide-react";
+import { RefreshCw, Plus } from "lucide-react";
 import { useSalesOrder } from "./hooks/useSalesOrder";
 import { ActiveSalesOrdersTable } from "./components/ActiveSalesOrdersTable";
 import { SalesOrderDetailPanel } from "./components/SalesOrderDetailPanel";

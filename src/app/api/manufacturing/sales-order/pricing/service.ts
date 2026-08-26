@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-
+// Removed NextResponse as it was unused
 export const DIRECTUS_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
 export const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
 
@@ -127,7 +126,7 @@ export async function resolveCustomerDiscountPrice(input: SalesOrderPricingInput
         try {
             const parent = await fetchProduct(parentId);
             categoryId = asNumber(parent.product_category);
-        } catch(e) {
+        } catch {
             // Parent not found, ignore.
         }
     }
@@ -142,7 +141,7 @@ export async function resolveCustomerDiscountPrice(input: SalesOrderPricingInput
     if (parentId && parentId > 0) {
         try {
             supplierIds = await fetchProductSuppliers(parentId);
-        } catch(e) {
+        } catch {
             // Parent suppliers not found, ignore.
         }
     }
