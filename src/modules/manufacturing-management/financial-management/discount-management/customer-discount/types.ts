@@ -45,8 +45,8 @@ export interface CustomerDiscount {
   id: number;
   customer_code: string;
   discount_type: number | DiscountType;
-  supplier_id: number | Supplier;
-  category_id: number | Category;
+  supplier_id?: number | Supplier | null;
+  category_id?: number | Category | null;
   created_by?: number | null;
   updated_by?: number | null;
   deleted_by?: number | null;

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Loader2, DollarSign, AlertTriangle, Search } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, AlertTriangle, Search, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
 import {
@@ -97,15 +97,7 @@ function singularUnitName(name: string) {
 }
 
 function formatUomLabel(product: any, products: any[]) {
-    const count = Number(product.unit_count) || 1;
-    const parent = products.find(item => Number(item.product_id) === Number(product.parent_product_id)) || product;
-    const baseUnitName = String(parent.unit_name || parent.unit_shortcut || "units").trim().toLowerCase();
-    const countedBaseUnit = count === 1 ? singularUnitName(baseUnitName) : baseUnitName;
-    const shortcut = String(product.unit_shortcut || "UNIT").toUpperCase();
-
-    if (product.is_parent) return `${shortcut} - ${count} ${countedBaseUnit}`;
-    const packageName = singularUnitName(String(product.unit_name || shortcut));
-    return `${shortcut} - ${count} ${countedBaseUnit} per ${packageName}`;
+    return String(product.unit_name || product.unit_shortcut || "Unit");
 }
 
 export function CreateSalesOrderModal({
@@ -131,8 +123,9 @@ export function CreateSalesOrderModal({
     const [salesmen, setSalesmen] = useState<any[]>([]);
     // disabled-lint-next-line @typescript-eslint/no-explicit-any
     const [users, setUsers] = useState<any[]>([]);
-    // disabled-lint-next-line @typescript-eslint/no-explicit-any
     const [productTypes, setProductTypes] = useState<any[]>([]);
+    // disabled-lint-next-line @typescript-eslint/no-explicit-any
+    const [discountTypes, setDiscountTypes] = useState<any[]>([]);
 
     const [loadingLookups, setLoadingLookups] = useState(false);
     const [lookupError, setLookupError] = useState("");
@@ -154,6 +147,7 @@ export function CreateSalesOrderModal({
     const [productSearch, setProductSearch] = useState("");
     const [formErrors, setFormErrors] = useState<FormErrors>({});
     const [discardOpen, setDiscardOpen] = useState(false);
+    const [confirmingAction, setConfirmingAction] = useState<"save" | "cancel" | null>(null);
 
     const [customerOverrides, setCustomerOverrides] = useState<Record<number, number>>({});
     const [versionStates, setVersionStates] = useState<Record<number, VersionState>>({});
@@ -186,6 +180,27 @@ export function CreateSalesOrderModal({
     };
 
     useEffect(() => {
+        if (isOpen) {
+            setCustomerId("");
+            setPoNo("");
+            setBranchId("");
+            setPaymentTermId("");
+            setUserId("");
+            setSalesmanAccountId("");
+            setDeliveryDate("");
+            setDueDate("");
+            setRemarks("");
+            setOverrideLeadTime(false);
+            setItems([]);
+            setProductSearch("");
+            setFormErrors({});
+            setConfirmingAction(null);
+            setCustomerOverrides({});
+            setVersionStates({});
+        }
+    }, [isOpen]);
+
+    useEffect(() => {
         if (!customerId) {
             setCustomerOverrides({});
             return;
@@ -213,7 +228,7 @@ export function CreateSalesOrderModal({
     }, [customerId]);
 
     useEffect(() => {
-        const productIds = [...new Set(items.map(item => Number(item.product_id)).filter(Boolean))];
+        const productIds = [...new Set(items.map(item => Number(item.parent_product_id)).filter(Boolean))];
         const requestId = ++versionRequestRef.current;
         const controller = new AbortController();
         if (productIds.length === 0) {
@@ -228,23 +243,24 @@ export function CreateSalesOrderModal({
                     signal: controller.signal
                 });
                 if (!response.ok) return [productId, { status: "unavailable" }] as const;
-                const versions = await response.json();
+                const versionsData = await response.json();
+                const activeVersions = versionsData.filter((v: any) => v.status === "Active" || v.is_active);
                 const overrideVersionId = customerOverrides[productId];
                 const overrideVersion = overrideVersionId
-                    ? versions.find((version: any) => Number(version.version_id) === overrideVersionId)
+                    ? activeVersions.find((version: any) => Number(version.version_id) === overrideVersionId)
                     : null;
-                const standardVersion = versions.find((version: any) => (
-                    (version.status === "Active" || version.is_active) && isStandardBOMVersion(version)
+                const standardVersion = activeVersions.find((version: any) => (
+                    isStandardBOMVersion(version)
                 ));
                 const matchedVersion = overrideVersion
                     || standardVersion
-                    || versions.find((version: any) => version.status === "Active" || version.is_active);
+                    || activeVersions[0];
                 if (!matchedVersion) return [productId, { status: "unavailable" }] as const;
                 const suffix = overrideVersion ? "Override" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
                 return [productId, {
                     status: "resolved",
                     label: `${matchedVersion.version_name} (${suffix})`,
-                    versions,
+                    versions: activeVersions,
                     defaultVersionId: Number(matchedVersion.version_id)
                 }] as const;
             } catch (error) {
@@ -258,7 +274,7 @@ export function CreateSalesOrderModal({
         });
 
         return () => controller.abort();
-    }, [items.map(item => item.product_id).join(","), customerOverrides]);
+    }, [items.map(item => item.parent_product_id).join(","), customerOverrides]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -276,6 +292,7 @@ export function CreateSalesOrderModal({
             setOverrideLeadTime(false);
             setItems([]);
             setFormErrors({});
+            setConfirmingAction(null);
             nextLineIdRef.current = 1;
         } else {
             setLoadingLookups(true);
@@ -289,6 +306,7 @@ export function CreateSalesOrderModal({
                     setSalesmen(data.salesmen || []);
                     setUsers(data.users || []);
                     setProductTypes(data.productTypes || []);
+                    setDiscountTypes(data.discountTypes || []);
                     setLookupError("");
                 })
                 .catch(err => setLookupError(err.message || "Failed to load lookup data."))
@@ -303,7 +321,7 @@ export function CreateSalesOrderModal({
             const customerCode = customer?.customer_code;
             if (!customerCode) return { discountType: null, discountAmount: 0 };
 
-            const res = await fetch(`/api/manufacturing/financial-management/discount-management/customer-discounting/pricing?customerCode=${customerCode}&productId=${pId}&basePrice=${basePrice}`);
+            const res = await fetch(`/api/manufacturing/sales-order/pricing?customerCode=${customerCode}&productId=${pId}&basePrice=${basePrice}`);
             if (res.ok) {
                 const data = await res.json();
                 const discountAmount = typeof data.finalPrice === 'number' && typeof basePrice === 'number'
@@ -545,7 +563,7 @@ export function CreateSalesOrderModal({
                 const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
 
                 if (isFinishedGood) {
-                    const versionState = versionStates[item.product_id];
+                    const versionState = versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
                     if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
                 }
@@ -573,8 +591,7 @@ export function CreateSalesOrderModal({
         return valid;
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSubmit = async () => {
         if (lookupError || customers.length === 0 || products.length === 0) {
             return toast.error("Customer and product directories must load before creating a sales order.");
         }
@@ -596,16 +613,22 @@ export function CreateSalesOrderModal({
                 deliveryDate,
                 dueDate,
                 remarks: finalRemarks,
-                items: items.map(item => ({
-                    parent_product_id: item.parent_product_id,
-                    product_id: item.product_id,
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    discount_type: item.discount_type,
-                    discount_amount: item.discount_amount,
-                    discount_percent: item.discount_percent,
-                    bom_version_id: item.bom_version_id
-                }))
+                items: items.map(item => {
+                    const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
+                    const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
+                    const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
+                    return {
+                        parent_product_id: item.parent_product_id,
+                        product_id: item.product_id,
+                        quantity: item.quantity,
+                        unit_price: item.unit_price,
+                        discount_type: item.discount_type,
+                        discount_amount: item.discount_amount,
+                        discount_percent: item.discount_percent,
+                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
+                    };
+                }),
+                submitForApproval: false
             });
             onClose();
         } catch (err) {
@@ -653,8 +676,7 @@ export function CreateSalesOrderModal({
                         <span className="text-xs">Loading dependencies...</span>
                     </div>
                 ) : (
-                    <form
-                        onSubmit={handleSubmit}
+                    <div
                         onKeyDown={handleFormKeyDown}
                         className="flex min-h-0 flex-1 flex-col"
                     >
@@ -762,7 +784,7 @@ export function CreateSalesOrderModal({
                                 <CreatableSelect
                                     options={salesmen
                                         .filter(s => Number(s.employee_id) === Number(userId))
-                                        .map(s => ({ value: String(s.id), label: s.salesman_name }))}
+                                        .map(s => ({ value: String(s.id), label: s.salesman_code || "N/A" }))}
                                     value={salesmanAccountId}
                                     onValueChange={val => {
                                         setSalesmanAccountId(val);
@@ -871,13 +893,14 @@ export function CreateSalesOrderModal({
                                 <table className="block w-full text-left text-xs md:table">
                                     <thead className="hidden md:table-header-group">
                                         <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                            <th className="py-2.5 px-4 w-[18%]">Product Type</th>
-                                            <th className="py-2.5 px-4 w-[20%]">Parent product</th>
-                                            <th className="py-2.5 px-4 w-[15%]">Version</th>
-                                            <th className="py-2.5 px-4 w-28">UOM</th>
-                                            <th className="py-2.5 px-4 text-right w-24">Unit Price (PHP)</th>
-                                            <th className="py-2.5 px-4 text-right w-24">Discount (PHP)</th>
-                                            <th className="py-2.5 px-4 text-right w-20">Quantity</th>
+                                            <th className="py-2.5 px-4 w-[15%]">Product Type</th>
+                                            <th className="py-2.5 px-4 w-[18%]">Product</th>
+                                            <th className="py-2.5 px-4 w-[13%]">Version</th>
+                                            <th className="py-2.5 px-4 w-24">UOM</th>
+                                            <th className="py-2.5 px-4 text-right w-20">Qty</th>
+                                            <th className="py-2.5 px-4 text-right w-24">Unit Price</th>
+                                            <th className="py-2.5 px-4 text-left w-24">Discount Type</th>
+                                            <th className="py-2.5 px-4 text-right w-24">Discount Amount</th>
                                             <th className="py-2.5 px-4 text-right">Total Net</th>
                                             <th className="py-2.5 px-4 text-center">Action</th>
                                         </tr>
@@ -913,7 +936,6 @@ export function CreateSalesOrderModal({
 
                                                 return filteredItems.map((item) => {
                                                     const trueIndex = items.findIndex(it => it.line_id === item.line_id);
-                                                const totalNet = Number(item.unit_price || 0) * Number(item.quantity || 0);
                                                 const otherSelectedVariantIds = items
                                                     .map((it, idx) => idx !== trueIndex ? it.product_id : 0)
                                                     .filter(id => id > 0);
@@ -956,7 +978,7 @@ export function CreateSalesOrderModal({
                                                             {formErrors.items?.[item.line_id]?.product_type && <p id={`line-${item.line_id}-product-type-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
                                                         </td>
                                                         <td className="block overflow-visible p-0 md:table-cell md:p-3">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Parent Product</span>
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Product</span>
                                                             <CreatableSelect
                                                                 options={parentOptions}
                                                                 value={item.parent_product_id ? String(item.parent_product_id) : ""}
@@ -972,18 +994,18 @@ export function CreateSalesOrderModal({
                                                         </td>
                                                         <td className="block overflow-visible p-0 md:table-cell md:p-3">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                            {Number(item.product_id) > 0 && versionStates[item.product_id]?.versions && versionStates[item.product_id]!.versions!.length > 0 ? (
-                                                                versionStates[item.product_id]?.status === "loading" ? (
+                                                            {Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.versions && versionStates[item.parent_product_id]!.versions!.length > 0 ? (
+                                                                versionStates[item.parent_product_id]?.status === "loading" ? (
                                                                     <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                                ) : versionStates[item.product_id]?.status === "resolved" ? (
+                                                                ) : versionStates[item.parent_product_id]?.status === "resolved" ? (
                                                                     <select
-                                                                        value={item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || ""}
+                                                                        value={item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || ""}
                                                                         onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
                                                                         className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
                                                                     >
-                                                                        {versionStates[item.product_id]?.versions?.map((v: any) => (
+                                                                        {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
                                                                             <option key={v.version_id} value={v.version_id}>
-                                                                                {v.version_name} {Number(v.version_id) === versionStates[item.product_id]?.defaultVersionId ? "(Default)" : ""}
+                                                                                {v.version_name} {Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}
                                                                             </option>
                                                                         ))}
                                                                     </select>
@@ -1008,20 +1030,8 @@ export function CreateSalesOrderModal({
                                                             {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
                                                             {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-28 md:p-3 md:text-right">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-muted-foreground bg-muted/50 border rounded-lg">
-                                                                {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                            </div>
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount (PHP)</span>
-                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
-                                                                {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
-                                                            </div>
-                                                        </td>
-                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
-                                                            <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Quantity</label>
+                                                        <td className="block p-0 md:table-cell md:w-20 md:p-3 md:text-right">
+                                                            <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Qty</label>
                                                             <input
                                                                 id={`line-${item.line_id}-quantity`}
                                                                 type="number"
@@ -1034,8 +1044,32 @@ export function CreateSalesOrderModal({
                                                             />
                                                             {formErrors.items?.[item.line_id]?.quantity && <p id={`line-${item.line_id}-quantity-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
                                                         </td>
+                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
+                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-muted-foreground bg-muted/50 border rounded-lg">
+                                                                {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </div>
+                                                        </td>
+                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-left">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount Type</span>
+                                                            <div className="h-8 flex items-center justify-start px-2 text-xs font-semibold text-muted-foreground truncate" title={(() => {
+                                                                const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
+                                                                return matchedDiscount?.discount_type || "-";
+                                                            })()}>
+                                                                {(() => {
+                                                                    const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
+                                                                    return matchedDiscount?.discount_type || "-";
+                                                                })()}
+                                                            </div>
+                                                        </td>
+                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Discount Amount</span>
+                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
+                                                                {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
+                                                            </div>
+                                                        </td>
                                                         <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:p-3">
-                                                            <span className="text-xs md:hidden">Total</span>
+                                                            <span className="text-xs md:hidden">Total Net</span>
                                                             ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                         </td>
                                                         <td className="block p-0 text-right md:table-cell md:p-3 md:text-center">
@@ -1090,35 +1124,76 @@ export function CreateSalesOrderModal({
                                 </div>
                             </div>
 
-                        <div className="flex justify-end gap-2">
-                            <button
-                                type="button"
-                                onClick={requestClose}
-                                className="h-9 rounded-md border bg-background px-4 text-xs font-semibold transition-colors hover:bg-muted"
-                            >
-                                Cancel
-                            </button>
-                             <button
-                                type="submit"
-                                disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)}
-                                className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                {submitting ? (
-                                    <>
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        Creating...
-                                    </>
-                                ) : (
-                                    <>
-                                        <DollarSign className="h-3.5 w-3.5" />
-                                        Create Sales Order
-                                    </>
-                                )}
-                            </button>
-                        </div>
+                            <div className="flex gap-3 items-center">
+                                <button
+                                    type="button"
+                                    onClick={requestClose}
+                                    className="px-6 py-2.5 rounded-lg border bg-background text-foreground font-semibold hover:bg-muted transition-colors text-sm cursor-pointer"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={submitting}
+                                    onClick={() => {
+                                        if (validateForm()) {
+                                            setConfirmingAction("save");
+                                        }
+                                    }}
+                                    className="px-6 py-2.5 rounded-lg bg-primary text-primary-foreground font-bold hover:bg-primary/90 transition-all text-sm cursor-pointer shadow-sm hover:shadow"
+                                >
+                                    Save Draft
+                                </button>
                             </div>
                         </div>
-                    </form>
+                    </div>
+                </div>
+                )}
+
+                {confirmingAction && (
+                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50">
+                        <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95">
+                            <div className="flex flex-col items-center text-center space-y-3">
+                                <div className={`p-3 rounded-full ${confirmingAction === "save" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                                    {confirmingAction === "save" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-foreground">
+                                        {confirmingAction === "save" ? "Confirm Creation" : "Discard Changes?"}
+                                    </h3>
+                                    <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                                        {confirmingAction === "save"
+                                            ? "Are you sure you want to create this sales order?"
+                                            : "Are you sure you want to discard your unsaved changes? This action cannot be undone."}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-6 flex justify-center gap-3 w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmingAction(null)}
+                                    disabled={submitting}
+                                    className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm font-semibold transition-colors hover:bg-muted cursor-pointer"
+                                >
+                                    {confirmingAction === "save" ? "Cancel" : "Keep Editing"}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={confirmingAction === "save" ? handleSubmit : () => {
+                                        setConfirmingAction(null);
+                                        setDiscardOpen(false);
+                                        onClose();
+                                    }}
+                                    disabled={submitting}
+                                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-all cursor-pointer ${
+                                        confirmingAction === "save" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
+                                    }`}
+                                >
+                                    {submitting ? "Processing..." : confirmingAction === "save" ? "Confirm" : "Discard"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 )}
                 </DialogContent>
             </Dialog>

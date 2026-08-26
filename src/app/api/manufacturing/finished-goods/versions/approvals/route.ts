@@ -210,7 +210,10 @@ export async function POST(request: Request) {
         }
 
         const userId = await getUserIdFromToken();
-        const nowIso = new Date().toISOString();
+        
+        const phDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const phTimeIso = `${phDate.getFullYear()}-${pad(phDate.getMonth() + 1)}-${pad(phDate.getDate())} ${pad(phDate.getHours())}:${pad(phDate.getMinutes())}:${pad(phDate.getSeconds())}`;
 
         // Fetch current version to verify existence and get product_id
         const verRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${numVersionId}`, { headers, cache: "no-store" });
@@ -256,7 +259,9 @@ export async function POST(request: Request) {
                 status: "Active",
                 is_primary: isSetPrimary,
                 approved_by: userId,
-                approved_at: nowIso,
+                approved_at: phTimeIso,
+                updated_by: userId,
+                updated_at: phTimeIso,
                 approval_remarks: remarks || feedback || null
             };
         } else if (normalizedAction === "reject") {
@@ -269,20 +274,18 @@ export async function POST(request: Request) {
                 is_primary: false,
                 rejection_reason: finalReason.trim(),
                 approved_by: userId,
-                approved_at: nowIso
+                approved_at: phTimeIso,
+                updated_by: userId,
+                updated_at: phTimeIso
             };
         } else if (normalizedAction === "request_revision") {
-            const finalFeedback = remarks || feedback || reason;
-            if (!finalFeedback || !finalFeedback.trim()) {
-                return NextResponse.json({ error: "Revision instructions / feedback are required." }, { status: 400 });
-            }
             updatePayload = {
-                status: "Rejected",
+                status: "Revision",
                 is_primary: false,
-                rejection_reason: finalFeedback.trim(),
-                approval_remarks: finalFeedback.trim(),
                 approved_by: userId,
-                approved_at: nowIso
+                approved_at: phTimeIso,
+                updated_by: userId,
+                updated_at: phTimeIso
             };
         }
 

@@ -44,10 +44,12 @@ interface CashIssuanceCreateDialogProps {
     paymentEditingMode?: "preparation" | "releasing";
 }
 const isPaymentCOA = (c: COADto) => {
-    return !!c.isPayment;
+    return Number(c.accountType) === 1 && !!c.isPayment;
 };
 
-const isPayableOrExpenseCOA = (c: COADto) => !isPaymentCOA(c);
+const isPayableOrExpenseCOA = (c: COADto) => {
+    return [3, 4, 7, 8, 9, 10].includes(Number(c.accountType));
+};
 
 const MEMO_AMOUNT_TOLERANCE = 0.01;
 
@@ -609,7 +611,7 @@ export function CashIssuanceCreateDialog({
         toast.success(`${memo.memo_type_name} applied successfully!`);
     };
 
-    const paymentCoaOptions = useMemo(() => coas.map((coa) => ({
+    const paymentCoaOptions = useMemo(() => coas.filter(isPaymentCOA).map((coa) => ({
         value: coa.coaId,
         label: `${coa.glCode || "NO-CODE"} - ${coa.accountTitle || "Unknown"}`,
     })), [coas]);

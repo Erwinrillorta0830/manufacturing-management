@@ -23,7 +23,6 @@ export function useSalesOrderApproval() {
     const [currentPage, setCurrentPage] = useState(1);
     const [limit] = useState(10);
     const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState("For Approval");
     const [customerCodeFilter, setCustomerCodeFilter] = useState("");
     const [dateFromFilter, setDateFromFilter] = useState("");
     const [dateToFilter, setDateToFilter] = useState("");
@@ -54,7 +53,6 @@ export function useSalesOrderApproval() {
     const loadPendingOrders = async (
         page = currentPage, 
         search = searchQuery, 
-        status = statusFilter, 
         customer = customerCodeFilter, 
         dateFrom = dateFromFilter, 
         dateTo = dateToFilter
@@ -65,14 +63,12 @@ export function useSalesOrderApproval() {
         listAbortRef.current = controller;
         setLoading(true);
 
-        const effectiveStatus = (status === "All" || status === "All Status") ? "" : status;
-
         try {
             const res = await fetchSalesOrders({
                 page,
                 limit,
                 search,
-                status: effectiveStatus,
+                status: "For Approval",
                 customerCode: customer,
                 dateFrom,
                 dateTo
@@ -96,9 +92,9 @@ export function useSalesOrderApproval() {
     };
 
     useEffect(() => {
-        loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+        loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
 // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter]);
+    }, [currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter]);
 
     useEffect(() => () => {
         listRequestIdRef.current += 1;
@@ -139,7 +135,7 @@ export function useSalesOrderApproval() {
         try {
             await approveSalesOrder(orderId);
             toast.success("Sales Order approved! Released to production floor.");
-            loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
             }
@@ -155,7 +151,7 @@ export function useSalesOrderApproval() {
         try {
             await holdSalesOrder(orderId);
             toast.success("Sales Order placed On Hold.");
-            loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
             }
@@ -171,7 +167,7 @@ export function useSalesOrderApproval() {
         try {
             await updateSalesOrderStatus(orderId, "Draft");
             toast.success("Sales Order rejected and returned to Draft status.");
-            loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
             }
@@ -187,7 +183,7 @@ export function useSalesOrderApproval() {
         try {
             await cancelSalesOrder(orderId);
             toast.success("Sales Order cancelled.");
-            loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
             }
@@ -196,11 +192,6 @@ export function useSalesOrderApproval() {
         } finally {
             setUpdatingStatusId(null);
         }
-    };
-
-    const handleStatusFilterChange = (status: string) => {
-        setStatusFilter(status);
-        setCurrentPage(1);
     };
 
     const handleCustomerCodeFilterChange = (code: string) => {
@@ -219,7 +210,7 @@ export function useSalesOrderApproval() {
     };
 
     const refreshData = () => {
-        loadPendingOrders(currentPage, searchQuery, statusFilter, customerCodeFilter, dateFromFilter, dateToFilter);
+        loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter);
     };
 
     return {
@@ -234,8 +225,6 @@ export function useSalesOrderApproval() {
         setCurrentPage,
         searchQuery,
         setSearchQuery: handleSearchChange,
-        statusFilter,
-        setStatusFilter: handleStatusFilterChange,
         customerCodeFilter,
         setCustomerCodeFilter: handleCustomerCodeFilterChange,
         dateFromFilter,
