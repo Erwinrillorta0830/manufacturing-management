@@ -1,11 +1,6 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 
-interface DirectusMfgBom {
-    product_id: string | number;
-    bom_id: string | number;
-}
-
 interface DirectusMfgRouting {
     routing_id?: string | number;
     id?: string | number;
@@ -37,7 +32,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const fetchList = [
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers: headersNoCache }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=*`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
@@ -117,6 +112,27 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             return Number(obj);
         };
 
+        const getRelationId = (value: unknown, keys: string[] = []): number => {
+            if (value === null || value === undefined) return 0;
+            if (typeof value !== "object") {
+                const id = Number(value);
+                return Number.isInteger(id) && id > 0 ? id : 0;
+            }
+
+            const record = value as Record<string, unknown>;
+            for (const key of [...keys, "id"]) {
+                const id = Number(record[key]);
+                if (Number.isInteger(id) && id > 0) return id;
+            }
+            return 0;
+        };
+
+        const isEnabledFlag = (value: unknown): boolean => {
+            if (value === true || value === 1) return true;
+            const normalized = String(value ?? "").trim().toLowerCase();
+            return normalized === "1" || normalized === "true" || normalized === "yes";
+        };
+
         const versionMap = new Map<number, string>();
         mfgVersions.forEach((v: any) => {
             versionMap.set(Number(v.version_id || v.id), v.version_name);
@@ -169,11 +185,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     quantity: Number(s.allocated_quantity || 0)
                 }));
 
-            const productBomIds = mfgBoms
-                .filter((b: DirectusMfgBom) => Number(b.product_id) === Number(jo.product_id))
-                .map((b: DirectusMfgBom) => Number(b.bom_id));
-
-            // Map routing tasks relationally and update requires_qa dynamically
+            // Map routing tasks relationally. New job-order routes carry their
+            // master routing/QA metadata; legacy rows resolve it by the persisted
+            // JO version, sequence, and operation instead.
             const routingTasks = tasks
                 .filter((t: any) => getObjId(t.job_order_id) === joIdInt)
                 .map((task: any) => {
@@ -194,28 +208,27 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     const op = operations.find((o: any) => Number(o.id) === Number(task.operation_id));
                     const taskName = op?.operation_name || "Production Step";
 
-                    const liveRout = mfgRoutings.find((mr: any) => Number(mr.route_id || mr.id) === Number(task.routing_id));
-                    let reqQA = liveRout 
-                        ? (liveRout.qa_template_id !== null && liveRout.qa_template_id !== undefined && liveRout.qa_template_id !== 0)
-                        : false;
-
-                    if (!reqQA && taskName) {
-                        reqQA = mfgRoutings.some((mr: any) => 
-                            productBomIds.includes(Number(mr.version_id)) && 
-                            Number(mr.operation_id) === Number(task.operation_id) &&
-                            (mr.qa_template_id !== null && mr.qa_template_id !== undefined && mr.qa_template_id !== 0)
-                        );
-                    }
+                    const taskRoutingId = getRelationId(task.routing_id, ["routing_id", "route_id"]);
+                    const persistedQaTemplateId = getRelationId(task.qa_template_id, ["qa_template_id", "template_id"]);
 
                     const totalHours = taskAssigns.reduce((sum: number, a: any) => sum + Number(a.logged_hours || 0), 0);
                     const totalCost = taskAssigns.reduce((sum: number, a: any) => sum + (Number(a.logged_hours || 0) * Number(a.hourly_rate || 0)), 0);
 
-                    const masterRoute = mfgRoutings.find((mr: any) => 
-                        Number(mr.version_id) === Number(jo.version_id) && 
-                        Number(mr.sequence_order) === Number(task.sequence_order) && 
+                    const masterRouteById = taskRoutingId > 0
+                        ? mfgRoutings.find((mr: any) => getRelationId(mr.route_id, ["route_id", "routing_id"]) === taskRoutingId)
+                        : null;
+                    const masterRoute = masterRouteById || mfgRoutings.find((mr: any) =>
+                        Number(mr.version_id) === Number(jo.version_id) &&
+                        Number(mr.sequence_order) === Number(task.sequence_order) &&
                         Number(mr.operation_id) === Number(task.operation_id)
                     );
-                    const routeId = masterRoute?.route_id || masterRoute?.id;
+                    const masterRoutingId = getRelationId(masterRoute?.route_id, ["route_id", "routing_id"]);
+                    const masterQaTemplateId = getRelationId(masterRoute?.qa_template_id, ["qa_template_id", "template_id"]);
+                    const qaTemplateId = persistedQaTemplateId || masterQaTemplateId || null;
+                    const reqQA = isEnabledFlag(task.requires_qa)
+                        || isEnabledFlag(masterRoute?.requires_qa)
+                        || qaTemplateId !== null;
+                    const routeId = masterRoutingId || taskRoutingId;
                     const stepBoms = routeId ? mfgRoutesBom.filter((b: any) => Number(b.route_id) === Number(routeId)) : [];
                     
                     const stepBomItems = stepBoms.map((b: any) => {
@@ -235,8 +248,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     return {
                         id: task.jo_route_id, // Map primary key jo_route_id to legacy 'id'
                         jo_id: joNo,
-                        routing_id: task.routing_id,
-                        qa_template_id: liveRout ? liveRout.qa_template_id : null,
+                        routing_id: taskRoutingId || masterRoutingId || null,
+                        qa_template_id: qaTemplateId,
                         name: taskName,
                         sequence_order: task.sequence_order,
                         status: task.status,

@@ -1,5 +1,5 @@
 const DIRECTUS_URL = process.env.DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://vtc:3101";
-const DIRECTUS_STATIC_TOKEN = "test";
+const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
 
 const headers = {
     "Authorization": `Bearer ${DIRECTUS_STATIC_TOKEN}`,
@@ -43,8 +43,11 @@ const collectionsSchema = [
         fields: [
             { field: "job_order_id", type: "integer", schema: { is_nullable: false } },
             { field: "sequence_order", type: "integer", schema: { is_nullable: false } },
+            { field: "routing_id", type: "integer", schema: { is_nullable: true } },
             { field: "work_center_id", type: "integer", schema: { is_nullable: false } },
             { field: "operation_id", type: "integer", schema: { is_nullable: false } },
+            { field: "qa_template_id", type: "integer", schema: { is_nullable: true } },
+            { field: "requires_qa", type: "boolean", schema: { is_nullable: false, default_value: false } },
             { field: "planned_setup_hours", type: "float", schema: { is_nullable: false } },
             { field: "planned_run_hours", type: "float", schema: { is_nullable: false } },
             { field: "actual_setup_hours", type: "float", schema: { is_nullable: true, default_value: 0 } },

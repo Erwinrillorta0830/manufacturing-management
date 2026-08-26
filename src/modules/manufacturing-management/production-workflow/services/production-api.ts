@@ -83,9 +83,10 @@ export async function patchRoutingTask(payload: PatchTaskPayload): Promise<void>
     if (!res.ok) throw new Error("Failed to update task.");
 }
 
-export async function fetchQATemplate(taskName: string, productId: number): Promise<any> {
+export async function fetchQATemplate(taskName: string, productId: number, templateId?: number | null): Promise<any> {
+    const templateParam = templateId && templateId > 0 ? `&templateId=${templateId}` : "";
     const res = await fetch(
-        `/api/manufacturing/qa?action=matching-template&taskName=${encodeURIComponent(taskName)}&productId=${productId}`,
+        `/api/manufacturing/qa?action=matching-template&taskName=${encodeURIComponent(taskName)}&productId=${productId}${templateParam}`,
         { cache: "no-store" }
     );
     if (!res.ok) throw new Error("Failed to load QA Checklist template.");
@@ -181,8 +182,8 @@ export async function fetchGenealogyAndMovements(joId: string | number, batchNo?
     let url = `/api/manufacturing/production/genealogy?joId=${joId}`;
     if (batchNo) url += `&batchNo=${encodeURIComponent(batchNo)}`;
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to load genealogy records.");
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to load genealogy records.");
     return {
         genealogy: json.genealogy || [],
         movements: json.movements || []

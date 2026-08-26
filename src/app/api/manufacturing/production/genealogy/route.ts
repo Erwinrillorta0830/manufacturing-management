@@ -3,6 +3,58 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
+class DirectusReadError extends Error {
+    readonly status = 502;
+
+    constructor(message: string) {
+        super(message);
+        this.name = "DirectusReadError";
+    }
+}
+
+async function directusRows<T = any>(url: string, label: string): Promise<T[]> {
+    let response: Response;
+    let responseText = "";
+
+    try {
+        response = await fetch(url, { headers, cache: "no-store" });
+        responseText = await response.text();
+    } catch (error) {
+        throw new DirectusReadError(`${label} failed: ${(error as Error).message || "Directus request failed"}`);
+    }
+
+    let payload: any = null;
+    try {
+        payload = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        throw new DirectusReadError(`${label} failed with HTTP ${response.status}: ${responseText || "No response body"}`);
+    }
+
+    if (!payload || !Array.isArray(payload.data)) {
+        throw new DirectusReadError(`${label} returned an invalid collection response.`);
+    }
+
+    return payload.data as T[];
+}
+
+function normalizeGenealogyRecord(row: any): any {
+    return {
+        ...row,
+        genealogy_id: row.genealogy_id ?? row.id,
+        job_order_no: row.job_order_no || row.job_order_id?.job_order_no || "",
+        finished_batch_no: row.batch_no ?? row.finished_batch_no,
+        raw_product_id: row.component_product_id ?? row.raw_product_id,
+        raw_lot_id: row.component_lot_id ?? row.raw_lot_id,
+        raw_batch_no: row.component_batch_no ?? row.raw_batch_no,
+        quantity_consumed: row.consumed_quantity ?? row.quantity_consumed,
+        created_by: row.created_by ?? null
+    };
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -13,26 +65,37 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Missing joId or batchNo query parameter" }, { status: 400 });
         }
 
-        // Fetch genealogy records
-        let genUrl = `${DIRECTUS_URL}/items/jo_material_genealogy?limit=-1&sort=-created_at`;
-        if (joId) {
-            genUrl += `&filter[job_order_id][_eq]=${joId}`;
-        }
-        if (batchNo) {
-            genUrl += `&filter[finished_batch_no][_eq]=${encodeURIComponent(batchNo)}`;
-        }
+        const genealogyFilters: Record<string, any>[] = [];
+        if (joId) genealogyFilters.push({ job_order_id: { _eq: joId } });
+        if (batchNo) genealogyFilters.push({ batch_no: { _eq: batchNo } });
 
-        const [genRes, prodsRes, usersRes, movRes] = await Promise.all([
-            fetch(genUrl, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[source_document_id][_eq]=${joId}&limit=-1&sort=-created_on`, { headers, cache: "no-store" }).catch(() => null)
+        const genealogyFilter = genealogyFilters.length === 1
+            ? genealogyFilters[0]
+            : { _and: genealogyFilters };
+        const genUrl = `${DIRECTUS_URL}/items/jo_material_genealogy?filter=${encodeURIComponent(JSON.stringify(genealogyFilter))}&limit=-1&sort=-created_at`;
+        const movementUrl = joId
+            ? `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({ source_document_id: { _eq: joId } }))}&limit=-1&sort=-created_at`
+            : null;
+
+        // These are the required audit sources. Any upstream failure must be
+        // visible to the caller instead of being represented as empty data.
+        const [rawGen, movements] = await Promise.all([
+            directusRows<any>(genUrl, "Genealogy records lookup"),
+            movementUrl ? directusRows<any>(movementUrl, "Inventory movements lookup") : Promise.resolve([])
         ]);
 
-        const rawGen = genRes && genRes.ok ? (await genRes.json()).data || [] : [];
-        const prods = prodsRes && prodsRes.ok ? (await prodsRes.json()).data || [] : [];
-        const users = usersRes && usersRes.ok ? (await usersRes.json()).data || [] : [];
-        const movements = movRes && movRes.ok ? (await movRes.json()).data || [] : [];
+        // Display enrichment is best-effort. Primary audit rows remain valid
+        // when product or user metadata is temporarily unavailable.
+        const [prods, users] = await Promise.all([
+            directusRows<any>(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,unit_of_measurement.unit_shortcut`, "Product enrichment lookup").catch((error) => {
+                console.warn("Product enrichment unavailable for genealogy audit:", error);
+                return [];
+            }),
+            directusRows<any>(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, "User enrichment lookup").catch((error) => {
+                console.warn("User enrichment unavailable for genealogy audit:", error);
+                return [];
+            })
+        ]);
 
         const prodMap = new Map<number, { name: string; uom: string }>();
         prods.forEach((p: any) => {
@@ -48,7 +111,8 @@ export async function GET(request: Request) {
             userMap.set(Number(u.user_id), name);
         });
 
-        const enrichedGenealogy = rawGen.map((g: any) => {
+        const enrichedGenealogy = rawGen.map((rawRecord: any) => {
+            const g = normalizeGenealogyRecord(rawRecord);
             const prodInfo = prodMap.get(Number(g.raw_product_id));
             return {
                 ...g,
@@ -76,6 +140,10 @@ export async function GET(request: Request) {
         });
     } catch (e: any) {
         console.error("Error in genealogy GET API:", e);
-        return NextResponse.json({ error: e.message || "Failed to load genealogy records" }, { status: 500 });
+        const status = e instanceof DirectusReadError ? e.status : 500;
+        return NextResponse.json({
+            success: false,
+            error: e.message || "Failed to load genealogy records"
+        }, { status });
     }
 }

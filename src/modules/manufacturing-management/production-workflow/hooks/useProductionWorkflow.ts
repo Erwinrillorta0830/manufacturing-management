@@ -405,7 +405,7 @@ export function useProductionWorkflow() {
             setQaInspectorId(taskOps[0] ? String(taskOps[0].user_id) : "");
             
             try {
-                const data = await fetchQATemplate(task.name, selectedJobOrder.product_id);
+                const data = await fetchQATemplate(task.name, selectedJobOrder.product_id, task.qa_template_id);
                 setQaTemplate(data.template);
                 
                 let params = data.parameters || [];
