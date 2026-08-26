@@ -19,6 +19,13 @@ class TransferError extends Error {
     }
 }
 
+function isActiveWorkCenter(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value === "boolean") return value;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized !== "0" && normalized !== "false";
+}
+
 interface TransferTransactionState {
     allocationCreated: boolean;
     allocationId: number | null;
@@ -290,6 +297,32 @@ export async function POST(request: Request) {
             throw new TransferError("The supplied Job Order number does not match the selected Job Order.", 400);
         }
 
+        const workCenterFilter = encodeURIComponent(JSON.stringify({
+            work_center_id: { _eq: data.work_center_id }
+        }));
+        const workCenters = await directusRequest<DirectusRecord[]>(
+            `/items/manufacturing_work_centers?filter=${workCenterFilter}&fields=work_center_id,work_center_name,is_active&limit=1`,
+            { headers, cache: "no-store" },
+            "Load target work center",
+            true
+        );
+        const workCenter = workCenters[0];
+        if (!workCenter) {
+            throw new TransferError("The selected target work center does not exist.", 400);
+        }
+        if (!isActiveWorkCenter(workCenter.is_active)) {
+            throw new TransferError("The selected target work center is inactive.", 400);
+        }
+
+        const targetBin = data.target_bin.trim();
+        const expectedTargetBin = `FLOOR-STAGING-${data.work_center_id}`;
+        if (targetBin !== expectedTargetBin) {
+            throw new TransferError("The target staging bin must match the selected work center.", 400, {
+                expected_target_bin: expectedTargetBin,
+                work_center_id: data.work_center_id
+            });
+        }
+
         const material = await directusRequest<DirectusRecord>(
             `/items/manufacturing_job_order_materials/${data.jo_material_id}?fields=jo_material_id,job_order_id,product_id,reserved_quantity`,
             { headers, cache: "no-store" },
@@ -341,7 +374,7 @@ export async function POST(request: Request) {
                     required_quantity: data.transfer_quantity,
                     shortage_quantity: shortageQty,
                     source_bin: data.source_bin,
-                    target_bin: data.target_bin
+                    target_bin: targetBin
                 },
                 { status: 409 }
             );
@@ -403,7 +436,7 @@ export async function POST(request: Request) {
             throw new TransferError("The existing staging quantities are invalid.", 503);
         }
 
-        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${data.target_bin};jo_material_id=${data.jo_material_id}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
+        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${targetBin};work_center_id=${data.work_center_id};jo_material_id=${data.jo_material_id}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
 
         if (existingAllocation) {
             transactionState.allocationId = recordId(existingAllocation);
@@ -628,7 +661,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({
             success: true,
-            message: `Material successfully staged to ${data.target_bin}. Allocation status updated to HARD (RESERVED / READY).`,
+            message: `Material successfully staged to ${targetBin}. Allocation status updated to HARD (RESERVED / READY).`,
             data: {
                 job_order_id: data.job_order_id,
                 jo_material_id: data.jo_material_id,
@@ -636,7 +669,8 @@ export async function POST(request: Request) {
                 branch_id: branchId,
                 lot_id: resolvedLotId,
                 batch_no: data.batch_no,
-                target_bin: data.target_bin,
+                target_bin: targetBin,
+                work_center_id: data.work_center_id,
                 transfer_quantity: data.transfer_quantity,
                 reservation_status: "HARD",
                 allocation_id: transactionState.allocationId,

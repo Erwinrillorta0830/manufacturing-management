@@ -126,7 +126,7 @@ export function StagingPickList({
                         <span>&bull;</span>
                         <span>Work Center: <strong className="text-foreground">{jobOrder.primary_work_center_name}</strong></span>
                         <span>&bull;</span>
-                        <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin}</code></span>
+                        <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin || "No active destination"}</code></span>
                         <span>&bull;</span>
                         <span>Shift: <strong className="text-foreground">{jobOrder.shift_option || "Shift 1"}</strong></span>
                     </div>
