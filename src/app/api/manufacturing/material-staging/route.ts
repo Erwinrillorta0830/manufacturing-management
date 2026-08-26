@@ -41,6 +41,19 @@ class MaterialStagingReadError extends Error {
     readonly status = 503;
 }
 
+function isActiveWorkCenter(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value === "boolean") return value;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized !== "0" && normalized !== "false";
+}
+
+interface NormalizedWorkCenter {
+    work_center_id: number;
+    work_center_name: string;
+    is_active: boolean;
+}
+
 function requireDirectusResponse(response: Response | null, collection: string): asserts response is Response {
     if (!response || !response.ok) {
         throw new MaterialStagingReadError(
@@ -72,7 +85,7 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_id&fields=work_center_id,work_center_name,is_active`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&limit=-1&sort=branch_name&fields=id,branch_name,branch_code`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&sort=-movement_id`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,expiry_date,received_quantity`, { headers, cache: "no-store" }).catch(() => null),
@@ -106,10 +119,20 @@ export async function GET(request: Request) {
             });
         });
 
-        const workCenterMap = new Map<number, string>();
-        rawWorkCenters.forEach((wc: { work_center_id: number; work_center_name: string }) => {
-            workCenterMap.set(Number(wc.work_center_id), wc.work_center_name);
+        const normalizedWorkCenters: NormalizedWorkCenter[] = rawWorkCenters
+            .map((wc: { work_center_id?: number; work_center_name?: string; is_active?: unknown }) => ({
+                work_center_id: Number(wc.work_center_id),
+                work_center_name: wc.work_center_name || `Work Center #${wc.work_center_id}`,
+                is_active: isActiveWorkCenter(wc.is_active)
+            }))
+            .filter((wc: NormalizedWorkCenter) => wc.work_center_id > 0);
+        const workCenterMap = new Map<number, (typeof normalizedWorkCenters)[number]>();
+        normalizedWorkCenters.forEach((wc) => {
+            workCenterMap.set(wc.work_center_id, wc);
         });
+        const fallbackWorkCenter = normalizedWorkCenters
+            .filter((wc) => wc.is_active)
+            .sort((left, right) => left.work_center_id - right.work_center_id)[0] || null;
 
         const branchMap = new Map<number, { id: number; branchName: string; branchCode?: string }>();
         rawBranches.forEach((b: { id: number; branch_name: string; branch_code?: string }) => {
@@ -152,6 +175,30 @@ export async function GET(request: Request) {
                         quantity: (currentLot?.quantity || 0) + qty
                     });
                 }
+            }
+        });
+
+        // Recover the actual destination for staged transfers from the movement audit trail.
+        // Older rows may contain FLOOR-STAGING-WC01, so only the current explicit work-center
+        // audit format is trusted as an override of the resolved Job Order destination.
+        const stagedDestinationByMaterialBatch = new Map<string, string>();
+        rawMovements.forEach((m: { batch_no?: string; quantity?: number; remarks?: string }) => {
+            if (Number(m.quantity || 0) <= 0) return;
+            const remarks = String(m.remarks || "");
+            const workCenterMatch = remarks.match(/work_center_id=(\d+)/i);
+            const targetBinMatch = remarks.match(/target_bin=([^;]+)/i);
+            const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
+            if (!workCenterMatch || !targetBinMatch || !materialMatch) return;
+
+            const workCenterId = Number(workCenterMatch[1]);
+            const targetBin = targetBinMatch[1].trim();
+            if (targetBin !== `FLOOR-STAGING-${workCenterId}`) return;
+
+            const batchNo = String(m.batch_no || "").trim();
+            if (!batchNo) return;
+            const key = `${Number(materialMatch[1])}:${batchNo.toLowerCase()}`;
+            if (!stagedDestinationByMaterialBatch.has(key)) {
+                stagedDestinationByMaterialBatch.set(key, targetBin);
             }
         });
 
@@ -310,13 +357,17 @@ export async function GET(request: Request) {
         }) => {
             const joId = Number(jo.job_order_id || jo.id || 0);
             const joProduct = productMap.get(Number(jo.product_id));
-            const wcName = jo.primary_work_center_id ? (workCenterMap.get(Number(jo.primary_work_center_id)) || `Work Center #${jo.primary_work_center_id}`) : "General Assembly";
+            const primaryWorkCenterId = jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null;
+            const primaryWorkCenter = primaryWorkCenterId ? workCenterMap.get(primaryWorkCenterId) : null;
+            const stagingWorkCenter = primaryWorkCenter?.is_active ? primaryWorkCenter : fallbackWorkCenter;
+            const stagingWorkCenterId = stagingWorkCenter?.work_center_id || null;
+            const wcName = stagingWorkCenter?.work_center_name || "No active work center";
             const branchInfo = jo.branch_id ? branchMap.get(Number(jo.branch_id)) : null;
 
-            // Suggested Floor Staging Bin naming convention: FLOOR-STAGING-[WorkCenterID]
-            const suggestedStagingBin = jo.primary_work_center_id
-                ? `FLOOR-STAGING-${jo.primary_work_center_id}`
-                : `FLOOR-STAGING-WC01`;
+            // The staging bin is derived from the same active work center used by the UI and transfer API.
+            const suggestedStagingBin = stagingWorkCenterId
+                ? `FLOOR-STAGING-${stagingWorkCenterId}`
+                : null;
 
             // Filter materials belonging to this JO
             const joMaterials = rawMaterials.filter((m) => getJoId(m.job_order_id) === joId);
@@ -344,6 +395,8 @@ export async function GET(request: Request) {
                     const onHandLotQty = stockByProductBatch.get(`${mProductId}:${lotNo}`) ?? 0;
                     const resStatus = (al.reservation_status === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING")) ? "HARD" : "SOFT";
                     const isStaged = resStatus === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING");
+                    const allocationStagingBin = al.staging_bin?.trim();
+                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${lotNo.toLowerCase()}`);
                     const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
                     const stagedQty = Number(al.staged_quantity || 0);
 
@@ -356,7 +409,9 @@ export async function GET(request: Request) {
                         expiry_date: lotMeta?.expiry_date || null,
                         qa_status: lotMeta?.qa_status || "Passed",
                         reservation_status: resStatus as "SOFT" | "HARD",
-                        staging_bin: al.staging_bin || (isStaged ? suggestedStagingBin : "MAIN-STORE"),
+                        staging_bin: isStaged
+                            ? movementStagingBin || suggestedStagingBin || allocationStagingBin || "MAIN-STORE"
+                            : allocationStagingBin || "MAIN-STORE",
                         source_bin: "MAIN-STORE",
                         on_hand_lot_quantity: Math.max(0, onHandLotQty),
                         override_negative: al.override_negative || false,
@@ -417,7 +472,7 @@ export async function GET(request: Request) {
                     shortage_quantity: shortageQty,
                     reservation_status: overallResStatus,
                     staging_bin: isFullyStaged
-                        ? suggestedStagingBin
+                        ? allocatedLots.find((lot) => lot.reservation_status === "HARD")?.staging_bin || suggestedStagingBin || "MAIN-STORE"
                         : allocatedLots.find((lot) => lot.reservation_status === "HARD")?.staging_bin || "MAIN-STORE",
                     is_staged: isFullyStaged,
                     has_shortage: isItemShort,
@@ -452,6 +507,7 @@ export async function GET(request: Request) {
                 status: jo.status,
                 primary_work_center_id: jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null,
                 primary_work_center_name: wcName,
+                staging_work_center_id: stagingWorkCenterId,
                 suggested_staging_bin: suggestedStagingBin,
                 shift_option: jo.shift_option || "Shift 1 (Day)",
                 branch_id: jo.branch_id ? Number(jo.branch_id) : null,
@@ -519,11 +575,7 @@ export async function GET(request: Request) {
             success: true,
             data: filtered,
             stats,
-            workCenters: rawWorkCenters.map((w: { work_center_id: number; work_center_name: string; is_active?: boolean }) => ({
-                work_center_id: Number(w.work_center_id),
-                work_center_name: w.work_center_name,
-                is_active: w.is_active !== undefined ? Boolean(Number(w.is_active)) : true
-            })),
+            workCenters: normalizedWorkCenters,
             branches: Array.from(branchMap.values())
         });
     } catch (e) {

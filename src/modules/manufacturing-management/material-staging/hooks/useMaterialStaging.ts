@@ -31,6 +31,8 @@ export function useMaterialStaging() {
     });
 
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [hasSuccessfulLoad, setHasSuccessfulLoad] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedBranchId, setSelectedBranchId] = useState<string>("all");
     const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("PLANNED_RESERVED"); // default focus on Planned & Reserved
@@ -60,10 +62,12 @@ export function useMaterialStaging() {
             });
 
             if (res.success) {
+                setLoadError(null);
                 setJobOrders(res.data);
                 setWorkCenters(res.workCenters || []);
                 setBranches(res.branches || []);
                 if (res.stats) setStats(res.stats);
+                setHasSuccessfulLoad(true);
 
                 if (showToast) {
                     toast.success("Material staging data refreshed");
@@ -72,8 +76,10 @@ export function useMaterialStaging() {
                 throw new Error(res.error || "Failed to load data");
             }
         } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to load material staging data";
             console.error("Failed to load material staging data:", err);
-            toast.error((err as Error).message || "Failed to load material staging data");
+            setLoadError(message);
+            toast.error(message);
         } finally {
             setLoading(false);
         }
@@ -230,6 +236,13 @@ export function useMaterialStaging() {
 
     // Batch Stage All Available for a Job Order
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
+        const stagingWorkCenterId = jobOrder.staging_work_center_id;
+        const targetBin = jobOrder.suggested_staging_bin;
+        if (!stagingWorkCenterId || !targetBin) {
+            toast.error(`Cannot stage JO #${jobOrder.job_order_no}: no active work-center destination is configured.`);
+            return;
+        }
+
         try {
             setTransferring(true);
             let stagedCount = 0;
@@ -249,8 +262,6 @@ export function useMaterialStaging() {
                     continue;
                 }
 
-                const targetBin = jobOrder.suggested_staging_bin || `FLOOR-STAGING-${jobOrder.primary_work_center_id || 1}`;
-
                 const payload: BinTransferPayload = {
                     job_order_id: jobOrder.job_order_id,
                     job_order_no: jobOrder.job_order_no,
@@ -262,7 +273,7 @@ export function useMaterialStaging() {
                     transfer_quantity: qtyToStage,
                     source_bin: "MAIN-STORE",
                     target_bin: targetBin,
-                    work_center_id: jobOrder.primary_work_center_id || 1,
+                    work_center_id: stagingWorkCenterId,
                     override_negative: false
                 };
 
@@ -296,6 +307,8 @@ export function useMaterialStaging() {
         branches,
         stats,
         loading,
+        loadError,
+        hasSuccessfulLoad,
         searchQuery,
         setSearchQuery,
         selectedBranchId,

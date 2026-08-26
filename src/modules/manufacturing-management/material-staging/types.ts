@@ -86,7 +86,8 @@ export interface StagingJobOrder {
     status: JobOrderStatus | string;
     primary_work_center_id: number | null;
     primary_work_center_name: string;
-    suggested_staging_bin: string; // e.g. "FLOOR-STAGING-WC01" or "FLOOR-STAGING-1"
+    staging_work_center_id: number | null;
+    suggested_staging_bin: string | null; // e.g. "FLOOR-STAGING-112"
     shift_option?: string | null;
     branch_id: number | null;
     branch_name: string;
