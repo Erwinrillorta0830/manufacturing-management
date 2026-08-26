@@ -13,7 +13,9 @@ function powerOfTen(power: number): bigint {
 }
 
 function expandScientific(value: string): { coefficient: bigint; scale: number } {
-    const match = DECIMAL_PATTERN.exec(value.trim());
+    const trimmedValue = value.trim();
+    const normalizedValue = trimmedValue.replace(/^([+-]?)\./, (_, sign: string) => `${sign}0.`);
+    const match = DECIMAL_PATTERN.exec(normalizedValue);
     if (!match) throw new Error(`Invalid decimal value: ${value}`);
 
     const sign = match[1] === "-" ? -1n : 1n;
