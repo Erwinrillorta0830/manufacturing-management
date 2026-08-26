@@ -503,6 +503,8 @@ export function useProductionWorkflow() {
                     body: JSON.stringify({
                         taskId: selectedTask.id,
                         taskPatch: {
+                            status: "Completed",
+                            completed_at: new Date().toISOString(),
                             actual_run_hours: operatorsSummary.total_hours
                         }
                     })
