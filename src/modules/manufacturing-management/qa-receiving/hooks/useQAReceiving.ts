@@ -70,17 +70,25 @@ function hydrateStoredAllocations(
     fallback: Pick<ReceivingLotAllocationInput, "batchNumber" | "manufacturingDate" | "expirationDate">
 ): ReceivingLotAllocationInput[] {
     if (allocations?.length) {
-        return allocations.map(allocation => ({
-            clientId: uuidv4(),
-            storageLotId: String(allocation.storage_lot_id),
-            batchNumber: allocation.batch_number || fallback.batchNumber,
-            manufacturingDate: allocation.manufacturing_date || fallback.manufacturingDate,
-            expirationDate: allocation.expiration_date || fallback.expirationDate,
-            quantity: Number(allocation.quantity) || 0
-        }));
+        const groupIdsByLot = new Map<string, string>();
+        return allocations.map(allocation => {
+            const storageLotId = String(allocation.storage_lot_id);
+            const allocationGroupId = groupIdsByLot.get(storageLotId) || uuidv4();
+            groupIdsByLot.set(storageLotId, allocationGroupId);
+
+            return {
+                clientId: uuidv4(),
+                allocationGroupId,
+                storageLotId,
+                batchNumber: allocation.batch_number || fallback.batchNumber,
+                manufacturingDate: allocation.manufacturing_date || fallback.manufacturingDate,
+                expirationDate: allocation.expiration_date || fallback.expirationDate,
+                quantity: Number(allocation.quantity) || 0
+            };
+        });
     }
     return fallbackLotId && fallbackQuantity > 0
-        ? [{ clientId: uuidv4(), storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
+        ? [{ clientId: uuidv4(), allocationGroupId: uuidv4(), storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
         : [];
 }
 

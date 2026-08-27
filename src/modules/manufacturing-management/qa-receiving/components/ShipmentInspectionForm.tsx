@@ -58,6 +58,7 @@ interface SearchableStorageLotSelectProps {
     value: string | number;
     disabled?: boolean;
     storageLots: StorageLot[];
+    ariaLabel?: string;
     onChange: (value: string) => void;
 }
 
@@ -65,6 +66,7 @@ function SearchableStorageLotSelect({
     value,
     disabled,
     storageLots,
+    ariaLabel,
     onChange
 }: SearchableStorageLotSelectProps) {
     const [isOpen, setIsOpen] = React.useState(false);
@@ -100,6 +102,7 @@ function SearchableStorageLotSelect({
             <button
                 type="button"
                 disabled={disabled}
+                aria-label={ariaLabel}
                 onClick={() => {
                     if (!disabled) {
                         setIsOpen(!isOpen);
@@ -179,6 +182,14 @@ function SearchableStorageLotSelect({
 
 type AllocationDisposition = "accepted" | "rejected";
 
+type AllocationField = "batchNumber" | "manufacturingDate" | "expirationDate" | "quantity";
+
+interface LotAllocationGroup {
+    groupId: string;
+    storageLotId: string;
+    allocations: ReceivingLotAllocationInput[];
+}
+
 interface LotAllocationEditorProps {
     lineId: number;
     productId: number;
@@ -191,8 +202,7 @@ interface LotAllocationEditorProps {
     readOnly: boolean;
     loadStorageLotBatches: (productId: number, lotId: number) => Promise<StorageLotBatch[]>;
     onChange: (allocations: ReceivingLotAllocationInput[]) => void;
-    onAdd: () => void;
-    onRemove: (index: number) => void;
+    onAddLot: () => void;
 }
 
 function LotAllocationEditor({
@@ -207,8 +217,7 @@ function LotAllocationEditor({
     readOnly,
     loadStorageLotBatches,
     onChange,
-    onAdd,
-    onRemove
+    onAddLot
 }: LotAllocationEditorProps) {
     const [batchOptionsByLot, setBatchOptionsByLot] = React.useState<Record<number, StorageLotBatch[]>>({});
     const tone = disposition === "accepted"
@@ -233,187 +242,318 @@ function LotAllocationEditor({
         }
     }, [allocations, loadBatches]);
 
-    const updateAllocation = (index: number, field: keyof ReceivingLotAllocationInput, value: string | number) => {
-        onChange(allocations.map((allocation, allocationIndex) => (
-            allocationIndex === index ? { ...allocation, [field]: value } : allocation
+    const groups = React.useMemo<LotAllocationGroup[]>(() => {
+        const grouped = new Map<string, LotAllocationGroup>();
+
+        allocations.forEach(allocation => {
+            const storageLotId = String(allocation.storageLotId || "");
+            const fallbackGroupId = allocation.allocationGroupId || `legacy-${allocation.clientId}`;
+            const groupKey = storageLotId ? `lot-${storageLotId}` : `group-${fallbackGroupId}`;
+            const existing = grouped.get(groupKey);
+
+            if (existing) {
+                existing.allocations.push(allocation);
+                return;
+            }
+
+            grouped.set(groupKey, {
+                groupId: allocation.allocationGroupId || fallbackGroupId,
+                storageLotId,
+                allocations: [allocation]
+            });
+        });
+
+        return Array.from(grouped.values());
+    }, [allocations]);
+
+    const updateAllocation = (groupId: string, clientId: string, field: AllocationField, value: string | number) => {
+        onChange(allocations.map(allocation => (
+            allocation.clientId === clientId
+                ? { ...allocation, allocationGroupId: allocation.allocationGroupId || groupId, [field]: value }
+                : allocation
         )));
     };
 
-    const changeLot = (index: number, value: string) => {
+    const changeLot = (group: LotAllocationGroup, value: string) => {
         const lotId = Number(value);
-        onChange(allocations.map((allocation, allocationIndex) => (
-            allocationIndex === index
-                ? { ...allocation, storageLotId: value, batchNumber: "", manufacturingDate: "", expirationDate: "" }
+        const groupClientIds = new Set(group.allocations.map(allocation => allocation.clientId));
+
+        onChange(allocations.map(allocation => (
+            groupClientIds.has(allocation.clientId)
+                ? { ...allocation, allocationGroupId: group.groupId, storageLotId: value, batchNumber: "", manufacturingDate: "", expirationDate: "" }
                 : allocation
         )));
         if (Number.isSafeInteger(lotId) && lotId > 0) loadBatches(lotId);
     };
 
+    const addBatch = (group: LotAllocationGroup) => {
+        if (readOnly || !group.storageLotId) return;
+
+        onChange([
+            ...allocations,
+            {
+                clientId: uuidv4(),
+                allocationGroupId: group.groupId,
+                storageLotId: group.storageLotId,
+                batchNumber: "",
+                manufacturingDate: "",
+                expirationDate: "",
+                quantity: ""
+            }
+        ]);
+    };
+
+    const removeBatch = (clientId: string) => {
+        onChange(allocations.filter(allocation => allocation.clientId !== clientId));
+    };
+
     const total = allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
     const effectiveStorageLots = React.useMemo(() => {
         const knownIds = new Set(storageLots.map(lot => String(lot.lot_id)));
-        const historicalLots = allocations
-            .filter(allocation => allocation.storageLotId && !knownIds.has(String(allocation.storageLotId)))
-            .map(allocation => ({
-                lot_id: Number(allocation.storageLotId),
+        const historicalLots = new Map<number, StorageLot>();
+
+        allocations.forEach(allocation => {
+            const lotId = Number(allocation.storageLotId);
+            if (!Number.isSafeInteger(lotId) || lotId <= 0 || knownIds.has(String(lotId))) return;
+            historicalLots.set(lotId, {
+                lot_id: lotId,
                 lot_name: `Lot ${allocation.storageLotId}`,
                 max_batch_capacity: null,
                 availableQuantity: null
-            } satisfies StorageLot));
-        return [...storageLots, ...historicalLots];
+            });
+        });
+
+        return [...storageLots, ...Array.from(historicalLots.values())];
     }, [allocations, storageLots]);
 
-    const canAddRow = !readOnly && storageLots.length > 0 && total < expectedQuantity - 1e-9;
+    const knownStorageLotIds = React.useMemo(
+        () => new Set(storageLots.map(lot => String(lot.lot_id))),
+        [storageLots]
+    );
+    const usedLotIds = React.useMemo(
+        () => new Set(groups.map(group => group.storageLotId).filter(Boolean)),
+        [groups]
+    );
+    const hasUnassignedGroup = groups.some(group => !group.storageLotId);
+    const canAddLot = !readOnly
+        && !hasUnassignedGroup
+        && storageLots.some(lot => {
+            const availableQuantity = lot.availableQuantity;
+            const hasCapacity = availableQuantity === null
+                || availableQuantity === undefined
+                || !Number.isFinite(Number(availableQuantity))
+                || Number(availableQuantity) > 0;
+            return hasCapacity && !usedLotIds.has(String(lot.lot_id));
+        });
+
+    const getStorageLotsForGroup = (group: LotAllocationGroup) => {
+        const usedByOtherGroup = new Set(
+            groups
+                .filter(otherGroup => otherGroup.groupId !== group.groupId)
+                .map(otherGroup => otherGroup.storageLotId)
+                .filter(Boolean)
+        );
+
+        return effectiveStorageLots.filter(lot => {
+            const lotId = String(lot.lot_id);
+            if (lotId === group.storageLotId) return true;
+            return knownStorageLotIds.has(lotId) && !usedByOtherGroup.has(lotId);
+        });
+    };
 
     return (
         <div className="space-y-2">
             <div className={`overflow-x-auto rounded-lg border ${tone.border}`}>
-                <table className="w-full min-w-[900px] text-[10px]">
+                <table className="w-full min-w-[720px] text-[10px]">
                     <caption className="sr-only">{tone.label} inventory lot allocations</caption>
                     <thead className="bg-muted/40 text-muted-foreground uppercase text-[9px] font-extrabold tracking-wider">
                         <tr>
-                            <th scope="col" className="w-[23%] px-2 py-2 text-left">Lot *</th>
-                            <th scope="col" className="w-[21%] px-2 py-2 text-left">Batch No. *</th>
-                            <th scope="col" className="w-[16%] px-2 py-2 text-left">Mfg Date</th>
-                            <th scope="col" className="w-[16%] px-2 py-2 text-left">Expiry Date</th>
-                            <th scope="col" className="w-[14%] px-2 py-2 text-right">Qty *</th>
+                            <th scope="col" className="w-[30%] px-2 py-2 text-left">Batch No. *</th>
+                            <th scope="col" className="w-[22%] px-2 py-2 text-left">Mfg Date</th>
+                            <th scope="col" className="w-[22%] px-2 py-2 text-left">Expiry Date</th>
+                            <th scope="col" className="w-[16%] px-2 py-2 text-right">Qty *</th>
                             <th scope="col" className="w-12 px-2 py-2 text-center">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y">
-                        {allocations.length === 0 ? (
+                    {groups.length === 0 ? (
+                        <tbody>
                             <tr>
-                                <td colSpan={6} className="px-3 py-3 text-center text-muted-foreground">
-                                    No {tone.label.toLowerCase()} allocation rows added.
+                                <td colSpan={5} className="px-3 py-3 text-center text-muted-foreground">
+                                    No {tone.label.toLowerCase()} lot groups added.
                                 </td>
                             </tr>
-                        ) : allocations.map((allocation, allocationIndex) => {
-                            const selectedLot = effectiveStorageLots.find(lot => String(lot.lot_id) === String(allocation.storageLotId));
-                            const otherIncomingForLot = [
-                                ...allocations.filter((_, index) => index !== allocationIndex),
-                                ...otherAllocations
-                            ]
-                                .filter(current => String(current.storageLotId) === String(allocation.storageLotId))
-                                .reduce((sum, current) => sum + Math.max(0, Number(current.quantity) || 0), 0);
-                            const maxQuantity = selectedLot?.availableQuantity === null || selectedLot?.availableQuantity === undefined
-                                ? undefined
-                                : Math.max(0, Number(selectedLot.availableQuantity) - otherIncomingForLot);
-                            const batchOptions = selectedLot ? batchOptionsByLot[selectedLot.lot_id] || [] : [];
-                            const dateRequired = !isPackaging && Number(allocation.quantity) > 0;
-                            const missingBatch = !allocation.batchNumber.trim();
-                            const invalidDates = dateRequired && (!allocation.manufacturingDate || !allocation.expirationDate);
-                            const batchListId = "receiving-batches-" + lineId + "-" + disposition + "-" + allocation.clientId;
+                        </tbody>
+                    ) : groups.map(group => {
+                        const selectedLot = effectiveStorageLots.find(lot => String(lot.lot_id) === group.storageLotId);
+                        const groupTotal = group.allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
+                        const lotIncomingTotal = [...allocations, ...otherAllocations]
+                            .filter(allocation => String(allocation.storageLotId) === group.storageLotId)
+                            .reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
+                        const lotRemaining = selectedLot?.availableQuantity === null || selectedLot?.availableQuantity === undefined
+                            ? null
+                            : Number(selectedLot.availableQuantity) - lotIncomingTotal;
 
-                            return (
-                                <tr key={allocation.clientId} className="bg-background/70 align-top">
-                                    <td className="px-2 py-2">
-                                        <SearchableStorageLotSelect
-                                            value={allocation.storageLotId}
-                                            disabled={readOnly}
-                                            storageLots={effectiveStorageLots}
-                                            onChange={value => changeLot(allocationIndex, value)}
-                                        />
-                                        <p className="mt-1 text-[9px] font-semibold text-muted-foreground">
-                                            {selectedLot
-                                                ? selectedLot.lot_name + " - " + (selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "capacity unavailable") + " unit(s) available"
-                                                : "Select an eligible lot before assigning a batch."}
-                                        </p>
-                                    </td>
-                                    <td className="px-2 py-2">
-                                        <input
-                                            id={batchListId + "-input"}
-                                            list={batchListId}
-                                            value={allocation.batchNumber}
-                                            onChange={event => updateAllocation(allocationIndex, "batchNumber", event.target.value)}
-                                            disabled={readOnly || !allocation.storageLotId}
-                                            placeholder={allocation.storageLotId ? "Select or assign batch" : "Select a lot first"}
-                                            className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold outline-none " + (missingBatch && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
-                                            aria-label={tone.label + " batch number"}
-                                        />
-                                        <datalist id={batchListId}>
-                                            {batchOptions.map((batch, batchIndex) => (
-                                                <option
-                                                    key={batch.batchNumber + "-" + (batch.manufacturingDate ?? "") + "-" + (batch.expirationDate ?? "") + "-" + batchIndex}
-                                                    value={batch.batchNumber}
-                                                />
-                                            ))}
-                                        </datalist>
-                                    </td>
-                                    <td className="px-2 py-2">
-                                        <input
-                                            id={batchListId + "-manufacturing-date"}
-                                            type="date"
-                                            value={allocation.manufacturingDate}
-                                            max={allocation.expirationDate || undefined}
-                                            required={dateRequired}
-                                            disabled={readOnly || !allocation.storageLotId || !allocation.batchNumber.trim()}
-                                            onChange={event => updateAllocation(allocationIndex, "manufacturingDate", event.target.value)}
-                                            className={"h-9 w-full rounded-lg border bg-background px-2 text-[10px] font-semibold outline-none " + (invalidDates && !allocation.manufacturingDate && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
-                                            aria-label={tone.label + " manufacturing date"}
-                                        />
-                                    </td>
-                                    <td className="px-2 py-2">
-                                        <input
-                                            id={batchListId + "-expiration-date"}
-                                            type="date"
-                                            value={allocation.expirationDate}
-                                            min={allocation.manufacturingDate || undefined}
-                                            required={dateRequired}
-                                            disabled={readOnly || !allocation.storageLotId || !allocation.batchNumber.trim()}
-                                            onChange={event => updateAllocation(allocationIndex, "expirationDate", event.target.value)}
-                                            className={"h-9 w-full rounded-lg border bg-background px-2 text-[10px] font-semibold outline-none " + (invalidDates && !allocation.expirationDate && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
-                                            aria-label={tone.label + " expiry date"}
-                                        />
-                                    </td>
-                                    <td className="px-2 py-2">
-                                        <input
-                                            id={batchListId + "-quantity"}
-                                            type="number"
-                                            min="0"
-                                            max={maxQuantity}
-                                            step="any"
-                                            value={allocation.quantity}
-                                            disabled={readOnly || !allocation.storageLotId || !allocation.batchNumber.trim()}
-                                            onChange={event => updateAllocation(allocationIndex, "quantity", event.target.value === "" ? "" : Number(event.target.value))}
-                                            className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold text-right outline-none " + (maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity ? "border-red-500" : "border-border") + " " + tone.input}
-                                            aria-label={tone.label + " quantity for " + (selectedLot?.lot_name || allocation.storageLotId)}
-                                            aria-invalid={maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity}
-                                        />
-                                        {maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity && (
-                                            <span className="mt-1 block text-[9px] font-semibold text-red-600" role="alert">
-                                                Quantity exceeds remaining lot capacity.
-                                            </span>
+                        return (
+                            <tbody key={group.groupId} className="divide-y">
+                                <tr className="bg-muted/30">
+                                    <th scope="rowgroup" colSpan={5} className="px-2 py-2 text-left">
+                                        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                            <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+                                                <span className="shrink-0 text-[9px] font-extrabold uppercase tracking-wider text-foreground">Lot *</span>
+                                                <div className="w-full min-w-0 max-w-[460px]">
+                                                    <SearchableStorageLotSelect
+                                                        value={group.storageLotId}
+                                                        disabled={readOnly}
+                                                        storageLots={getStorageLotsForGroup(group)}
+                                                        ariaLabel={tone.label + " storage lot"}
+                                                        onChange={value => changeLot(group, value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap items-center justify-between gap-2 lg:justify-end">
+                                                <span className="text-[9px] font-semibold text-muted-foreground">
+                                                    {selectedLot
+                                                        ? `${groupTotal.toLocaleString()} allocated · ${lotRemaining === null ? "capacity unavailable" : `${Math.max(0, lotRemaining).toLocaleString()} remaining`}`
+                                                        : "Select an eligible lot before assigning batches."}
+                                                </span>
+                                                {!readOnly && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => addBatch(group)}
+                                                        disabled={!group.storageLotId}
+                                                        className={"h-8 px-2.5 rounded-lg border bg-background text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-muted disabled:opacity-50 " + tone.text + " " + tone.border}
+                                                        aria-label={"Add batch to " + tone.label.toLowerCase() + " lot group"}
+                                                    >
+                                                        <Plus className="h-3.5 w-3.5" /> Add Batch
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {selectedLot && (
+                                            <div className="mt-1 text-[9px] font-semibold text-muted-foreground">
+                                                {selectedLot.lot_name} · {selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "capacity unavailable"} unit(s) available before this receipt.
+                                                {lotRemaining !== null && lotRemaining < -1e-9 && (
+                                                    <span className="ml-1 text-red-600" role="alert">Incoming allocation exceeds the remaining lot capacity.</span>
+                                                )}
+                                            </div>
                                         )}
-                                    </td>
-                                    <td className="px-2 py-2 text-center">
-                                        {!readOnly ? (
-                                            <button
-                                                type="button"
-                                                onClick={() => onRemove(allocationIndex)}
-                                                className="h-9 w-9 rounded-lg border text-muted-foreground hover:border-red-300 hover:text-red-600 flex items-center justify-center mx-auto"
-                                                aria-label={"Remove " + tone.label.toLowerCase() + " allocation"}
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </button>
-                                        ) : (
-                                            <span className="text-muted-foreground" aria-hidden="true">-</span>
-                                        )}
-                                    </td>
+                                    </th>
                                 </tr>
-                            );
-                        })}
-                    </tbody>
+                                {group.allocations.map(allocation => {
+                                    const otherIncomingForLot = [
+                                        ...allocations,
+                                        ...otherAllocations
+                                    ]
+                                        .filter(current => String(current.storageLotId) === group.storageLotId && current.clientId !== allocation.clientId)
+                                        .reduce((sum, current) => sum + Math.max(0, Number(current.quantity) || 0), 0);
+                                    const maxQuantity = selectedLot?.availableQuantity === null || selectedLot?.availableQuantity === undefined
+                                        ? undefined
+                                        : Math.max(0, Number(selectedLot.availableQuantity) - otherIncomingForLot);
+                                    const batchOptions = selectedLot ? batchOptionsByLot[selectedLot.lot_id] || [] : [];
+                                    const dateRequired = !isPackaging && Number(allocation.quantity) > 0;
+                                    const missingBatch = !allocation.batchNumber.trim();
+                                    const invalidDates = dateRequired && (!allocation.manufacturingDate || !allocation.expirationDate);
+                                    const batchListId = "receiving-batches-" + lineId + "-" + disposition + "-" + allocation.clientId;
+
+                                    return (
+                                        <tr key={allocation.clientId} className="bg-background/70 align-top">
+                                            <td className="px-2 py-2">
+                                                <input
+                                                    id={batchListId + "-input"}
+                                                    list={batchListId}
+                                                    value={allocation.batchNumber}
+                                                    onChange={event => updateAllocation(group.groupId, allocation.clientId, "batchNumber", event.target.value)}
+                                                    disabled={readOnly || !group.storageLotId}
+                                                    placeholder={group.storageLotId ? "Select or assign batch" : "Select a lot first"}
+                                                    className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold outline-none " + (missingBatch && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
+                                                    aria-label={tone.label + " batch number"}
+                                                />
+                                                <datalist id={batchListId}>
+                                                    {batchOptions.map((batch, batchIndex) => (
+                                                        <option
+                                                            key={batch.batchNumber + "-" + (batch.manufacturingDate ?? "") + "-" + (batch.expirationDate ?? "") + "-" + batchIndex}
+                                                            value={batch.batchNumber}
+                                                        />
+                                                    ))}
+                                                </datalist>
+                                            </td>
+                                            <td className="px-2 py-2">
+                                                <input
+                                                    id={batchListId + "-manufacturing-date"}
+                                                    type="date"
+                                                    value={allocation.manufacturingDate}
+                                                    max={allocation.expirationDate || undefined}
+                                                    required={dateRequired}
+                                                    disabled={readOnly || !group.storageLotId || !allocation.batchNumber.trim()}
+                                                    onChange={event => updateAllocation(group.groupId, allocation.clientId, "manufacturingDate", event.target.value)}
+                                                    className={"h-9 w-full rounded-lg border bg-background px-2 text-[10px] font-semibold outline-none " + (invalidDates && !allocation.manufacturingDate && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
+                                                    aria-label={tone.label + " manufacturing date"}
+                                                />
+                                            </td>
+                                            <td className="px-2 py-2">
+                                                <input
+                                                    id={batchListId + "-expiration-date"}
+                                                    type="date"
+                                                    value={allocation.expirationDate}
+                                                    min={allocation.manufacturingDate || undefined}
+                                                    required={dateRequired}
+                                                    disabled={readOnly || !group.storageLotId || !allocation.batchNumber.trim()}
+                                                    onChange={event => updateAllocation(group.groupId, allocation.clientId, "expirationDate", event.target.value)}
+                                                    className={"h-9 w-full rounded-lg border bg-background px-2 text-[10px] font-semibold outline-none " + (invalidDates && !allocation.expirationDate && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
+                                                    aria-label={tone.label + " expiry date"}
+                                                />
+                                            </td>
+                                            <td className="px-2 py-2">
+                                                <input
+                                                    id={batchListId + "-quantity"}
+                                                    type="number"
+                                                    min="0"
+                                                    max={maxQuantity}
+                                                    step="any"
+                                                    value={allocation.quantity}
+                                                    disabled={readOnly || !group.storageLotId || !allocation.batchNumber.trim()}
+                                                    onChange={event => updateAllocation(group.groupId, allocation.clientId, "quantity", event.target.value === "" ? "" : Number(event.target.value))}
+                                                    className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold text-right outline-none " + (maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity ? "border-red-500" : "border-border") + " " + tone.input}
+                                                    aria-label={tone.label + " quantity for " + (selectedLot?.lot_name || group.storageLotId)}
+                                                    aria-invalid={maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity}
+                                                />
+                                                {maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity && (
+                                                    <span className="mt-1 block text-[9px] font-semibold text-red-600" role="alert">
+                                                        Quantity exceeds remaining lot capacity.
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="px-2 py-2 text-center">
+                                                {!readOnly ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeBatch(allocation.clientId)}
+                                                        className="h-9 w-9 rounded-lg border text-muted-foreground hover:border-red-300 hover:text-red-600 flex items-center justify-center mx-auto"
+                                                        aria-label={"Remove " + tone.label.toLowerCase() + " batch allocation"}
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-muted-foreground" aria-hidden="true">-</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        );
+                    })}
                 </table>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
                 {!readOnly && (
                     <button
                         type="button"
-                        onClick={onAdd}
-                        disabled={!canAddRow}
+                        onClick={onAddLot}
+                        disabled={!canAddLot}
                         className={"h-8 px-2.5 rounded-lg border bg-background text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-muted disabled:opacity-50 " + tone.text + " " + tone.border}
                     >
-                        <Plus className="h-3.5 w-3.5" /> Add Row
+                        <Plus className="h-3.5 w-3.5" /> Add Lot
                     </button>
                 )}
                 <div className={`text-[10px] font-bold ${Math.abs(total - expectedQuantity) > 1e-9 ? "text-red-600" : tone.text}`}>
@@ -554,14 +694,9 @@ export default function ShipmentInspectionForm({
         const line = lineItems.find(item => item.line_id === lineId);
         const storageLots = line ? storageLotsByProductId[Number(line.product_id?.product_id)] || [] : [];
         if (storageLots.length === 0) return;
-        const accepted = Number(row.acceptedQty || 0);
-        const allocated = row.acceptedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
-        const remaining = Math.max(0, accepted - allocated);
-        const availableLot = storageLots[0];
-        if (!availableLot) return;
         handleUpdateAllocations(lineId, [
             ...row.acceptedLotAllocations,
-            { clientId: uuidv4(), storageLotId: String(availableLot.lot_id), batchNumber: "", manufacturingDate: "", expirationDate: "", quantity: remaining }
+            { clientId: uuidv4(), allocationGroupId: uuidv4(), storageLotId: "", batchNumber: "", manufacturingDate: "", expirationDate: "", quantity: "" }
         ]);
     };
 
@@ -569,14 +704,9 @@ export default function ShipmentInspectionForm({
         const line = lineItems.find(item => item.line_id === lineId);
         const storageLots = line ? storageLotsByProductId[Number(line.product_id?.product_id)] || [] : [];
         if (storageLots.length === 0) return;
-        const rejected = Number(row.rejectedQty || 0);
-        const allocated = row.rejectedLotAllocations.reduce((sum, allocation) => sum + Number(allocation.quantity || 0), 0);
-        const remaining = Math.max(0, rejected - allocated);
-        const availableLot = storageLots[0];
-        if (!availableLot) return;
         handleUpdateRejectedAllocations(lineId, [
             ...row.rejectedLotAllocations,
-            { clientId: uuidv4(), storageLotId: String(availableLot.lot_id), batchNumber: "", manufacturingDate: "", expirationDate: "", quantity: remaining }
+            { clientId: uuidv4(), allocationGroupId: uuidv4(), storageLotId: "", batchNumber: "", manufacturingDate: "", expirationDate: "", quantity: "" }
         ]);
     };
 
@@ -1143,8 +1273,7 @@ export default function ShipmentInspectionForm({
                                                 readOnly={readOnly}
                                                 loadStorageLotBatches={loadStorageLotBatches}
                                                 onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
-                                                onAdd={() => addAcceptedLot(line.line_id, row)}
-                                                onRemove={index => handleUpdateAllocations(line.line_id, row.acceptedLotAllocations.filter((_, allocationIndex) => allocationIndex !== index))}
+                                                onAddLot={() => addAcceptedLot(line.line_id, row)}
                                             />
                                         )}
                                         {rejectedVal > 0 && (
@@ -1167,8 +1296,7 @@ export default function ShipmentInspectionForm({
                                                     readOnly={readOnly}
                                                     loadStorageLotBatches={loadStorageLotBatches}
                                                     onChange={allocations => handleUpdateRejectedAllocations(line.line_id, allocations)}
-                                                    onAdd={() => addRejectedLot(line.line_id, row)}
-                                                    onRemove={index => handleUpdateRejectedAllocations(line.line_id, row.rejectedLotAllocations.filter((_, allocationIndex) => allocationIndex !== index))}
+                                                    onAddLot={() => addRejectedLot(line.line_id, row)}
                                                 />
                                             </div>
                                         )}
@@ -1287,7 +1415,7 @@ export default function ShipmentInspectionForm({
                         <div>
                             <strong>Complete the required fields before previewing:</strong>
                             <ul className="mt-1 list-disc pl-4 space-y-0.5">
-                                {receivingValidationIssues.slice(0, 6).map(issue => <li key={`${issue.lineId || "global"}-${issue.field}-${issue.message}`}>{issue.message}</li>)}
+                                {receivingValidationIssues.slice(0, 6).map((issue, issueIndex) => <li key={`${issue.lineId || "global"}-${issue.field}-${issue.message}-${issueIndex}`}>{issue.message}</li>)}
                             </ul>
                             {receivingValidationIssues.length > 6 && <span>Resolve the remaining {receivingValidationIssues.length - 6} issue(s) shown on the manifest lines.</span>}
                         </div>
