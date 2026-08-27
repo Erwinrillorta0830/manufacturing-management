@@ -8,7 +8,8 @@ import {
     QAJOInspectionLog, 
     JobOrderStatusHistory, 
     TwoPointQAInspectionPayload, 
-    TwoPointQAInspectionResult 
+    TwoPointQAInspectionResult,
+    YieldJobOrderMaterial
 } from "../types";
 
 export async function fetchQALogs(): Promise<QALog[]> {
@@ -36,10 +37,16 @@ export async function fetchBranchesList(): Promise<Branch[]> {
     return data.branches || [];
 }
 
-export async function fetchJobOrderMaterials(joId: string): Promise<any[]> {
-    const res = await fetch(`/api/manufacturing/planning-engineering?action=job-order-materials&joId=${joId}`);
-    if (!res.ok) throw new Error("Failed to load materials");
-    return res.json();
+export async function fetchJobOrderMaterials(joId: string): Promise<YieldJobOrderMaterial[]> {
+    const res = await fetch(`/api/manufacturing/planning-engineering?action=job-order-materials&joId=${encodeURIComponent(joId)}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to load materials");
+    }
+    if (!Array.isArray(data)) {
+        throw new Error("Materials lookup returned an invalid response");
+    }
+    return data as YieldJobOrderMaterial[];
 }
 
 // Fetch QA rejection reasons list

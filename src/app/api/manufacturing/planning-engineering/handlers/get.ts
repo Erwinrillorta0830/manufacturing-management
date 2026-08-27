@@ -12,6 +12,7 @@ import {
 } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -798,32 +799,16 @@ export async function handleGET(request: Request) {
             if (!joId) {
                 return NextResponse.json({ error: "Missing joId" }, { status: 400 });
             }
-            const isNumeric = /^\d+$/.test(joId);
-            const filterKey = isNumeric ? "job_order_id" : "job_order_id.job_order_no";
-            const url = `${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[${filterKey}][_eq]=${encodeURIComponent(joId)}&limit=-1`;
-            const res = await fetch(url, { headers, cache: "no-store" });
-            if (!res.ok) throw new Error("Failed to fetch job order materials");
-            const data = await res.json();
-            
-            // Resolve product details for each material for better UI presentation
-            const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,cost_per_unit`, { headers });
-            const products = prodRes.ok ? (await prodRes.json()).data || [] : [];
-            const productsMap = new Map<number, any>();
-            products.forEach((p: any) => {
-                productsMap.set(Number(p.product_id), p);
-            });
-            
-            const enriched = (data.data || []).map((m: any) => {
-                const prod = productsMap.get(Number(m.product_id)) as any;
-                return {
-                    ...m,
-                    product_name: prod?.product_name || `Product #${m.product_id}`,
-                    product_code: prod?.product_code || "",
-                    cost_per_unit: prod?.cost_per_unit || 0
-                };
-            });
-            
-            return NextResponse.json(enriched);
+
+            try {
+                const { materials } = await loadYieldMaterials(joId);
+                return NextResponse.json(materials);
+            } catch (error) {
+                if (error instanceof YieldMaterialsError) {
+                    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+                }
+                throw error;
+            }
         }
 
         if (action === "wizard-step-2") {
