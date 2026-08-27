@@ -5,7 +5,9 @@ import {
     ExpenseTypeOption,
     POLineItem,
     LandedExpenseRow,
-    HybridCalculationResult
+    HybridCalculationResult,
+    PurchaseAmountLandingRow,
+    PurchaseOrderOption
 } from "../components/purchase-amount/types";
 import {
     fetchEligibleOrders,
@@ -22,32 +24,7 @@ import type { LandedCostAllocationRule } from "../types";
 
 const ALLOCATION_RULES = ["Quantity", "Value", "Weight", "Volume", "Hybrid"] as const;
 
-export interface PurchaseOrderOption {
-    purchase_order_id?: number;
-    shipment_id?: number;
-    id?: number;
-    reference_number?: string;
-    purchase_order_no?: string;
-    supplier_name?: string | {
-        id?: number;
-        supplier_name?: string;
-        is_foreign?: number | boolean;
-        default_currency?: string;
-        country?: string;
-    } | null;
-    is_posted?: number | boolean;
-    is_posted_amounts?: number | boolean;
-    inventory_status?: number | null;
-    payment_status?: number | null;
-    status?: string | null;
-    is_import?: number;
-    currency_code?: string;
-    exchange_rate?: number | string;
-    total_amount?: number | string;
-    total_php_value?: number | string;
-    total_foreign_currency?: number | string;
-    [key: string]: unknown;
-}
+export type { PurchaseOrderOption } from "../components/purchase-amount/types";
 
 interface PurchaseAmountExpenseRecord extends Record<string, unknown> {
     overhead_id?: number | string | null;
@@ -102,6 +79,52 @@ function purchaseOrderId(order: PurchaseOrderOption | null | undefined): number 
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function supplierName(order: PurchaseOrderOption): string {
+    if (typeof order.supplier_name === "object" && order.supplier_name !== null) {
+        return String(order.supplier_name.supplier_name || (order.supplier_name.id ? `Supplier #${order.supplier_name.id}` : "N/A"));
+    }
+    return String(order.supplier_name || "N/A");
+}
+
+function finiteNumber(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeLandingRows(orders: PurchaseOrderOption[]): PurchaseAmountLandingRow[] {
+    const rowsByPurchaseOrderId = new Map<number, PurchaseAmountLandingRow>();
+
+    for (const order of orders) {
+        const id = purchaseOrderId(order);
+        if (!id) continue;
+
+        const isPosted = isPurchaseOrderPosted(order);
+        const isEligible = isLandedCostPostingEligible(order);
+        if (!isPosted && !isEligible) continue;
+
+        const existing = rowsByPurchaseOrderId.get(id);
+        if (existing?.isPosted && !isPosted) continue;
+
+        const currencyCode = String(order.currency_code || (order.is_import === 1 ? "USD" : "PHP")).trim().toUpperCase();
+        rowsByPurchaseOrderId.set(id, {
+            purchaseOrderId: id,
+            purchaseOrderNo: String(order.purchase_order_no || order.reference_number || `PO #${id}`),
+            supplierName: supplierName(order),
+            purchaseType: currencyCode === "PHP" ? "LOCAL PURCHASE" : "FOREIGN IMPORT",
+            currencyCode,
+            totalAmountPhp: finiteNumber(order.total_amount ?? order.total_php_value),
+            totalForeignCurrency: finiteNumber(order.total_foreign_currency),
+            status: isPosted ? "Posted & Capitalized" : "Awaiting Posting",
+            isPosted,
+            canEdit: !isPosted && isEligible,
+            canViewLedger: isPosted,
+            sourceOrder: order
+        });
+    }
+
+    return [...rowsByPurchaseOrderId.values()];
+}
+
 export function usePurchaseAmountPosting(
     propShipments?: PurchaseOrderOption[],
     propSelectedShipment?: PurchaseOrderOption | null,
@@ -142,7 +165,9 @@ export function usePurchaseAmountPosting(
 
     // The API response is authoritative. The broad shipment prop is not used
     // as a fallback because it can contain POs that are no longer eligible.
-    const allOrders = useMemo(() => fetchedOrders, [fetchedOrders]);
+    const allOrders = fetchedOrders;
+
+    const landingRows = useMemo(() => normalizeLandingRows(allOrders), [allOrders]);
 
     const postedOrders = useMemo(() => {
         return allOrders.filter(isPurchaseOrderPosted);
@@ -161,6 +186,10 @@ export function usePurchaseAmountPosting(
     const handleSelectPO = (po: PurchaseOrderOption) => {
         setErrorMessage(null);
         setSuccessMessage(null);
+        if (!isLandedCostPostingEligible(po)) {
+            setErrorMessage("Only eligible, unposted purchase orders can be edited.");
+            return;
+        }
         if (propSetSelectedShipment) propSetSelectedShipment(po);
         setInternalSelected(po);
     };
@@ -444,23 +473,23 @@ export function usePurchaseAmountPosting(
         setLandedExpenses(previous => previous.map(expense => expense.id === id ? { ...expense, [field]: value } : expense));
     };
 
-    const handleExecutePosting = async () => {
-        if (!selectedShipment) return;
+    const handleExecutePosting = async (): Promise<boolean> => {
+        if (!selectedShipment) return false;
         if (!allocationRule) {
             setErrorMessage("Select an allocation rule before posting purchase amounts.");
-            return;
+            return false;
         }
         if (isForeignPO && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
             setErrorMessage("Enter a positive forex exchange rate before posting.");
-            return;
+            return false;
         }
         if (hasInvalidExpenseRows) {
             setErrorMessage("Select a valid operational expense type for every expense amount before posting.");
-            return;
+            return false;
         }
         if (calculationResult.hasMissingWeight) {
             setErrorMessage(`Complete the required weights for: ${calculationResult.missingWeightItems.join(", ")}.`);
-            return;
+            return false;
         }
 
         setPosting(true);
@@ -507,8 +536,10 @@ export function usePurchaseAmountPosting(
             const refreshed = await fetchEligibleOrders().catch(() => null);
             if (refreshed) setFetchedOrders(refreshed);
             clearSelectedPO();
+            return true;
         } catch (error) {
             setErrorMessage((error as Error).message || "Failed to post purchase amounts.");
+            return false;
         } finally {
             setPosting(false);
         }
@@ -521,6 +552,7 @@ export function usePurchaseAmountPosting(
         errorMessage,
         eligibleOrders,
         postedOrders,
+        landingRows,
         selectedShipment,
         handleSelectPO,
         clearSelectedPO,
