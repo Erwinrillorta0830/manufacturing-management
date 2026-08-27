@@ -247,6 +247,9 @@ export interface LandedCostAuditAllocationLine {
     allocatedFee: number;
     addedUnitCost: number;
     finalLandedUnitCost: number;
+    expectedBaseUnitCostPhp?: number | null;
+    currencyConsistent?: boolean;
+    currencyReason?: string | null;
     roundingVariance: number;
     isRoundingRecipient: boolean;
 }
@@ -294,6 +297,12 @@ export interface LandedCostAuditResponse {
         totalAllocatedFee: number;
         expectedFee: number;
         matchesTotal: boolean;
+        currency: {
+            currencyCode: string;
+            exchangeRate: number;
+            isForeign: boolean;
+            matches: boolean;
+        };
         lines: LandedCostAuditAllocationLine[];
     };
     valuation: {

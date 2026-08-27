@@ -61,7 +61,9 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
     });
 
     const totalPostedValue = postedOrders.reduce((sum, po) => sum + (Number(po.total_amount) || 0), 0);
-    const totalForeignValue = postedOrders.filter(po => po.currency_code === "USD" || po.is_import === 1).reduce((sum, po) => sum + (Number(po.total_foreign_currency) || 0), 0);
+    const totalForeignValue = postedOrders
+        .filter(po => String(po.currency_code || "PHP").toUpperCase() !== "PHP")
+        .reduce((sum, po) => sum + (Number(po.total_foreign_currency) || 0), 0);
 
     const handleViewDetails = async (po: PostedOrder) => {
         setSelectedDetailPo(po);
@@ -71,7 +73,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
             const poId = Number(po.purchase_order_id || po.shipment_id || po.id || 0);
             if (!poId) return;
             const [data, archive] = await Promise.all([
-                fetchPurchaseAmountDetails(poId),
+                fetchPurchaseAmountDetails(poId, { includePosted: true }),
                 fetchPurchaseOrderArchiveStatus(poId).catch(() => null)
             ]);
             setPoDetails(data);
@@ -119,7 +121,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                     <div>
                         <div className="text-[11px] font-bold text-muted-foreground uppercase">Total Posted Value (PHP)</div>
                         <div className="text-lg font-black font-mono">
-                            ₱{totalPostedValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            PHP {totalPostedValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                     </div>
                 </div>
@@ -174,11 +176,12 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                             </tr>
                         ) : (
                             filteredOrders.map((po, index) => {
-                                const isForeign = po.currency_code === "USD" || po.is_import === 1;
+                                const currencyCode = String(po.currency_code || "PHP").toUpperCase();
+                                const isForeign = currencyCode !== "PHP";
                                 const poNo = po.purchase_order_no || po.reference_number || `PO #${po.purchase_order_id}`;
                                 const suppName = typeof po.supplier_name === "object" ? (po.supplier_name?.supplier_name || `Supplier #${po.supplier_name?.id}`) : (po.supplier_name ? `Supplier #${po.supplier_name}` : "N/A");
                                 const totalPhp = Number(po.total_amount) || 0;
-                                const rate = Number(po.exchange_rate) || 58.50;
+                                const rate = Number(po.exchange_rate);
                                 const rowKey = po.purchase_order_id || po.shipment_id || po.id || po.reference_number || `${poNo}-${index}`;
 
                                 return (
@@ -198,10 +201,12 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                             </span>
                                         </td>
                                         <td className="p-3 text-right font-mono text-muted-foreground">
-                                            {isForeign ? `₱${rate.toFixed(2)}` : "1.00"}
+                                            {isForeign
+                                                ? Number.isFinite(rate) && rate > 0 ? `PHP ${rate.toFixed(4)} / ${currencyCode}` : "Unavailable"
+                                                : "1.0000"}
                                         </td>
                                         <td className="p-3 text-right font-mono font-bold text-emerald-600">
-                                            ₱{totalPhp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            PHP {totalPhp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </td>
                                         <td className="p-3 text-center">
                                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
@@ -273,15 +278,17 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 bg-muted/20 border rounded-xl text-xs">
                                         <div>
                                             <div className="text-muted-foreground text-[10px] font-bold">Exchange Rate</div>
-                                            <div className="font-mono font-bold">₱{(Number(poDetails.purchaseOrder?.exchange_rate) || 58.50).toFixed(2)} / USD</div>
+                                            <div className="font-mono font-bold">{Number.isFinite(Number(poDetails.purchaseOrder?.exchange_rate)) && Number(poDetails.purchaseOrder?.exchange_rate) > 0
+                                                ? `PHP ${Number(poDetails.purchaseOrder?.exchange_rate).toFixed(4)} / ${String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase()}`
+                                                : "Unavailable — reconciliation required"}</div>
                                         </div>
                                         <div>
                                             <div className="text-muted-foreground text-[10px] font-bold">Total Foreign Currency</div>
-                                            <div className="font-mono font-bold">${(Number(poDetails.purchaseOrder?.total_foreign_currency) || 0).toFixed(2)}</div>
+                                            <div className="font-mono font-bold">{String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase()} {(Number(poDetails.purchaseOrder?.total_foreign_currency) || 0).toFixed(2)}</div>
                                         </div>
                                         <div>
                                             <div className="text-muted-foreground text-[10px] font-bold">Total PHP Amount</div>
-                                            <div className="font-mono font-bold text-emerald-600">₱{(Number(poDetails.purchaseOrder?.total_amount) || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
+                                            <div className="font-mono font-bold text-emerald-600">PHP {(Number(poDetails.purchaseOrder?.total_amount) || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
                                         </div>
                                         <div>
                                             <div className="text-muted-foreground text-[10px] font-bold">Posting Status</div>
@@ -337,7 +344,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                                                 <tr key={idx}>
                                                                     <td className="p-2.5 font-semibold">{title}</td>
                                                                     <td className="p-2.5 text-right font-mono font-bold text-emerald-600">
-                                                                        ₱{Number(exp.amount).toFixed(2)}
+                                                                        PHP {Number(exp.amount).toFixed(2)}
                                                                     </td>
                                                                 </tr>
                                                             );
@@ -359,17 +366,20 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                                 <thead className="bg-muted/50 border-b text-[10px] font-bold text-muted-foreground uppercase">
                                                     <tr>
                                                         <th className="p-2.5">Product</th>
-                                                        <th className="p-2.5 text-right">Received Qty</th>
-                                                        <th className="p-2.5 text-right">Unit Price</th>
-                                                        <th className="p-2.5 text-right">Allocated Fee / Unit</th>
-                                                        <th className="p-2.5 text-right">Final Landed Unit Cost</th>
+                                                        <th className="p-2.5 text-right">Accepted Qty</th>
+                                                        <th className="p-2.5 text-right">Invoice Unit Price ({String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase()})</th>
+                                                        <th className="p-2.5 text-right">Allocated Fee / Unit (PHP)</th>
+                                                        <th className="p-2.5 text-right">Final Landed Unit Cost (PHP)</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y">
                                                     {poDetails.lineItems?.map((line: POLineItem) => {
                                                         const pName = typeof line.product_id === "object" ? line.product_id.product_name : `Product #${line.product_id}`;
-                                                        const qty = Number(line.received_quantity) || 1;
-                                                        const unitPrice = Number(line.unit_price) || 0;
+                                                        const isForeignDetail = String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase() !== "PHP";
+                                                        const qty = Number(line.accepted_quantity ?? line.received_quantity) || 0;
+                                                        const unitPrice = isForeignDetail
+                                                            ? Number(line.unit_price_foreign)
+                                                            : Number(line.base_unit_cost_php);
                                                         const allocFee = Number(line.allocated_expense_php) || 0;
                                                         const finalCost = Number(line.final_landed_unit_cost) || 0;
 
@@ -377,9 +387,9 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                                             <tr key={line.purchase_order_product_id}>
                                                                 <td className="p-2.5 font-semibold">{pName}</td>
                                                                 <td className="p-2.5 text-right font-mono font-bold">{qty.toLocaleString()}</td>
-                                                                <td className="p-2.5 text-right font-mono text-muted-foreground">${unitPrice.toFixed(2)}</td>
-                                                                <td className="p-2.5 text-right font-mono text-emerald-600 font-bold">+₱{allocFee.toFixed(2)}</td>
-                                                                <td className="p-2.5 text-right font-mono font-bold text-amber-600">₱{finalCost.toFixed(2)}</td>
+                                                                <td className="p-2.5 text-right font-mono text-muted-foreground">{Number.isFinite(unitPrice) ? `${String(isForeignDetail ? poDetails.purchaseOrder?.currency_code || "PHP" : "PHP").toUpperCase()} ${unitPrice.toFixed(4)}` : "Unavailable"}</td>
+                                                                <td className="p-2.5 text-right font-mono text-emerald-600 font-bold">+PHP {allocFee.toFixed(2)}</td>
+                                                                <td className="p-2.5 text-right font-mono font-bold text-amber-600">PHP {finalCost.toFixed(2)}</td>
                                                             </tr>
                                                         );
                                                     })}

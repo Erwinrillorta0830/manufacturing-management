@@ -79,7 +79,7 @@ export function legacyToStandardKg(w: number, unitCodeOrShortcut?: string): numb
 export interface LandedCostInput {
     key: number;
     quantity: number;
-    baseUnitCost: number;
+    baseUnitCostPhp: number;
     weight?: number;
     lineGrossWeightKg?: number;
     volume?: number;
@@ -137,7 +137,7 @@ export function calculateLandedCostAllocations(
                 key: line.key,
                 category_type: line.category_type,
                 quantity: line.quantity,
-                baseUnitCost: line.baseUnitCost,
+                baseUnitCostPhp: line.baseUnitCostPhp,
                 lineGrossWeightKg: line.lineGrossWeightKg ?? deriveLineGrossWeightKg(
                     line.weight || 0,
                     line.weightUnit,
@@ -148,7 +148,7 @@ export function calculateLandedCostAllocations(
         );
     }
 
-    const totalValue = lines.reduce((sum, line) => sum + line.quantity * line.baseUnitCost, 0);
+    const totalValue = lines.reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
     const totalWeight = lines.reduce((sum, line) => sum + line.quantity * Number(line.weight || 0), 0);
     const totalVolume = lines.reduce((sum, line) => sum + line.quantity * Number(line.volume || 0), 0);
 
@@ -159,14 +159,14 @@ export function calculateLandedCostAllocations(
         } else if (method === "Volume" && totalVolume > 0) {
             ratio = line.quantity * Number(line.volume || 0) / totalVolume;
         } else if (totalValue > 0) {
-            ratio = line.quantity * line.baseUnitCost / totalValue;
+            ratio = line.quantity * line.baseUnitCostPhp / totalValue;
         } else {
             ratio = lines.length > 0 ? 1 / lines.length : 0;
         }
 
         const allocatedExpense = roundMoney(ratio * totalExpensesPhp);
         const finalLandedUnitCost = roundMoney(
-            line.baseUnitCost + (line.quantity > 0 ? allocatedExpense / line.quantity : 0)
+            line.baseUnitCostPhp + (line.quantity > 0 ? allocatedExpense / line.quantity : 0)
         );
         return [line.key, { allocatedExpense, finalLandedUnitCost }];
     }));
@@ -236,7 +236,7 @@ export async function processShipmentLandedCosts(
         return {
             key: line.line_id,
             quantity,
-            baseUnitCost: Number(line.base_unit_cost_php || 0),
+            baseUnitCostPhp: Number(line.base_unit_cost_php || 0),
             weight: weightBreakdown.grossWeightKg,
             lineGrossWeightKg: weightBreakdown.grossWeightKg * quantity,
             volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0),

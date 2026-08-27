@@ -1,23 +1,79 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-cost-eligibility";
-import { finalizeLandedCost, getLandedCostComputation, isLandedCostError } from "../landed-cost/_domain";
+import {
+    finalizeLandedCost,
+    getLandedCostComputation,
+    isLandedCostError,
+    loadLandedCostSnapshot
+} from "../landed-cost/_domain";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
     PurchaseOrderAuthorizationError,
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
-import {
-    ProductWeightValidationError,
-    resolveProductWeightBreakdown
-} from "@/modules/manufacturing-management/procurement/packaging-weight";
-import { ProductCategoryTypeValidationError, resolveProductCategoryTypes } from "../_category-type";
+import { isPurchaseOrderPosted } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+
+function weightedAverage(
+    rows: Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>,
+    field: string,
+    quantity: number,
+    fallback: number
+): number {
+    if (quantity <= 0) return fallback;
+    let weightedTotal = 0;
+    let weightedQuantity = 0;
+    for (const row of rows) {
+        const accepted = Math.max(0, Number(row.received_quantity || 0) - Number(row.quantity_rejected || 0));
+        const value = Number(row[field]);
+        if (accepted > 0 && Number.isFinite(value)) {
+            weightedTotal += accepted * value;
+            weightedQuantity += accepted;
+        }
+    }
+    return weightedQuantity > 0 ? weightedTotal / weightedQuantity : fallback;
+}
+
+function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedCostSnapshot>>) {
+    return snapshot.lines.map(line => {
+        const product = {
+            ...(line.product as Record<string, unknown>),
+            product_id: line.productId,
+            product_name: line.productName
+        };
+        const receivingRows = line.receivingRows as Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>;
+        const receivedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0);
+        const rejectedQuantity = receivingRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0);
+        const allocatedExpense = weightedAverage(receivingRows, "allocated_expense_php", line.quantity, 0);
+        const finalLandedUnitCost = weightedAverage(receivingRows, "final_landed_unit_cost", line.quantity, line.baseUnitCostPhp + allocatedExpense);
+
+        return {
+            purchase_order_product_id: line.key,
+            product_id: product,
+            product_name: line.productName,
+            category_type: line.categoryType,
+            received_quantity: line.quantity,
+            accepted_quantity: line.quantity,
+            quantity_received: receivedQuantity,
+            quantity_rejected: rejectedQuantity,
+            unit_price: line.baseUnitCostPhp,
+            unit_price_foreign: line.unitPriceForeign,
+            base_unit_cost_php: line.baseUnitCostPhp,
+            gross_weight: line.lineGrossWeightKg / line.quantity,
+            line_gross_weight_kg: line.lineGrossWeightKg,
+            allocated_expense_php: allocatedExpense,
+            final_landed_unit_cost: finalLandedUnitCost,
+            total_amount: finalLandedUnitCost * line.quantity
+        };
+    });
+}
 
 export async function GET(request: Request) {
     try {
         await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.expenses });
         const { searchParams } = new URL(request.url);
         const poId = searchParams.get("poId");
+        const includePosted = searchParams.get("includePosted") === "true";
 
         // Fetch chart of accounts
         const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?limit=-1&sort=gl_code`, {
@@ -37,11 +93,12 @@ export async function GET(request: Request) {
             cache: "no-store"
         }).catch(() => null);
 
-        let activeForexRate = 58.50; // Default fallback exchange rate PHP/USD
+        let activeForexRate: number | null = null;
         if (forexRes && forexRes.ok) {
             const forexData = await forexRes.json();
-            if (forexData?.data?.[0]?.exchange_rate) {
-                activeForexRate = Number(forexData.data[0].exchange_rate);
+            const configuredRate = Number(forexData?.data?.[0]?.exchange_rate);
+            if (Number.isFinite(configuredRate) && configuredRate > 0) {
+                activeForexRate = configuredRate;
             }
         }
 
@@ -69,51 +126,22 @@ export async function GET(request: Request) {
 
         const poData = await poRes.json();
         const purchaseOrder = poData?.data;
-        await assertLandedCostStatus(purchaseOrderId);
-
-        // Fetch PO line items from purchase_order_receiving
-        const linesRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${poId}&filter[is_reverted][_eq]=0&fields=*,product_id.*,product_id.weight_unit_id.*&limit=-1`, {
-            headers,
-            cache: "no-store"
-        });
-
-        let lineItems: Record<string, unknown>[] = [];
-        if (linesRes.ok) {
-            const linesData = await linesRes.json();
-            const persistedLines = (linesData?.data || []) as Record<string, unknown>[];
-            const productIds = persistedLines
-                .map(item => {
-                    const product = item.product_id;
-                    return Number(product && typeof product === "object"
-                        ? (product as Record<string, unknown>).product_id
-                        : product);
-                })
-                .filter(id => Number.isInteger(id) && id > 0);
-            const categoryTypes = await resolveProductCategoryTypes(productIds);
-            lineItems = persistedLines.map((item: Record<string, unknown>) => {
-                const product = item.product_id;
-                const productId = Number(product && typeof product === "object"
-                    ? (product as Record<string, unknown>).product_id
-                    : product);
-                const weightBreakdown = resolveProductWeightBreakdown(item.product_id, {
-                    requireComplete: categoryTypes.get(productId) === "PACKAGING"
-                });
-                return {
-                ...item,
-                category_type: categoryTypes.get(productId),
-                gross_weight: weightBreakdown.grossWeightKg,
-                net_weight: weightBreakdown.netWeight,
-                outer_carton_weight: weightBreakdown.outerCartonWeight,
-                pallet_weight: weightBreakdown.palletWeight,
-                unit_gross_weight_kg: weightBreakdown.grossWeightKg,
-                unit_net_weight_kg: weightBreakdown.netWeightKg,
-                unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
-                unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
-                weight_unit: weightBreakdown.weightUnitCode,
-                line_gross_weight_kg: weightBreakdown.grossWeightKg * Number(item.received_quantity || 0)
-                };
-            });
+        if (includePosted) {
+            if (!isPurchaseOrderPosted(purchaseOrder)) {
+                return NextResponse.json({
+                    error: "Purchase order is not posted for ledger viewing.",
+                    code: "POSTED_LEDGER_REQUIRED"
+                }, { status: 409 });
+            }
+        } else {
+            await assertLandedCostStatus(purchaseOrderId);
         }
+
+        // Build the preview from the same persisted PO-line and accepted-receipt
+        // snapshot used by the canonical finalizer. Receiving unit_price is PHP;
+        // it is never treated as the foreign invoice price.
+        const snapshot = await loadLandedCostSnapshot(purchaseOrderId);
+        const lineItems = buildCanonicalLineItems(snapshot);
 
         // Fetch existing import landed cost entries
         const importRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_import?filter[purchase_order_id][_eq]=${poId}&fields=*&limit=-1`, {
@@ -140,14 +168,16 @@ export async function GET(request: Request) {
             importExpenses,
             landedCost,
             chartOfAccounts,
-            activeForexRate
+            activeForexRate,
+            currencyCode: snapshot.currencyCode,
+            exchangeRate: snapshot.exchangeRate
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Internal Server Error";
         return NextResponse.json({
             error: message,
-            ...(error instanceof LandedCostEligibilityError ? { code: error.code } : {})
-        }, { status: error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError
+            ...(error instanceof LandedCostEligibilityError || isLandedCostError(error) ? { code: (error as { code?: string }).code } : {})
+        }, { status: error instanceof LandedCostEligibilityError || isLandedCostError(error)
             ? error.status
             : 500 });
     }
@@ -190,7 +220,7 @@ export async function POST(request: Request) {
             ...(error instanceof LandedCostEligibilityError || isLandedCostError(error) ? { code: (error as { code?: string }).code } : {})
         }, { status: error instanceof PurchaseOrderAuthorizationError
             ? error.status
-            : error instanceof LandedCostEligibilityError || error instanceof ProductCategoryTypeValidationError || error instanceof ProductWeightValidationError || isLandedCostError(error)
+            : error instanceof LandedCostEligibilityError || isLandedCostError(error)
             ? error.status
             : 500 });
     }
