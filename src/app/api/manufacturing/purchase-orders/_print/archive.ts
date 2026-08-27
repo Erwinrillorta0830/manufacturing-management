@@ -147,6 +147,7 @@ function stableSnapshotHash(data: PurchaseOrderPrintableSnapshot): string {
         lines: data.lines,
         approvals: data.approvals,
         selectedApproval: data.selectedApproval,
+        receivingHeaders: data.receivingHeaders,
         receivingRecords: data.receivingRecords,
         movements: data.movements,
         allocations: data.allocations,

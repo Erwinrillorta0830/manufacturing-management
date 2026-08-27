@@ -89,6 +89,15 @@ export interface ApprovalPrintEntry {
     snapshotAvailable: boolean;
 }
 
+export interface ReceivingPrintHeader {
+    headerId: number;
+    receiptNumber: string;
+    receiptDate: string;
+    branch: string;
+    quantityStatus: string;
+    postingStatus: string;
+}
+
 export interface ReceivingPrintRecord {
     receivingRecordId: number;
     headerId: number | null;
@@ -174,6 +183,7 @@ export interface PurchaseOrderPrintableSnapshot {
     lines: PurchaseOrderPrintLine[];
     approvals: ApprovalPrintEntry[];
     selectedApproval: ApprovalPrintEntry | null;
+    receivingHeaders: ReceivingPrintHeader[];
     receivingRecords: ReceivingPrintRecord[];
     movements: StorageMovementPrintRecord[];
     allocations: StorageAllocationPrintRecord[];
