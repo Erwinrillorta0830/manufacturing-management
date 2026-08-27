@@ -1,4 +1,5 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
+import type { ReceivingQuantityStatus } from "./_receiving-status";
 
 export type ReceivingTicketStatus = "Reserved" | "Posted" | "Failed";
 const RECEIVING_TICKET_MAX_LENGTH = 32;
@@ -15,7 +16,7 @@ export interface ReceivingTicketRow {
     receipt_date: string | null;
     purchase_order_id: number;
     branch_id: number;
-    receipt_type: "full" | "partial" | string;
+    quantity_status: ReceivingQuantityStatus | string;
     workflow_revision: number;
     idempotency_key: string;
     posting_status: ReceivingTicketStatus | string;
@@ -49,7 +50,7 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
         receipt_date: dateOnly(row.receipt_date),
         purchase_order_id: relationId(row.purchase_order_id, "purchase_order_id"),
         branch_id: relationId(row.branch_id, "id"),
-        receipt_type: String(row.receipt_type || "full"),
+        quantity_status: String(row.quantity_status || "PARTIAL"),
         workflow_revision: Number(row.workflow_revision || 0),
         idempotency_key: String(row.idempotency_key || ""),
         posting_status: String(row.posting_status || "")
@@ -57,7 +58,7 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
 }
 
 function ticketFields() {
-    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,receipt_type,workflow_revision,idempotency_key,posting_status";
+    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,quantity_status,workflow_revision,idempotency_key,posting_status";
 }
 
 async function directusJson(path: string, init?: RequestInit) {
@@ -138,7 +139,7 @@ export async function allocateReceivingTicket(input: {
     branchId: number;
     receiptNumber: string;
     receiptDate: string;
-    receiptType: "full" | "partial";
+    quantityStatus: ReceivingQuantityStatus;
     workflowRevision: number;
     idempotencyKey: string;
     createdBy: number;
@@ -173,7 +174,7 @@ export async function allocateReceivingTicket(input: {
                     branch_id: input.branchId,
                     receiving_ticket_no: receiptNumber,
                     receipt_date: input.receiptDate,
-                    receipt_type: input.receiptType,
+                    quantity_status: input.quantityStatus,
                     workflow_revision: input.workflowRevision,
                     idempotency_key: input.idempotencyKey,
                     created_by: input.createdBy

@@ -1,4 +1,5 @@
 import React from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Shipment } from "../types";
 
 function formatShipmentCreatedAt(value: string | null | undefined): string {
@@ -22,6 +23,8 @@ interface InboundShipmentsListProps {
     loadingShipments: boolean;
     filteredShipments: Shipment[];
     selectedShipment: Shipment | null;
+    isCollapsed: boolean;
+    onToggleCollapse: () => void;
     showReceived: boolean;
     setShowReceived: (show: boolean) => void;
     onSelectShipment: (s: Shipment) => void;
@@ -39,6 +42,8 @@ export default function InboundShipmentsList({
     loadingShipments,
     filteredShipments,
     selectedShipment,
+    isCollapsed,
+    onToggleCollapse,
     showReceived,
     setShowReceived,
     onSelectShipment,
@@ -52,20 +57,59 @@ export default function InboundShipmentsList({
     setEndDate
 }: InboundShipmentsListProps) {
     return (
-        <div className="md:col-span-1 border rounded-xl bg-card overflow-hidden flex flex-col max-h-[75dvh]">
+        <aside
+            id="qa-receiving-pending-inspection-logs"
+            aria-label="Pending Inspection Logs"
+            className="h-full max-h-[75dvh] overflow-hidden rounded-xl border bg-card flex flex-col"
+        >
             {/* Header */}
-            <div className="p-4 border-b bg-muted/20 flex items-center justify-between">
-                <h3 className="text-xs font-bold text-foreground">Pending Inspection Logs</h3>
-                <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-muted-foreground select-none font-bold">
-                    <input
-                        type="checkbox"
-                        checked={showReceived}
-                        onChange={e => setShowReceived(e.target.checked)}
-                        className="rounded border-border accent-primary"
-                    />
-                    Show Received
-                </label>
+            <div className={`border-b bg-muted/20 flex items-center gap-2 ${isCollapsed ? "justify-center p-2" : "justify-between p-4"}`}>
+                {isCollapsed ? (
+                    <button
+                        type="button"
+                        onClick={onToggleCollapse}
+                        aria-expanded={false}
+                        aria-controls="qa-receiving-pending-inspection-logs-content"
+                        aria-label="Expand Pending Inspection Logs"
+                        title="Expand Pending Inspection Logs"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-blue-600 bg-blue-600 text-white transition-colors hover:bg-blue-700"
+                    >
+                        <ChevronRight className="h-4 w-4" />
+                    </button>
+                ) : (
+                    <>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                            <h3 className="text-xs font-bold text-foreground">Pending Inspection Logs</h3>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                            <label className="flex cursor-pointer select-none items-center gap-1.5 text-[10px] font-bold text-muted-foreground">
+                                <input
+                                    type="checkbox"
+                                    checked={showReceived}
+                                    onChange={e => setShowReceived(e.target.checked)}
+                                    className="rounded border-border accent-primary"
+                                />
+                                Show Received
+                            </label>
+                            {selectedShipment && (
+                                <button
+                                    type="button"
+                                    onClick={onToggleCollapse}
+                                    aria-expanded={true}
+                                    aria-controls="qa-receiving-pending-inspection-logs-content"
+                                    aria-label="Collapse Pending Inspection Logs"
+                                    title="Collapse Pending Inspection Logs"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-blue-600 bg-blue-600 text-white transition-colors hover:bg-blue-700"
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                </button>
+                            )}
+                        </div>
+                    </>
+                )}
             </div>
+
+            <div id="qa-receiving-pending-inspection-logs-content" hidden={isCollapsed} className="flex min-h-0 flex-1 flex-col">
 
             {/* Filter Section */}
             <div className="p-3 border-b bg-muted/5 space-y-2.5">
@@ -119,7 +163,7 @@ export default function InboundShipmentsList({
             </div>
 
             {/* List */}
-            <div className="p-3 overflow-y-auto space-y-2.5 flex-1">
+            <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
                 {loadingShipments ? (
                     <div className="p-8 text-center text-xs text-muted-foreground">Loading shipments...</div>
                 ) : filteredShipments.length === 0 ? (
@@ -158,6 +202,7 @@ export default function InboundShipmentsList({
                     ))
                 )}
             </div>
-        </div>
+            </div>
+        </aside>
     );
 }

@@ -1,4 +1,4 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType } from "../types";
 
 export interface QuarantineDispositionResponse {
     stock: QuarantineStock[];
@@ -31,6 +31,15 @@ export async function fetchBranches(signal?: AbortSignal): Promise<Branch[]> {
     const res = await fetch("/api/manufacturing/qa-receiving?action=branches", { signal });
     if (!res.ok) throw new Error("Failed to load branch list");
     return res.json();
+}
+
+export async function fetchSupplierDocumentTypes(signal?: AbortSignal): Promise<SupplierDocumentType[]> {
+    const res = await fetch("/api/manufacturing/qa-receiving/document-types", { signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to load supplier document types.");
+    const data = Array.isArray(body) ? body : body.data;
+    if (!Array.isArray(data)) throw new Error("Supplier document types returned an invalid response.");
+    return data as SupplierDocumentType[];
 }
 
 export async function fetchStorageLots(productId: number, signal?: AbortSignal): Promise<StorageLot[]> {
@@ -73,7 +82,7 @@ export async function previewReceivingQa(payload: {
     replacementDispositionId?: number | null;
     receiptNumber: string;
     receiptDate: string;
-    receiptType: "full" | "partial";
+    supplierDocumentTypeId: number | null;
     processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{
