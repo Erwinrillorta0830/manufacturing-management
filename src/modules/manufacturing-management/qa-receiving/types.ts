@@ -40,6 +40,8 @@ export interface StorageLotBatch {
 export interface ReceivingLotAllocationInput {
     /** Client-only identity used to keep allocation rows stable while editing. */
     clientId: string;
+    /** Client-only identity shared by all batch rows under the same lot header. */
+    allocationGroupId: string;
     storageLotId: string;
     batchNumber: string;
     manufacturingDate: string;
