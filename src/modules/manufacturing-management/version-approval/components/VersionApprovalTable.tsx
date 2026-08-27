@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { VersionApprovalItem } from "../types";
 import { Card } from "@/components/ui/card";
 import {
@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Eye, CheckCircle, XCircle, Clock, AlertTriangle, Layers } from "lucide-react";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 
 interface VersionApprovalTableProps {
     items: VersionApprovalItem[];
@@ -28,6 +29,18 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
     loading,
     onReviewAndCompare,
 }) => {
+    const [pageIndex, setPageIndex] = useState<number>(1);
+    const [pageSize, setPageSize] = useState<number>(10);
+
+    const [prevItems, setPrevItems] = useState<VersionApprovalItem[]>(items);
+
+    if (items !== prevItems) {
+        setPrevItems(items);
+        setPageIndex(1);
+    }
+
+    const paginatedItems = items.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+
     const formatDate = (dateStr: string) => {
         try {
             const d = new Date(dateStr);
@@ -144,7 +157,7 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {items.map((item) => (
+                        {paginatedItems.map((item) => (
                             <TableRow key={item.id} className="border-b border-border/60 hover:bg-muted/40">
                                 <TableCell>
                                     <div className="va-product-cell">
@@ -203,6 +216,18 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                         ))}
                     </TableBody>
                 </Table>
+            </div>
+            <div className="p-4 border-t border-border">
+                <DataTablePagination
+                    pageIndex={pageIndex}
+                    pageSize={pageSize}
+                    rowCount={items.length}
+                    onPageChange={setPageIndex}
+                    onPageSizeChange={(size) => {
+                        setPageSize(size);
+                        setPageIndex(1);
+                    }}
+                />
             </div>
         </Card>
     );

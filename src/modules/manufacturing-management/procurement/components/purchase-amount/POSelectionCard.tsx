@@ -44,9 +44,9 @@ export default function POSelectionCard({
                     const idVal = String(po.purchase_order_id || po.shipment_id || `po-${idx}`);
                     const poNo = po.purchase_order_no || po.reference_number || `PO #${idVal}`;
                     const suppName = typeof po.supplier_name === "object" ? po.supplier_name?.supplier_name : (po.supplier_name || "Supplier");
-                    const isImp = po.is_import === 1 || po.currency_code === "USD";
-                    const curr = isImp ? "USD" : "PHP";
-                    const amt = po.total_amount ? Number(po.total_amount).toLocaleString("en-US", { minimumFractionDigits: 2 }) : "0.00";
+                    const curr = String(po.currency_code || (po.is_import === 1 ? "USD" : "PHP")).toUpperCase();
+                    const amount = curr === "PHP" ? po.total_amount ?? po.total_php_value : po.total_foreign_currency;
+                    const amt = Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 });
                     const forceClosed = Boolean(po.isForceReceived || po.forceReceivedAt);
                     const statusLabel = Number(po.inventory_status) === LANDED_COST_INVENTORY_STATUS ? "Received" : "Not eligible";
                     return {
@@ -62,6 +62,25 @@ export default function POSelectionCard({
                 placeholder="Search Received Purchase Order..."
                 className="h-10 text-xs w-full bg-background font-bold"
             />
+            {selectedShipment && (() => {
+                const supplier = typeof selectedShipment.supplier_name === "object"
+                    ? selectedShipment.supplier_name?.supplier_name
+                    : selectedShipment.supplier_name;
+                const currency = String(selectedShipment.currency_code || (selectedShipment.is_import === 1 ? "USD" : "PHP")).toUpperCase();
+                const amount = currency === "PHP"
+                    ? selectedShipment.total_amount ?? selectedShipment.total_php_value
+                    : selectedShipment.total_foreign_currency;
+                return (
+                    <div className="grid grid-cols-2 gap-2 rounded-lg border bg-background p-3 text-[11px] sm:grid-cols-3 lg:grid-cols-6">
+                        <div><div className="text-muted-foreground">PO Number</div><div className="font-bold">{selectedShipment.purchase_order_no || selectedShipment.reference_number || "—"}</div></div>
+                        <div><div className="text-muted-foreground">Supplier</div><div className="truncate font-bold" title={String(supplier || "Unknown supplier")}>{supplier || "Unknown supplier"}</div></div>
+                        <div><div className="text-muted-foreground">Status</div><div className="font-bold">{selectedShipment.status || "Received"}</div></div>
+                        <div><div className="text-muted-foreground">Payment</div><div className="font-bold">{Number(selectedShipment.payment_status) === 2 ? "Awaiting Payment" : String(selectedShipment.payment_status || "Unavailable")}</div></div>
+                        <div><div className="text-muted-foreground">Currency</div><div className="font-bold">{currency}</div></div>
+                        <div><div className="text-muted-foreground">Total Value</div><div className="font-bold">{currency === "USD" ? "$" : "₱"}{Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div></div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }

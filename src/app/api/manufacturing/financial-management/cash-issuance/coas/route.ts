@@ -23,15 +23,29 @@ export async function GET(request: NextRequest) {
         
         const data = (await res.json()).data || [];
         
-        type DirectusCoaItem = { coa_id?: string | number; gl_code?: string; account_title?: string; account_type?: string | number; isPayment?: boolean; is_payment?: boolean; };
-        // Map to COADto
-        const mapped = data.map((item: DirectusCoaItem) => ({
-            coaId: Number(item.coa_id),
-            glCode: item.gl_code || "",
-            accountTitle: item.account_title || "",
-            accountType: item.account_type ? Number(item.account_type) : null,
-            isPayment: item.isPayment || item.is_payment || false
-        }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped = data.map((item: any) => {
+            const isPay = item.isPayment !== undefined ? item.isPayment : item.is_payment;
+            let isPaymentBool = false;
+            if (isPay === true || isPay === 1 || isPay === "1" || isPay === "true") {
+                isPaymentBool = true;
+            } else if (isPay && typeof isPay === "object" && Array.isArray(isPay.data)) {
+                isPaymentBool = isPay.data[0] === 1;
+            }
+            
+            let accType = item.account_type;
+            if (accType && typeof accType === "object" && accType.id !== undefined) {
+                accType = accType.id;
+            }
+            
+            return {
+                coaId: Number(item.coa_id),
+                glCode: item.gl_code || "",
+                accountTitle: item.account_title || "",
+                accountType: accType ? Number(accType) : null,
+                isPayment: isPaymentBool
+            };
+        });
         
         return NextResponse.json(mapped);
     } catch (error) {

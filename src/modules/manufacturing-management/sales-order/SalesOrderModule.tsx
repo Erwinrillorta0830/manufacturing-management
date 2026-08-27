@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { RefreshCw, Loader2, Plus } from "lucide-react";
+import { RefreshCw, Plus } from "lucide-react";
 import { useSalesOrder } from "./hooks/useSalesOrder";
 import { ActiveSalesOrdersTable } from "./components/ActiveSalesOrdersTable";
 import { SalesOrderDetailPanel } from "./components/SalesOrderDetailPanel";
@@ -42,6 +42,22 @@ export default function SalesOrderModule() {
     } = useSalesOrder();
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [prefillPayload, setPrefillPayload] = useState<any | null>(null);
+
+    React.useEffect(() => {
+        const raw = sessionStorage.getItem("pending_so_conversion");
+        if (raw) {
+            try {
+                const payload = JSON.parse(raw);
+                sessionStorage.removeItem("pending_so_conversion");
+                setPrefillPayload(payload);
+                setIsCreateModalOpen(true);
+            } catch {
+                // ignore invalid payload
+            }
+        }
+    }, []);
  
     return (
         <div className="space-y-6">
@@ -75,35 +91,29 @@ export default function SalesOrderModule() {
  
             {/* Main Content Pane */}
             <div className="space-y-6">
-                {loading ? (
-                    <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground">
-                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        <span className="text-xs">Loading orders...</span>
-                    </div>
-                ) : (
-                    <ActiveSalesOrdersTable
-                        salesOrders={salesOrders}
-                        updatingStatusId={updatingStatusId}
-                        viewOrderDetails={viewOrderDetails}
-                        handleApproveOrder={handleApproveOrder}
-                        currentPage={currentPage}
-                        setCurrentPage={setCurrentPage}
-                        searchQuery={searchQuery}
-                        setSearchQuery={setSearchQuery}
-                        statusFilter={statusFilter}
-                        setStatusFilter={setStatusFilter}
-                        customerCodeFilter={customerCodeFilter}
-                        setCustomerCodeFilter={setCustomerCodeFilter}
-                        dateFromFilter={dateFromFilter}
-                        setDateFromFilter={setDateFromFilter}
-                        dateToFilter={dateToFilter}
-                        setDateToFilter={setDateToFilter}
-                        totalCount={totalCount}
-                        totalPages={totalPages}
-                        limit={limit}
-                        setLimit={setLimit}
-                    />
-                )}
+                <ActiveSalesOrdersTable
+                    salesOrders={salesOrders}
+                    loading={loading}
+                    updatingStatusId={updatingStatusId}
+                    viewOrderDetails={viewOrderDetails}
+                    handleApproveOrder={handleApproveOrder}
+                    currentPage={currentPage}
+                    setCurrentPage={setCurrentPage}
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    statusFilter={statusFilter}
+                    setStatusFilter={setStatusFilter}
+                    customerCodeFilter={customerCodeFilter}
+                    setCustomerCodeFilter={setCustomerCodeFilter}
+                    dateFromFilter={dateFromFilter}
+                    setDateFromFilter={setDateFromFilter}
+                    dateToFilter={dateToFilter}
+                    setDateToFilter={setDateToFilter}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    limit={limit}
+                    setLimit={setLimit}
+                />
             </div>
 
             {/* Modal - details view */}
@@ -128,8 +138,12 @@ export default function SalesOrderModule() {
 
             <CreateSalesOrderModal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
+                onClose={() => {
+                    setIsCreateModalOpen(false);
+                    setPrefillPayload(null);
+                }}
                 onSubmit={handleCreateSalesOrderDirect}
+                prefillPayload={prefillPayload}
             />
         </div>
     );

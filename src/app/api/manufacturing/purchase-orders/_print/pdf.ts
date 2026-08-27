@@ -61,6 +61,26 @@ function displayDate(value: string): string {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-PH");
 }
 
+function printableDate(value: string): string {
+    if (!value || value === "N/A") return "N/A";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("en-PH", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        timeZone: "Asia/Manila"
+    }).format(date);
+}
+
+function uniqueValues(values: readonly string[]): string[] {
+    return [...new Set(values.map(value => value.trim()).filter(value => value && value !== "N/A"))];
+}
+
+function joinValues(values: readonly string[], fallback = "N/A"): string {
+    return uniqueValues(values).join(", ") || fallback;
+}
+
 function pdfText(value: unknown, fallback = "N/A"): string {
     const result = String(value ?? "").trim();
     return result || fallback;
@@ -135,6 +155,8 @@ function drawHeader(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot, titl
         drawRightMetadata(`PO NUMBER: ${pdfText(data.purchaseOrder.purchaseOrderNumber)}`, 19);
         drawRightMetadata(`DATE: ${displayDate(data.purchaseOrder.encodedAt)}`, 24);
         drawRightMetadata(`TYPE: ${purchaseOrderType(data.purchaseOrder.currencyCode)}`, 29);
+    } else if (data.documentType === "QA_GOODS_RECEIPT") {
+        drawRightMetadata(`PO: ${pdfText(data.purchaseOrder.purchaseOrderNumber)}`, 19);
     } else {
         drawRightMetadata(`PO: ${pdfText(data.purchaseOrder.purchaseOrderNumber)}`, 19);
         drawRightMetadata(`Generated: ${displayDate(data.generatedAt)}`, 24);
@@ -161,10 +183,14 @@ function drawFooter(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot): voi
         setPdfFont(doc).setFontSize(6).setTextColor(90, 90, 90);
         const footerLeft = data.documentType === "PURCHASE_ORDER"
             ? "OFFICIAL PURCHASE ORDER - CONFIDENTIAL & PROPRIETARY"
+            : data.documentType === "QA_GOODS_RECEIPT"
+                ? "QA GOODS RECEIPT"
             : "System-generated manufacturing purchase-order compliance document";
-        const footerCenter = `Template: ${pdfText(data.template.name)} v${pdfText(data.template.version)}`;
+        const footerCenter = data.documentType === "QA_GOODS_RECEIPT"
+            ? ""
+            : `Template: ${pdfText(data.template.name)} v${pdfText(data.template.version)}`;
         doc.text(fitSingleLine(doc, footerLeft, 62), 10, pageHeight - 9);
-        doc.text(fitSingleLine(doc, footerCenter, 66), 135, pageHeight - 9, { align: "center" });
+        if (footerCenter) doc.text(fitSingleLine(doc, footerCenter, 66), 135, pageHeight - 9, { align: "center" });
         doc.text(`Page ${page} of ${pageCount}`, pageWidth - 10, pageHeight - 9, { align: "right" });
         doc.setTextColor(0, 0, 0);
     }
@@ -358,6 +384,19 @@ function drawSignatureBlock(doc: PdfDocument, startY: number): number {
     return startY + 16;
 }
 
+function drawBottomSignatureBlock(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot, y: number): number {
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const footerBoundary = pageHeight - FOOTER_RESERVED;
+    const sectionHeight = 27;
+    if (y + sectionHeight > footerBoundary) {
+        doc.addPage();
+        y = drawHeader(doc, data, "QA GOODS RECEIPT");
+    }
+    const sectionY = Math.max(y + 3, footerBoundary - sectionHeight);
+    const headingY = drawSectionTitle(doc, "Signatories", sectionY);
+    return drawSignatureBlock(doc, headingY + 3);
+}
+
 function drawPurchaseOrderAuditStrip(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot, startY: number): number {
     const pageWidth = doc.internal.pageSize.getWidth();
     doc.setDrawColor(170, 170, 170).line(PAGE_MARGIN, startY, pageWidth - PAGE_MARGIN, startY);
@@ -494,17 +533,72 @@ async function renderFinanceDocument(doc: PdfDocument, data: PurchaseOrderPrinta
     return y;
 }
 
+function qaReceiptSummary(data: PurchaseOrderPrintableSnapshot) {
+    const receiptHeaders = data.receivingHeaders;
+    const recordReceiptNumbers = data.receivingRecords.map(record => record.receiptNumber);
+    const recordReceiptDates = data.receivingRecords.map(record => record.receivedDate);
+    const recordBranches = data.receivingRecords.map(record => record.branch);
+    const receiptNumbers = receiptHeaders.length > 0
+        ? receiptHeaders.map(header => header.receiptNumber)
+        : recordReceiptNumbers;
+    const receiptDates = receiptHeaders.length > 0
+        ? receiptHeaders.map(header => printableDate(header.receiptDate))
+        : recordReceiptDates.map(printableDate);
+    const branches = receiptHeaders.length > 0
+        ? receiptHeaders.map(header => header.branch)
+        : recordBranches;
+    const receiptStatuses = receiptHeaders.map(header => header.quantityStatus);
+    const receiptCount = receiptHeaders.length > 0
+        ? `${receiptHeaders.length} committed receipt${receiptHeaders.length === 1 ? "" : "s"}`
+        : receiptNumbers.length > 0
+            ? `${uniqueValues(receiptNumbers).length} receipt${uniqueValues(receiptNumbers).length === 1 ? "" : "s"}`
+            : "N/A";
+    return {
+        receiptNumbers: joinValues(receiptNumbers),
+        receiptDates: joinValues(receiptDates),
+        branches: joinValues(branches),
+        receiptStatuses: joinValues(receiptStatuses),
+        receiptCount
+    };
+}
+
 async function renderQaDocument(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot, y: number): Promise<number> {
     const po = data.purchaseOrder;
-    y = drawSectionTitle(doc, "Goods-receipt handoff", y);
-    y = await renderTable(doc, y, ["PO", "Receipt header", "Receipt count", "Status", "Payment status", "Workflow revision"], [[
-        po.purchaseOrderNumber,
-        data.sourceReceivingHeaderId ? `#${data.sourceReceivingHeaderId}` : "All committed receipts",
-        String(data.receivingRecords.length),
-        po.inventoryStatus,
-        po.paymentStatus,
-        String(po.workflowRevision)
-    ]]);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const contentWidth = pageWidth - PAGE_MARGIN * 2;
+    const gap = 4;
+    const panelWidth = (contentWidth - gap) / 2;
+    const summary = qaReceiptSummary(data);
+    const supplierRows: Array<[string, string]> = [
+        ["Vendor / Supplier", po.supplier],
+        ["Vendor Class", po.vendorClass],
+        ["Supplier Address", po.supplierAddress],
+        ["Payment Terms", po.paymentTerms],
+        ["Delivery Terms", po.deliveryTerms],
+        ["Payment Mode", po.paymentMode],
+        ["Arrangement", po.paymentArrangement]
+    ];
+    const receiptRows: Array<[string, string]> = [
+        ["Purchase Order", po.purchaseOrderNumber],
+        ["External Reference", po.reference],
+        ["Purchase Order Date", printableDate(po.encodedAt)],
+        ["Receipt Number(s)", summary.receiptNumbers],
+        ["Receipt Date(s)", summary.receiptDates],
+        ["Receipt Count", summary.receiptCount],
+        ["Receiving Branch", summary.branches],
+        ["Receipt Status", summary.receiptStatuses],
+        ["Document Status", po.inventoryStatus],
+        ["Payment Status", po.paymentStatus]
+    ];
+    const panelHeight = Math.max(
+        infoPanelHeight(doc, supplierRows, panelWidth * 0.36, panelWidth * 0.64 - 7),
+        infoPanelHeight(doc, receiptRows, panelWidth * 0.36, panelWidth * 0.64 - 7)
+    );
+    y = ensureSpace(doc, y, panelHeight + 13, data, "QA GOODS RECEIPT");
+    y = drawSectionTitle(doc, "Goods-receipt details", y);
+    drawInfoPanel(doc, PAGE_MARGIN, y, panelWidth, panelHeight, "Supplier / Order Details", supplierRows);
+    drawInfoPanel(doc, PAGE_MARGIN + panelWidth + gap, y, panelWidth, panelHeight, "Receipt Details", receiptRows);
+    y += panelHeight + 8;
     y = drawSectionTitle(doc, "QA inspection and receiving records", y);
     y = await renderTable(doc, y,
         ["Product", "Receipt / batch", "Branch / lot", "Received", "Accepted", "Rejected", "Over-delivery", "QA", "Expiry"],
@@ -517,9 +611,9 @@ async function renderQaDocument(doc: PdfDocument, data: PurchaseOrderPrintableSn
             quantity(record.rejectedQuantity),
             quantity(record.overDeliveryQuantity),
             record.qaStatus,
-            record.expirationDate
+            printableDate(record.expirationDate)
         ]));
-    return y;
+    return drawBottomSignatureBlock(doc, data, y);
 }
 
 async function renderStorageDocument(doc: PdfDocument, data: PurchaseOrderPrintableSnapshot, y: number): Promise<number> {
@@ -568,7 +662,7 @@ async function renderLandedCostDocument(doc: PdfDocument, data: PurchaseOrderPri
         ]));
     }
     y = drawSectionTitle(doc, "Line allocation", y);
-    y = await renderTable(doc, y, ["Product", "Quantity", "Base unit cost", "Allocated fee", "Final landed unit cost", "Share"], landedCost.allocations.map(allocation => [
+    y = await renderTable(doc, y, ["Product", "Quantity", "Base unit cost (PHP)", "Allocated fee (PHP)", "Final landed unit cost (PHP)", "Share"], landedCost.allocations.map(allocation => [
         allocation.product,
         quantity(allocation.quantity),
         money(allocation.baseUnitCost, "PHP", doc),
@@ -620,7 +714,7 @@ export async function generatePurchaseOrderPdf(data: PurchaseOrderPrintableSnaps
         case "STORAGE_LOT_ALLOCATION": contentY = await renderStorageDocument(doc, data, y); break;
         case "LANDED_COST": contentY = await renderLandedCostDocument(doc, data, y); break;
     }
-    if (data.documentType !== "PURCHASE_ORDER") {
+    if (data.documentType !== "PURCHASE_ORDER" && data.documentType !== "QA_GOODS_RECEIPT") {
         await renderAuditBlock(doc, data, Math.max(contentY, currentY(doc, y)));
     }
     drawFooter(doc, data);

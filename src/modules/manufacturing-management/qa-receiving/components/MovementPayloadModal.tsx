@@ -129,7 +129,14 @@ export default function MovementPayloadModal({
                                     <td className="px-3 py-2.5 align-top text-right font-mono font-bold text-foreground text-sm">{route.quantity.toLocaleString()}</td>
                                     <td className="px-3 py-2.5 align-top font-mono text-[11px]">MFG: {route.manufacturingDate || "N/A"}<br />EXP: {route.expiryDate || "N/A"}</td>
                                     <td className="px-3 py-2.5 align-top font-semibold"><strong>{route.transactionType.name}</strong></td>
-                                    <td className="px-3 py-2.5 align-top max-w-[260px] whitespace-normal text-muted-foreground">{route.remarks || "None"}</td>
+                                    <td className="px-3 py-2.5 align-top max-w-[260px] whitespace-normal text-muted-foreground">
+                                        {route.capacityOverride && (
+                                            <span className="mb-1 block font-bold text-amber-700" role="status">
+                                                Capacity override - audit review required ({route.capacityOverrideQuantity.toLocaleString()} unit(s) over available capacity)
+                                            </span>
+                                        )}
+                                        {route.remarks || (!route.capacityOverride ? "None" : null)}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -159,22 +166,70 @@ export default function MovementPayloadModal({
                         <>
                             {(() => {
                                 const displayReceipt = committedResult.receivingTicketNumber || committedResult.commitReference || "N/A";
+                                const paymentStatus = Number(committedResult.paymentStatus) === 2 ? "Awaiting Payment" : "Pending";
+                                const statusClass = committedResult.status === "Received"
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                    : committedResult.status === "Rejected"
+                                        ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                                        : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
                                 return (
-                                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs border-y py-2.5 bg-muted/20 font-medium">
-                                        <span><strong>PO Number:</strong> {purchaseOrderReference || "Current purchase order"}</span>
-                                        <span><strong>Receipt Number:</strong> <span className="font-mono font-bold text-primary">{displayReceipt}</span></span>
-                                        <span><strong>Date of Receipt:</strong> {committedResult.receiptDate}</span>
-                                        <span><strong>Status:</strong> <span className="font-bold text-emerald-700">{committedResult.status}</span></span>
-                                        {committedResult.status === "Received" && (
-                                            <>
-                                                <span><strong>Payment Status:</strong> <span className="font-bold text-blue-700">{Number(committedResult.paymentStatus) === 2 ? "Awaiting Payment" : "Pending"}</span></span>
-                                                {Number(committedResult.paymentStatus) === 2 && (
-                                                    <span className="text-blue-700"><strong>Finance Queue:</strong> <span className="font-bold">Purchase Amount Posting</span></span>
-                                                )}
-                                            </>
-                                        )}
-                                        <span><strong>Submission:</strong> {committedResult.idempotentReplay ? "Idempotent Replay" : "Fresh Posting"}</span>
-                                    </div>
+                                    <section
+                                        aria-labelledby="receiving-transaction-summary"
+                                        className="overflow-hidden rounded-xl border bg-muted/10 shadow-sm"
+                                    >
+                                        <div className="border-b bg-muted/30 px-4 py-3">
+                                            <h3 id="receiving-transaction-summary" className="text-sm font-extrabold uppercase tracking-wider text-foreground">
+                                                Transaction Summary
+                                            </h3>
+                                            <p className="mt-0.5 text-xs text-muted-foreground">Posted receiving metadata</p>
+                                        </div>
+                                        <dl className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 lg:col-span-2">
+                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">PO Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-base font-extrabold leading-tight text-foreground sm:text-lg">
+                                                    {purchaseOrderReference || "Current purchase order"}
+                                                </dd>
+                                            </div>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 lg:col-span-2">
+                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Receipt Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-base font-extrabold leading-tight text-primary sm:text-lg">
+                                                    {displayReceipt}
+                                                </dd>
+                                            </div>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
+                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date of Receipt</dt>
+                                                <dd className="mt-1 text-sm font-semibold tabular-nums text-foreground">{committedResult.receiptDate}</dd>
+                                            </div>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
+                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</dt>
+                                                <dd className="mt-1">
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-sm font-bold ${statusClass}`}>
+                                                        {committedResult.status}
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            {committedResult.status === "Received" && (
+                                                <>
+                                                    <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
+                                                        <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Status</dt>
+                                                        <dd className="mt-1 text-sm font-bold text-blue-700 dark:text-blue-300">{paymentStatus}</dd>
+                                                    </div>
+                                                    {Number(committedResult.paymentStatus) === 2 && (
+                                                        <div className="min-w-0 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-3">
+                                                            <dt className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Finance Queue</dt>
+                                                            <dd className="mt-1 text-sm font-bold text-blue-700 dark:text-blue-300">Purchase Amount Posting</dd>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
+                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Submission</dt>
+                                                <dd className="mt-1 text-sm font-semibold text-foreground">
+                                                    {committedResult.idempotentReplay ? "Idempotent Replay" : "Fresh Posting"}
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                    </section>
                                 );
                             })()}
 
@@ -291,7 +346,15 @@ export default function MovementPayloadModal({
                                                     <td className="px-2 py-2">{route?.storageLotName || "N/A"}</td>
                                                     <td className="px-2 py-2">{route?.branch.name || "N/A"}<br /><span className="text-muted-foreground">{route?.branch.code || ""}</span></td>
                                                     <td className="px-2 py-2 text-right font-bold tabular-nums">{movement.quantity.toLocaleString()}</td>
-                                                    <td className="px-2 py-2">{movement.sourceDocumentNo}<br /><span className="text-muted-foreground">{route?.transactionType.name || "N/A"}</span></td>
+                                                    <td className="px-2 py-2">
+                                                        {movement.sourceDocumentNo}<br />
+                                                        <span className="text-muted-foreground">{route?.transactionType.name || "N/A"}</span>
+                                                        {movement.capacityOverride && (
+                                                            <span className="mt-1 block font-bold text-amber-700" role="status">
+                                                                Capacity override - audit review required ({movement.capacityOverrideQuantity.toLocaleString()} over)
+                                                            </span>
+                                                        )}
+                                                    </td>
                                                             </>
                                                         );
                                                     })()}

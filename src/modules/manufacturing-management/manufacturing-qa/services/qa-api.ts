@@ -8,7 +8,8 @@ import {
     QAJOInspectionLog, 
     JobOrderStatusHistory, 
     TwoPointQAInspectionPayload, 
-    TwoPointQAInspectionResult 
+    TwoPointQAInspectionResult,
+    YieldJobOrderMaterial
 } from "../types";
 
 export async function fetchQALogs(): Promise<QALog[]> {
@@ -36,10 +37,16 @@ export async function fetchBranchesList(): Promise<Branch[]> {
     return data.branches || [];
 }
 
-export async function fetchJobOrderMaterials(joId: string): Promise<any[]> {
-    const res = await fetch(`/api/manufacturing/planning-engineering?action=job-order-materials&joId=${joId}`);
-    if (!res.ok) throw new Error("Failed to load materials");
-    return res.json();
+export async function fetchJobOrderMaterials(joId: string): Promise<YieldJobOrderMaterial[]> {
+    const res = await fetch(`/api/manufacturing/planning-engineering?action=job-order-materials&joId=${encodeURIComponent(joId)}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to load materials");
+    }
+    if (!Array.isArray(data)) {
+        throw new Error("Materials lookup returned an invalid response");
+    }
+    return data as YieldJobOrderMaterial[];
 }
 
 // Fetch QA rejection reasons list
@@ -72,7 +79,20 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             action: "two-point-inspection",
-            ...payload
+            job_order_id: payload.job_order_id,
+            job_order_no: payload.job_order_no,
+            product_id: payload.product_id,
+            branch_id: payload.branch_id,
+            inspected_quantity: payload.inspected_quantity,
+            passed_quantity: payload.passed_quantity,
+            rejected_quantity: payload.rejected_quantity,
+            rejection_reason_id: payload.rejection_reason_id ?? null,
+            lot_number: payload.lot_number,
+            manufacturing_date: payload.manufacturing_date,
+            expiry_date: payload.expiry_date,
+            unit_cost: payload.unit_cost ?? 0,
+            remarks: payload.remarks ?? "",
+            ...(payload.user_id ? { user_id: payload.user_id } : {})
         })
     });
     const data = await res.json();

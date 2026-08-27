@@ -23,6 +23,13 @@ function normalizeTerm(value: string | null | undefined): string {
         .trim();
 }
 
+function hasNumericPaymentDays(term: PaymentTerm): boolean {
+    return term.payment_days !== null
+        && term.payment_days !== undefined
+        && String(term.payment_days).trim() !== ""
+        && Number.isFinite(Number(term.payment_days));
+}
+
 export function resolveSupplierPaymentTermId(
     profileValue: string | null | undefined,
     paymentTerms: PaymentTerm[]
@@ -36,16 +43,19 @@ export function resolveSupplierPaymentTermId(
     const profileDays = normalizedProfile.match(/\b(\d+)\b/);
     if (profileDays) {
         const days = Number(profileDays[1]);
-        const dayMatch = paymentTerms.find(term => Number(term.payment_days) === days);
+        const dayMatch = paymentTerms.find(term => hasNumericPaymentDays(term) && Number(term.payment_days) === days);
         if (dayMatch) return dayMatch.id;
     }
 
     if (normalizedProfile.includes("cash on delivery") || normalizedProfile === "cod") {
         const cashMatch = paymentTerms.find(term => {
             const name = normalizeTerm(term.payment_name);
-            return name.includes("cash") || Number(term.payment_days) === 0;
+            return name.includes("cash on delivery") || name === "cod";
         });
         if (cashMatch) return cashMatch.id;
+
+        const zeroDayMatch = paymentTerms.find(term => hasNumericPaymentDays(term) && Number(term.payment_days) === 0);
+        if (zeroDayMatch) return zeroDayMatch.id;
     }
 
     return null;

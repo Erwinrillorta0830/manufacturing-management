@@ -36,6 +36,26 @@ interface OperatorPanelProps {
     handleCompleteStepClick: (taskId: number) => void;
 }
 
+interface BreakdownMaterial {
+    jo_material_id?: number | string | null;
+    id?: number | string | null;
+    product_name?: string;
+    product_id?: number | string | null;
+    actual_consumed_quantity?: number | string | null;
+    allocated_quantity?: number | string | null;
+    quantity_allocated?: number | string | null;
+    unit_shortcut?: string | null;
+}
+
+function getPositiveNumericId(value: unknown): number | null {
+    const id = Number(value);
+    return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function getMaterialId(material: BreakdownMaterial): number | null {
+    return getPositiveNumericId(material.jo_material_id ?? material.id);
+}
+
 // Live ticking timer component for clocked-in operators
 function RunningTimer({ startedAt }: { startedAt: string }) {
     const [elapsed, setElapsed] = useState("");
@@ -90,10 +110,12 @@ export default function OperatorPanel({
     const [haltedStepId, setHaltedStepId] = useState<string>("");
     const [yieldQty, setYieldQty] = useState<string>("0");
     const [haltReason, setHaltReason] = useState<string>("");
-    const [materials, setMaterials] = useState<any[]>([]);
+    const [materials, setMaterials] = useState<BreakdownMaterial[]>([]);
     const [consumedQtys, setConsumedQtys] = useState<Record<number, string>>({});
     const [loadingMaterials, setLoadingMaterials] = useState(false);
     const [submittingHalt, setSubmittingHalt] = useState(false);
+    const trimmedHaltReason = haltReason.trim();
+    const hasValidHaltReason = trimmedHaltReason.length > 0;
 
     const groupedOperators = React.useMemo(() => {
         const groups: Record<number, {
@@ -108,7 +130,8 @@ export default function OperatorPanel({
         }> = {};
 
         routeOperators.forEach((op: any) => {
-            const userId = op.user_id;
+            const userId = getPositiveNumericId(op.user_id);
+            if (userId === null) return;
             const isRunning = op.started_at !== null && op.stopped_at === null;
             const hours = Number(op.actual_hours || 0);
 
@@ -163,10 +186,30 @@ export default function OperatorPanel({
             fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${selectedJobOrder.order_id}`)
                 .then((res) => res.json())
                 .then((data) => {
-                    setMaterials(data);
+                    const responseMaterials = Array.isArray(data) ? data as BreakdownMaterial[] : [];
+                    const seenMaterialIds = new Set<number>();
+                    const identifiedMaterials = responseMaterials.filter((material) => {
+                        const materialId = getMaterialId(material);
+                        if (materialId === null || seenMaterialIds.has(materialId)) return false;
+                        seenMaterialIds.add(materialId);
+                        return true;
+                    });
+
+                    if (identifiedMaterials.length !== responseMaterials.length) {
+                        toast.error("Some allocated materials could not be displayed because their identifiers were missing or duplicated.");
+                    }
+
+                    setMaterials(identifiedMaterials);
                     const initialConsumed: Record<number, string> = {};
-                    data.forEach((m: any) => {
-                        initialConsumed[m.id] = String(m.actual_consumed_quantity || m.quantity_allocated || 0);
+                    identifiedMaterials.forEach((material) => {
+                        const materialId = getMaterialId(material);
+                        if (materialId === null) return;
+                        initialConsumed[materialId] = String(
+                            material.actual_consumed_quantity ??
+                            material.allocated_quantity ??
+                            material.quantity_allocated ??
+                            0
+                        );
                     });
                     setConsumedQtys(initialConsumed);
                 })
@@ -176,22 +219,33 @@ export default function OperatorPanel({
     }, [isBreakdownOpen, selectedJobOrder]);
 
     const handleHaltSubmit = async () => {
-        if (!haltReason.trim()) {
-            alert("Please input a valid explanation or note for the breakdown halt.");
+        if (!hasValidHaltReason) {
+            toast.error("Halt reason is required.");
             return;
         }
+
+        const jobOrderId = getPositiveNumericId(selectedJobOrder.order_id);
+        if (jobOrderId === null) {
+            toast.error("A valid Job Order is required to log a breakdown.");
+            return;
+        }
+
         setSubmittingHalt(true);
         try {
             const body = {
-                action: "halt",
-                joId: selectedJobOrder.order_id,
-                haltedStepName: haltedStepId,
+                action: "breakdown",
+                jobOrderId,
+                haltedStepId: haltedStepId,
                 yieldQty: Number(yieldQty),
-                haltReason,
-                materials: Object.entries(consumedQtys).map(([id, val]) => ({
-                    materialId: Number(id),
-                    consumedQty: Number(val)
-                }))
+                haltReason: trimmedHaltReason,
+                materials: materials.flatMap((material) => {
+                    const materialId = getMaterialId(material);
+                    if (materialId === null) return [];
+                    return [{
+                        materialId,
+                        consumedQty: Number(consumedQtys[materialId] ?? 0)
+                    }];
+                })
             };
             const res = await fetch(`/api/manufacturing/planning-engineering`, {
                 method: "PATCH",
@@ -202,23 +256,47 @@ export default function OperatorPanel({
                 setIsBreakdownOpen(false);
                 window.location.reload();
             } else {
-                alert("Failed to log breakdown. Please try again.");
+                const errorData = await res.json().catch(() => null);
+                toast.error(errorData?.error || "Failed to log breakdown. Please try again.");
             }
         } catch (e) {
             console.error("Error logging breakdown:", e);
-            alert("An error occurred. Please try again.");
+            toast.error("An error occurred while logging the breakdown. Please try again.");
         } finally {
             setSubmittingHalt(false);
         }
     };
 
     const getUserLabel = (uId: number) => {
-        const u = users.find((usr) => (usr.user_id || usr.id) === uId);
+        const u = users.find((usr) => getPositiveNumericId(usr.user_id ?? usr.id) === uId);
         if (!u) return `Operator #${uId}`;
         const fname = u.user_fname || u.first_name || "";
         const lname = u.user_lname || u.last_name || "";
         return `${fname} ${lname}`.trim() || `User #${uId}`;
     };
+
+    const operatorOptions = React.useMemo(() => {
+        const assignedUserIds = new Set(
+            routeOperators
+                .map((operator) => getPositiveNumericId(operator.user_id))
+                .filter((userId): userId is number => userId !== null)
+        );
+        const seenUserIds = new Set<number>();
+
+        return users.reduce<{ value: string; label: string }[]>((options, user) => {
+            const userId = getPositiveNumericId(user.user_id ?? user.id);
+            if (userId === null || assignedUserIds.has(userId) || seenUserIds.has(userId)) {
+                return options;
+            }
+
+            seenUserIds.add(userId);
+            options.push({
+                value: String(userId),
+                label: `${getUserLabel(userId)} (${user.user_position || user.position || "Operator"})`
+            });
+            return options;
+        }, []);
+    }, [routeOperators, users]);
 
     const isJobOnHold = selectedJobOrder.status === "On Hold";
 
@@ -297,12 +375,7 @@ export default function OperatorPanel({
                         <div className="flex flex-wrap gap-2 items-center bg-muted/30 p-2 border border-border/50 rounded-xl">
                             <div className="flex-1 min-w-[200px]">
                                 <SearchableSelect
-                                    options={users
-                                        .filter((u) => !routeOperators.some((ro) => ro.user_id === (u.user_id || u.id)))
-                                        .map((u) => ({
-                                            value: String(u.user_id || u.id),
-                                            label: `${getUserLabel(u.user_id || u.id)} (${u.user_position || u.position || "Operator"})`
-                                        }))}
+                                    options={operatorOptions}
                                     value={localAssigneeId}
                                     onValueChange={(val) => setLocalAssigneeId(val)}
                                     placeholder="Select floor personnel..."
@@ -349,7 +422,7 @@ export default function OperatorPanel({
                                 const isEditingHours = localActiveManualUserId === gop.user_id;
 
                                 return (
-                                    <div key={gop.user_id} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 sm:p-2.5 bg-background border border-border/60 rounded-xl hover:bg-muted/10 transition-colors gap-2">
+                                    <div key={`operator-${gop.user_id}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 sm:p-2.5 bg-background border border-border/60 rounded-xl hover:bg-muted/10 transition-colors gap-2">
                                         <div className="flex items-center gap-2.5 min-w-0">
                                             <div className="p-1.5 bg-primary/5 rounded-lg text-primary shrink-0">
                                                 <User className="h-4 w-4" />
@@ -535,7 +608,10 @@ export default function OperatorPanel({
                                 id="haltReason"
                                 value={haltReason}
                                 onChange={(e) => setHaltReason(e.target.value)}
-                                className="flex min-h-[70px] w-full rounded-md border border-slate-800 bg-slate-900 text-slate-100 px-3 py-2 text-xs placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0"
+                                required
+                                aria-required="true"
+                                aria-invalid={!hasValidHaltReason}
+                                className={`flex min-h-[70px] w-full rounded-md border bg-slate-900 text-slate-100 px-3 py-2 text-xs placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0 ${hasValidHaltReason ? "border-slate-800" : "border-red-500/60"}`}
                                 placeholder="Detail the incident (e.g. Baking Oven heating unit failed, waiting on maintenance)"
                             />
                         </div>
@@ -551,25 +627,30 @@ export default function OperatorPanel({
                                 <p className="text-slate-500 text-center py-2 text-[10px]">No materials allocated to this Job Order.</p>
                             ) : (
                                 <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-                                    {materials.map((m) => (
-                                        <div key={m.id} className="flex items-center justify-between p-2 bg-slate-900 border border-slate-800 rounded-md">
+                                    {materials.map((m) => {
+                                        const materialId = getMaterialId(m);
+                                        if (materialId === null) return null;
+
+                                        return (
+                                        <div key={`material-${materialId}`} className="flex items-center justify-between p-2 bg-slate-900 border border-slate-800 rounded-md">
                                             <span className="font-bold text-slate-300 truncate max-w-[200px]" title={m.product_name}>
                                                 {m.product_name}
                                             </span>
                                             <div className="flex items-center gap-1.5 shrink-0">
                                                 <Input
                                                     type="number"
-                                                    value={consumedQtys[m.id] || "0"}
+                                                    value={consumedQtys[materialId] || "0"}
                                                     onChange={(e) => {
                                                         const val = e.target.value;
-                                                        setConsumedQtys((prev) => ({ ...prev, [m.id]: val }));
+                                                        setConsumedQtys((prev) => ({ ...prev, [materialId]: val }));
                                                     }}
                                                     className="h-7 w-20 bg-slate-950 border-slate-850 text-right text-xs"
                                                 />
                                                 <span className="text-slate-400 font-medium font-mono w-6">{m.unit_shortcut}</span>
                                             </div>
                                         </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -585,7 +666,7 @@ export default function OperatorPanel({
                         </Button>
                         <Button
                             onClick={handleHaltSubmit}
-                            disabled={submittingHalt}
+                            disabled={submittingHalt || !hasValidHaltReason}
                             className="bg-red-600 hover:bg-red-700 text-white font-bold h-8 text-xs px-4"
                         >
                             {submittingHalt ? (

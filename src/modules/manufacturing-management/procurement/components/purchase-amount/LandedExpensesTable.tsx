@@ -2,30 +2,31 @@
 
 import React from "react";
 import { Layers, Plus, Trash2, Cpu, CheckCircle2 } from "lucide-react";
-import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
-import { ChartOfAccount, LandedExpenseRow } from "./types";
+import { ExpenseTypeOption, LandedExpenseRow } from "./types";
 
 interface LandedExpensesTableProps {
     landedExpenses: LandedExpenseRow[];
-    chartOfAccounts: ChartOfAccount[];
+    expenseTypes: ExpenseTypeOption[];
     onAddExpenseRow: () => void;
     onRemoveExpenseRow: (id: string) => void;
     onUpdateExpenseRow: (id: string, field: keyof LandedExpenseRow, value: LandedExpenseRow[keyof LandedExpenseRow]) => void;
+    disabled?: boolean;
 }
 
 export default function LandedExpensesTable({
     landedExpenses,
-    chartOfAccounts,
+    expenseTypes,
     onAddExpenseRow,
     onRemoveExpenseRow,
-    onUpdateExpenseRow
+    onUpdateExpenseRow,
+    disabled = false
 }: LandedExpensesTableProps) {
     return (
         <div className="space-y-3">
             <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <Layers className="h-4 w-4 text-primary" />
-                    Import Landed Expenses & Chart of Accounts Entry
+                    Import Landed Expenses
                 </h3>
                 <button
                     type="button"
@@ -48,7 +49,7 @@ export default function LandedExpensesTable({
                         </span>
                     </div>
                     <p className="text-muted-foreground text-[11px]">
-                        Landed fees are automatically distributed strictly according to product category rules:
+                    Landed fees are automatically distributed strictly according to product category rules:
                         <span className="font-semibold text-blue-600 dark:text-blue-400"> Raw Materials</span> by <strong>Unit Quantity</strong>, 
                         <span className="font-semibold text-purple-600 dark:text-purple-400"> Packaging Items</span> by <strong>Gross Weight</strong>, and 
                         <span className="font-semibold text-amber-600 dark:text-amber-400"> Finished Goods</span> by <strong>Commercial Value</strong>.
@@ -60,7 +61,7 @@ export default function LandedExpensesTable({
                 <table className="w-full text-xs text-left">
                     <thead className="bg-muted/50 border-b text-[11px] font-bold text-muted-foreground uppercase">
                         <tr>
-                            <th className="p-3">Financial Chart of Account</th>
+                            <th className="p-3">Expense Type</th>
                             <th className="p-3">Fee Amount (PHP)</th>
                             <th className="p-3 text-right">Action</th>
                         </tr>
@@ -69,19 +70,21 @@ export default function LandedExpensesTable({
                         {landedExpenses.map((exp) => (
                             <tr key={exp.id} className="hover:bg-muted/30">
                                 <td className="p-3 min-w-[320px]">
-                                    <CreatableSelect
-                                        options={chartOfAccounts.map((coa, idx) => {
-                                            const idNum = coa?.coa_id ?? coa?.id;
-                                            const val = idNum != null ? String(idNum) : (coa?.gl_code ? String(coa.gl_code) : `coa-${idx}`);
-                                            const title = coa?.account_title || coa?.account_name || `Account #${val}`;
-                                            const label = coa?.gl_code ? `[${coa.gl_code}] ${title}` : title;
-                                            return { value: val, label };
-                                        })}
-                                        value={exp.chart_of_account_id ? String(exp.chart_of_account_id) : ""}
-                                        onValueChange={(val) => onUpdateExpenseRow(exp.id, "chart_of_account_id", Number(val))}
-                                        placeholder="Search Chart of Account..."
-                                        className="h-8 text-xs font-medium w-full"
-                                    />
+                                    <select
+                                        value={exp.overhead_id ? String(exp.overhead_id) : ""}
+                                        onChange={(event) => {
+                                            const value = event.target.value ? Number(event.target.value) : null;
+                                            const selected = expenseTypes.find(type => type.id === value);
+                                            onUpdateExpenseRow(exp.id, "overhead_id", value);
+                                            onUpdateExpenseRow(exp.id, "expense_type", selected?.label || "");
+                                        }}
+                                        disabled={disabled || expenseTypes.length === 0}
+                                        aria-label="Expense Type"
+                                        className="h-8 w-full rounded border bg-background px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <option value="">Select Expense Type...</option>
+                                        {expenseTypes.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+                                    </select>
                                 </td>
                                 <td className="p-3">
                                     <input
@@ -90,6 +93,7 @@ export default function LandedExpensesTable({
                                         value={exp.amount || ""}
                                         onChange={(e) => onUpdateExpenseRow(exp.id, "amount", Number(e.target.value))}
                                         placeholder="0.00"
+                                        disabled={disabled}
                                         className="h-8 w-44 px-2 rounded border bg-background text-xs font-bold"
                                     />
                                 </td>
@@ -98,6 +102,7 @@ export default function LandedExpensesTable({
                                         <button
                                             type="button"
                                             onClick={() => onRemoveExpenseRow(exp.id)}
+                                            disabled={disabled}
                                             className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
                                         >
                                             <Trash2 className="h-4 w-4" />
@@ -109,6 +114,11 @@ export default function LandedExpensesTable({
                     </tbody>
                 </table>
             </div>
+            {expenseTypes.length === 0 && (
+                <p className="text-[11px] font-semibold text-amber-600">
+                    No operational expense types are configured. Ask an administrator to configure an expense type with a GL mapping.
+                </p>
+            )}
         </div>
     );
 }

@@ -8,7 +8,8 @@ import {
     Branch, 
     QARejectionReason, 
     QAJOInspectionLog, 
-    TwoPointQAInspectionPayload 
+    TwoPointQAInspectionPayload,
+    YieldJobOrderMaterial
 } from "../types";
 import {
     fetchQALogs,
@@ -326,6 +327,9 @@ export function useManufacturingQA() {
     const [manufacturingDate, setManufacturingDate] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
+    const [yieldMaterials, setYieldMaterials] = useState<YieldJobOrderMaterial[]>([]);
+    const [yieldMaterialsLoading, setYieldMaterialsLoading] = useState(false);
+    const [yieldMaterialsError, setYieldMaterialsError] = useState<string | null>(null);
 
     // Supervisor Override Dialog states
     const [selectedDisp, setSelectedDisp] = useState<DispositionRecord | null>(null);
@@ -662,6 +666,9 @@ export function useManufacturingQA() {
     // Handle Open Yield Dialog
     const handleOpenYieldDialog = (jo: JobOrder) => {
         setSelectedJO(jo);
+        setYieldMaterials([]);
+        setYieldMaterialsError(null);
+        setYieldMaterialsLoading(false);
         setYieldQty(String(jo.quantity || jo.target_quantity || 0));
         
         const firstLog = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
@@ -695,9 +702,9 @@ export function useManufacturingQA() {
         try {
             const materials = await fetchJobOrderMaterials(joNo);
             components = materials.map((m: any) => ({
-                product_name: m.product_name || `Component #${m.product_id}`,
-                quantity: Number(m.actual_consumed_quantity || m.quantity_required || 0),
-                unit: m.unit_shortcut || "units"
+                product_name: m.productName || m.product_name || `Component #${m.productId || m.product_id}`,
+                quantity: Number(m.actualConsumedQuantity ?? m.actual_consumed_quantity ?? 0),
+                unit: m.unitOfMeasure || m.unit_shortcut || "units"
             }));
         } catch (err) {
             console.error("Failed to load materials for receipt reprint:", err);
@@ -718,6 +725,35 @@ export function useManufacturingQA() {
         });
     };
 
+    const loadYieldClosingMaterials = async (): Promise<YieldJobOrderMaterial[]> => {
+        if (!selectedJO) return [];
+
+        const joNo = selectedJO.job_order_no || selectedJO.jo_id;
+        setYieldMaterialsLoading(true);
+        setYieldMaterialsError(null);
+        try {
+            const materials = await fetchJobOrderMaterials(joNo);
+            setYieldMaterials(materials);
+            return materials;
+        } catch (e: any) {
+            const message = e?.message || "Failed to load material requirements for yield closing.";
+            setYieldMaterials([]);
+            setYieldMaterialsError(message);
+            throw e instanceof Error ? e : new Error(message);
+        } finally {
+            setYieldMaterialsLoading(false);
+        }
+    };
+
+    const handleRetryYieldMaterials = async () => {
+        try {
+            await loadYieldClosingMaterials();
+            toast.success("Material requirements loaded. You may submit the yield closing.");
+        } catch (e: any) {
+            toast.error(e.message || "Failed to load material requirements.");
+        }
+    };
+
     // Submit Finished Goods Yield closing
     const handleSubmitYieldClosing = async () => {
         if (!selectedJO) return;
@@ -734,31 +770,32 @@ export function useManufacturingQA() {
             return;
         }
 
+        if (!selectedJO.branch_id) {
+            toast.error("Error: Job Order is missing branch_id allocation.");
+            return;
+        }
+
         const joNo = selectedJO.job_order_no || selectedJO.jo_id;
         setActionLoading(true);
         try {
-            let componentsConsumed: Array<{
+            const materials = await loadYieldClosingMaterials();
+            const componentsConsumed: Array<{
                 component_product_id: number;
                 required: number;
                 quantity: number;
                 component_name: string;
-            }> = [];
-            try {
-                const materials = await fetchJobOrderMaterials(joNo);
-                componentsConsumed = materials.map((m: any) => ({
-                    component_product_id: m.product_id,
-                    required: m.quantity_required,
-                    quantity: m.quantity_required,
-                    component_name: m.product_name
-                }));
-            } catch (err) {
-                console.warn("Failed to load materials for yield closing consumption:", err);
-            }
-
-            if (!selectedJO.branch_id) {
-                toast.error("Error: Job Order is missing branch_id allocation.");
-                return;
-            }
+            }> = materials.map(material => {
+                const targetQuantity = Number(selectedJO.target_quantity || selectedJO.quantity || 0);
+                const yieldRatio = targetQuantity > 0 ? Number(yieldQty) / targetQuantity : 0;
+                const scaledRequired = material.allocatedQuantity * yieldRatio;
+                const incrementalQuantity = Math.max(0, scaledRequired - material.actualConsumedQuantity);
+                return {
+                    component_product_id: material.productId,
+                    required: material.allocatedQuantity,
+                    quantity: incrementalQuantity,
+                    component_name: material.productName
+                };
+            });
 
             await postFinishedGoodsReceipt({
                 joId: joNo,
@@ -806,7 +843,6 @@ export function useManufacturingQA() {
 
             refreshAll();
         } catch (e: any) {
-            console.error("Yield closing error:", e);
             toast.error(e.message || "An error occurred during finished goods yield closing.");
         } finally {
             setActionLoading(false);
@@ -1078,7 +1114,11 @@ export function useManufacturingQA() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        yieldMaterials,
+        yieldMaterialsLoading,
+        yieldMaterialsError,
         handleOpenYieldDialog,
+        handleRetryYieldMaterials,
         handleSubmitYieldClosing,
         handleReprintReceipt,
 

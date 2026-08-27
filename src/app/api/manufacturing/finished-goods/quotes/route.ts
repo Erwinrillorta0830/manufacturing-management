@@ -74,7 +74,10 @@ export async function PATCH(request: Request) {
             body: JSON.stringify({ status })
         });
 
-        if (!res.ok) throw new Error(`Failed to update quotation status: ${res.status}`);
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+        }
 
         return NextResponse.json({ success: true });
     } catch (e) {

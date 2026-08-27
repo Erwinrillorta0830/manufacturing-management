@@ -27,8 +27,12 @@ export default function QAReceivingModule() {
         handleReceiptNumberChange,
         receiptDate,
         handleReceiptDateChange,
-        receiptType,
-        setReceiptType,
+        supplierDocumentTypes,
+        loadingSupplierDocumentTypes,
+        supplierDocumentTypeError,
+        supplierDocumentTypeId,
+        handleSupplierDocumentTypeChange,
+        quantityStatus,
         processOverDelivery,
         setProcessOverDelivery,
         overDeliveryLines,
@@ -47,7 +51,7 @@ export default function QAReceivingModule() {
         handleCommitReceiving,
         handleForceReceived,
         forceReceivedSubmitting,
-        handleFinishCommitted,
+        handleFinishCommitted: finishCommittedInspection,
         validatingInspection,
         previewError,
         qaSubmissionBlockReason,
@@ -90,6 +94,25 @@ export default function QAReceivingModule() {
         handleCancelQuarantineDisposition
     } = useQAReceiving();
 
+    const [isQueueCollapsed, setIsQueueCollapsed] = React.useState(false);
+    const queueIsCollapsed = Boolean(selectedShipment && isQueueCollapsed);
+
+    React.useEffect(() => {
+        if (!selectedShipment) {
+            setIsQueueCollapsed(false);
+        }
+    }, [selectedShipment]);
+
+    const handleClearInspection = React.useCallback(() => {
+        setIsQueueCollapsed(false);
+        clearInspection();
+    }, [clearInspection]);
+
+    const handleFinishCommitted = React.useCallback(() => {
+        setIsQueueCollapsed(false);
+        finishCommittedInspection();
+    }, [finishCommittedInspection]);
+
     return (
         <div className="space-y-6">
             {/* Header and Tabs */}
@@ -108,7 +131,7 @@ export default function QAReceivingModule() {
                     <button
                         onClick={() => {
                             setActiveTab("inbound");
-                            clearInspection();
+                            handleClearInspection();
                         }}
                         className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
                             activeTab === "inbound"
@@ -139,7 +162,7 @@ export default function QAReceivingModule() {
                     <button
                         onClick={() => {
                             setActiveTab("quarantine");
-                            clearInspection();
+                            handleClearInspection();
                             void loadQuarantine();
                         }}
                         className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -159,13 +182,15 @@ export default function QAReceivingModule() {
 
             {/* TAB 1: Inbound QA Queue */}
             {activeTab === "inbound" && (
-                <div className="grid gap-6 md:grid-cols-3">
-                    {/* Left 1/3: Active Shipments waiting for inspection */}
-                    <div className={selectedShipment ? "hidden md:block" : "block col-span-1"}>
+                <div className="flex min-w-0 flex-col gap-6 md:flex-row md:items-stretch">
+                    {/* Left: Active Shipments waiting for inspection */}
+                    <div className={`w-full shrink-0 ${selectedShipment ? "hidden md:block" : "block"} ${queueIsCollapsed ? "md:w-10" : "md:w-80"}`}>
                         <InboundShipmentsList
                             loadingShipments={loadingShipments}
                             filteredShipments={filteredShipments}
                             selectedShipment={selectedShipment}
+                            isCollapsed={queueIsCollapsed}
+                            onToggleCollapse={() => setIsQueueCollapsed(prev => !prev)}
                             showReceived={showReceived}
                             setShowReceived={setShowReceived}
                             onSelectShipment={handleSelectShipment}
@@ -180,8 +205,8 @@ export default function QAReceivingModule() {
                         />
                     </div>
 
-                    {/* Right 2/3: Cargo Inspect details form */}
-                    <div className={`md:col-span-2 border rounded-xl bg-card overflow-hidden max-h-[85dvh] md:max-h-[75dvh] flex flex-col ${
+                    {/* Right: Cargo Inspect details form */}
+                    <div className={`min-w-0 flex-1 border rounded-xl bg-card overflow-hidden max-h-[85dvh] md:max-h-[75dvh] flex flex-col ${
                         selectedShipment ? "block" : "hidden md:flex"
                     }`}>
                         {selectedShipment ? (
@@ -202,8 +227,12 @@ export default function QAReceivingModule() {
                                     onReceiptNumberChange={handleReceiptNumberChange}
                                     receiptDate={receiptDate}
                                     onReceiptDateChange={handleReceiptDateChange}
-                                    receiptType={receiptType}
-                                    setReceiptType={setReceiptType}
+                                    supplierDocumentTypes={supplierDocumentTypes}
+                                    loadingSupplierDocumentTypes={loadingSupplierDocumentTypes}
+                                    supplierDocumentTypeError={supplierDocumentTypeError}
+                                    supplierDocumentTypeId={supplierDocumentTypeId}
+                                    onSupplierDocumentTypeChange={handleSupplierDocumentTypeChange}
+                                    quantityStatus={quantityStatus}
                                     processOverDelivery={processOverDelivery}
                                     setProcessOverDelivery={setProcessOverDelivery}
                                     overDeliveryLines={overDeliveryLines}
@@ -225,7 +254,7 @@ export default function QAReceivingModule() {
                                     handleUpdateQaReading={handleUpdateQaReading}
                                     handleSubmitInspection={handleSubmitInspection}
                                     onReviewPreview={() => setPreviewOpen(true)}
-                                    onCancel={clearInspection}
+                                    onCancel={handleClearInspection}
                                     onForceReceived={handleForceReceived}
                                     forceReceivedSubmitting={forceReceivedSubmitting}
                                 />

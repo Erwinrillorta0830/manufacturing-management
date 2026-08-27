@@ -20,18 +20,46 @@ interface DirectusMaterial {
 
 interface DirectusAllocation {
     allocation_id?: number;
+    jo_materials_reservation_id?: number;
     id?: number;
     job_order_id?: number | { job_order_id?: number };
+    branch_id?: number;
     jo_material_id?: number;
     product_id?: number;
     lot_id?: number;
     batch_no?: string;
     allocated_quantity?: number;
     reserved_quantity?: number;
+    staged_quantity?: number;
     staging_bin?: string;
     reservation_status?: string;
     override_negative?: boolean;
     created_at?: string;
+}
+
+class MaterialStagingReadError extends Error {
+    readonly status = 503;
+}
+
+function isActiveWorkCenter(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value === "boolean") return value;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized !== "0" && normalized !== "false";
+}
+
+interface NormalizedWorkCenter {
+    work_center_id: number;
+    work_center_name: string;
+    is_active: boolean;
+}
+
+function requireDirectusResponse(response: Response | null, collection: string): asserts response is Response {
+    if (!response || !response.ok) {
+        throw new MaterialStagingReadError(
+            `Unable to read ${collection} from Directus. Material staging data is unavailable until the connection and permissions are restored.`
+        );
+    }
 }
 
 export async function GET(request: Request) {
@@ -45,7 +73,6 @@ export async function GET(request: Request) {
         const [
             joRes,
             materialsRes,
-            allocationsRes,
             reservationsRes,
             productsRes,
             workCentersRes,
@@ -56,20 +83,24 @@ export async function GET(request: Request) {
         ] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_id&fields=work_center_id,work_center_name,is_active`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&limit=-1&sort=branch_name&fields=id,branch_name,branch_code`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&sort=-movement_id`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,expiry_date,received_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=*,job_order_id.product_id,job_order_id.job_order_no`, { headers, cache: "no-store" }).catch(() => null)
         ]);
 
+        requireDirectusResponse(joRes, "Job Orders");
+        requireDirectusResponse(materialsRes, "Job Order materials");
+        requireDirectusResponse(reservationsRes, "Job Order material reservations");
+        requireDirectusResponse(productsRes, "Products");
+        requireDirectusResponse(movementsRes, "Inventory movements");
+
         const rawJOs = joRes.ok ? (await joRes.json()).data || [] : [];
         const rawMaterials: DirectusMaterial[] = materialsRes && materialsRes.ok ? (await materialsRes.json()).data || [] : [];
-        const rawAllocations: DirectusAllocation[] = allocationsRes && allocationsRes.ok ? (await allocationsRes.json()).data || [] : [];
-        const rawReservations = reservationsRes && reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
+        const rawReservations: DirectusAllocation[] = reservationsRes && reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
         const rawProducts = productsRes.ok ? (await productsRes.json()).data || [] : [];
         const rawWorkCenters = workCentersRes && workCentersRes.ok ? (await workCentersRes.json()).data || [] : [];
         const rawBranches = branchesRes && branchesRes.ok ? (await branchesRes.json()).data || [] : [];
@@ -88,10 +119,20 @@ export async function GET(request: Request) {
             });
         });
 
-        const workCenterMap = new Map<number, string>();
-        rawWorkCenters.forEach((wc: { work_center_id: number; work_center_name: string }) => {
-            workCenterMap.set(Number(wc.work_center_id), wc.work_center_name);
+        const normalizedWorkCenters: NormalizedWorkCenter[] = rawWorkCenters
+            .map((wc: { work_center_id?: number; work_center_name?: string; is_active?: unknown }) => ({
+                work_center_id: Number(wc.work_center_id),
+                work_center_name: wc.work_center_name || `Work Center #${wc.work_center_id}`,
+                is_active: isActiveWorkCenter(wc.is_active)
+            }))
+            .filter((wc: NormalizedWorkCenter) => wc.work_center_id > 0);
+        const workCenterMap = new Map<number, (typeof normalizedWorkCenters)[number]>();
+        normalizedWorkCenters.forEach((wc) => {
+            workCenterMap.set(wc.work_center_id, wc);
         });
+        const fallbackWorkCenter = normalizedWorkCenters
+            .filter((wc) => wc.is_active)
+            .sort((left, right) => left.work_center_id - right.work_center_id)[0] || null;
 
         const branchMap = new Map<number, { id: number; branchName: string; branchCode?: string }>();
         rawBranches.forEach((b: { id: number; branch_name: string; branch_code?: string }) => {
@@ -106,8 +147,15 @@ export async function GET(request: Request) {
         // key: `${productId}:${batchNo}` -> number
         const stockByProductBatch = new Map<string, number>();
         const stockByProduct = new Map<number, number>();
+        const lotStockByBranchProductBatch = new Map<string, { lotId: number; batchNo: string; quantity: number }>();
 
-        rawMovements.forEach((m: { product_id?: number | { product_id?: number }; batch_no?: string; quantity?: number }) => {
+        rawMovements.forEach((m: {
+            product_id?: number | { product_id?: number };
+            branch_id?: number;
+            lot_id?: number;
+            batch_no?: string;
+            quantity?: number;
+        }) => {
             const pId = typeof m.product_id === "object" ? Number(m.product_id?.product_id) : Number(m.product_id);
             const batchNo = (m.batch_no || "LOT-N/A").trim() || "LOT-N/A";
             const qty = Number(m.quantity || 0);
@@ -115,6 +163,53 @@ export async function GET(request: Request) {
                 const key = `${pId}:${batchNo}`;
                 stockByProductBatch.set(key, (stockByProductBatch.get(key) || 0) + qty);
                 stockByProduct.set(pId, (stockByProduct.get(pId) || 0) + qty);
+
+                const branchId = Number(m.branch_id || 0);
+                const lotId = Number(m.lot_id || 0);
+                if (branchId && lotId) {
+                    const lotKey = `${branchId}:${pId}:${batchNo.toLowerCase()}`;
+                    const currentLot = lotStockByBranchProductBatch.get(lotKey);
+                    lotStockByBranchProductBatch.set(lotKey, {
+                        lotId,
+                        batchNo,
+                        quantity: (currentLot?.quantity || 0) + qty
+                    });
+                }
+            }
+        });
+
+        // Recover the actual destination for staged transfers from the movement audit trail.
+        // Older rows may contain FLOOR-STAGING-WC01, so only the current explicit work-center
+        // audit format is trusted as an override of the resolved Job Order destination.
+        const stagedDestinationByMaterialBatch = new Map<string, string>();
+        rawMovements.forEach((m: { batch_no?: string; quantity?: number; remarks?: string }) => {
+            if (Number(m.quantity || 0) <= 0) return;
+            const remarks = String(m.remarks || "");
+            const workCenterMatch = remarks.match(/work_center_id=(\d+)/i);
+            const targetBinMatch = remarks.match(/target_bin=([^;]+)/i);
+            const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
+            if (!workCenterMatch || !targetBinMatch || !materialMatch) return;
+
+            const workCenterId = Number(workCenterMatch[1]);
+            const targetBin = targetBinMatch[1].trim();
+            if (targetBin !== `FLOOR-STAGING-${workCenterId}`) return;
+
+            const batchNo = String(m.batch_no || "").trim();
+            if (!batchNo) return;
+            const key = `${Number(materialMatch[1])}:${batchNo.toLowerCase()}`;
+            if (!stagedDestinationByMaterialBatch.has(key)) {
+                stagedDestinationByMaterialBatch.set(key, targetBin);
+            }
+        });
+
+        const defaultLotByBranchProduct = new Map<string, { lotId: number; batchNo: string; quantity: number }>();
+        lotStockByBranchProductBatch.forEach((lot, lotKey) => {
+            if (lot.quantity <= 0) return;
+            const keyParts = lotKey.split(":");
+            const branchProductKey = `${keyParts[0]}:${keyParts[1]}`;
+            const currentLot = defaultLotByBranchProduct.get(branchProductKey);
+            if (!currentLot || lot.quantity > currentLot.quantity) {
+                defaultLotByBranchProduct.set(branchProductKey, lot);
             }
         });
 
@@ -151,40 +246,92 @@ export async function GET(request: Request) {
             return Number(val);
         };
 
-        // Combine reservations and allocations
-        const allAllocationsByJo = new Map<number, DirectusAllocation[]>();
-        rawAllocations.forEach((alloc) => {
-            const joId = getJoId(alloc.job_order_id);
-            if (joId) {
-                const list = allAllocationsByJo.get(joId) || [];
-                list.push(alloc);
-                allAllocationsByJo.set(joId, list);
-            }
+        const materialById = new Map<number, DirectusMaterial>();
+        rawMaterials.forEach((material) => {
+            const materialId = Number(material.jo_material_id || material.id || 0);
+            if (materialId) materialById.set(materialId, material);
         });
 
+        const stagingMovementByKey = new Map<string, { quantity: number; lotId: number; stagingBin: string | null; negativeOverride: boolean }>();
+        rawMovements.forEach((movement: {
+            source_document_id?: number;
+            branch_id?: number;
+            product_id?: number | { product_id?: number };
+            lot_id?: number;
+            batch_no?: string;
+            transaction_type_id?: number;
+            quantity?: number;
+            remarks?: string;
+        }) => {
+            const remarks = String(movement.remarks || "");
+            const productId = typeof movement.product_id === "object"
+                ? Number(movement.product_id?.product_id)
+                : Number(movement.product_id);
+            const lotId = Number(movement.lot_id || 0);
+            const jobOrderId = Number(movement.source_document_id || 0);
+            const branchId = Number(movement.branch_id || 0);
+            const batchNo = String(movement.batch_no || "").trim().toLowerCase();
+            const quantity = Number(movement.quantity || 0);
+            if (
+                !remarks.includes("[MM-MATERIAL-STAGING]") ||
+                Number(movement.transaction_type_id) !== 4 ||
+                quantity <= 0 ||
+                !productId ||
+                !lotId ||
+                !jobOrderId ||
+                !branchId ||
+                !batchNo
+            ) return;
+
+            const key = `${jobOrderId}:${branchId}:${productId}:${batchNo}`;
+            const targetBin = remarks.match(/target_bin=([^;|]+)/i)?.[1]?.trim() || null;
+            const current = stagingMovementByKey.get(key);
+            stagingMovementByKey.set(key, {
+                quantity: (current?.quantity || 0) + quantity,
+                lotId: lotId || current?.lotId || 0,
+                stagingBin: targetBin || current?.stagingBin || null,
+                negativeOverride: Boolean(current?.negativeOverride || remarks.includes("[NEGATIVE OVERRIDE]"))
+            });
+        });
+
+        // Combine reservations and allocations
+        const allAllocationsByJo = new Map<number, DirectusAllocation[]>();
         rawReservations.forEach((res: {
+            jo_materials_reservation_id?: number;
             id?: number;
-            job_order_id?: number | { job_order_id?: number };
-            jo_material_id?: number | { job_order_id?: number };
+            branch_id?: number;
+            jo_material_id?: number;
             product_id?: number;
             batch_no?: string;
             reserved_quantity?: number;
-            staging_bin?: string;
-            reservation_status?: string;
+            created_at?: string;
         }) => {
-            const joId = getJoId(res.job_order_id) || (typeof res.jo_material_id === "object" ? getJoId(res.jo_material_id?.job_order_id) : 0);
+            const materialId = Number(res.jo_material_id || 0);
+            const material = materialById.get(materialId);
+            const joId = getJoId(material?.job_order_id);
+            const productId = Number(res.product_id || material?.product_id || 0);
+            const branchId = Number(res.branch_id || 0);
+            const batchNo = String(res.batch_no || "").trim();
+            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${batchNo.toLowerCase()}`);
+            const lot = lotStockByBranchProductBatch.get(`${branchId}:${productId}:${batchNo.toLowerCase()}`);
+            const isHard = Boolean(stagingMovement && stagingMovement.quantity > 0);
             if (joId) {
                 const list = allAllocationsByJo.get(joId) || [];
                 list.push({
-                    allocation_id: res.id,
+                    allocation_id: res.jo_materials_reservation_id || res.id,
                     job_order_id: joId,
-                    jo_material_id: typeof res.jo_material_id === "number" ? res.jo_material_id : undefined,
-                    product_id: Number(res.product_id),
-                    batch_no: res.batch_no,
+                    branch_id: branchId,
+                    jo_material_id: materialId,
+                    product_id: productId,
+                    lot_id: stagingMovement?.lotId || lot?.lotId || 0,
+                    batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
                     reserved_quantity: Number(res.reserved_quantity || 0),
-                    staging_bin: res.staging_bin || "MAIN-STORE",
-                    reservation_status: res.reservation_status || "SOFT"
+                    staged_quantity: Number(stagingMovement?.quantity || 0),
+                    staging_bin: stagingMovement?.stagingBin || "MAIN-STORE",
+                    reservation_status: isHard ? "HARD" : "SOFT",
+                    override_negative: Boolean(stagingMovement?.negativeOverride),
+                    created_at: res.created_at
                 });
                 allAllocationsByJo.set(joId, list);
             }
@@ -210,13 +357,17 @@ export async function GET(request: Request) {
         }) => {
             const joId = Number(jo.job_order_id || jo.id || 0);
             const joProduct = productMap.get(Number(jo.product_id));
-            const wcName = jo.primary_work_center_id ? (workCenterMap.get(Number(jo.primary_work_center_id)) || `Work Center #${jo.primary_work_center_id}`) : "General Assembly";
+            const primaryWorkCenterId = jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null;
+            const primaryWorkCenter = primaryWorkCenterId ? workCenterMap.get(primaryWorkCenterId) : null;
+            const stagingWorkCenter = primaryWorkCenter?.is_active ? primaryWorkCenter : fallbackWorkCenter;
+            const stagingWorkCenterId = stagingWorkCenter?.work_center_id || null;
+            const wcName = stagingWorkCenter?.work_center_name || "No active work center";
             const branchInfo = jo.branch_id ? branchMap.get(Number(jo.branch_id)) : null;
 
-            // Suggested Floor Staging Bin naming convention: FLOOR-STAGING-[WorkCenterID]
-            const suggestedStagingBin = jo.primary_work_center_id
-                ? `FLOOR-STAGING-${jo.primary_work_center_id}`
-                : `FLOOR-STAGING-WC01`;
+            // The staging bin is derived from the same active work center used by the UI and transfer API.
+            const suggestedStagingBin = stagingWorkCenterId
+                ? `FLOOR-STAGING-${stagingWorkCenterId}`
+                : null;
 
             // Filter materials belonging to this JO
             const joMaterials = rawMaterials.filter((m) => getJoId(m.job_order_id) === joId);
@@ -244,18 +395,23 @@ export async function GET(request: Request) {
                     const onHandLotQty = stockByProductBatch.get(`${mProductId}:${lotNo}`) ?? 0;
                     const resStatus = (al.reservation_status === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING")) ? "HARD" : "SOFT";
                     const isStaged = resStatus === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING");
+                    const allocationStagingBin = al.staging_bin?.trim();
+                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${lotNo.toLowerCase()}`);
                     const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
+                    const stagedQty = Number(al.staged_quantity || 0);
 
                     return {
                         allocation_id: al.allocation_id || al.id,
-                        lot_id: al.lot_id || idx + 1,
+                        lot_id: al.lot_id || 0,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
-                        staged_quantity: isStaged ? allocQty : 0,
+                        staged_quantity: isStaged ? (stagedQty > 0 ? stagedQty : allocQty) : 0,
                         expiry_date: lotMeta?.expiry_date || null,
                         qa_status: lotMeta?.qa_status || "Passed",
                         reservation_status: resStatus as "SOFT" | "HARD",
-                        staging_bin: al.staging_bin || (isStaged ? suggestedStagingBin : "MAIN-STORE"),
+                        staging_bin: isStaged
+                            ? movementStagingBin || suggestedStagingBin || allocationStagingBin || "MAIN-STORE"
+                            : allocationStagingBin || "MAIN-STORE",
                         source_bin: "MAIN-STORE",
                         on_hand_lot_quantity: Math.max(0, onHandLotQty),
                         override_negative: al.override_negative || false,
@@ -265,11 +421,12 @@ export async function GET(request: Request) {
 
                 // If no specific lot allocations exist, synthesize a default allocation from available stock
                 if (allocatedLots.length === 0 && requiredQty > 0) {
-                    const defaultOnHand = stockByProduct.get(mProductId) || 0;
+                    const defaultLot = defaultLotByBranchProduct.get(`${Number(jo.branch_id || 0)}:${mProductId}`);
+                    const defaultOnHand = defaultLot?.quantity ?? stockByProduct.get(mProductId) ?? 0;
                     allocatedLots.push({
                         allocation_id: undefined,
-                        lot_id: 1,
-                        batch_no: `LOT-${mProductId}-MAIN`,
+                        lot_id: defaultLot?.lotId || 0,
+                        batch_no: defaultLot?.batchNo || `LOT-${mProductId}-MAIN`,
                         allocated_quantity: requiredQty,
                         staged_quantity: 0,
                         expiry_date: null,
@@ -294,7 +451,12 @@ export async function GET(request: Request) {
                 const isFullyStaged = totalStagedQty >= requiredQty && requiredQty > 0;
                 if (isFullyStaged) stagedMaterialsCount++;
 
-                const overallResStatus: "SOFT" | "HARD" = (isFullyStaged || allocatedLots.every((l) => l.reservation_status === "HARD")) ? "HARD" : "SOFT";
+                const hasAnyStaged = totalStagedQty > 0;
+                const overallResStatus: "SOFT" | "HARD" | "PARTIAL" = isFullyStaged
+                    ? "HARD"
+                    : hasAnyStaged
+                        ? "PARTIAL"
+                        : "SOFT";
 
                 return {
                     jo_material_id: matId,
@@ -309,7 +471,9 @@ export async function GET(request: Request) {
                     on_hand_quantity: Math.max(0, onHandStock),
                     shortage_quantity: shortageQty,
                     reservation_status: overallResStatus,
-                    staging_bin: isFullyStaged ? suggestedStagingBin : "MAIN-STORE",
+                    staging_bin: isFullyStaged
+                        ? allocatedLots.find((lot) => lot.reservation_status === "HARD")?.staging_bin || suggestedStagingBin || "MAIN-STORE"
+                        : allocatedLots.find((lot) => lot.reservation_status === "HARD")?.staging_bin || "MAIN-STORE",
                     is_staged: isFullyStaged,
                     has_shortage: isItemShort,
                     allocations: allocatedLots
@@ -321,10 +485,11 @@ export async function GET(request: Request) {
                 : 0;
 
             const allStaged = totalMaterialsCount > 0 && stagedMaterialsCount === totalMaterialsCount;
+            const hasAnyStaged = mappedMaterials.some((material) => material.staged_quantity > 0);
 
             const joResStatus: "SOFT" | "HARD" | "PARTIAL" = allStaged
                 ? "HARD"
-                : stagedMaterialsCount > 0
+                : hasAnyStaged || stagedMaterialsCount > 0
                     ? "PARTIAL"
                     : "SOFT";
 
@@ -342,6 +507,7 @@ export async function GET(request: Request) {
                 status: jo.status,
                 primary_work_center_id: jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null,
                 primary_work_center_name: wcName,
+                staging_work_center_id: stagingWorkCenterId,
                 suggested_staging_bin: suggestedStagingBin,
                 shift_option: jo.shift_option || "Shift 1 (Day)",
                 branch_id: jo.branch_id ? Number(jo.branch_id) : null,
@@ -372,11 +538,26 @@ export async function GET(request: Request) {
         }
 
         if (search) {
-            filtered = filtered.filter((j: { job_order_no: string; product_name: string; product_code: string; primary_work_center_name: string }) =>
+            filtered = filtered.filter((j: {
+                job_order_no?: string;
+                product_name?: string;
+                product_code?: string;
+                primary_work_center_name?: string;
+                materials?: Array<{
+                    product_name?: string;
+                    product_code?: string;
+                    allocations?: Array<{ batch_no?: string }>;
+                }>;
+            }) =>
                 j.job_order_no?.toLowerCase().includes(search) ||
                 j.product_name?.toLowerCase().includes(search) ||
                 j.product_code?.toLowerCase().includes(search) ||
-                j.primary_work_center_name?.toLowerCase().includes(search)
+                j.primary_work_center_name?.toLowerCase().includes(search) ||
+                j.materials?.some((m) =>
+                    m.product_name?.toLowerCase().includes(search) ||
+                    m.product_code?.toLowerCase().includes(search) ||
+                    m.allocations?.some((a) => a.batch_no?.toLowerCase().includes(search))
+                )
             );
         }
 
@@ -394,18 +575,14 @@ export async function GET(request: Request) {
             success: true,
             data: filtered,
             stats,
-            workCenters: rawWorkCenters.map((w: { work_center_id: number; work_center_name: string; is_active?: boolean }) => ({
-                work_center_id: Number(w.work_center_id),
-                work_center_name: w.work_center_name,
-                is_active: w.is_active !== undefined ? Boolean(Number(w.is_active)) : true
-            })),
+            workCenters: normalizedWorkCenters,
             branches: Array.from(branchMap.values())
         });
     } catch (e) {
         console.error("[Material Staging GET API] Error:", e);
         return NextResponse.json(
             { success: false, error: (e as Error).message || "Failed to fetch material staging data" },
-            { status: 500 }
+            { status: e instanceof MaterialStagingReadError ? e.status : 500 }
         );
     }
 }
