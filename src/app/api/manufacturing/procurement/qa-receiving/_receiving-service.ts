@@ -28,6 +28,16 @@ import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
+import {
+    allocationCapacityKey,
+    capacityAuditsEqual,
+    evaluateLotCapacities,
+    normalizeLotCapacity,
+    readLotCapacityAudit,
+    type LotCapacityAllocationAudit,
+    type LotCapacityAllocationInput,
+    type LotCapacityAudit
+} from "../../qa-receiving/_lot-capacity";
 
 class ReceivingError extends Error {
     constructor(message: string, readonly status: number) {
@@ -79,6 +89,9 @@ interface FinalReceivingMovement {
     batchNumber: string;
     manufacturingDate: string | null;
     expirationDate: string | null;
+    capacityOverride: boolean;
+    capacityAvailableBeforeReceipt: number | null;
+    capacityOverrideQuantity: number;
 }
 
 interface PendingMovement extends Omit<FinalReceivingMovement, "movementId"> {
@@ -133,7 +146,7 @@ async function loadMovementRows(receivingLineIds: number[]) {
     if (receivingLineIds.length === 0) return [];
     const params = new URLSearchParams({
         "filter[source_document_id][_in]": receivingLineIds.join(","),
-        fields: "movement_id,source_document_id,branch_id,transaction_type_id,lot_id,batch_no,manufacturing_date,expiry_date,quantity,version_id",
+        fields: "movement_id,source_document_id,branch_id,transaction_type_id,lot_id,batch_no,manufacturing_date,expiry_date,quantity,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity",
         limit: "-1"
     });
     const response = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${params.toString()}`, {
@@ -146,7 +159,7 @@ async function loadMovementRows(receivingLineIds: number[]) {
 
 function finalizeMovements(pending: PendingMovement[], rows: Record<string, unknown>[]): FinalReceivingMovement[] | null {
     if (rows.length !== pending.length) return null;
-    const movementByKey = new Map<string, number>();
+    const movementByKey = new Map<string, { movementId: number; audit: LotCapacityAudit }>();
     for (const row of rows) {
         if (row.version_id !== null) return null;
         const movementId = Number(row.movement_id);
@@ -158,12 +171,15 @@ function finalizeMovements(pending: PendingMovement[], rows: Record<string, unkn
             quantity: Number(row.quantity),
             batchNumber: String(row.batch_no || "")
         });
-        if (!Number.isSafeInteger(movementId) || movementId <= 0 || movementByKey.has(key)) return null;
-        movementByKey.set(key, movementId);
+        const audit = readLotCapacityAudit(row);
+        if (!Number.isSafeInteger(movementId) || movementId <= 0 || movementByKey.has(key) || !audit) return null;
+        movementByKey.set(key, { movementId, audit });
     }
     const finalized = pending.map(draft => {
-        const movementId = movementByKey.get(movementKey(draft));
-        return movementId ? { ...draft, movementId } : null;
+        const persisted = movementByKey.get(movementKey(draft));
+        return persisted && capacityAuditsEqual(draft, persisted.audit)
+            ? { ...draft, movementId: persisted.movementId }
+            : null;
     });
     return finalized.every((movement): movement is PendingMovement & { movementId: number } => Boolean(movement))
         ? finalized.map(({ payload, ...movement }) => {
@@ -429,45 +445,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (lineItemUpdates.some(item => item.rejected_lot_allocations.some(allocation => !validLotIds.has(allocation.storage_lot_id)))) {
             throw new ReceivingError("One or more rejected inventory storage lots do not exist.", 400);
         }
-        const capacityByLot = new Map(lotRows.map(lot => [
-            Number(lot.lot_id),
-            lot.max_batch_capacity === null || lot.max_batch_capacity === undefined || lot.max_batch_capacity === ""
-                ? null
-                : Number(lot.max_batch_capacity)
-        ]));
-        const incomingByLot = new Map<number, number>();
-        for (const item of lineItemUpdates) {
-            for (const allocation of normalizeReceivingLotAllocations(
-                Number(item.quantity_accepted),
-                item.accepted_lot_allocations.map(value => ({
-                    storageLotId: value.storage_lot_id,
-                    quantity: value.quantity,
-                    batchNumber: value.batch_no,
-                    manufacturingDate: value.manufacturing_date,
-                    expirationDate: value.expiration_date
-                }))
-            )) {
-                incomingByLot.set(allocation.storageLotId, (incomingByLot.get(allocation.storageLotId) || 0) + allocation.quantity);
-            }
-            for (const allocation of normalizeRejectedLotAllocations(
-                Number(item.quantity_rejected || 0),
-                item.rejected_lot_allocations.map(value => ({
-                    storageLotId: value.storage_lot_id,
-                    quantity: value.quantity,
-                    batchNumber: value.batch_no,
-                    manufacturingDate: value.manufacturing_date,
-                    expirationDate: value.expiration_date
-                }))
-            )) {
-                incomingByLot.set(allocation.storageLotId, (incomingByLot.get(allocation.storageLotId) || 0) + allocation.quantity);
-            }
-        }
-        for (const [lotId, incomingQuantity] of incomingByLot) {
-            const capacity = capacityByLot.get(lotId);
-            if (capacity !== undefined && capacity !== null && Number.isFinite(capacity) && (occupiedByLot.get(lotId) || 0) + incomingQuantity > capacity + 1e-9) {
-                throw new ReceivingError(`Storage lot ${lotId} does not have enough remaining capacity.`, 409);
-            }
-        }
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
         const receiptNumbers = lineItemUpdates.map(item => receiptNumberForLine(referenceNumber, item.line_id));
@@ -645,6 +622,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (!emptyUnassignedLot && lotTypeId !== productTypeId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is assigned to a different Product Type.`, 409);
                 }
+                if (normalizeLotCapacity(lot.max_batch_capacity) === null) {
+                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} has no valid maximum capacity.`, 409);
+                }
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
                 typeSet.add(productTypeId);
                 productTypesByLot.set(allocation.storageLotId, typeSet);
@@ -731,6 +711,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const lineChanges: Array<{ id: number; received: unknown }> = [];
         const assignedLotChanges: Array<{ id: number; previousInventoryTypeId: number | null }> = [];
         const productChanges = new Map<number, { cost_per_unit: unknown; estimated_unit_cost: unknown }>();
+        let capacityAuditsByAllocationKey = new Map<string, LotCapacityAllocationAudit>();
 
         const rollback = async () => {
             for (const [productId, previous] of [...productChanges.entries()].reverse()) {
@@ -754,7 +735,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         try {
         // Re-read lot affinity and occupancy immediately before persistence so
-        // a concurrent receiving operation cannot overfill or repurpose a lot.
+        // a concurrent receiving operation cannot repurpose a lot and the
+        // capacity override is calculated from the current ledger state.
         const allocationLotIds = [...productTypesByLot.keys()];
         if (allocationLotIds.length > 0) {
             const [freshLotsResponse, freshMovementResponse] = await Promise.all([
@@ -764,6 +746,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (!freshLotsResponse.ok || !freshMovementResponse.ok) throw new ReceivingError("Unable to revalidate storage-lot capacity before receiving.", 503);
             const freshLots = ((await freshLotsResponse.json()).data || []) as Array<Record<string, unknown>>;
             const freshOccupied = sumMovementQuantitiesByLot(((await freshMovementResponse.json()).data || []) as Array<Record<string, unknown>>);
+            const freshCapacityByLot = new Map<number, number | null>();
             for (const lotId of allocationLotIds) {
                 const lot = freshLots.find(row => Number(row.lot_id) === lotId);
                 if (!lot) throw new ReceivingError(`Storage lot ${lotId} no longer exists.`, 409);
@@ -771,25 +754,39 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 const expectedTypeId = typeIds && typeIds.size === 1 ? [...typeIds][0] : null;
                 const currentTypeId = relationValueId(lot.inventory_type_id, ["product_type_id", "type_id", "id"]);
                 const occupied = Math.max(0, freshOccupied.get(lotId) || 0);
-                const capacity = lot.max_batch_capacity === null || lot.max_batch_capacity === undefined || lot.max_batch_capacity === ""
-                    ? null
-                    : Number(lot.max_batch_capacity);
                 if (!expectedTypeId || currentTypeId && currentTypeId !== expectedTypeId || !currentTypeId && occupied > 1e-9) {
                     throw new ReceivingError(`Storage lot ${lotId} Product Type changed while receiving was being prepared.`, 409);
                 }
                 if (relationValueId(lot.unit_id, ["unit_id", "id"]) !== uomByLot.get(lotId)) {
                     throw new ReceivingError(`Storage lot ${lotId} UOM changed while receiving was being prepared.`, 409);
                 }
-                const incomingQuantity = incomingByLot.get(lotId) || 0;
-                if (capacity === null || !Number.isFinite(capacity) || capacity <= 0 || occupied + incomingQuantity > capacity + 1e-9) {
-                    throw new ReceivingError(`Storage lot ${lotId} does not have enough remaining capacity.`, 409);
+                const normalizedCapacity = normalizeLotCapacity(lot.max_batch_capacity);
+                if (normalizedCapacity === null) {
+                    throw new ReceivingError(`Storage lot ${lotId} has no valid maximum capacity.`, 409);
                 }
+                freshCapacityByLot.set(lotId, normalizedCapacity);
                 if (!currentTypeId) {
                     const assignResponse = await mutate("lots", lotId, "PATCH", { inventory_type_id: expectedTypeId });
                     if (!assignResponse.ok) throw new ReceivingError(`Storage lot ${lotId} could not be assigned to the receiving Product Type.`, 409);
                     assignedLotChanges.push({ id: lotId, previousInventoryTypeId: null });
                 }
             }
+            const capacityInputs: LotCapacityAllocationInput[] = prepared.flatMap(line => [
+                ...line.acceptedLotAllocations.map((allocation, index) => ({
+                    key: allocationCapacityKey(line.item.line_id, "Passed", index),
+                    lotId: allocation.storageLotId,
+                    quantity: allocation.quantity
+                })),
+                ...line.rejectedLotAllocations.map((allocation, index) => ({
+                    key: allocationCapacityKey(line.item.line_id, "Rejected", index),
+                    lotId: allocation.storageLotId,
+                    quantity: allocation.quantity
+                }))
+            ]);
+            const capacityEvaluations = evaluateLotCapacities(freshCapacityByLot, freshOccupied, capacityInputs);
+            capacityAuditsByAllocationKey = new Map(
+                [...capacityEvaluations.values()].flatMap(evaluation => evaluation.allocations.map(audit => [audit.key, audit] as const))
+            );
         }
 
             commitPhase = "receiving";
@@ -841,7 +838,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     batchNumber: string,
                     manufacturingDate: string | null,
                     expirationDate: string | null,
-                    remarks: string | null
+                    remarks: string | null,
+                    capacityAudit: LotCapacityAllocationAudit
                 ) => {
                     if (!inventoryLotId || quantity <= 0) return;
                     pendingMovements.push({
@@ -858,6 +856,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                         batchNumber,
                         manufacturingDate,
                         expirationDate,
+                        capacityOverride: capacityAudit.capacityOverride,
+                        capacityAvailableBeforeReceipt: capacityAudit.capacityAvailableBeforeReceipt,
+                        capacityOverrideQuantity: capacityAudit.capacityOverrideQuantity,
                         payload: {
                             product_id: line.productId,
                             lot_id: storageLotId,
@@ -871,18 +872,26 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                             version_id: null,
                             quantity,
                             created_by: options.actorUserId,
-                            remarks
+                            remarks,
+                            is_capacity_override: capacityAudit.capacityOverride,
+                            capacity_available_before_receipt: capacityAudit.capacityAvailableBeforeReceipt,
+                            capacity_override_quantity: capacityAudit.capacityOverrideQuantity
                         }
                     });
                 };
-                for (const acceptedAllocation of line.acceptedLotAllocations) {
+                const capacityAuditFor = (kind: "Passed" | "Rejected", index: number) => {
+                    const audit = capacityAuditsByAllocationKey.get(allocationCapacityKey(line.item.line_id, kind, index));
+                    if (!audit) throw new ReceivingError(`Unable to calculate capacity audit for line ${line.item.line_id}.`, 503);
+                    return audit;
+                };
+                for (const [index, acceptedAllocation] of line.acceptedLotAllocations.entries()) {
                     const inventoryLotId = await saveInventory(branchId, acceptedAllocation.storageLotId, acceptedAllocation.quantity, "Passed", null);
-                    addPendingMovement("Passed", inventoryLotId, branchId, acceptedAllocation.storageLotId, passedMovementTypeId, acceptedAllocation.quantity, acceptedAllocation.batchNumber, acceptedAllocation.manufacturingDate, acceptedAllocation.expirationDate, line.item.rejection_reason);
+                    addPendingMovement("Passed", inventoryLotId, branchId, acceptedAllocation.storageLotId, passedMovementTypeId, acceptedAllocation.quantity, acceptedAllocation.batchNumber, acceptedAllocation.manufacturingDate, acceptedAllocation.expirationDate, line.item.rejection_reason, capacityAuditFor("Passed", index));
                 }
                 if (rejectedMovementTypeId) {
-                    for (const rejectedAllocation of line.rejectedLotAllocations) {
+                    for (const [index, rejectedAllocation] of line.rejectedLotAllocations.entries()) {
                         const inventoryLotId = await saveInventory(Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedAllocation.quantity, "Rejected", line.item.rejection_reason);
-                        addPendingMovement("Rejected", inventoryLotId, Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedMovementTypeId, rejectedAllocation.quantity, rejectedAllocation.batchNumber, rejectedAllocation.manufacturingDate, rejectedAllocation.expirationDate, line.item.rejection_reason);
+                        addPendingMovement("Rejected", inventoryLotId, Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedMovementTypeId, rejectedAllocation.quantity, rejectedAllocation.batchNumber, rejectedAllocation.manufacturingDate, rejectedAllocation.expirationDate, line.item.rejection_reason, capacityAuditFor("Rejected", index));
                     }
                 }
                 if (!replacementDispositionId) {
@@ -913,7 +922,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
             commitPhase = "movements";
             movementWriteAttempted = true;
-            const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id`, {
+            const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity`, {
                 method: "POST",
                 headers,
                 body: JSON.stringify(pendingMovements.map(movement => movement.payload))

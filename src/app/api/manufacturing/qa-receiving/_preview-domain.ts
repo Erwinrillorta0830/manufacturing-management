@@ -1,6 +1,11 @@
 import type { QaChecklistItemEvaluation } from "../qa/_purchase-specification-domain";
 import type { ReceivingDisposition } from "../qa/_receiving-evaluation";
 import type { ReceivingLotAllocation } from "./_lot-allocation";
+import {
+    allocationCapacityKey,
+    type LotCapacityAllocationAudit,
+    type LotCapacityAudit
+} from "./_lot-capacity";
 import type { ReceivingDocumentTypeOption } from "./_supplier-document-type";
 import type { ReceivingQuantityStatus } from "./_receiving-status";
 
@@ -48,6 +53,9 @@ export interface ReceivingMovementRoute {
     createdBy: number;
     sourceDocumentNo: string;
     remarks: string | null;
+    capacityOverride: boolean;
+    capacityAvailableBeforeReceipt: number | null;
+    capacityOverrideQuantity: number;
     allocationDrafts: ReceivingMrpAllocationDraft[];
     unallocatedQuantity: number;
 }
@@ -86,6 +94,7 @@ export interface ReceivingPreviewResult {
 }
 
 interface RouteInput {
+    lineId: number;
     acceptedQuantity: number;
     acceptedLotAllocations: ReceivingLotAllocation[];
     rejectedLotAllocations?: ReceivingLotAllocation[];
@@ -97,6 +106,7 @@ interface RouteInput {
     rejectionReason: string | null;
     allocationDrafts: ReceivingMrpAllocationDraft[];
     unallocatedQuantity: number;
+    capacityAuditsByAllocationKey: ReadonlyMap<string, LotCapacityAllocationAudit>;
 }
 
 export function buildMrpAllocationDrafts(
@@ -140,6 +150,14 @@ export function buildReceivingRoutes(
         createdBy: input.createdBy,
         sourceDocumentNo: input.sourceDocumentNo
     } as const;
+    const capacityAudit = (kind: "Passed" | "Rejected", index: number): LotCapacityAudit => {
+        const audit = input.capacityAuditsByAllocationKey.get(allocationCapacityKey(input.lineId, kind, index));
+        return {
+            capacityOverride: audit?.capacityOverride || false,
+            capacityAvailableBeforeReceipt: audit?.capacityAvailableBeforeReceipt ?? null,
+            capacityOverrideQuantity: audit?.capacityOverrideQuantity || 0
+        };
+    };
     const routes: ReceivingMovementRoute[] = [];
 
     if (input.acceptedQuantity > 0) {
@@ -158,6 +176,7 @@ export function buildReceivingRoutes(
                 manufacturingDate: allocation.manufacturingDate,
                 expiryDate: allocation.expirationDate,
                 remarks: input.remarks,
+                ...capacityAudit("Passed", index),
                 allocationDrafts: index === 0 ? input.allocationDrafts : [],
                 unallocatedQuantity: index === 0 ? input.unallocatedQuantity : 0
             });
@@ -170,7 +189,7 @@ export function buildReceivingRoutes(
         const rejectedLotAllocations = input.rejectedLotAllocations?.length
             ? input.rejectedLotAllocations
             : [];
-        rejectedLotAllocations.forEach(allocation => {
+        rejectedLotAllocations.forEach((allocation, index) => {
             routes.push({
                 ...shared,
                 kind: "Rejected",
@@ -184,6 +203,7 @@ export function buildReceivingRoutes(
                 manufacturingDate: allocation.manufacturingDate,
                 expiryDate: allocation.expirationDate,
                 remarks: input.rejectionReason || input.remarks,
+                ...capacityAudit("Rejected", index),
                 allocationDrafts: [],
                 unallocatedQuantity: 0
             });
