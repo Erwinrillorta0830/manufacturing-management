@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { decodeJwtPayload } from "@/lib/auth-utils";
-import { normalizeDisbursement, getLineItems, getUserMap, PayableRow, DisbursementRow, resolveEncoderId, getCoaMap, getDivisionMap, getBankMap, relationId, loadNormalizedDisbursement } from "../../route";
+import { relationId, normalizeDisbursement } from "@/modules/manufacturing-management/financial-management/cash-issuance/services/disbursement.helpers";
+import { getLineItems, getUserMap, resolveEncoderId, getCoaMap, getDivisionMap, getBankMap, loadNormalizedDisbursement } from "@/modules/manufacturing-management/financial-management/cash-issuance/services/disbursement.repo";
+import type { PayableRow, DisbursementRow, PaymentRow } from "@/modules/manufacturing-management/financial-management/cash-issuance/services/disbursement.types";
 import { findUnpostedPurchaseOrderReferences } from "../../_purchase-order-eligibility";
 import { findVatSplitDivisionError } from "../../_payable-split-integrity";
 import { acquireMemoCapLock, refreshSupplierMemoStatuses, validateSupplierMemoCaps } from "../../_memo-cap-integrity";
@@ -165,7 +167,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         const isReplay = currentStatus === status ||
             (status === "Submitted" && currentStatus === "Approved" && Number(currentDis.total_amount) < 1000);
         if (isReplay) {
-            return NextResponse.json(await loadNormalizedDisbursement(currentDis, token));
+            return NextResponse.json(await loadNormalizedDisbursement(currentDis));
         }
 
         // Immutability Enforcement: block modifications if isPosted = 1
@@ -198,8 +200,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
         // 2. Fetch line items to calculate double-entry debits/credits balance
         const lineItems = await getLineItems([id]);
-        const payables = lineItems.payables.get(id) || [];
-        const payments = lineItems.payments.get(id) || [];
+        const payables = (lineItems.payables.get(id) || []) as PayableRow[];
+        const payments = (lineItems.payments.get(id) || []) as PaymentRow[];
         const coaMap = await getCoaMap();
         const bankMap = await getBankMap();
 
@@ -469,9 +471,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             // Removed p.released_by
         });
 
-        const userMap = await getUserMap(token, userIdsToFetch);
+        const userMap = await getUserMap(userIdsToFetch);
         const divisionMap = await getDivisionMap();
-        const normalized = normalizeDisbursement(updatedDis, lineItems.payables, lineItems.payments, userMap, coaMap, divisionMap, bankMap);
+        const normalized = normalizeDisbursement(updatedDis, payables, payments, userMap, coaMap, divisionMap, bankMap);
 
         return NextResponse.json(normalized);
 

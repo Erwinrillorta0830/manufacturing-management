@@ -24,7 +24,11 @@ export function addSalesOrderFilters(params: URLSearchParams, filters: {
     dateTo?: string;
 }) {
     if (filters.status && filters.status.toLowerCase() !== "all" && filters.status.toLowerCase() !== "all status") {
-        params.set("filter[order_status][_eq]", filters.status);
+        if (filters.status.includes(",")) {
+            params.set("filter[order_status][_in]", filters.status);
+        } else {
+            params.set("filter[order_status][_eq]", filters.status);
+        }
     }
     if (filters.search) {
         params.set("filter[_or][0][order_no][_icontains]", filters.search);

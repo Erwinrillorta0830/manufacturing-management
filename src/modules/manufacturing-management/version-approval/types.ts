@@ -26,6 +26,7 @@ export interface VersionApprovalItem {
     status: ApprovalStatus;
     rejection_reason?: string | null;
     revision_notes?: string | null;
+    remarks?: string | null;
     base_version_id?: number | null;
     approved_by_name?: string | null;
 }
