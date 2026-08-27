@@ -13,6 +13,48 @@ export interface ExpenseTypeOption {
     label: string;
 }
 
+export interface PurchaseOrderOption {
+    purchase_order_id?: number;
+    shipment_id?: number;
+    id?: number;
+    reference_number?: string;
+    purchase_order_no?: string;
+    supplier_name?: string | {
+        id?: number;
+        supplier_name?: string;
+        is_foreign?: number | boolean;
+        default_currency?: string;
+        country?: string;
+    } | null;
+    is_posted?: number | boolean;
+    is_posted_amounts?: number | boolean;
+    inventory_status?: number | null;
+    payment_status?: number | null;
+    status?: string | null;
+    is_import?: number;
+    currency_code?: string;
+    exchange_rate?: number | string;
+    total_amount?: number | string;
+    total_php_value?: number | string;
+    total_foreign_currency?: number | string;
+    [key: string]: unknown;
+}
+
+export interface PurchaseAmountLandingRow {
+    purchaseOrderId: number;
+    purchaseOrderNo: string;
+    supplierName: string;
+    purchaseType: "FOREIGN IMPORT" | "LOCAL PURCHASE";
+    currencyCode: string;
+    totalAmountPhp: number;
+    totalForeignCurrency: number;
+    status: "Awaiting Posting" | "Posted & Capitalized";
+    isPosted: boolean;
+    canEdit: boolean;
+    canViewLedger: boolean;
+    sourceOrder: PurchaseOrderOption;
+}
+
 export interface POLineItem {
     purchase_order_product_id: number;
     product_id: number | {
