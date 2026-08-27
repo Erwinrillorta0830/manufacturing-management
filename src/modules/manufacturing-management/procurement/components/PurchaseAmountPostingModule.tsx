@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
     AlertTriangle,
     ArrowLeft,
@@ -99,10 +99,7 @@ export default function PurchaseAmountPostingModule({
     const ruleReady = Boolean(allocationRule);
     const expensesReady = !hasInvalidExpenseRows;
     const stepState = (available: boolean, complete: boolean): StepState => !available ? "Locked" : complete ? "Complete" : "Ready";
-
-    useEffect(() => {
-        if (selectedShipment && view === "landing") setView("editing");
-    }, [selectedShipment, view]);
+    const activeView = view === "landing" && selectedShipment ? "editing" : view;
 
     const handleEdit = (order: PurchaseAmountLandingRow) => {
         handleSelectPO(order.sourceOrder);
@@ -136,9 +133,9 @@ export default function PurchaseAmountPostingModule({
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
                 <div>
                     <h2 className="flex items-center gap-2 text-lg font-bold"><Calculator className="h-5 w-5 text-primary" />Purchase Amount Posting &amp; Landed Cost Engine</h2>
-                    <p className="text-xs text-muted-foreground">{view === "editing" ? "Complete the sequential landed-cost controls before posting and locking costs." : "Review purchase orders in one landing page and open editing or audit details from the status action."}</p>
+                    <p className="text-xs text-muted-foreground">{activeView === "editing" ? "Complete the sequential landed-cost controls before posting and locking costs." : "Review purchase orders in one landing page and open editing or audit details from the status action."}</p>
                 </div>
-                {view === "editing" && selectedShipment && (
+                {activeView === "editing" && selectedShipment && (
                     <div className="flex flex-wrap items-center justify-end gap-2">
                         <button type="button" onClick={handleBackToLanding} aria-label="Back to Purchase Amount landing page" className="inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Landing Page</button>
                         <div className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${isForeignPO ? "border-amber-500/20 bg-amber-500/10 text-amber-600" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"}`}>
@@ -151,7 +148,7 @@ export default function PurchaseAmountPostingModule({
                 )}
             </div>
 
-            {view === "editing" ? (
+            {activeView === "editing" ? (
                 <div className="space-y-4">
                     {errorMessage && <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-xs font-semibold text-red-600"><AlertTriangle className="h-4 w-4 shrink-0" /><span>{errorMessage}</span></div>}
                     {successMessage && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage}</span></div>}
@@ -189,7 +186,7 @@ export default function PurchaseAmountPostingModule({
                 <>
                     {successMessage && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage}</span></div>}
                     <PostedPOLedgerTable orders={landingRows} loading={loading} errorMessage={errorMessage} onEdit={handleEdit} onViewLedger={handleViewLedger} />
-                    {view === "audit" && auditOrder && <PurchaseAmountAuditDrawer order={auditOrder} onClose={handleCloseAudit} />}
+                    {activeView === "audit" && auditOrder && <PurchaseAmountAuditDrawer order={auditOrder} onClose={handleCloseAudit} />}
                 </>
             )}
         </div>
