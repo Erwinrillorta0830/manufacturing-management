@@ -91,6 +91,8 @@ export function buildProductCostUpdates(
     allocationOutput: HybridAllocationEngineOutput | null,
     _exchangeRate: number
 ): ProductCostUpdate[] {
+    // Kept in the compatibility signature; landed costs are already PHP-denominated.
+    void _exchangeRate;
     const totals = new Map<number, { quantity: number; cost: number }>();
 
     for (const item of lineItems) {

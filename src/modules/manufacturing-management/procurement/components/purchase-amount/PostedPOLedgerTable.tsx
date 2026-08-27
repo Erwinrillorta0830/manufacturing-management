@@ -121,7 +121,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                     <div>
                         <div className="text-[11px] font-bold text-muted-foreground uppercase">Total Posted Value (PHP)</div>
                         <div className="text-lg font-black font-mono">
-                            â‚±{totalPostedValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            PHP {totalPostedValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                     </div>
                 </div>
@@ -206,7 +206,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                                 : "1.0000"}
                                         </td>
                                         <td className="p-3 text-right font-mono font-bold text-emerald-600">
-                                            â‚±{totalPhp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            PHP {totalPhp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </td>
                                         <td className="p-3 text-center">
                                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
@@ -344,7 +344,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                                                 <tr key={idx}>
                                                                     <td className="p-2.5 font-semibold">{title}</td>
                                                                     <td className="p-2.5 text-right font-mono font-bold text-emerald-600">
-                                                                        â‚±{Number(exp.amount).toFixed(2)}
+                                                                        PHP {Number(exp.amount).toFixed(2)}
                                                                     </td>
                                                                 </tr>
                                                             );
@@ -415,4 +415,3 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
         </div>
     );
 }
-

@@ -272,7 +272,7 @@ export function usePurchaseAmountPosting(
             hasMissingWeight: false,
             missingWeightItems: []
         };
-    }, [lineItems, landedExpenses, isForeignPO, allocationRule]);
+    }, [lineItems, landedExpenses, allocationRule]);
 
     const handleAddExpenseRow = () => {
         const defaultCoa = chartOfAccounts[0]?.coa_id || chartOfAccounts[0]?.id || 0;
