@@ -181,6 +181,10 @@ export interface ProductItem {
     productId: number;
     productName: string;
     skuCode: string;
+    unitCost?: number;
+    cost_per_unit?: number;
+    price_per_unit?: number;
+    estimated_unit_cost?: number;
 }
 
 export interface FefoPriorityInfo {
@@ -211,3 +215,51 @@ export interface FefoAllocationResult {
     fullyAllocated: boolean;
     allocations: FefoAllocationItem[];
 }
+
+// ─── Inventory Movement Types (/api/mm-inventory-movements/all) ─────
+
+export interface InventoryMovement {
+    movementKey?: string;
+    transactionType: string;
+    movementDirection: "IN" | "OUT" | string;
+    sourceModule: string;
+    referenceId?: number;
+    referenceDetailId?: number;
+    referenceNo: string;
+    transactionDate: string;
+    postedAt?: string;
+    postedBy?: number;
+    branchId?: number;
+    inventoryLotId?: number;
+    lotId?: number;
+    lotName?: string;
+    productId: number;
+    productCode: string;
+    productName: string;
+    productTypeId?: number;
+    productTypeName?: string;
+    unitId?: number;
+    unitName?: string;
+    batchNo: string;
+    manufacturingDate?: string | null;
+    expirationDate?: string | null;
+    inventoryCondition: string;
+    quantityIn: number;
+    quantityOut: number;
+    unitCost: number;
+    differenceCost: number;
+    remarks?: string | null;
+    stockType?: string | null;
+    sourceStatus?: string;
+    displayNumber?: number;
+}
+
+export interface InventoryMovementFilters {
+    searchQuery: string;
+    direction: "ALL" | "IN" | "OUT";
+    transactionType: string;
+    lotId: number | "ALL";
+    productId: number | "ALL";
+    branchId?: number | "ALL";
+}
+

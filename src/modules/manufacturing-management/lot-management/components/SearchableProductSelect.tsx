@@ -167,11 +167,18 @@ export function SearchableProductSelect({
                                         />
                                         <span className="truncate font-medium">{p.productName}</span>
                                     </div>
-                                    {p.skuCode && (
-                                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground border border-border/50 ml-2">
-                                            {p.skuCode}
-                                        </span>
-                                    )}
+                                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                        {p.unitCost !== undefined && Number(p.unitCost) > 0 && (
+                                            <span className="text-[10px] font-mono text-muted-foreground">
+                                                ₱{Number(p.unitCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        )}
+                                        {p.skuCode && (
+                                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground border border-border/50">
+                                                {p.skuCode}
+                                            </span>
+                                        )}
+                                    </div>
                                 </button>
                             );
                         })

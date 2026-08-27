@@ -7,7 +7,8 @@ import {
     CreateBatchPayload,
     UpdateBatchPayload,
     Branch,
-    ProductItem
+    ProductItem,
+    InventoryMovement
 } from "../types";
 
 export async function fetchBranches(): Promise<Branch[]> {
@@ -141,3 +142,33 @@ export async function deleteBatch(batchId: number): Promise<{ success: boolean }
     }
     return await res.json();
 }
+
+// ─── Inventory Movement API Functions (/api/mm-inventory-movements/all) ───
+
+export async function fetchInventoryMovements(params?: {
+    branchId?: number;
+    lotId?: number;
+    productId?: number;
+    batchNo?: string;
+    direction?: string;
+    transactionType?: string;
+    referenceNo?: string;
+}): Promise<InventoryMovement[]> {
+    const searchParams = new URLSearchParams();
+    if (params?.branchId) searchParams.append("branch", String(params.branchId));
+    if (params?.lotId) searchParams.append("lotId", String(params.lotId));
+    if (params?.productId) searchParams.append("productId", String(params.productId));
+    if (params?.batchNo) searchParams.append("batchNo", params.batchNo);
+    if (params?.direction && params.direction !== "ALL") searchParams.append("direction", params.direction);
+    if (params?.transactionType && params.transactionType !== "ALL") searchParams.append("transactionType", params.transactionType);
+    if (params?.referenceNo) searchParams.append("referenceNo", params.referenceNo);
+    searchParams.append("_t", String(Date.now()));
+
+    const queryStr = searchParams.toString();
+    const res = await fetch(`/api/manufacturing/inventory-movements?${queryStr}`, { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error("Failed to fetch inventory movements from BFF");
+    }
+    return await res.json();
+}
+

@@ -82,13 +82,38 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
     }, []);
 
     useEffect(() => {
-        loadBatches();
-    }, [loadBatches]);
+        let isMounted = true;
+        Promise.all([
+            fetchBatches(),
+            fetchProducts().catch(() => [])
+        ])
+            .then(([batchList, productList]) => {
+                if (isMounted) {
+                    setBatches(batchList);
+                    setProducts(productList);
+                    setLoadingBatches(false);
+                }
+            })
+            .catch((e) => {
+                if (isMounted) {
+                    console.error("Failed to load batches:", e);
+                    toast.error("Failed to load registered batches");
+                    setLoadingBatches(false);
+                }
+            });
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
     const openCreateBatchDialog = (preselectedLotId?: number) => {
         const defaultLotId = preselectedLotId || (lots.length > 0 ? lots[0].lotId : "");
         const matchedLot = lots.find((l) => l.lotId === defaultLotId);
-        const defaultProdId = products.length > 0 ? products[0].productId : "";
+        const defaultProd = products.length > 0 ? products[0] : null;
+        const defaultProdId = defaultProd ? defaultProd.productId : "";
+        const initialCost = defaultProd?.unitCost !== undefined
+            ? String(defaultProd.unitCost)
+            : (defaultProd?.cost_per_unit !== undefined ? String(defaultProd.cost_per_unit) : "0.00");
         
         const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
         const autoSeq = String(batches.length + 1).padStart(3, "0");
@@ -98,9 +123,9 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
             batchNumber: suggestedBatchNo,
             lotId: defaultLotId,
             productId: defaultProdId,
-            itemCode: products.length > 0 ? products[0].skuCode : "",
+            itemCode: defaultProd ? defaultProd.skuCode : "",
             quantity: "1",
-            unitCost: "0.00",
+            unitCost: initialCost,
             uomId: matchedLot?.uomId || "",
             manufacturingDate: new Date().toISOString().slice(0, 10),
             expirationDate: "",
@@ -152,10 +177,15 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
 
         if (field === "productId" && typeof value === "number") {
             const matchedProduct = products.find((p) => p.productId === value);
+            const resolvedCost = matchedProduct?.unitCost !== undefined
+                ? String(matchedProduct.unitCost)
+                : (matchedProduct?.cost_per_unit !== undefined ? String(matchedProduct.cost_per_unit) : "");
+
             setBatchFormData((prev) => ({
                 ...prev,
                 productId: value,
-                itemCode: matchedProduct?.skuCode || prev.itemCode
+                itemCode: matchedProduct?.skuCode || prev.itemCode,
+                unitCost: resolvedCost !== "" ? resolvedCost : prev.unitCost
             }));
             return;
         }

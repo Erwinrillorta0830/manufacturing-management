@@ -1,15 +1,19 @@
 "use client";
 
 import React, { useState } from "react";
-import { LayoutGrid, Warehouse, Layers, Plus, RefreshCw } from "lucide-react";
+import { LayoutGrid, Warehouse, Layers, Plus, RefreshCw, ArrowLeftRight } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
+import { useInventoryMovements } from "./hooks/useInventoryMovements";
 import LotKpiCards from "./components/LotKpiCards";
 import WarehouseRackView from "./components/WarehouseRackView";
 import LotTable from "./components/LotTable";
 import BatchTable from "./components/BatchTable";
+import InventoryMovementTable from "./components/InventoryMovementTable";
 import LotFormDialog from "./components/LotFormDialog";
 import BatchFormDialog from "./components/BatchFormDialog";
+import BatchMovementsDialog from "./components/BatchMovementsDialog";
+import { Batch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,12 +77,50 @@ export default function LotManagementModule() {
         loadBatches
     } = useBatchRegistration(lots, selectedProductId);
 
-    const [activeTab, setActiveTab] = useState<"rack-view" | "storage-lots" | "batch-table">("rack-view");
+    // Inventory Movements Hook (/api/mm-inventory-movements/all)
+    const {
+        movements,
+        filteredMovements,
+        loadingMovements,
+        movementSearchQuery,
+        setMovementSearchQuery,
+        directionFilter,
+        setDirectionFilter,
+        transactionTypeFilter,
+        setTransactionTypeFilter,
+        lotFilter: movementLotFilter,
+        setLotFilter: setMovementLotFilter,
+        availableTransactionTypes,
+        movementStats,
+        loadMovements,
+        resetFilters: resetMovementFilters
+    } = useInventoryMovements(selectedProductId);
 
+    const [activeTab, setActiveTab] = useState<"rack-view" | "storage-lots" | "batch-table" | "movement-history">("rack-view");
+
+    // Modal state for viewing movement audit trail for a specific batch
+    const [auditBatch, setAuditBatch] = useState<Batch | null>(null);
+    const [isAuditDialogOpen, setIsAuditDialogOpen] = useState(false);
+
+    const handleOpenBatchAudit = (batch: Batch) => {
+        setAuditBatch(batch);
+        setIsAuditDialogOpen(true);
+    };
+
+    const handleCloseBatchAudit = () => {
+        setAuditBatch(null);
+        setIsAuditDialogOpen(false);
+    };
+
+    const handleViewLotMovements = (lotId: number) => {
+        setMovementLotFilter(lotId);
+        setActiveTab("movement-history");
+    };
 
     const handleRefreshAll = () => {
         loadLots();
         loadBatches();
+        loadMovements();
     };
 
     return (
@@ -89,7 +131,7 @@ export default function LotManagementModule() {
             {/* Tabbed View Navigation & Action Toolbar */}
             <Tabs
                 value={activeTab}
-                onValueChange={(val) => setActiveTab(val as "rack-view" | "storage-lots" | "batch-table")}
+                onValueChange={(val) => setActiveTab(val as "rack-view" | "storage-lots" | "batch-table" | "movement-history")}
                 className="space-y-4"
             >
                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-card p-2 rounded-xl border border-border shadow-xs">
@@ -114,6 +156,13 @@ export default function LotManagementModule() {
                         >
                             <Layers className="h-4 w-4 text-primary" />
                             Registered Batches ({batches.length})
+                        </TabsTrigger>
+                        <TabsTrigger
+                            value="movement-history"
+                            className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
+                        >
+                            <ArrowLeftRight className="h-4 w-4 text-primary" />
+                            Movement History ({movements.length})
                         </TabsTrigger>
                     </TabsList>
 
@@ -179,6 +228,8 @@ export default function LotManagementModule() {
                         onEditLot={openEditLotDialog}
                         onAddBatchToLot={(lotId) => openCreateBatchDialog(lotId)}
                         onEditBatch={openEditBatchDialog}
+                        onViewBatchMovements={handleOpenBatchAudit}
+                        onViewLotMovements={handleViewLotMovements}
                     />
                 </TabsContent>
 
@@ -212,6 +263,28 @@ export default function LotManagementModule() {
                         onDelete={handleDeleteBatch}
                         onRefresh={loadBatches}
                         onAddClick={() => openCreateBatchDialog()}
+                        onViewMovements={handleOpenBatchAudit}
+                    />
+                </TabsContent>
+
+                {/* Tab 4: Inventory Movements (/api/mm-inventory-movements/all) */}
+                <TabsContent value="movement-history" className="mt-0 outline-none">
+                    <InventoryMovementTable
+                        movements={filteredMovements}
+                        lots={lots}
+                        loading={loadingMovements}
+                        searchQuery={movementSearchQuery}
+                        onSearchChange={setMovementSearchQuery}
+                        directionFilter={directionFilter}
+                        onDirectionFilterChange={setDirectionFilter}
+                        transactionTypeFilter={transactionTypeFilter}
+                        onTransactionTypeFilterChange={setTransactionTypeFilter}
+                        lotFilter={movementLotFilter}
+                        onLotFilterChange={setMovementLotFilter}
+                        availableTransactionTypes={availableTransactionTypes}
+                        onRefresh={loadMovements}
+                        onResetFilters={resetMovementFilters}
+                        stats={movementStats}
                     />
                 </TabsContent>
             </Tabs>
@@ -245,6 +318,16 @@ export default function LotManagementModule() {
                 products={products}
                 saving={savingBatch}
             />
+
+            {/* Batch Movement History Audit Dialog */}
+            <BatchMovementsDialog
+                isOpen={isAuditDialogOpen}
+                onClose={handleCloseBatchAudit}
+                batch={auditBatch}
+                movements={movements}
+                loading={loadingMovements}
+            />
         </div>
     );
 }
+

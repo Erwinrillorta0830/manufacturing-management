@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, RefreshCw, Pencil, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Search, RefreshCw, Pencil, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
 import { Batch, Lot, BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -36,6 +36,7 @@ interface BatchTableProps {
     onDelete: (batchId: number) => void;
     onRefresh: () => void;
     onAddClick: () => void;
+    onViewMovements?: (batch: Batch) => void;
 }
 
 export default function BatchTable({
@@ -52,14 +53,11 @@ export default function BatchTable({
     onEdit,
     onDelete,
     onRefresh,
-    onAddClick
+    onAddClick,
+    onViewMovements
 }: BatchTableProps) {
     const [currentPage, setCurrentPage] = React.useState(1);
     const [pageSize, setPageSize] = React.useState(10);
-
-    React.useEffect(() => {
-        setCurrentPage(1);
-    }, [batches.length, pageSize, selectedLotFilter, statusFilter, selectedProductId]);
 
     // Compute central FEFO Priority Map per product context
     const fefoMap = React.useMemo(() => {
@@ -67,7 +65,8 @@ export default function BatchTable({
     }, [batches, selectedProductId]);
 
     const totalPages = Math.ceil(batches.length / pageSize);
-    const startIndex = (currentPage - 1) * pageSize;
+    const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages || 1));
+    const startIndex = (safeCurrentPage - 1) * pageSize;
     const paginatedBatches = React.useMemo(() => {
         return batches.slice(startIndex, startIndex + pageSize);
     }, [batches, startIndex, pageSize]);
@@ -238,11 +237,23 @@ export default function BatchTable({
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-1">
+                                                {onViewMovements && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => onViewMovements(batch)}
+                                                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                                        title="View Movement History (/api/mm-inventory-movements/all)"
+                                                    >
+                                                        <History className="h-4 w-4" />
+                                                    </Button>
+                                                )}
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
                                                     onClick={() => onEdit(batch)}
                                                     className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                                    title="Edit Batch"
                                                 >
                                                     <Pencil className="h-4 w-4" />
                                                 </Button>
@@ -251,6 +262,7 @@ export default function BatchTable({
                                                     size="icon"
                                                     onClick={() => onDelete(batch.batchId)}
                                                     className="h-8 w-8 text-muted-foreground hover:text-rose-500"
+                                                    title="Delete Batch"
                                                 >
                                                     <Trash2 className="h-4 w-4" />
                                                 </Button>

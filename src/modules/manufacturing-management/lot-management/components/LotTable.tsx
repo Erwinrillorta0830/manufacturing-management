@@ -41,13 +41,9 @@ export default function LotTable({
     const [currentPage, setCurrentPage] = React.useState(1);
     const [pageSize, setPageSize] = React.useState(10);
 
-    // Reset page to 1 when search query or page size changes
-    React.useEffect(() => {
-        setCurrentPage(1);
-    }, [filteredLots.length, pageSize]);
-
     const totalPages = Math.ceil(filteredLots.length / pageSize);
-    const startIndex = (currentPage - 1) * pageSize;
+    const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages || 1));
+    const startIndex = (safeCurrentPage - 1) * pageSize;
     const paginatedLots = React.useMemo(() => {
         return filteredLots.slice(startIndex, startIndex + pageSize);
     }, [filteredLots, startIndex, pageSize]);

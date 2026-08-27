@@ -1,5 +1,5 @@
-import React from "react";
-import { Plus, Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2 } from "lucide-react";
+import React, { useState } from "react";
+import { Plus, Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ interface WarehouseRackViewProps {
     onEditLot: (lot: Lot) => void;
     onAddBatchToLot: (lotId: number) => void;
     onEditBatch: (batch: Batch) => void;
+    onViewBatchMovements?: (batch: Batch) => void;
+    onViewLotMovements?: (lotId: number) => void;
 }
 
 export default function WarehouseRackView({
@@ -22,8 +24,19 @@ export default function WarehouseRackView({
     selectedProductId = "ALL",
     onEditLot,
     onAddBatchToLot,
-    onEditBatch
+    onEditBatch,
+    onViewBatchMovements,
+    onViewLotMovements
 }: WarehouseRackViewProps) {
+    const [expandedLots, setExpandedLots] = useState<Record<number, boolean>>({});
+
+    const toggleExpandLot = (lotId: number) => {
+        setExpandedLots((prev) => ({
+            ...prev,
+            [lotId]: !prev[lotId]
+        }));
+    };
+
     const fefoMap = React.useMemo(() => {
         return getFefoPriorityMap(batches, selectedProductId);
     }, [batches, selectedProductId]);
@@ -59,6 +72,9 @@ export default function WarehouseRackView({
                 {sortedLots.map((lot) => {
                     const rawLotBatches = batches.filter((b) => b.lotId === lot.lotId);
                     const fefoSortedBatches = sortBatchesByFefo(rawLotBatches);
+                    const isExpanded = !!expandedLots[lot.lotId];
+                    const visibleBatches = isExpanded ? fefoSortedBatches : fefoSortedBatches.slice(0, 5);
+                    const hasMoreThan5 = fefoSortedBatches.length > 5;
                     const totalQty = rawLotBatches.reduce((sum, b) => sum + (b.quantity || 0), 0);
                     const capacityPercent = Math.min(
                         100,
@@ -106,6 +122,17 @@ export default function WarehouseRackView({
                                     </div>
                                     
                                     <div className="flex items-center gap-1 shrink-0">
+                                        {onViewLotMovements && (
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => onViewLotMovements(lot.lotId)}
+                                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                                title="View Rack Movements History"
+                                            >
+                                                <History className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
                                         <Button
                                             variant="ghost"
                                             size="icon"
@@ -151,6 +178,11 @@ export default function WarehouseRackView({
                                     <span className="text-[10px] font-bold tracking-wider uppercase text-muted-foreground">
                                         FEFO Ordered Shelves ({fefoSortedBatches.length})
                                     </span>
+                                    {hasMoreThan5 && !isExpanded && (
+                                        <span className="text-[10px] text-muted-foreground font-medium">
+                                            Showing top 5
+                                        </span>
+                                    )}
                                 </div>
 
                                 {fefoSortedBatches.length === 0 ? (
@@ -167,75 +199,114 @@ export default function WarehouseRackView({
                                         </Button>
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-1 gap-2">
-                                        {fefoSortedBatches.map((batch) => {
-                                            const statusConfig = getStatusConfig(batch.status);
-                                            const fefoInfo = fefoMap.get(batch.batchId);
+                                    <div className="flex flex-col gap-2">
+                                        <div className={`grid grid-cols-1 gap-2 ${isExpanded ? "max-h-[380px] overflow-y-auto pr-1" : ""}`}>
+                                            {visibleBatches.map((batch) => {
+                                                const statusConfig = getStatusConfig(batch.status);
+                                                const fefoInfo = fefoMap.get(batch.batchId);
 
-                                            return (
-                                                <div
-                                                    key={batch.batchId}
-                                                    onClick={() => onEditBatch(batch)}
-                                                    className={`group/box relative flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${
-                                                        fefoInfo?.isFefoNext
-                                                            ? "bg-amber-500/10 border-amber-500/40 shadow-xs hover:border-amber-500"
-                                                            : "border-border/80 bg-card hover:border-primary/50 hover:shadow-xs"
-                                                    }`}
-                                                >
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="font-bold text-xs text-foreground group-hover/box:text-primary transition-colors truncate">
-                                                                {batch.batchNumber}
-                                                            </span>
-                                                            
-                                                            {fefoInfo?.isFefoNext ? (
-                                                                <span className="px-1.5 py-0.2 text-[9px] font-black rounded-full bg-amber-500 text-amber-950 flex items-center gap-0.5 shadow-2xs animate-pulse">
-                                                                    FEFO NEXT (#1)
+                                                return (
+                                                    <div
+                                                        key={batch.batchId}
+                                                        onClick={() => onEditBatch(batch)}
+                                                        className={`group/box relative flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${
+                                                            fefoInfo?.isFefoNext
+                                                                ? "bg-amber-500/10 border-amber-500/40 shadow-xs hover:border-amber-500"
+                                                                : "border-border/80 bg-card hover:border-primary/50 hover:shadow-xs"
+                                                        }`}
+                                                    >
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className="font-bold text-xs text-foreground group-hover/box:text-primary transition-colors truncate">
+                                                                    {batch.batchNumber}
                                                                 </span>
-                                                            ) : fefoInfo?.priority ? (
-                                                                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-muted text-foreground border border-border">
-                                                                    #{fefoInfo.priority}
-                                                                </span>
-                                                            ) : null}
+                                                                
+                                                                {fefoInfo?.isFefoNext ? (
+                                                                    <span className="px-1.5 py-0.2 text-[9px] font-black rounded-full bg-amber-500 text-amber-950 flex items-center gap-0.5 shadow-2xs animate-pulse">
+                                                                        FEFO NEXT (#1)
+                                                                    </span>
+                                                                ) : fefoInfo?.priority ? (
+                                                                    <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-muted text-foreground border border-border">
+                                                                        #{fefoInfo.priority}
+                                                                    </span>
+                                                                ) : null}
 
-                                                            <span className={`px-1.5 py-0.2 text-[9px] font-bold rounded-full border ${statusConfig.badgeClass}`}>
-                                                                {statusConfig.label}
-                                                            </span>
+                                                                <span className={`px-1.5 py-0.2 text-[9px] font-bold rounded-full border ${statusConfig.badgeClass}`}>
+                                                                    {statusConfig.label}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                                                                <span className="truncate max-w-[130px] font-semibold text-foreground">
+                                                                    {batch.productName || `Product #${batch.productId}`}
+                                                                </span>
+                                                                {batch.itemCode && (
+                                                                    <span className="truncate max-w-[110px] font-mono text-[10px]">
+                                                                        ({batch.itemCode})
+                                                                    </span>
+                                                                )}
+                                                                <span>
+                                                                    Qty: <strong className="text-foreground">{batch.quantity.toLocaleString()}</strong> {batch.uomShortcut || uomLabel}
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
-                                                            <span className="truncate max-w-[130px] font-semibold text-foreground">
-                                                                {batch.productName || `Product #${batch.productId}`}
-                                                            </span>
-                                                            {batch.itemCode && (
-                                                                <span className="truncate max-w-[110px] font-mono text-[10px]">
-                                                                    ({batch.itemCode})
-                                                                </span>
+
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {onViewBatchMovements && (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        onViewBatchMovements(batch);
+                                                                    }}
+                                                                    className="h-6 w-6 text-muted-foreground hover:text-primary"
+                                                                    title="View Batch Movement History"
+                                                                >
+                                                                    <History className="h-3 w-3" />
+                                                                </Button>
                                                             )}
-                                                            <span>
-                                                                Qty: <strong className="text-foreground">{batch.quantity.toLocaleString()}</strong> {batch.uomShortcut || uomLabel}
-                                                            </span>
+                                                            {/* Expiration badge */}
+                                                            {batch.expirationDate && (
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <div className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded shrink-0 border ${
+                                                                            fefoInfo?.isFefoNext ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30 font-bold" : "bg-muted/50 text-muted-foreground border-border/50"
+                                                                        }`}>
+                                                                            <Calendar className="h-3 w-3 text-primary" />
+                                                                            <span>{batch.expirationDate.slice(0, 10)}</span>
+                                                                        </div>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent side="top">
+                                                                        <p className="text-xs">Expiration Date: {batch.expirationDate.slice(0, 10)}</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+                                                            )}
                                                         </div>
                                                     </div>
+                                                );
+                                            })}
+                                        </div>
 
-                                                    {/* Expiration badge */}
-                                                    {batch.expirationDate && (
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <div className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded shrink-0 border ${
-                                                                    fefoInfo?.isFefoNext ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30 font-bold" : "bg-muted/50 text-muted-foreground border-border/50"
-                                                                }`}>
-                                                                    <Calendar className="h-3 w-3 text-primary" />
-                                                                    <span>{batch.expirationDate.slice(0, 10)}</span>
-                                                                </div>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent side="top">
-                                                                <p className="text-xs">Expiration Date: {batch.expirationDate.slice(0, 10)}</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                        {hasMoreThan5 && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => toggleExpandLot(lot.lotId)}
+                                                className="w-full mt-1 h-7.5 text-xs font-semibold text-primary hover:text-primary hover:bg-primary/10 flex items-center justify-center gap-1.5 border-dashed border-primary/30 bg-primary/5 rounded-lg transition-all"
+                                            >
+                                                {isExpanded ? (
+                                                    <>
+                                                        <ChevronUp className="h-3.5 w-3.5" />
+                                                        Show Less (Top 5)
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <ChevronDown className="h-3.5 w-3.5" />
+                                                        +{fefoSortedBatches.length - 5} More Batches (Show All {fefoSortedBatches.length})
+                                                    </>
+                                                )}
+                                            </Button>
+                                        )}
                                     </div>
                                 )}
                             </div>

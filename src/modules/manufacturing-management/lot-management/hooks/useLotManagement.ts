@@ -65,7 +65,30 @@ export function useLotManagement() {
     };
 
     useEffect(() => {
-        loadLots();
+        let isMounted = true;
+        Promise.all([
+            fetchLots(),
+            fetchUoms().catch(() => []),
+            fetchBranches().catch(() => [])
+        ])
+            .then(([lotsList, uomsList, branchesList]) => {
+                if (isMounted) {
+                    setLots(lotsList);
+                    setUoms(uomsList);
+                    setBranches(branchesList);
+                    setLoading(false);
+                }
+            })
+            .catch((e) => {
+                if (isMounted) {
+                    console.error("Failed to load lots:", e);
+                    toast.error("Failed to load lots data");
+                    setLoading(false);
+                }
+            });
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     const openCreateDialog = () => {
