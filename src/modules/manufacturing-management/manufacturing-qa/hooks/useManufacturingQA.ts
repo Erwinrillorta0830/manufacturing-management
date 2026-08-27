@@ -750,7 +750,6 @@ export function useManufacturingQA() {
             await loadYieldClosingMaterials();
             toast.success("Material requirements loaded. You may submit the yield closing.");
         } catch (e: any) {
-            console.warn("Yield closing materials retry blocked:", e);
             toast.error(e.message || "Failed to load material requirements.");
         }
     };
@@ -844,7 +843,6 @@ export function useManufacturingQA() {
 
             refreshAll();
         } catch (e: any) {
-            console.warn("Yield closing blocked:", e);
             toast.error(e.message || "An error occurred during finished goods yield closing.");
         } finally {
             setActionLoading(false);
