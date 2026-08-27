@@ -97,7 +97,7 @@ export default function CustomersMemoListModule() {
     const filteredMemos = memos.filter(m => {
         const matchesSearch =
             m.memo_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            m.customer_id.customer_name.toLowerCase().includes(searchQuery.toLowerCase());
+            (m.customer_id?.customer_name || "").toLowerCase().includes(searchQuery.toLowerCase());
 
         const matchesSupplier = filterSupplier.length === 0 || filterSupplier.includes(String(m.supplier_id?.id || ""));
         const matchesCustomer = filterCustomer.length === 0 || filterCustomer.includes(String(m.customer_id?.id || ""));
@@ -456,23 +456,23 @@ export default function CustomersMemoListModule() {
                                                         <User className="h-3 w-3" />
                                                     </div>
                                                     <p className="text-base font-black text-slate-800 break-words tracking-tight">
-                                                        {memo.customer_id.customer_name}
+                                                        {memo.customer_id?.customer_name || "Unknown Customer"}
                                                     </p>
                                                 </div>
-                                                {memo.customer_id.store_name && (
+                                                {memo.customer_id?.store_name && (
                                                     <p className="text-[10px] font-bold text-blue-600 ml-9 uppercase tracking-widest opacity-80 leading-tight">
                                                         {memo.customer_id.store_name}
                                                     </p>
                                                 )}
                                                 <p className="text-[10px] font-black text-slate-400 ml-9 uppercase tracking-widest opacity-70 italic leading-none">
-                                                    Rep: {memo.salesman_id.salesman_code} - {memo.salesman_id.salesman_name}
+                                                    Rep: {memo.salesman_id?.salesman_code} - {memo.salesman_id?.salesman_name}
                                                 </p>
                                             </div>
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col gap-1.5">
                                                 <p className="text-sm font-black text-slate-800 tracking-tight leading-none">
-                                                    {memo.chart_of_account.account_title}
+                                                    {memo.chart_of_account?.account_title || "Unknown Account"}
                                                 </p>
                                                 <p className="text-[10px] font-bold text-slate-400 break-words uppercase tracking-widest italic opacity-80">
                                                     {memo.reason || "No reason specified"}

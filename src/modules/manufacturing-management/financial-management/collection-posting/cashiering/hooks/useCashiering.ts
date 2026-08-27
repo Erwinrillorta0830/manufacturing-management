@@ -115,6 +115,18 @@ export function useCashiering(
     const [isSheetLoading, setIsSheetLoading] = useState<boolean>(false);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [submissionError, setSubmissionError] = useState<string | null>(null);
+    const [submitAttempted, setSubmitAttempted] = useState<boolean>(false);
+    const [touchedChecks, setTouchedChecks] = useState<Record<string, Record<string, boolean>>>({});
+
+    const setCheckTouched = useCallback((tempId: string, field: string) => {
+        setTouchedChecks(prev => ({
+            ...prev,
+            [tempId]: {
+                ...(prev[tempId] || {}),
+                [field]: true
+            }
+        }));
+    }, []);
     const [listError, setListError] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<number | null>(null);
 
@@ -425,20 +437,19 @@ export function useCashiering(
 
     const updateCheck = (index: number, field: keyof CheckDetail, value: string) => {
         const updated = [...checks];
-        updated[index][field] = value;
+        updated[index] = { ...updated[index], [field]: value };
         setChecks(updated);
     };
 
     const handlePaymentMethodSelect = (index: number, methodId: string) => {
         const updated = [...checks];
-        updated[index].paymentMethodId = methodId;
+        updated[index] = { ...updated[index], paymentMethodId: methodId };
         setChecks(updated);
     };
 
     const handleCustomerSelect = async (index: number, customerId: string) => {
         const updated = [...checks];
-        updated[index].customerId = customerId;
-        updated[index].invoiceId = "";
+        updated[index] = { ...updated[index], customerId, invoiceId: "" };
         setChecks(updated);
         setSubmissionError(null);
 
@@ -464,17 +475,18 @@ export function useCashiering(
 
     const handleInvoiceSelect = (index: number, invoiceId: string) => {
         const updated = [...checks];
-        updated[index].invoiceId = invoiceId;
+        const newCheck = { ...updated[index], invoiceId };
 
-        if (!updated[index].customerId && routeInvoices.length > 0) {
+        if (!newCheck.customerId && routeInvoices.length > 0) {
             const selectedInv = routeInvoices.find(inv => (inv.invoiceId || inv.id)?.toString() === invoiceId);
             if (selectedInv) {
                 const custMatch = customers.find(c => (c.customerName || c.name) === selectedInv.customerName);
                 if (custMatch) {
-                    updated[index].customerId = custMatch.id.toString();
+                    newCheck.customerId = custMatch.id.toString();
                 }
             }
         }
+        updated[index] = newCheck;
         setChecks(updated);
     };
 
@@ -485,6 +497,8 @@ export function useCashiering(
         invoiceRequestController.current?.abort();
         setEditingId(null);
         setSubmissionError(null);
+        setSubmitAttempted(false);
+        setTouchedChecks({});
         setSalesmanId("");
         setCollectedBy(""); // 🚀 Reset
         setCrNo("");        // 🚀 Reset
@@ -497,6 +511,7 @@ export function useCashiering(
     const handleSubmit = async () => {
         if (isSheetLoading || isLookupsLoading) return;
         setSubmissionError(null);
+        setSubmitAttempted(true);
         if (!salesmanId) return setSubmissionError("Please select a Collector.");
         if (Object.values(denominations).some(quantity => !Number.isInteger(quantity) || quantity < 0)) {
             return setSubmissionError("Cash quantities must be non-negative whole numbers.");
@@ -589,6 +604,7 @@ export function useCashiering(
 
     return {
         isSheetOpen, setIsSheetOpen, isSheetLoading, isLookupsLoading, isSubmitting, submissionError, listError,
+        submitAttempted, setSubmitAttempted, touchedChecks, setCheckTouched,
         masterList, totalElements, totalPages, currentPage, salesmen, isLoading, salesmanId, setSalesmanId,
         users, collectedBy, setCollectedBy, crNo, setCrNo, // 🚀 Expose the new states to the component!
         collectionDate, setCollectionDate, remarks, setRemarks, denominations, handleDenomChange,

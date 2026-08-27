@@ -202,6 +202,10 @@ export interface CashieringState {
     isSheetLoading: boolean;
     isSubmitting: boolean;
     submissionError: string | null;
+    submitAttempted: boolean;
+    setSubmitAttempted: (val: boolean) => void;
+    touchedChecks: Record<string, Record<string, boolean>>;
+    setCheckTouched: (tempId: string, field: string) => void;
     listError: string | null;
     editingId: number | null;
     masterList: CollectionSummary[];

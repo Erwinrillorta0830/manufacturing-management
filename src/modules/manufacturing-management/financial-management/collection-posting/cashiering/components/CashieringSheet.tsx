@@ -59,7 +59,10 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
         isSubmitting,
         submissionError,
         editingId,
-        masterList
+        masterList,
+        submitAttempted,
+        touchedChecks,
+        setCheckTouched
     } = state;
 
     const [openSalesman, setOpenSalesman] = useState(false);
@@ -314,7 +317,16 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
 
                                         {checks.map((check: CheckDetail, i: number) => {
                                             const availableInvoices = check.customerId ? (customerInvoices[check.customerId] || []) : routeInvoices;
-                                            const lineErrors = getCheckValidationErrors(check);
+                                            const rawErrors = getCheckValidationErrors(check);
+                                            const lineTouched = touchedChecks[check.tempId!] || {};
+                                            const lineErrors = {
+                                                paymentMethod: rawErrors.paymentMethod && (submitAttempted || lineTouched.paymentMethod),
+                                                coa: rawErrors.coa && (submitAttempted || lineTouched.coa),
+                                                bank: rawErrors.bank && (submitAttempted || lineTouched.bank),
+                                                reference: rawErrors.reference && (submitAttempted || lineTouched.reference),
+                                                amount: rawErrors.amount && (submitAttempted || lineTouched.amount),
+                                                chequeDate: rawErrors.chequeDate && (submitAttempted || lineTouched.chequeDate),
+                                            };
                                             const isSpecialLine = check.tempId?.startsWith("adj-") || check.tempId?.startsWith("ewt-");
                                             const requiresBank = !isSpecialLine;
 
@@ -339,7 +351,10 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                 Method <span
                                                                     className="text-destructive">*</span></label>
                                                             <Popover open={openPaymentIdx === i}
-                                                                     onOpenChange={(open) => setOpenPaymentIdx(open ? i : null)}>
+                                                                     onOpenChange={(open) => {
+                                                                         setOpenPaymentIdx(open ? i : null);
+                                                                         if (!open) setCheckTouched(check.tempId!, "paymentMethod");
+                                                                     }}>
                                                                 <PopoverTrigger asChild>
                                                                     <Button variant="outline"
                                                                             aria-invalid={lineErrors.paymentMethod}
@@ -366,6 +381,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                             <CommandGroup>
                                                                                 {paymentMethods.map((m: PaymentMethod) => (
                                                                                     <CommandItem key={m.methodId}
+                                                                                                 value={m.methodName}
                                                                                                  onSelect={() => {
                                                                                                      handlePaymentMethodSelect(i, m.methodId.toString());
                                                                                                      setOpenPaymentIdx(null);
@@ -384,7 +400,10 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                 className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Asset
                                                                 Type <span className="text-destructive">*</span></label>
                                                             <Popover open={openCoaIdx === i}
-                                                                     onOpenChange={(open) => setOpenCoaIdx(open ? i : null)}>
+                                                                     onOpenChange={(open) => {
+                                                                         setOpenCoaIdx(open ? i : null);
+                                                                         if (!open) setCheckTouched(check.tempId!, "coa");
+                                                                     }}>
                                                                 <PopoverTrigger asChild>
                                                                     <Button variant="outline"
                                                                              aria-invalid={lineErrors.coa}
@@ -410,6 +429,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                             <CommandGroup>
                                                                                 {coas.map((c: COA) => (
                                                                                     <CommandItem key={c.coaId || c.id}
+                                                                                                 value={c.accountTitle}
                                                                                                  onSelect={() => {
                                                                                                      updateCheck(i, "coaId", (c.coaId || c.id)?.toString() || "");
                                                                                                      setOpenCoaIdx(null);
@@ -428,7 +448,10 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                 className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Bank {requiresBank && <span
                                                                 className="text-destructive">*</span>}</label>
                                                             <Popover open={openBankIdx === i}
-                                                                     onOpenChange={(open) => setOpenBankIdx(open ? i : null)}>
+                                                                     onOpenChange={(open) => {
+                                                                         setOpenBankIdx(open ? i : null);
+                                                                         if (!open) setCheckTouched(check.tempId!, "bank");
+                                                                     }}>
                                                                 <PopoverTrigger asChild>
                                                                     <Button variant="outline"
                                                                              aria-invalid={lineErrors.bank}
@@ -449,6 +472,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                             <CommandGroup>
                                                                                 {banks.map((bank: Bank) => (
                                                                                     <CommandItem key={bank.id}
+                                                                                                 value={bank.bankName}
                                                                                                  onSelect={() => {
                                                                                                      updateCheck(i, "bankId", bank.id.toString());
                                                                                                      setOpenBankIdx(null);
@@ -499,6 +523,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                             <CommandGroup>
                                                                                 {customers.map((c: Customer) => (
                                                                                     <CommandItem key={c.id}
+                                                                                                 value={`${c.customerCode || c.code} ${c.customerName || c.name}`}
                                                                                                  onSelect={() => {
                                                                                                      handleCustomerSelect(i, c.id.toString());
                                                                                                      setOpenCustomerIdx(null);
@@ -585,6 +610,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                 aria-invalid={lineErrors.reference}
                                                                 className={cn("h-8 text-xs font-bold placeholder:font-normal bg-background", lineErrors.reference && "border-destructive focus-visible:ring-destructive")}
                                                                 placeholder="00001234" value={check.checkNo}
+                                                                onBlur={() => setCheckTouched(check.tempId!, "reference")}
                                                                 onChange={(e) => updateCheck(i, "checkNo", e.target.value)}/>
                                                         </div>
                                                         <div className="space-y-1.5">
@@ -595,6 +621,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                     aria-invalid={lineErrors.chequeDate}
                                                                     className={cn("h-8 text-[10px] font-bold text-muted-foreground uppercase bg-background", lineErrors.chequeDate && "border-destructive focus-visible:ring-destructive")}
                                                                     value={check.chequeDate}
+                                                                    onBlur={() => setCheckTouched(check.tempId!, "chequeDate")}
                                                                     onChange={(e) => updateCheck(i, "chequeDate", e.target.value)}/>
                                                              {lineErrors.chequeDate && (
                                                                  <p className="text-[10px] font-bold text-destructive" role="alert">
@@ -614,6 +641,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                     aria-invalid={lineErrors.amount}
                                                                     className={cn("h-8 pl-6 text-xs font-black text-right text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200/60 shadow-inner", lineErrors.amount && "border-destructive focus-visible:ring-destructive")}
                                                                     placeholder="0.00" value={check.amount}
+                                                                    onBlur={() => setCheckTouched(check.tempId!, "amount")}
                                                                     onChange={(e) => updateCheck(i, "amount", e.target.value)}
                                                                 />
                                                             </div>
