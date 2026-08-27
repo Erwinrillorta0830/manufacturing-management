@@ -347,6 +347,7 @@ async function persistedResult(
             }
             if (capacityAudit.capacityOverrideQuantity > route.quantity + LOT_CAPACITY_EPSILON
                 || (capacityAudit.capacityOverride && capacityAudit.capacityOverrideQuantity <= LOT_CAPACITY_EPSILON)
+                || (capacityAudit.capacityOverride && capacityAudit.capacityAvailableBeforeReceipt === null)
                 || (!capacityAudit.capacityOverride && capacityAudit.capacityOverrideQuantity > LOT_CAPACITY_EPSILON)) {
                 throw new CommitError(409, `${route.kind} movement for line ${line.lineId} has inconsistent capacity-audit data. Reconciliation is required.`);
             }
