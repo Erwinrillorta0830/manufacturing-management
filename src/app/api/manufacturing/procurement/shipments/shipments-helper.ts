@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
-import { dateOnlyInManila, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
+import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 import {
@@ -544,7 +544,7 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     }
 
     if (query.status === "Approved") {
-        clauses.push({ inventory_status: { _in: [INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.FOR_PICKUP] } });
+        clauses.push({ inventory_status: { _in: [...FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS] } });
         clauses.push({ finance_id: { _nnull: true } });
         return;
     }
@@ -592,14 +592,14 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
                 ]
             }
         });
-    } else if (query.status === "Awaiting Payment") {
+    } else if (!query.approvalStage && query.status === "Awaiting Payment") {
         clauses.push({
             _and: [
                 { inventory_status: { _in: [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED] } },
                 { payment_status: { _eq: PAYMENT_STATUS.AWAITING_PAYMENT } }
             ]
         });
-    } else if (query.status && !(query.approvalStage && isPurchaseOrderApprovalStatus(query.status))) {
+    } else if (query.status && !query.approvalStage) {
         clauses.push({ inventory_status: { _eq: shipmentStatusToInventoryStatus(query.status) } });
     }
     await addApprovalStageFilter(clauses, query);
