@@ -7,8 +7,8 @@ export interface LandedCostMethodOption {
 }
 
 export const LANDED_COST_METHOD_OPTIONS: readonly LandedCostMethodOption[] = [
+    { value: "Quantity", label: "Quantity", description: "Allocate by accepted received quantity." },
     { value: "Weight", label: "Weight", description: "Allocate by line gross weight." },
-    { value: "Volume", label: "Volume", description: "Allocate by line cubic volume." },
     {
         value: "Hybrid",
         label: "Hybrid (RM Qty / PKG Weight / FG Value)",
@@ -19,5 +19,9 @@ export const LANDED_COST_METHOD_OPTIONS: readonly LandedCostMethodOption[] = [
 export function landedCostMethodLabel(rule: LandedCostAllocationRule | ""): string {
     if (!rule) return "No allocation rule selected";
     return LANDED_COST_METHOD_OPTIONS.find(option => option.value === rule)?.label
-        || (rule === "Value" ? "Commercial Value (legacy)" : "No allocation rule selected");
+        || (rule === "Value"
+            ? "Commercial Value (legacy)"
+            : rule === "Volume"
+                ? "Volume (legacy)"
+                : "No allocation rule selected");
 }

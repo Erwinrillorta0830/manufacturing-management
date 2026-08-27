@@ -8,6 +8,11 @@ export interface ChartOfAccount {
     account_type?: number;
 }
 
+export interface ExpenseTypeOption {
+    id: number;
+    label: string;
+}
+
 export interface POLineItem {
     purchase_order_product_id: number;
     product_id: number | {
@@ -52,9 +57,12 @@ export interface POLineItem {
 
 export interface LandedExpenseRow {
     id: string;
-    chart_of_account_id: number;
+    overhead_id: number | null;
+    expense_type: string;
     amount: number;
     allocation_method: string;
+    /** Legacy account association retained only for displaying old records. */
+    legacyChartOfAccountId?: number | null;
 }
 
 export interface PurchaseOrderHeader {

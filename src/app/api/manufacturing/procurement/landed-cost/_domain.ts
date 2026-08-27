@@ -19,7 +19,7 @@ export const COMPUTATION_COLLECTION = "purchase_order_landed_cost_computations";
 export const ATTACHMENT_COLLECTION = "purchase_order_landed_cost_attachments";
 export const EXPENSE_COLLECTION = "purchase_order_landed_cost_expenses";
 
-export const ALLOCATION_RULES = ["Value", "Weight", "Volume", "Hybrid"] as const;
+export const ALLOCATION_RULES = ["Quantity", "Value", "Weight", "Volume", "Hybrid"] as const;
 export type AllocationRule = typeof ALLOCATION_RULES[number];
 export type ComputationStatus = "DRAFT" | "FINALIZING" | "FINALIZED" | "FAILED";
 export type AttachmentDocumentType = "CARRIER_INVOICE" | "FREIGHT_BILL" | "BROKER_ASSESSMENT_SHEET" | "OTHER";
@@ -32,11 +32,18 @@ export interface LandedCostExpenseInput {
     amount_php: number;
 }
 
+export interface LandedCostExpenseTypeOption {
+    id: number;
+    label: string;
+}
+
 export interface LandedCostAttachment {
     id: number;
     computation_id: number;
     directus_file_id: string;
     document_type: AttachmentDocumentType;
+    expense_type_id?: number | null;
+    expense_type_label?: string | null;
     file_name: string;
     mime_type: string | null;
     file_size: number | null;
@@ -110,6 +117,7 @@ export interface ComputationRecord extends DirectusRecord {
     purchase_order_id: number;
     allocation_rule: AllocationRule;
     status: ComputationStatus;
+    exchange_rate?: number | string | null;
     fg_value_share?: number | string | null;
     fg_fee_pool?: number | string | null;
 }
@@ -171,7 +179,10 @@ function hasNumericValue(value: unknown): boolean {
     return value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value));
 }
 
-export function resolveLandedCostCurrency(purchaseOrder: DirectusRecord): LandedCostCurrencyContract {
+export function resolveLandedCostCurrency(
+    purchaseOrder: DirectusRecord,
+    exchangeRateOverride?: unknown
+): LandedCostCurrencyContract {
     const rawCurrencyCode = String(purchaseOrder.currency_code ?? "").trim().toUpperCase();
     if (!rawCurrencyCode && Number(purchaseOrder.is_import) === 1) {
         throw new LandedCostDomainError(
@@ -185,7 +196,9 @@ export function resolveLandedCostCurrency(purchaseOrder: DirectusRecord): Landed
     const currencyCode = rawCurrencyCode || "PHP";
     if (currencyCode === "PHP") return { currencyCode, isForeign: false, exchangeRate: 1 };
 
-    const exchangeRate = Number(purchaseOrder.exchange_rate);
+    const exchangeRate = exchangeRateOverride === undefined || exchangeRateOverride === null || String(exchangeRateOverride).trim() === ""
+        ? Number(purchaseOrder.exchange_rate)
+        : Number(exchangeRateOverride);
     if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
         throw new LandedCostDomainError(
             422,
@@ -270,6 +283,107 @@ async function listRows(collection: string, query: string): Promise<DirectusReco
     return Array.isArray(rows) ? rows : [];
 }
 
+interface OverheadTypeRecord extends DirectusRecord {
+    id?: number;
+    overhead_name?: string | null;
+    coa_id?: unknown;
+}
+
+async function loadOverheadTypeMap(): Promise<Map<number, OverheadTypeRecord>> {
+    const rows = await listRows(
+        "overhead_types",
+        "fields=id,overhead_name,coa_id&sort=overhead_name&limit=-1"
+    ) as OverheadTypeRecord[];
+    return new Map(
+        rows
+            .map(row => [asPositiveId(row.id), row] as const)
+            .filter(([id]) => id !== null)
+    ) as Map<number, OverheadTypeRecord>;
+}
+
+export async function getLandedCostExpenseTypes(): Promise<LandedCostExpenseTypeOption[]> {
+    const overheadTypes = await loadOverheadTypeMap();
+    return [...overheadTypes.entries()]
+        .filter(([, row]) => Boolean(asPositiveId(row.coa_id)))
+        .map(([id, row]) => ({ id, label: String(row.overhead_name || "").trim() }))
+        .filter(option => option.label.length > 0)
+        .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+async function resolveExpenseInputs(expenses: LandedCostExpenseInput[]): Promise<LandedCostExpenseInput[]> {
+    const overheadTypes = await loadOverheadTypeMap();
+    const resolved: LandedCostExpenseInput[] = [];
+
+    for (const expense of expenses) {
+        const rawAmount = expense.amount_php as unknown;
+        const amountText = rawAmount == null ? "" : String(rawAmount).trim();
+        const overheadId = asPositiveId(expense.overhead_id);
+        if (!amountText && !overheadId) continue;
+
+        const amount = Number(rawAmount);
+        if (!Number.isFinite(amount) || amount < 0) {
+            throw new LandedCostDomainError(
+                400,
+                "LANDED_COST_EXPENSE_AMOUNT_INVALID",
+                "Landed-cost expense amounts must be finite and non-negative."
+            );
+        }
+
+        if (amount === 0 && !overheadId) continue;
+        if (amount <= 0) {
+            throw new LandedCostDomainError(
+                400,
+                "LANDED_COST_EXPENSE_AMOUNT_REQUIRED",
+                "Enter a positive amount for every selected operational expense type."
+            );
+        }
+        if (!overheadId) {
+            throw new LandedCostDomainError(
+                400,
+                "LANDED_COST_EXPENSE_TYPE_REQUIRED",
+                "Select an operational expense type for every landed-cost expense."
+            );
+        }
+
+        const overhead = overheadTypes.get(overheadId);
+        if (!overhead) {
+            throw new LandedCostDomainError(
+                400,
+                "LANDED_COST_EXPENSE_TYPE_INVALID",
+                "The selected operational expense type is no longer available.",
+                { overheadId }
+            );
+        }
+        const chartOfAccountId = asPositiveId(overhead.coa_id);
+        if (!chartOfAccountId) {
+            throw new LandedCostDomainError(
+                409,
+                "LANDED_COST_EXPENSE_TYPE_UNMAPPED",
+                `Operational expense type ${String(overhead.overhead_name || overheadId)} has no configured GL account mapping.`,
+                { overheadId }
+            );
+        }
+
+        resolved.push({
+            ...expense,
+            overhead_id: overheadId,
+            chart_of_account_id: chartOfAccountId,
+            expense_type: String(overhead.overhead_name || "").trim(),
+            amount_php: amount
+        });
+    }
+
+    return resolved;
+}
+
+/**
+ * Resolve operational expense types to their configured GL accounts for
+ * compatibility callers that still use the shipment-expense service.
+ */
+export async function resolveLandedCostExpenseInputs(expenses: LandedCostExpenseInput[]): Promise<LandedCostExpenseInput[]> {
+    return resolveExpenseInputs(expenses);
+}
+
 async function findComputation(purchaseOrderId: number): Promise<ComputationRecord | null> {
     const rows = await listRows(
         COMPUTATION_COLLECTION,
@@ -306,7 +420,10 @@ function assertDraft(computation: ComputationRecord): void {
     }
 }
 
-export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<LandedCostInputSnapshot> {
+export async function loadLandedCostSnapshot(
+    purchaseOrderId: number,
+    exchangeRateOverride?: unknown
+): Promise<LandedCostInputSnapshot> {
     const purchaseOrder = await directusJson<DirectusRecord>(`/items/purchase_order/${purchaseOrderId}?fields=*`);
     const lineRows = await listRows(
         "purchase_order_products",
@@ -346,7 +463,7 @@ export async function loadLandedCostSnapshot(purchaseOrderId: number): Promise<L
         }
     }
 
-    const currency = resolveLandedCostCurrency(purchaseOrder);
+    const currency = resolveLandedCostCurrency(purchaseOrder, exchangeRateOverride);
     const lines: LandedCostInputLine[] = [];
 
     for (const line of lineRows) {
@@ -404,7 +521,31 @@ export async function getComputationAttachments(computationId: number): Promise<
         ATTACHMENT_COLLECTION,
         `filter[computation_id][_eq]=${computationId}&sort=id`
     );
-    return rows as unknown as LandedCostAttachment[];
+    let overheadTypes = new Map<number, OverheadTypeRecord>();
+    try {
+        overheadTypes = await loadOverheadTypeMap();
+    } catch {
+        // The attachment relation is optional for historical records and older
+        // environments may not have the catalog available yet.
+    }
+    return rows.map(row => {
+        const expenseTypeId = asPositiveId(row.expense_type_id);
+        const overhead = expenseTypeId ? overheadTypes.get(expenseTypeId) : undefined;
+        return {
+            ...row,
+            id: asPositiveId(row.id) || 0,
+            computation_id: asPositiveId(row.computation_id) || computationId,
+            directus_file_id: String(row.directus_file_id || ""),
+            document_type: String(row.document_type || "OTHER") as AttachmentDocumentType,
+            expense_type_id: expenseTypeId,
+            expense_type_label: overhead?.overhead_name ? String(overhead.overhead_name) : null,
+            file_name: String(row.file_name || ""),
+            mime_type: row.mime_type == null ? null : String(row.mime_type),
+            file_size: row.file_size == null ? null : Number(row.file_size),
+            uploaded_by: asPositiveId(row.uploaded_by),
+            uploaded_at: row.uploaded_at == null ? null : String(row.uploaded_at)
+        };
+    });
 }
 
 export async function assertAttachmentDraft(purchaseOrderId: number, computationId: number): Promise<ComputationRecord> {
@@ -428,10 +569,17 @@ export async function uploadLandedCostAttachment(input: {
     purchaseOrderId: number;
     computationId: number;
     documentType: AttachmentDocumentType;
+    expenseTypeId: number;
     file: File;
     actorId?: number | null;
 }) {
     await assertAttachmentDraft(input.purchaseOrderId, input.computationId);
+    const overheadTypes = await loadOverheadTypeMap();
+    const expenseTypeId = asPositiveId(input.expenseTypeId);
+    const expenseType = expenseTypeId ? overheadTypes.get(expenseTypeId) : undefined;
+    if (!expenseTypeId || !expenseType) {
+        throw new LandedCostDomainError(400, "ATTACHMENT_EXPENSE_TYPE_REQUIRED", "Select a valid operational expense type before uploading a computation document.");
+    }
     if (!isAllowedAttachment(input.file)) {
         throw new LandedCostDomainError(400, "ATTACHMENT_TYPE_INVALID", "Only PDF and XLSX computation files are accepted.");
     }
@@ -472,12 +620,17 @@ export async function uploadLandedCostAttachment(input: {
             computation_id: input.computationId,
             directus_file_id: fileId,
             document_type: input.documentType,
+            expense_type_id: expenseTypeId,
             file_name: input.file.name,
             mime_type: input.file.type || null,
             file_size: input.file.size,
             uploaded_by: input.actorId || null
         });
-        return metadata as unknown as LandedCostAttachment;
+        return {
+            ...metadata,
+            expense_type_id: expenseTypeId,
+            expense_type_label: String(expenseType.overhead_name || "")
+        } as unknown as LandedCostAttachment;
     } catch (error) {
         await fetch(`${DIRECTUS_URL}/files/${encodeURIComponent(fileId)}`, {
             method: "DELETE",
@@ -511,11 +664,22 @@ export async function getComputationExpenses(computationId: number): Promise<Lan
         EXPENSE_COLLECTION,
         `filter[computation_id][_eq]=${computationId}&sort=id`
     );
+    let overheadTypes = new Map<number, OverheadTypeRecord>();
+    try {
+        overheadTypes = await loadOverheadTypeMap();
+    } catch {
+        // Older environments may not expose the operational catalog yet.
+    }
     return rows.map(row => ({
         expense_id: asPositiveId(row.id) || undefined,
         overhead_id: asPositiveId(row.overhead_id),
         chart_of_account_id: asPositiveId(row.chart_of_account_id),
-        expense_type: row.expense_type ? String(row.expense_type) : "",
+        expense_type: row.expense_type
+            ? String(row.expense_type)
+            : (() => {
+                const overheadId = asPositiveId(row.overhead_id);
+                return overheadId ? String(overheadTypes.get(overheadId)?.overhead_name || "") : "";
+            })(),
         amount_php: Math.max(0, asNumber(row.amount_php))
     }));
 }
@@ -632,7 +796,7 @@ export async function getLandedCostAudit(purchaseOrderId: number) {
     let currencyContract: LandedCostCurrencyContract | null = null;
     let currencyContractError: string | null = null;
     try {
-        currencyContract = resolveLandedCostCurrency(purchaseOrder);
+        currencyContract = resolveLandedCostCurrency(purchaseOrder, computation.exchange_rate);
     } catch (error) {
         currencyContractError = error instanceof Error ? error.message : "The purchase-order currency contract could not be verified.";
     }
@@ -780,6 +944,7 @@ export async function getLandedCostAudit(purchaseOrderId: number) {
             purchaseOrderId: computation.purchase_order_id,
             allocationRule: computation.allocation_rule,
             status: computation.status,
+            exchangeRate: computation.exchange_rate == null ? null : asNumber(computation.exchange_rate),
             totalLandedFee: expectedFee,
             roundingVariance: variance,
             fgValueShare: asNumber(computation.fg_value_share),
@@ -841,6 +1006,7 @@ export async function saveLandedCostDraft(input: {
     purchaseOrderId: number;
     allocationRule: unknown;
     expenses: LandedCostExpenseInput[];
+    exchangeRate?: unknown;
     actorId?: number | null;
     sourceFlow?: string;
 }) {
@@ -849,12 +1015,19 @@ export async function saveLandedCostDraft(input: {
     let computation = await findComputation(input.purchaseOrderId);
     if (computation) assertDraft(computation);
 
+    // Resolve and validate every expense and the effective currency before any
+    // existing draft rows are deleted or replaced.
+    const effectiveRateInput = input.exchangeRate ?? computation?.exchange_rate;
+    const snapshot = await loadLandedCostSnapshot(input.purchaseOrderId, effectiveRateInput);
+    const resolvedExpenses = await resolveExpenseInputs(input.expenses);
+
     if (!computation) {
         computation = await directusJson<ComputationRecord>(`/items/${COMPUTATION_COLLECTION}`, {
             method: "POST",
             body: JSON.stringify({
                 purchase_order_id: input.purchaseOrderId,
                 allocation_rule: allocationRule,
+                exchange_rate: snapshot.exchangeRate,
                 status: "DRAFT",
                 source_flow: input.sourceFlow || "MANUFACTURING_PROCUREMENT",
                 created_by: input.actorId || null
@@ -863,7 +1036,13 @@ export async function saveLandedCostDraft(input: {
     } else {
         computation = await directusJson<ComputationRecord>(`/items/${COMPUTATION_COLLECTION}/${computation.id}`, {
             method: "PATCH",
-            body: JSON.stringify({ allocation_rule: allocationRule, status: "DRAFT", source_flow: input.sourceFlow || computation.source_flow || "MANUFACTURING_PROCUREMENT", failure_reason: null })
+            body: JSON.stringify({
+                allocation_rule: allocationRule,
+                exchange_rate: snapshot.exchangeRate,
+                status: "DRAFT",
+                source_flow: input.sourceFlow || computation.source_flow || "MANUFACTURING_PROCUREMENT",
+                failure_reason: null
+            })
         });
     }
 
@@ -871,9 +1050,8 @@ export async function saveLandedCostDraft(input: {
     for (const expense of existingExpenses) {
         if (expense.id) await directusJson(`/items/${EXPENSE_COLLECTION}/${expense.id}`, { method: "DELETE" });
     }
-    for (const expense of input.expenses) {
+    for (const expense of resolvedExpenses) {
         const amount = Math.max(0, asNumber(expense.amount_php));
-        if (amount <= 0 && !expense.overhead_id && !expense.chart_of_account_id) continue;
         await directusJson(`/items/${EXPENSE_COLLECTION}`, {
             method: "POST",
             body: JSON.stringify({
@@ -934,12 +1112,14 @@ export async function previewLandedCost(input: {
     purchaseOrderId: number;
     allocationRule: unknown;
     expenses: LandedCostExpenseInput[];
+    exchangeRate?: unknown;
 }) {
     const allocationRule = requireAllocationRule(input.allocationRule);
-    const snapshot = await loadLandedCostSnapshot(input.purchaseOrderId);
+    const snapshot = await loadLandedCostSnapshot(input.purchaseOrderId, input.exchangeRate);
+    const expenses = await resolveExpenseInputs(input.expenses);
     return {
         allocationRule,
-        calculation: buildCalculation(snapshot, allocationRule, input.expenses),
+        calculation: buildCalculation(snapshot, allocationRule, expenses),
         lines: snapshot.lines.map(line => ({
             key: line.key,
             productId: line.productId,
@@ -958,6 +1138,7 @@ export async function finalizeLandedCost(input: {
     computationId?: number | null;
     allocationRule?: unknown;
     expenses?: LandedCostExpenseInput[];
+    exchangeRate?: unknown;
     actorId?: number | null;
     sourceFlow?: string;
 }) {
@@ -973,11 +1154,12 @@ export async function finalizeLandedCost(input: {
         purchaseOrderId: input.purchaseOrderId,
         allocationRule,
         expenses: input.expenses || (existing ? await getComputationExpenses(existing.id) : []),
+        exchangeRate: input.exchangeRate ?? existing?.exchange_rate,
         actorId: input.actorId,
         sourceFlow: input.sourceFlow
     });
     const computation = draft.computation as ComputationRecord;
-    const snapshot = await loadLandedCostSnapshot(input.purchaseOrderId);
+    const snapshot = await loadLandedCostSnapshot(input.purchaseOrderId, computation.exchange_rate);
     const expenses = await getComputationExpenses(computation.id);
     const calculation = buildCalculation(snapshot, allocationRule, expenses);
     await loadSettings();
@@ -987,6 +1169,7 @@ export async function finalizeLandedCost(input: {
     await patchRow(COMPUTATION_COLLECTION, computation.id, {
         status: "FINALIZING",
         finalization_key: finalizationKey,
+        exchange_rate: snapshot.exchangeRate,
         total_shipment_value: calculation.totalShipmentValue,
         total_landed_fee: calculation.totalLandedFee,
         rm_value_share: calculation.rmValueShare,

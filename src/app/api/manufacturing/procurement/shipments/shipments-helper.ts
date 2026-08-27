@@ -667,6 +667,45 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     };
 }
 
+async function fetchFinalizedLandedCostExchangeRates(purchaseOrderIds: readonly number[]): Promise<Map<number, string>> {
+    const ids = [...new Set(purchaseOrderIds.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        "filter[purchase_order_id][_in]": ids.join(","),
+        "filter[status][_eq]": "FINALIZED",
+        fields: "purchase_order_id,exchange_rate,id",
+        sort: "-id",
+        limit: "-1"
+    });
+
+    try {
+        const res = await fetch(`${DIRECTUS_URL}/items/purchase_order_landed_cost_computations?${params.toString()}`, {
+            headers,
+            cache: "no-store"
+        });
+        if (!res.ok) return new Map();
+        const rows = ((await res.json()).data || []) as Array<{ purchase_order_id?: unknown; exchange_rate?: unknown }>;
+        const rates = new Map<number, string>();
+        for (const row of rows) {
+            const purchaseOrderId = Number(row.purchase_order_id);
+            if (!Number.isSafeInteger(purchaseOrderId) || purchaseOrderId <= 0 || rates.has(purchaseOrderId)) continue;
+            const rawRate = row.exchange_rate == null ? "" : String(row.exchange_rate).trim();
+            if (!rawRate) continue;
+            try {
+                const rate = DecimalValue.from(rawRate);
+                if (rate.compare(0) > 0) rates.set(purchaseOrderId, rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE));
+            } catch {
+                // An invalid finalized rate must not replace the purchase-order rate.
+            }
+        }
+        return rates;
+    } catch (error) {
+        console.warn("[Manufacturing Directus API] Failed to load finalized landed-cost exchange rates:", error);
+        return new Map();
+    }
+}
+
 export async function fetchIncomingShipments(options: { landedCostOnly?: boolean; includePosted?: boolean } = {}): Promise<unknown[]> {
     try {
         const landedCostFilter = options.landedCostOnly
@@ -692,7 +731,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             workflowRevision: Number(row.workflow_revision || 0)
         })));
 
-        return poList.map(row => mapPurchaseOrder(
+        const mappedOrders = poList.map(row => mapPurchaseOrder(
             row,
             suppliers,
             paymentModes,
@@ -700,6 +739,16 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             rejectionStages.get(Number(row.purchase_order_id)) || null,
             revisionCounts.get(Number(row.purchase_order_id)) || 0
         ));
+        const finalizedRates = options.includePosted
+            ? await fetchFinalizedLandedCostExchangeRates(poList
+                .filter(row => isPurchaseOrderPosted(row))
+                .map(row => Number(row.purchase_order_id)))
+            : new Map<number, string>();
+
+        return mappedOrders.map(order => {
+            const finalizedRate = finalizedRates.get(Number(order.shipment_id));
+            return finalizedRate ? { ...order, exchange_rate: finalizedRate } : order;
+        });
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch incoming shipments:", e);
         return [];

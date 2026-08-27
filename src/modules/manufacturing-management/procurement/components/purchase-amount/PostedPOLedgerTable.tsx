@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchPurchaseAmountDetails } from "../../services/purchase-amount-api";
-import { ChartOfAccount, POLineItem, LandedExpenseRow, PurchaseOrderHeader } from "./types";
+import { ChartOfAccount, POLineItem, PurchaseOrderHeader } from "./types";
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
 import LandedCostAuditSummary from "../LandedCostAuditSummary";
 import {
@@ -36,9 +36,22 @@ export type PostedOrder = IncomingShipment & Partial<PurchaseOrderHeader> & {
 
 export interface PODetails {
     purchaseOrder?: PostedOrder;
-    importExpenses?: LandedExpenseRow[];
+    importExpenses?: AuditExpense[];
     chartOfAccounts?: ChartOfAccount[];
     lineItems?: POLineItem[];
+    landedCost?: {
+        computation?: { exchange_rate?: number | string | null } | null;
+        expenses?: AuditExpense[];
+    };
+}
+
+interface AuditExpense {
+    id?: number | string;
+    overhead_id?: number | null;
+    expense_type?: string | null;
+    amount?: number | string | null;
+    amount_php?: number | string | null;
+    chart_of_account_id?: number | null;
 }
 
 interface PostedPOLedgerTableProps {
@@ -60,7 +73,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
         return poNo.includes(query) || suppName.toLowerCase().includes(query);
     });
 
-    const totalPostedValue = postedOrders.reduce((sum, po) => sum + (Number(po.total_amount) || 0), 0);
+    const totalPostedValue = postedOrders.reduce((sum, po) => sum + (Number(po.total_amount ?? po.total_php_value) || 0), 0);
     const totalForeignValue = postedOrders
         .filter(po => String(po.currency_code || "PHP").toUpperCase() !== "PHP")
         .reduce((sum, po) => sum + (Number(po.total_foreign_currency) || 0), 0);
@@ -180,7 +193,7 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                 const isForeign = currencyCode !== "PHP";
                                 const poNo = po.purchase_order_no || po.reference_number || `PO #${po.purchase_order_id}`;
                                 const suppName = typeof po.supplier_name === "object" ? (po.supplier_name?.supplier_name || `Supplier #${po.supplier_name?.id}`) : (po.supplier_name ? `Supplier #${po.supplier_name}` : "N/A");
-                                const totalPhp = Number(po.total_amount) || 0;
+                                const totalPhp = Number(po.total_amount ?? po.total_php_value) || 0;
                                 const rate = Number(po.exchange_rate);
                                 const rowKey = po.purchase_order_id || po.shipment_id || po.id || po.reference_number || `${poNo}-${index}`;
 
@@ -278,8 +291,8 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 bg-muted/20 border rounded-xl text-xs">
                                         <div>
                                             <div className="text-muted-foreground text-[10px] font-bold">Exchange Rate</div>
-                                            <div className="font-mono font-bold">{Number.isFinite(Number(poDetails.purchaseOrder?.exchange_rate)) && Number(poDetails.purchaseOrder?.exchange_rate) > 0
-                                                ? `PHP ${Number(poDetails.purchaseOrder?.exchange_rate).toFixed(4)} / ${String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase()}`
+                                           <div className="font-mono font-bold">{Number.isFinite(Number(poDetails.landedCost?.computation?.exchange_rate ?? poDetails.purchaseOrder?.exchange_rate)) && Number(poDetails.landedCost?.computation?.exchange_rate ?? poDetails.purchaseOrder?.exchange_rate) > 0
+                                               ? `PHP ${Number(poDetails.landedCost?.computation?.exchange_rate ?? poDetails.purchaseOrder?.exchange_rate).toFixed(4)} / ${String(poDetails.purchaseOrder?.currency_code || "PHP").toUpperCase()}`
                                                 : "Unavailable — reconciliation required"}</div>
                                         </div>
                                         <div>
@@ -321,30 +334,32 @@ export default function PostedPOLedgerTable({ postedOrders }: PostedPOLedgerTabl
                                         )}
                                     </div>
 
-                                    {/* Import Expenses Table if any */}
-                                    {poDetails.importExpenses && poDetails.importExpenses.length > 0 && (
+                                    {/* Expense-to-GL audit table. New canonical expenses are preferred; legacy import rows remain readable. */}
+                                    {((poDetails.landedCost?.expenses?.length ? poDetails.landedCost.expenses : poDetails.importExpenses) || []).length > 0 && (
                                         <div className="space-y-2">
                                             <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                                                 <Layers className="h-3.5 w-3.5 text-primary" />
-                                                Capitalized Import Expenses (Chart of Accounts)
+                                                Capitalized Expenses and GL Mapping
                                             </h4>
                                             <div className="border rounded-xl overflow-hidden bg-background text-xs">
                                                 <table className="w-full text-left">
                                                     <thead className="bg-muted/50 border-b text-[10px] font-bold text-muted-foreground uppercase">
                                                         <tr>
-                                                            <th className="p-2.5">Chart of Account ID</th>
+                                                            <th className="p-2.5">Expense Type</th>
+                                                            <th className="p-2.5">Chart of Account</th>
                                                             <th className="p-2.5 text-right">Fee Amount (PHP)</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y">
-                                                        {poDetails.importExpenses.map((exp: LandedExpenseRow, idx: number) => {
+                                                        {((poDetails.landedCost?.expenses?.length ? poDetails.landedCost.expenses : poDetails.importExpenses) || []).map((exp, idx) => {
                                                             const coaObj = poDetails.chartOfAccounts?.find((c: ChartOfAccount) => (c.coa_id ?? c.id) === exp.chart_of_account_id);
-                                                            const title = coaObj ? `[${coaObj.gl_code || "GL"}] ${coaObj.account_title || coaObj.account_name}` : `Account ID #${exp.chart_of_account_id}`;
+                                                            const title = coaObj ? `[${coaObj.gl_code || "GL"}] ${coaObj.account_title || coaObj.account_name}` : exp.chart_of_account_id ? `Account ID #${exp.chart_of_account_id}` : "Mapped by expense type";
                                                             return (
-                                                                <tr key={idx}>
-                                                                    <td className="p-2.5 font-semibold">{title}</td>
+                                                                <tr key={exp.id ?? `${exp.overhead_id ?? "expense"}-${idx}`}>
+                                                                    <td className="p-2.5 font-semibold">{exp.expense_type || "Unclassified legacy expense"}</td>
+                                                                    <td className="p-2.5 text-muted-foreground">{title}</td>
                                                                     <td className="p-2.5 text-right font-mono font-bold text-emerald-600">
-                                                                        PHP {Number(exp.amount).toFixed(2)}
+                                                                        PHP {Number(exp.amount_php ?? exp.amount ?? 0).toFixed(2)}
                                                                     </td>
                                                                 </tr>
                                                             );

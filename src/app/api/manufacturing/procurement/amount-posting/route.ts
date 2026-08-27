@@ -4,6 +4,7 @@ import { assertLandedCostStatus, LandedCostEligibilityError } from "../_landed-c
 import {
     finalizeLandedCost,
     getLandedCostComputation,
+    getLandedCostExpenseTypes,
     isLandedCostError,
     loadLandedCostSnapshot
 } from "../landed-cost/_domain";
@@ -87,6 +88,8 @@ export async function GET(request: Request) {
             chartOfAccounts = coaData?.data || [];
         }
 
+        const expenseTypes = await getLandedCostExpenseTypes();
+
         // Fetch forex exchange rate from forex_configurations
         const forexRes = await fetch(`${DIRECTUS_URL}/items/forex_configurations?filter[currency_code][_eq]=USD&limit=1`, {
             headers,
@@ -105,7 +108,8 @@ export async function GET(request: Request) {
         if (!poId) {
             return NextResponse.json({
                 chartOfAccounts,
-                activeForexRate
+                activeForexRate,
+                expenseTypes
             });
         }
 
@@ -169,6 +173,7 @@ export async function GET(request: Request) {
             landedCost,
             chartOfAccounts,
             activeForexRate,
+            expenseTypes,
             currencyCode: snapshot.currencyCode,
             exchangeRate: snapshot.exchangeRate
         });
@@ -198,9 +203,8 @@ export async function POST(request: Request) {
         }
         const expenses = Array.isArray(body.expenses)
             ? body.expenses.map((expense: Record<string, unknown>) => ({
-                chart_of_account_id: Number(expense.chart_of_account_id) || null,
-                expense_type: typeof expense.expense_type === "string" ? expense.expense_type : "",
-                amount_php: Number(expense.amount || expense.amount_php || 0)
+                overhead_id: Number(expense.overhead_id) || null,
+                amount_php: Number(expense.amount_php ?? expense.amount ?? 0)
             }))
             : [];
         const result = await finalizeLandedCost({
@@ -208,6 +212,7 @@ export async function POST(request: Request) {
             computationId: body.computation_id ? Number(body.computation_id) : null,
             allocationRule,
             expenses,
+            exchangeRate: body.exchange_rate,
             actorId: actor.userId,
             sourceFlow: "PURCHASE_AMOUNT_POSTING"
         });

@@ -41,7 +41,9 @@ export interface POLineItemForPosting {
 export interface LandedExpenseEntry {
     po_import_id?: number;
     purchase_order_id: number;
-    chart_of_account_id: number;
+    overhead_id?: number | null;
+    /** Legacy read-only field. Posting never trusts or forwards this value. */
+    chart_of_account_id?: number | null;
     chart_of_account_name?: string;
     amount: number;
     allocation_method?: string; // "hybrid" | "quantity" | "weight" | "value"
@@ -366,15 +368,14 @@ export async function processPurchaseAmountPosting(payload: {
     line_items: POLineItemForPosting[];
 }) {
     void payload.is_foreign;
-    void payload.exchange_rate;
     return finalizeLandedCost({
         purchaseOrderId: payload.purchase_order_id,
-        allocationRule: payload.allocation_rule || (payload.is_foreign ? "Hybrid" : "Value"),
+        allocationRule: payload.allocation_rule,
         expenses: (payload.expenses || []).map(expense => ({
-            chart_of_account_id: expense.chart_of_account_id,
-            expense_type: expense.chart_of_account_name || "",
+            overhead_id: expense.overhead_id,
             amount_php: expense.amount
         })),
+        exchangeRate: payload.exchange_rate,
         sourceFlow: "PURCHASE_AMOUNT_POSTING_LEGACY_ADAPTER"
     });
 }

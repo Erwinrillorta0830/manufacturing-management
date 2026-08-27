@@ -190,10 +190,15 @@ export interface ShipmentExpense {
     expense_type?: string;
     overhead_id?: number;
     amount_php: number | string;
-    allocation_method: "By Value" | "By Weight" | "By Volume" | "Manual" | "Value" | "Weight" | "Volume" | "Hybrid";
+    allocation_method: "By Quantity" | "By Value" | "By Weight" | "By Volume" | "Manual" | "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
-export type LandedCostAllocationRule = "Value" | "Weight" | "Volume" | "Hybrid";
+/**
+ * Quantity, Weight, and Hybrid are the supported rules exposed by the
+ * purchase-amount editor. Value and Volume remain readable so older landed
+ * cost drafts and posted records continue to render correctly.
+ */
+export type LandedCostAllocationRule = "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 
 export interface LandedCostExpenseDraft {
     expense_id?: number;
@@ -208,6 +213,8 @@ export interface LandedCostAttachmentRecord {
     computation_id: number;
     directus_file_id: string;
     document_type: "CARRIER_INVOICE" | "FREIGHT_BILL" | "BROKER_ASSESSMENT_SHEET" | "OTHER";
+    expense_type_id?: number | null;
+    expense_type_label?: string | null;
     file_name: string;
     mime_type?: string | null;
     file_size?: number | null;
@@ -219,6 +226,7 @@ export interface LandedCostComputationRecord {
     purchase_order_id: number;
     allocation_rule: LandedCostAllocationRule;
     status: "DRAFT" | "FINALIZING" | "FINALIZED" | "FAILED";
+    exchange_rate?: number | string | null;
     total_landed_fee?: number | null;
     rounding_variance?: number | null;
     fg_value_share?: number | string | null;
@@ -515,7 +523,7 @@ export interface DirectusShipmentExpense {
     shipment_id: number;
     expense_type: string;
     amount_php: number | string;
-    allocation_method: "Value" | "Weight" | "Volume" | "Hybrid";
+    allocation_method: "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 }
 
 export interface DirectusProductPerSupplier {

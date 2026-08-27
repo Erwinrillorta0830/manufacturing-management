@@ -1,6 +1,6 @@
 import { calculatePackagingWeightShares } from "./packaging-weight";
 
-export type LandedCostAllocationRule = "Value" | "Weight" | "Volume" | "Hybrid";
+export type LandedCostAllocationRule = "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
 
 export interface LandedCostCalculationLine {
@@ -49,6 +49,7 @@ function finiteNonNegative(value: number, fallback = 0): number {
 }
 
 function allocationRatio(rule: LandedCostAllocationRule, line: LandedCostCalculationLine): number {
+    if (rule === "Quantity") return finiteNonNegative(line.quantity);
     if (rule === "Weight") return finiteNonNegative(line.lineGrossWeightKg);
     if (rule === "Volume") return finiteNonNegative(line.volume) * finiteNonNegative(line.quantity);
     return finiteNonNegative(line.quantity) * finiteNonNegative(line.baseUnitCostPhp);
