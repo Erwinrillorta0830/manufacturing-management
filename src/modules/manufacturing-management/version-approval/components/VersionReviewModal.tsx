@@ -62,7 +62,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
     useEffect(() => {
         if (item) {
-            setRemarks(item.revision_notes || item.rejection_reason || "");
+            setRemarks(item.remarks || item.revision_notes || item.rejection_reason || "");
         }
     }, [item]);
 
@@ -122,6 +122,11 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
             return;
         }
 
+        if (action === "revision" && !remarks.trim()) {
+            setErrorMsg("Please specify what needs to be revised.");
+            return;
+        }
+
         setSubmitting(true);
         setErrorMsg(null);
 
@@ -129,8 +134,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
             versionId: item.version_id,
             action: action,
             setActive: action === "approve" ? setActive : false,
-            remarks: action === "approve" ? remarks.trim() : undefined,
-            rejectionReason: action === "reject" ? remarks.trim() : undefined,
+            remarks: remarks.trim() || undefined,
         };
 
         try {
@@ -400,7 +404,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
                         <div className="flex flex-col gap-1.5 mt-1">
                             <label className="text-xs font-medium text-muted-foreground">
-                                Review Remarks / Note (Required for Rejection)
+                                Review Remarks / Note (Required for Rejection & Revision)
                             </label>
                             <Textarea
                                 className="bg-background border-input text-foreground placeholder:text-muted-foreground min-h-[80px]"

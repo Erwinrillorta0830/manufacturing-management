@@ -22,6 +22,7 @@ interface DirectusProductVersion {
     approved_at?: string | null;
     approval_remarks?: string | null;
     rejection_reason?: string | null;
+    remarks?: string | null;
 }
 
 interface DirectusProduct {
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
         const searchParam = searchParams.get("search");
 
         const [verRes, prodRes, usersRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,base_quantity,uom_id,expected_yield_percentage,custom_overhead,status,valid_from,valid_to,created_by,created_at,approved_by,approved_at,remarks`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,product_category.category_name`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null)
         ]);
@@ -122,8 +123,9 @@ export async function GET(request: Request) {
                 created_by: createdByName,
                 created_at: v.created_at || new Date().toISOString(),
                 status: v.status || "Draft",
-                rejection_reason: v.rejection_reason || null,
-                revision_notes: v.approval_remarks || null,
+                rejection_reason: v.remarks || v.rejection_reason || null,
+                revision_notes: v.remarks || v.approval_remarks || null,
+                remarks: v.remarks || null,
                 base_version_id: null,
                 approved_by_name: approvedByName
             };
@@ -209,6 +211,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid versionId" }, { status: 400 });
         }
 
+        if (normalizedAction === "request_revision" && (!remarks || !remarks.trim())) {
+            return NextResponse.json({ error: "Remarks are required to request a revision." }, { status: 400 });
+        }
+
         const userId = await getUserIdFromToken();
         
         const phDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
@@ -262,7 +268,7 @@ export async function POST(request: Request) {
                 approved_at: phTimeIso,
                 updated_by: userId,
                 updated_at: phTimeIso,
-                approval_remarks: remarks || feedback || null
+                remarks: remarks || feedback || null
             };
         } else if (normalizedAction === "reject") {
             const finalReason = rejectionReason || reason || remarks;
@@ -272,9 +278,7 @@ export async function POST(request: Request) {
             updatePayload = {
                 status: "Rejected",
                 is_primary: false,
-                rejection_reason: finalReason.trim(),
-                approved_by: userId,
-                approved_at: phTimeIso,
+                remarks: finalReason.trim(),
                 updated_by: userId,
                 updated_at: phTimeIso
             };
@@ -282,8 +286,7 @@ export async function POST(request: Request) {
             updatePayload = {
                 status: "Revision",
                 is_primary: false,
-                approved_by: userId,
-                approved_at: phTimeIso,
+                remarks: remarks.trim(),
                 updated_by: userId,
                 updated_at: phTimeIso
             };
