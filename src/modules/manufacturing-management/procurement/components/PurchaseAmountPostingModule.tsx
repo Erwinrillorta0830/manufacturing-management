@@ -188,7 +188,7 @@ export default function PurchaseAmountPostingModule({
                                     <h3 className="text-xs font-bold uppercase tracking-wider">Landed-Cost Allocation Rule</h3>
                                     <p className="text-[11px] text-muted-foreground mt-1">Choose the rule used by the server for every landed-cost allocation. This selection is required before posting.</p>
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                     {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
                                         const selected = allocationRule === value;
                                         return (
