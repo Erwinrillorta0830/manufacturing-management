@@ -409,6 +409,10 @@ export default function ShipmentExpenses({
                                  purchaseOrderId={shipment.shipment_id}
                                  allocationRule={allocationForm.allocation_method}
                                  expenses={allocationForm.expenses}
+                                 expenseTypes={overheadTypes
+                                     .map((type) => ({ id: Number(type.id), label: String(type.overhead_name || "") }))
+                                     .filter((type) => type.id > 0 && type.label)}
+                                 exchangeRate={Number(shipment.exchange_rate) || 1}
                                  sourceFlow="SHIPMENT_EXPENSES"
                                  disabled={submitting}
                              />

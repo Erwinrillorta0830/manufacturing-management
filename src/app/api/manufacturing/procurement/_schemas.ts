@@ -137,7 +137,7 @@ export const expenseAllocationSchema = z.object({
         expense_type: z.string().trim().default(""),
         amount_php: nonNegativeNumber
     })),
-    allocationMethod: z.enum(["Value", "Weight", "Volume", "Hybrid", "By Value", "By Weight", "By Volume", "By Hybrid"]),
+    allocationMethod: z.enum(["Quantity", "Value", "Weight", "Volume", "Hybrid", "By Quantity", "By Value", "By Weight", "By Volume", "By Hybrid"]),
     lineItemUpdates: z.array(z.object({
         line_id: positiveId,
         quantity_received: nonNegativeNumber

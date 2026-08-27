@@ -52,9 +52,10 @@ export async function POST(request: Request) {
         const purchaseOrderId = Number(formData.get("purchaseOrderId"));
         const computationId = Number(formData.get("computationId"));
         const documentType = String(formData.get("documentType") || "");
+        const expenseTypeId = Number(formData.get("expenseTypeId"));
         const file = formData.get("file");
-        if (!Number.isSafeInteger(purchaseOrderId) || purchaseOrderId <= 0 || !Number.isSafeInteger(computationId) || computationId <= 0) {
-            return NextResponse.json({ error: "purchaseOrderId and computationId are required." }, { status: 400 });
+        if (!Number.isSafeInteger(purchaseOrderId) || purchaseOrderId <= 0 || !Number.isSafeInteger(computationId) || computationId <= 0 || !Number.isSafeInteger(expenseTypeId) || expenseTypeId <= 0) {
+            return NextResponse.json({ error: "purchaseOrderId, computationId, and expenseTypeId are required." }, { status: 400 });
         }
         if (!DOCUMENT_TYPES.has(documentType as AttachmentDocumentType)) {
             return NextResponse.json({ error: "A valid computation document type is required." }, { status: 400 });
@@ -66,6 +67,7 @@ export async function POST(request: Request) {
             purchaseOrderId,
             computationId,
             documentType: documentType as AttachmentDocumentType,
+            expenseTypeId,
             file,
             actorId: actor.userId
         });
