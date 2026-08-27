@@ -43,9 +43,26 @@ export async function POST(_request: NextRequest, context: RouteParams) {
         if (!detailsRes.ok) {
             return NextResponse.json({ success: false, error: "Failed to load sheet details." }, { status: 500 });
         }
-        const details = (await detailsRes.json()).data || [];
+        const details: Array<Record<string, unknown>> = (await detailsRes.json()).data || [];
         if (details.length === 0) {
             return NextResponse.json({ success: false, error: "Cannot submit a Physical Inventory sheet with no detail rows." }, { status: 400 });
+        }
+
+        // Validate variance reasons for REGULAR physical inventory sheets
+        if (sheet.stock_type === "REGULAR") {
+            for (const d of details) {
+                const sys = Number(d.system_count || 0);
+                const phys = Number(d.physical_count || 0);
+                const variance = phys - sys;
+                const remarksStr = d.remarks ? String(d.remarks).trim() : "";
+                if (Math.abs(variance) > 0.0001 && !remarksStr) {
+                    const batchNo = d.batch_no || d.inventory_lot_id || "N/A";
+                    return NextResponse.json({
+                        success: false,
+                        error: `Variance reason is required for Batch #${batchNo} which has a non-zero variance of ${variance > 0 ? `+${variance}` : variance}.`
+                    }, { status: 400 });
+                }
+            }
         }
 
         // Recalculate totals first

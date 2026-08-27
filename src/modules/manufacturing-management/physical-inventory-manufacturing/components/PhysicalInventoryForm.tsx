@@ -11,7 +11,7 @@ import {
 } from "../types";
 import SearchableSelect from "./SearchableSelect";
 import { formatQty, formatMoney } from "./PhysicalInventoryList";
-import { ArrowLeft, Plus, Save, Send, Trash2, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag } from "lucide-react";
+import { ArrowLeft, Plus, Save, Send, Trash2, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2 } from "lucide-react";
 
 interface Props {
     sheet?: MmPhysicalInventorySheet | null;
@@ -375,6 +375,9 @@ export default function PhysicalInventoryForm({
                                 </option>
                             ))}
                         </select>
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Product filter locked while sheet contains detail rows.</p>
+                        )}
                     </div>
 
                     <div>
@@ -382,7 +385,7 @@ export default function PhysicalInventoryForm({
                         <select
                             value={priceTypeId}
                             onChange={(e) => setPriceTypeId(Number(e.target.value))}
-                            disabled={isReadOnly}
+                            disabled={isReadOnly || (details.length > 0 && !isNew)}
                             className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
                         >
                             <option value={0}>Standard Cost / Default Price (0.00)</option>
@@ -392,6 +395,9 @@ export default function PhysicalInventoryForm({
                                 </option>
                             ))}
                         </select>
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Price basis locked while sheet contains detail rows.</p>
+                        )}
                     </div>
 
                     <div>
@@ -407,6 +413,9 @@ export default function PhysicalInventoryForm({
                             </option>
                             <option value="REGULAR">Regular Physical Inventory</option>
                         </select>
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Stock count type locked while sheet contains detail rows.</p>
+                        )}
                         {isNew && branchHasCommittedOpening && (
                             <p className="text-[10px] text-amber-600 mt-1 font-medium">
                                 Committed Opening Inventory already established for this branch. Stock count type set to Regular.
@@ -420,10 +429,13 @@ export default function PhysicalInventoryForm({
                             type="datetime-local"
                             value={startingDate}
                             onChange={(e) => setStartingDate(e.target.value)}
-                            disabled={isReadOnly}
+                            disabled={isReadOnly || (details.length > 0 && !isNew)}
                             className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
                             required
                         />
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Starting date locked while sheet contains detail rows.</p>
+                        )}
                     </div>
 
                     <div>
@@ -432,10 +444,13 @@ export default function PhysicalInventoryForm({
                             type="datetime-local"
                             value={cutoffDate}
                             onChange={(e) => setCutoffDate(e.target.value)}
-                            disabled={isReadOnly}
+                            disabled={isReadOnly || (details.length > 0 && !isNew)}
                             className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
                             required
                         />
+                        {details.length > 0 && !isNew && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">Cutoff date locked while sheet contains detail rows.</p>
+                        )}
                     </div>
                 </div>
 
@@ -569,8 +584,24 @@ export default function PhysicalInventoryForm({
                         </div>
 
                         {details.length === 0 ? (
-                            <div className="bg-card border rounded-xl p-8 text-center text-muted-foreground shadow-xs">
-                                No line items added yet. Click &quot;Add Product Count&quot; to begin.
+                            <div className="bg-card border rounded-xl p-12 text-center text-muted-foreground shadow-xs flex flex-col items-center justify-center gap-3 animate-in fade-in-50">
+                                {loading || saving ? (
+                                    <>
+                                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                                        <span className="text-sm font-semibold text-foreground">
+                                            Loading inventory line items...
+                                        </span>
+                                        <span className="text-xs text-muted-foreground max-w-sm">
+                                            Fetching system counts and auto-populating stock ledger data. Please wait a moment.
+                                        </span>
+                                    </>
+                                ) : (
+                                    <span>
+                                        {isDraft
+                                            ? "No line items added yet. Click \"Add Product Count\" to begin."
+                                            : "No line items recorded for this physical inventory sheet."}
+                                    </span>
+                                )}
                             </div>
                         ) : viewMode === "GROUPED" ? (
                             /* GROUPED BY LOT VIEW */

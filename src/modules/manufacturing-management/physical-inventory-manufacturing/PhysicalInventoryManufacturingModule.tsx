@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
     MmPhysicalInventorySheet,
     MmPhysicalInventoryDetail,
@@ -43,6 +44,10 @@ import CancelModal from "./components/CancelModal";
 import { CheckCircle2, AlertTriangle, X } from "lucide-react";
 
 export default function PhysicalInventoryManufacturingModule() {
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => {
+        setMounted(true);
+    }, []);
     const [view, setView] = useState<"LIST" | "FORM">("LIST");
     const [sheets, setSheets] = useState<MmPhysicalInventorySheet[]>([]);
     const [activeSheet, setActiveSheet] = useState<MmPhysicalInventorySheet | null>(null);
@@ -115,6 +120,8 @@ export default function PhysicalInventoryManufacturingModule() {
     const handleViewSheet = async (sheet: MmPhysicalInventorySheet) => {
         try {
             setLoading(true);
+            setLastCreatedLot(null);
+            setLastCreatedBatch(null);
             const fullSheet = await fetchPhysicalInventorySheet(sheet.physical_inventory_id);
             setActiveSheet(fullSheet);
             setView("FORM");
@@ -123,6 +130,8 @@ export default function PhysicalInventoryManufacturingModule() {
             if (bId) {
                 const lList = await fetchLotsByBranch(bId);
                 setLots(lList);
+            } else {
+                setLots([]);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to load sheet details";
@@ -134,6 +143,9 @@ export default function PhysicalInventoryManufacturingModule() {
 
     const handleCreateNew = () => {
         setActiveSheet(null);
+        setLots([]);
+        setLastCreatedLot(null);
+        setLastCreatedBatch(null);
         setView("FORM");
     };
 
@@ -291,10 +303,11 @@ export default function PhysicalInventoryManufacturingModule() {
 
         try {
             setLoading(true);
-            const updated = await submitPhysicalInventorySheet(sheetToSubmit.physical_inventory_id);
-            showToast(`Physical Inventory ${updated.pi_no} submitted for review.`);
-            if (activeSheet?.physical_inventory_id === updated.physical_inventory_id) {
-                setActiveSheet(updated);
+            await submitPhysicalInventorySheet(sheetToSubmit.physical_inventory_id);
+            const fullSheet = await fetchPhysicalInventorySheet(sheetToSubmit.physical_inventory_id);
+            showToast(`Physical Inventory ${fullSheet.pi_no} submitted for review.`);
+            if (activeSheet?.physical_inventory_id === fullSheet.physical_inventory_id) {
+                setActiveSheet(fullSheet);
             }
             await loadSheets();
         } catch (err: unknown) {
@@ -312,10 +325,11 @@ export default function PhysicalInventoryManufacturingModule() {
 
         try {
             setLoading(true);
-            const updated = await returnToDraftPhysicalInventorySheet(sheetToReturn.physical_inventory_id);
-            showToast(`Physical Inventory ${updated.pi_no} returned to DRAFT status.`);
-            if (activeSheet?.physical_inventory_id === updated.physical_inventory_id) {
-                setActiveSheet(updated);
+            await returnToDraftPhysicalInventorySheet(sheetToReturn.physical_inventory_id);
+            const fullSheet = await fetchPhysicalInventorySheet(sheetToReturn.physical_inventory_id);
+            showToast(`Physical Inventory ${fullSheet.pi_no} returned to DRAFT status.`);
+            if (activeSheet?.physical_inventory_id === fullSheet.physical_inventory_id) {
+                setActiveSheet(fullSheet);
             }
             await loadSheets();
         } catch (err: unknown) {
@@ -331,9 +345,10 @@ export default function PhysicalInventoryManufacturingModule() {
         if (!activeSheet) return;
         try {
             setLoading(true);
-            const committed = await commitPhysicalInventorySheet(activeSheet.physical_inventory_id);
-            showToast(`Physical Inventory ${committed.pi_no} committed successfully!`);
-            setActiveSheet(committed);
+            await commitPhysicalInventorySheet(activeSheet.physical_inventory_id);
+            const fullSheet = await fetchPhysicalInventorySheet(activeSheet.physical_inventory_id);
+            showToast(`Physical Inventory ${fullSheet.pi_no} committed successfully!`);
+            setActiveSheet(fullSheet);
             await loadSheets();
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to commit physical inventory";
@@ -349,9 +364,10 @@ export default function PhysicalInventoryManufacturingModule() {
         if (!activeSheet) return;
         try {
             setLoading(true);
-            const cancelled = await cancelPhysicalInventorySheet(activeSheet.physical_inventory_id, reason);
-            showToast(`Physical Inventory ${cancelled.pi_no} cancelled.`);
-            setActiveSheet(cancelled);
+            await cancelPhysicalInventorySheet(activeSheet.physical_inventory_id, reason);
+            const fullSheet = await fetchPhysicalInventorySheet(activeSheet.physical_inventory_id);
+            showToast(`Physical Inventory ${fullSheet.pi_no} cancelled.`);
+            setActiveSheet(fullSheet);
             await loadSheets();
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to cancel sheet";
@@ -364,8 +380,15 @@ export default function PhysicalInventoryManufacturingModule() {
 
     // Lot & Batch creation callbacks
     const handleLotCreated = (newLot: MmLot) => {
-        setLots((prev) => [...prev, newLot]);
-        setLastCreatedLot(newLot);
+        const activeBranchId = getBranchIdNum();
+        const lotBranchId = typeof newLot.branch_id === "object" && newLot.branch_id !== null
+            ? Number((newLot.branch_id as { id?: number; branch_id?: number }).id || (newLot.branch_id as { id?: number; branch_id?: number }).branch_id || 0)
+            : Number(newLot.branch_id || 0);
+
+        if (lotBranchId === activeBranchId) {
+            setLots((prev) => [...prev, newLot]);
+            setLastCreatedLot(newLot);
+        }
         showToast(`Lot '${newLot.lot_name}' created successfully.`);
     };
 
@@ -388,24 +411,40 @@ export default function PhysicalInventoryManufacturingModule() {
         return !isNaN(num) && num > 0 ? num : null;
     };
 
+    const renderToast = () => {
+        if (!toast || !mounted) return null;
+
+        const toastContent = (
+            <div
+                className={`fixed bottom-6 right-6 z-[99999] flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border text-sm font-medium transition-all max-w-md animate-in fade-in slide-in-from-bottom-4 ${
+                    toast.type === "success"
+                        ? "bg-slate-900 text-emerald-300 border-emerald-500/40 shadow-emerald-950/40"
+                        : "bg-slate-900 text-rose-300 border-rose-500/40 shadow-rose-950/40"
+                }`}
+            >
+                {toast.type === "success" ? (
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                ) : (
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400" />
+                )}
+                <span className="leading-snug">{toast.message}</span>
+                <button
+                    onClick={() => setToast(null)}
+                    className="ml-auto shrink-0 p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                    aria-label="Close toast"
+                >
+                    <X className="h-4 w-4" />
+                </button>
+            </div>
+        );
+
+        return createPortal(toastContent, document.body);
+    };
+
     return (
         <div className="relative min-h-[500px]">
-            {/* Toast feedback */}
-            {toast && (
-                <div
-                    className={`fixed bottom-5 right-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium transition-all ${
-                        toast.type === "success"
-                            ? "bg-emerald-900 text-emerald-100 border-emerald-700"
-                            : "bg-rose-900 text-rose-100 border-rose-700"
-                    }`}
-                >
-                    {toast.type === "success" ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertTriangle className="h-5 w-5 shrink-0" />}
-                    <span>{toast.message}</span>
-                    <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
-                        <X className="h-4 w-4" />
-                    </button>
-                </div>
-            )}
+            {/* Toast feedback via Portal */}
+            {renderToast()}
 
             {/* View Switcher */}
             {view === "LIST" ? (

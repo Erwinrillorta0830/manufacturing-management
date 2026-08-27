@@ -41,7 +41,43 @@ export default function CreateBatchModal({
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    if (!isOpen || !targetLot || !targetProduct) return null;
+    React.useEffect(() => {
+        if (isOpen) {
+            setBatchNo("");
+            setMfgDate("");
+            setExpDate("");
+            setUnitCost(targetProduct?.cost_per_unit !== undefined ? String(targetProduct.cost_per_unit) : "0");
+            setError(null);
+            setSubmitting(false);
+        }
+    }, [isOpen, lotId, productId, targetProduct?.cost_per_unit]);
+
+    if (!isOpen) return null;
+
+    if (!targetLot || !targetProduct) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+                <div className="bg-card border rounded-xl shadow-xl w-full max-w-md p-6 text-center space-y-4">
+                    <div className="flex justify-center text-amber-500">
+                        <AlertTriangle className="h-10 w-10" />
+                    </div>
+                    <h3 className="text-base font-bold text-foreground">Lot & Product Required</h3>
+                    <p className="text-xs text-muted-foreground">
+                        Please select both a valid Manufacturing Lot and a Product in the parent form before creating a new inventory batch.
+                    </p>
+                    <div className="pt-2">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-lg transition-colors"
+                        >
+                            Got it
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const shelfLife = Number(targetProduct.product_shelf_life || 0);
 
