@@ -21,6 +21,14 @@ export default function CancelModal({
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    React.useEffect(() => {
+        if (isOpen) {
+            setReason("");
+            setError(null);
+            setSubmitting(false);
+        }
+    }, [isOpen, sheet?.physical_inventory_id]);
+
     if (!isOpen || !sheet) return null;
 
     const handleCancel = async (e: React.FormEvent) => {
