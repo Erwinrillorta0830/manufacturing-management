@@ -27,6 +27,7 @@ import { QuarantineDispositionError, validateReplacementContext } from "../../qa
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
+import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
 
 class ReceivingError extends Error {
     constructor(message: string, readonly status: number) {
@@ -336,12 +337,19 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             replacementDispositionId: submittedReplacementDispositionId,
             referenceNumber,
             receiptDate,
-            receiptType,
+            supplierDocumentTypeId: submittedSupplierDocumentTypeId,
             processOverDelivery,
             branchId: submittedBranchId,
             lineItemUpdates: submittedLineItemUpdates
         } = parsed.data;
         const replacementDispositionId = submittedReplacementDispositionId ?? options.replacementDispositionId ?? null;
+        const supplierDocumentTypeId = submittedSupplierDocumentTypeId ?? null;
+        try {
+            await validateReceivingDocumentType(supplierDocumentTypeId, Boolean(replacementDispositionId));
+        } catch (error) {
+            if (error instanceof ReceivingDocumentTypeError) throw new ReceivingError(error.message, error.statusCode);
+            throw error;
+        }
         if (submittedReplacementDispositionId && options.replacementDispositionId && submittedReplacementDispositionId !== options.replacementDispositionId) {
             throw new ReceivingError("The replacement disposition context does not match the receiving request.", 409);
         }
@@ -412,8 +420,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (poLineIds.length !== poLines.length || unknownLineIds.length > 0) {
             throw new ReceivingError("One or more purchase-order lines do not exist.", 400);
         }
-        if (!replacementDispositionId && receiptType === "full" && missingLineIds.length > 0) {
-            throw new ReceivingError(`Full receipt requires every purchase-order line to be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
+        if (!replacementDispositionId && missingLineIds.length > 0) {
+            throw new ReceivingError(`Every purchase-order line must be included. Missing line(s): ${missingLineIds.join(", ")}.`, 400);
         }
         if (lineItemUpdates.some(item => item.accepted_lot_allocations.some(allocation => !validLotIds.has(allocation.storage_lot_id)))) {
             throw new ReceivingError("One or more accepted inventory storage lots do not exist.", 400);
@@ -684,12 +692,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 rejectedQuantity: previous.rejected + (current?.rejected || 0)
             };
         }));
-        if (!replacementDispositionId && receiptType === "full" && receivingStatus.status === "Partially Received") {
-            throw new ReceivingError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.", 422);
-        }
-        if (!replacementDispositionId && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
-            throw new ReceivingError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.", 422);
-        }
         if (!replacementDispositionId && receivingStatus.status === "Received" && !paymentStatusAllowsReceivingHandoff(shipment.payment_status)) {
             throw new ReceivingError("This purchase order already has an active or completed payment status and cannot be received again.", 409);
         }
@@ -803,6 +805,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
                     receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
+                    receipt_type: supplierDocumentTypeId,
                     quarantine_disposition_id: replacementDispositionId || null,
                     is_replacement: Boolean(replacementDispositionId),
                     is_over_received: line.isOverReceived,
