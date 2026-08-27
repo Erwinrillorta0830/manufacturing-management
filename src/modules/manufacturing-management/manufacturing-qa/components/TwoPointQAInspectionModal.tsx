@@ -195,10 +195,10 @@ function TwoPointQAFormContent({
             passed_quantity: numPass,
             rejected_quantity: numRej,
             rejection_reason_id: hasRejections ? Number(rejectionReasonId) : null,
-            lotNumber: lotNumber.trim() || `MFG-${joNo}`,
-            manufacturingDate: manufacturingDate || undefined,
-            expiryDate: expiryDate || undefined,
-            unitCost: parseFloat(unitCost) || 0,
+            lot_number: lotNumber.trim() || `MFG-${joNo}`,
+            manufacturing_date: manufacturingDate || undefined,
+            expiry_date: expiryDate || undefined,
+            unit_cost: parseFloat(unitCost) || 0,
             remarks: remarks.trim()
         };
 

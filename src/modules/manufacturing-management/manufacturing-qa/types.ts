@@ -91,14 +91,11 @@ export interface TwoPointQAInspectionPayload {
     rejected_quantity: number;
     rejection_reason_id?: number | null;
     lot_number?: string;
-    lotNumber?: string;
     manufacturing_date?: string;
-    manufacturingDate?: string;
     expiry_date?: string;
-    expiryDate?: string;
     unit_cost?: number;
-    unitCost?: number;
     remarks?: string;
+    user_id?: number;
 }
 
 export interface TwoPointQAInspectionResult {
