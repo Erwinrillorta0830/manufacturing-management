@@ -12,9 +12,8 @@ import {
     fetchPurchaseAmountDetails,
     postPurchaseAmounts
 } from "../services/purchase-amount-api";
-import { isForeignCountry } from "../supplier-country";
 import {
-    hasLandedCostStatus,
+    LANDED_COST_INVENTORY_STATUS,
     isLandedCostPostingEligible,
     isPurchaseOrderPosted
 } from "../landed-cost-eligibility";
@@ -59,7 +58,8 @@ export function usePurchaseAmountPosting(
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>([]);
-    const [exchangeRate, setExchangeRate] = useState<number>(58.50);
+    const [exchangeRate, setExchangeRate] = useState<number>(1);
+    const [currencyCode, setCurrencyCode] = useState("PHP");
     const [lineItems, setLineItems] = useState<POLineItem[]>([]);
     
     // Landed cost entries
@@ -83,7 +83,7 @@ export function usePurchaseAmountPosting(
     const allOrders = useMemo(() => fetchedOrders, [fetchedOrders]);
 
     const postedOrders = useMemo(() => {
-        return allOrders.filter(po => hasLandedCostStatus(po) && isPurchaseOrderPosted(po));
+        return allOrders.filter(po => Number(po.inventory_status) === LANDED_COST_INVENTORY_STATUS && isPurchaseOrderPosted(po));
     }, [allOrders]);
 
     const eligibleOrders = useMemo(() => {
@@ -101,17 +101,7 @@ export function usePurchaseAmountPosting(
         setInternalSelected(po);
     };
 
-    const isForeignPO = useMemo(() => {
-        if (!selectedShipment) return false;
-        const supp = selectedShipment.supplier_name;
-        const suppIsForeign = typeof supp === "object" && supp !== null && (
-            supp?.is_foreign === 1 ||
-            supp?.is_foreign === true ||
-            (supp as { default_currency?: string })?.default_currency === "USD" ||
-            isForeignCountry(supp?.country)
-        );
-        return selectedShipment.is_import === 1 || selectedShipment.currency_code === "USD" || Boolean(suppIsForeign);
-    }, [selectedShipment]);
+    const isForeignPO = useMemo(() => currencyCode !== "PHP", [currencyCode]);
 
     // Fetch PO details when active selection changes
     useEffect(() => {
@@ -124,14 +114,25 @@ export function usePurchaseAmountPosting(
         setSuccessMessage(null);
         setAllocationRule("");
         setLandedExpenses([{ id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "" }]);
+        setCurrencyCode("PHP");
+        setExchangeRate(1);
+        setLineItems([]);
 
         fetchPurchaseAmountDetails(poId)
             .then(data => {
+                const persistedCurrencyCode = String(data.purchaseOrder?.currency_code || "PHP").trim().toUpperCase();
+                const persistedExchangeRate = Number(data.purchaseOrder?.exchange_rate);
+                setCurrencyCode(persistedCurrencyCode);
+                setExchangeRate(persistedCurrencyCode === "PHP"
+                    ? 1
+                    : Number.isFinite(persistedExchangeRate) && persistedExchangeRate > 0
+                        ? persistedExchangeRate
+                        : 0);
+                if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(persistedExchangeRate) || persistedExchangeRate <= 0)) {
+                    throw new Error(`A valid persisted exchange rate is required for ${persistedCurrencyCode} purchase orders.`);
+                }
                 if (data.chartOfAccounts) {
                     setChartOfAccounts(data.chartOfAccounts);
-                }
-                if (data.activeForexRate) {
-                    setExchangeRate(data.purchaseOrder?.exchange_rate || data.activeForexRate || 58.50);
                 }
                 if (data.lineItems) {
                     setLineItems(data.lineItems.map((item: Record<string, unknown>) => {
@@ -148,6 +149,14 @@ export function usePurchaseAmountPosting(
                         const lineGrossWeightKg = Number.isFinite(persistedLineGrossWeight)
                             ? persistedLineGrossWeight
                             : weightBreakdown.grossWeightKg * Number(item.received_quantity || 0);
+                        const baseUnitCostPhp = Number(item.base_unit_cost_php);
+                        const unitPriceForeign = Number(item.unit_price_foreign);
+                        if (!Number.isFinite(baseUnitCostPhp) || baseUnitCostPhp < 0) {
+                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid PHP base unit cost.`);
+                        }
+                        if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(unitPriceForeign) || unitPriceForeign < 0)) {
+                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid ${persistedCurrencyCode} invoice unit price.`);
+                        }
 
                         return {
                             ...item,
@@ -161,7 +170,11 @@ export function usePurchaseAmountPosting(
                             unit_net_weight_kg: weightBreakdown.netWeightKg,
                             unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
                             unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
-                            line_gross_weight_kg: lineGrossWeightKg
+                            line_gross_weight_kg: lineGrossWeightKg,
+                            unit_price: baseUnitCostPhp,
+                            unit_price_foreign: Number.isFinite(unitPriceForeign) ? unitPriceForeign : baseUnitCostPhp,
+                            base_unit_cost_php: baseUnitCostPhp,
+                            accepted_quantity: Number(item.accepted_quantity ?? item.received_quantity) || 0
                         } as POLineItem;
                     }));
                 }
@@ -202,7 +215,7 @@ export function usePurchaseAmountPosting(
                 key: item.purchase_order_product_id,
                 category_type: item.category_type || "RAW_MATERIAL",
                 quantity: Number(item.received_quantity) || 0,
-                baseUnitCostPhp: (Number(item.unit_price) || 0) * (isForeignPO ? exchangeRate : 1),
+                baseUnitCostPhp: Number(item.base_unit_cost_php) || 0,
                 lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
                 volume: Number(product?.cbm_height || 0)
                     * Number(product?.cbm_width || 0)
@@ -216,8 +229,7 @@ export function usePurchaseAmountPosting(
                 .map(item => item.product_name || `Product #${item.product_id}`)
             : [];
         const baseLineCalculations = lineItems.map(item => {
-            const price = Number(item.unit_price) || 0;
-            const basePhp = isForeignPO ? price * exchangeRate : price;
+            const basePhp = Number(item.base_unit_cost_php) || 0;
             return {
                 ...item,
                 allocated_amount: 0,
@@ -260,7 +272,7 @@ export function usePurchaseAmountPosting(
             hasMissingWeight: false,
             missingWeightItems: []
         };
-    }, [lineItems, landedExpenses, exchangeRate, isForeignPO, allocationRule]);
+    }, [lineItems, landedExpenses, isForeignPO, allocationRule]);
 
     const handleAddExpenseRow = () => {
         const defaultCoa = chartOfAccounts[0]?.coa_id || chartOfAccounts[0]?.id || 0;
@@ -302,7 +314,7 @@ export function usePurchaseAmountPosting(
                 is_foreign: isForeignPO,
                 exchange_rate: isForeignPO ? exchangeRate : 1.0,
                 allocation_rule: allocationRule,
-                expenses: isForeignPO ? landedExpenses.filter(e => e.chart_of_account_id > 0 && e.amount > 0) : [],
+                expenses: landedExpenses.filter(e => e.chart_of_account_id > 0 && e.amount > 0),
                 line_items: calculationResult.lineCalculations.map(calc => ({
                     purchase_order_product_id: calc.purchase_order_product_id,
                     product_id: typeof calc.product_id === "object" && calc.product_id !== null ? (calc.product_id as { product_id: number }).product_id : calc.product_id,
@@ -351,6 +363,7 @@ export function usePurchaseAmountPosting(
         selectedShipment,
         handleSelectPO,
         isForeignPO,
+        currencyCode,
         exchangeRate,
         setExchangeRate,
         lineItems,

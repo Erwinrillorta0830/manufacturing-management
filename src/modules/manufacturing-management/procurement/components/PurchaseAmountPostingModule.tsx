@@ -31,9 +31,8 @@ export default function PurchaseAmountPostingModule({
         selectedShipment,
         handleSelectPO,
         isForeignPO,
+        currencyCode,
         exchangeRate,
-        setExchangeRate,
-        setLineItems,
         landedExpenses,
         allocationRule,
         setAllocationRule,
@@ -113,7 +112,7 @@ export default function PurchaseAmountPostingModule({
                         <>
                             <div className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 ${isForeignPO ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"}`}>
                                 {isForeignPO ? <DollarSign className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}
-                                {isForeignPO ? "FOREIGN IMPORTATION (USD)" : "LOCAL PURCHASE (PHP)"}
+                                {isForeignPO ? `FOREIGN IMPORTATION (${currencyCode})` : "LOCAL PURCHASE (PHP)"}
                             </div>
                             {(selectedShipment.isForceReceived || selectedShipment.forceReceivedAt) && (
                                 <div className="px-3 py-1.5 rounded-full text-xs font-bold bg-violet-500/10 text-violet-700 border border-violet-500/20">
@@ -166,8 +165,8 @@ export default function PurchaseAmountPostingModule({
                             {/* Foreign Import Forex & Sub-pool Overview */}
                             {isForeignPO && (
                                 <ForexSubPoolHeader
+                                    currencyCode={currencyCode}
                                     exchangeRate={exchangeRate}
-                                    setExchangeRate={setExchangeRate}
                                     calculationResult={calculationResult}
                                 />
                             )}
@@ -226,9 +225,8 @@ export default function PurchaseAmountPostingModule({
                             {/* Line Items Calculations & Landed Unit Cost Preview Table */}
                             <LineItemsPostingTable
                                 isForeignPO={isForeignPO}
-                                exchangeRate={exchangeRate}
+                                currencyCode={currencyCode}
                                 calculationResult={calculationResult}
-                                setLineItems={setLineItems}
                                 onExecutePosting={handleExecutePosting}
                                 posting={posting}
                                 allocationRuleSelected={Boolean(allocationRule)}

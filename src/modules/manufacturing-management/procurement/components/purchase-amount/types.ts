@@ -23,7 +23,15 @@ export interface POLineItem {
     product_category?: string;
     category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     received_quantity: number;
+    /** Persisted PHP base cost; never treat this as the invoice currency price. */
     unit_price: number;
+    unit_price_foreign?: number | null;
+    base_unit_cost_php: number;
+    accepted_quantity?: number;
+    quantity_received?: number;
+    quantity_rejected?: number;
+    currency_code?: string;
+    exchange_rate?: number;
     gross_weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;

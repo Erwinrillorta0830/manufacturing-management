@@ -98,7 +98,7 @@ export default function LandedCostAuditSummary({
                 </div>
             ) : audit ? (
                 <div className="space-y-4">
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                         <div className="rounded-lg border bg-muted/20 p-3">
                             <div className="text-[10px] font-bold uppercase text-muted-foreground">Allocation reconciliation</div>
                             <div className={`mt-1 text-sm font-black ${audit.allocation.matchesTotal ? "text-emerald-600" : "text-red-600"}`}>
@@ -123,6 +123,15 @@ export default function LandedCostAuditSummary({
                             </div>
                             <div className="text-[10px] text-muted-foreground">
                                 {audit.accountingVariance.status === "POSTED" ? `${audit.accountingVariance.entry?.entryNo || "Journal posted"} · balanced` : audit.accountingVariance.status === "NOT_APPLICABLE" ? "Zero material rounding variance" : "Journal reconciliation failed"}
+                            </div>
+                        </div>
+                        <div className="rounded-lg border bg-muted/20 p-3">
+                            <div className="text-[10px] font-bold uppercase text-muted-foreground">Currency contract</div>
+                            <div className={`mt-1 text-sm font-black ${audit.allocation.currency.matches ? "text-emerald-600" : "text-red-600"}`}>
+                                {audit.allocation.currency.currencyCode} @ {audit.allocation.currency.exchangeRate.toFixed(4)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                                {audit.allocation.currency.matches ? "Foreign invoice prices reconcile to PHP base costs." : "Currency or exchange-rate reconciliation required."}
                             </div>
                         </div>
                     </div>

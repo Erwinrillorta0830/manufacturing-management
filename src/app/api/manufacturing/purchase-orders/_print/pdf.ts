@@ -662,7 +662,7 @@ async function renderLandedCostDocument(doc: PdfDocument, data: PurchaseOrderPri
         ]));
     }
     y = drawSectionTitle(doc, "Line allocation", y);
-    y = await renderTable(doc, y, ["Product", "Quantity", "Base unit cost", "Allocated fee", "Final landed unit cost", "Share"], landedCost.allocations.map(allocation => [
+    y = await renderTable(doc, y, ["Product", "Quantity", "Base unit cost (PHP)", "Allocated fee (PHP)", "Final landed unit cost (PHP)", "Share"], landedCost.allocations.map(allocation => [
         allocation.product,
         quantity(allocation.quantity),
         money(allocation.baseUnitCost, "PHP", doc),

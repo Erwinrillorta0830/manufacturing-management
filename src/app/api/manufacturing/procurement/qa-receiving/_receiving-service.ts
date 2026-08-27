@@ -28,6 +28,7 @@ import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
+import { resolveBaseUnitCostPhp, resolveLandedCostCurrency } from "../landed-cost/_domain";
 import {
     allocationCapacityKey,
     capacityAuditsEqual,
@@ -398,7 +399,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         const requestedLotFilter = requestedLotIds.length > 0 ? requestedLotIds.join(",") : "0";
         const [headerRes, linesRes, lotsRes, lotInventoryRes, branchesRes, movementTypesRes] = await Promise.all([
-            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at`),
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at,currency_code,is_import,exchange_rate`),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${requestedLotFilter}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_in]=${requestedLotFilter}&fields=lot_id,product_id,quantity&limit=-1`, { headers, cache: "no-store" }),
@@ -409,6 +410,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!linesRes.ok || !lotsRes.ok || !lotInventoryRes.ok || !branchesRes.ok || !movementTypesRes.ok) throw new Error("Failed to validate receiving reference data.");
 
         const shipment = (await headerRes.json()).data as Record<string, unknown>;
+        const currency = resolveLandedCostCurrency(shipment);
         const branchId = resolvePurchaseOrderBranchId(shipment);
         if (!branchId) throw new ReceivingError("The Purchase Order does not have a valid receiving branch.", 409);
         if (branchId !== submittedBranchId) throw new ReceivingError("Receiving Branch must match the Purchase Order branch.", 409);
@@ -569,7 +571,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             // unit_price is the stored PHP base cost. Taxes, discounts, and
             // withholding are line totals and must not be converted back into
             // a unit cost for receiving or landed-cost allocation.
-            const baseUnitCost = Number(poLine.unit_price || 0);
+            const baseUnitCostPhp = resolveBaseUnitCostPhp({
+                purchase_order_product_id: Number(poLine.purchase_order_product_id),
+                unit_price: poLine.unit_price as number | string | null | undefined,
+                unit_price_foreign: poLine.unit_price_foreign as number | string | null | undefined
+            }, currency);
             const accepted = received - rejected;
             const acceptedAllocationDrafts = item.accepted_lot_allocations.map(allocation => ({
                 storageLotId: allocation.storage_lot_id,
@@ -644,7 +650,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 received,
                 accepted,
                 rejected,
-                baseUnitCost,
+                baseUnitCostPhp,
                 acceptedLotAllocations,
                 rejectedLotAllocations,
                 categoryType,
@@ -683,7 +689,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             return {
                 key: line.item.line_id,
                 quantity: line.accepted,
-                baseUnitCost: line.baseUnitCost,
+                baseUnitCostPhp: line.baseUnitCostPhp,
                 weight: line.weightBreakdown.grossWeightKg,
                 lineGrossWeightKg: line.weightBreakdown.grossWeightKg * line.accepted,
                 volume: Number(line.product.cbm_height || 0) * Number(line.product.cbm_width || 0) * Number(line.product.cbm_length || 0),
@@ -796,7 +802,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
                 const receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, { method: "POST", headers, body: JSON.stringify({
                     purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, lot_id: primaryAllocation.storageLotId,
-                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCost,
+                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCostPhp,
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
                     final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,

@@ -1,22 +1,27 @@
 "use client";
 
-import React from "react";
 import { Lock, Calculator } from "lucide-react";
-import { HybridCalculationResult, POLineItem } from "./types";
+import { HybridCalculationResult } from "./types";
 
 interface LineItemsPostingTableProps {
     isForeignPO: boolean;
-    exchangeRate: number;
+    currencyCode: string;
     calculationResult: HybridCalculationResult;
-    setLineItems?: React.Dispatch<React.SetStateAction<POLineItem[]>>;
     onExecutePosting: () => void;
     posting: boolean;
     allocationRuleSelected: boolean;
 }
 
+function formatCurrency(code: string, value: number, fractionDigits = 2): string {
+    return `${code} ${value.toLocaleString("en-US", {
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits
+    })}`;
+}
+
 export default function LineItemsPostingTable({
     isForeignPO,
-    exchangeRate,
+    currencyCode,
     calculationResult,
     onExecutePosting,
     posting,
@@ -37,19 +42,17 @@ export default function LineItemsPostingTable({
                         <tr>
                             <th className="p-3">Product Item</th>
                             <th className="p-3">Category</th>
-                            <th className="p-3 text-right">Received Qty</th>
+                            <th className="p-3 text-right">Accepted Qty</th>
                             <th className="p-3 text-right">Line Gross Weight (kg)</th>
-                            <th className="p-3 text-right">Unit Price ({isForeignPO ? "USD" : "PHP"})</th>
+                            <th className="p-3 text-right">{isForeignPO ? `Invoice Unit Price (${currencyCode})` : "Unit Price (PHP)"}</th>
                             {isForeignPO ? (
                                 <>
-                                    <th className="p-3 text-right">Base Cost (PHP)</th>
-                                    <th className="p-3 text-right">Allocated Expense (PHP)</th>
-                                    <th className="p-3 text-right">Final Landed Unit Cost</th>
+                                    <th className="p-3 text-right">Base Unit Cost (PHP)</th>
+                                    <th className="p-3 text-right">Allocated Fee / Unit (PHP)</th>
+                                    <th className="p-3 text-right">Final Landed Unit Cost (PHP)</th>
                                 </>
                             ) : (
-                                <>
-                                    <th className="p-3 text-right">Line Total (PHP)</th>
-                                </>
+                                <th className="p-3 text-right">Line Total (PHP)</th>
                             )}
                         </tr>
                     </thead>
@@ -62,23 +65,26 @@ export default function LineItemsPostingTable({
                                 : line.category_type === "FINISHED_GOODS"
                                     ? "FINISHED GOODS"
                                     : "RAW MATERIAL";
-                            const price = Number(line.unit_price) || 0;
-                            const basePhp = price * (isForeignPO ? exchangeRate : 1.0);
-                            const lineTotal = basePhp * (line.received_quantity || 0);
+                            const price = isForeignPO
+                                ? Number(line.unit_price_foreign)
+                                : Number(line.base_unit_cost_php);
+                            const basePhp = Number(line.base_unit_cost_php) || 0;
+                            const acceptedQuantity = line.accepted_quantity ?? line.received_quantity ?? 0;
+                            const lineTotal = basePhp * acceptedQuantity;
 
                             return (
                                 <tr key={line.purchase_order_product_id} className="hover:bg-muted/30">
                                     <td className="p-3 font-semibold">{name}</td>
                                     <td className="p-3">
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                            isPkg 
-                                                ? "bg-purple-500/10 text-purple-600 border border-purple-500/20" 
+                                            isPkg
+                                                ? "bg-purple-500/10 text-purple-600 border border-purple-500/20"
                                                 : "bg-blue-500/10 text-blue-600 border border-blue-500/20"
                                         }`}>
                                             {categoryLabel}
                                         </span>
                                     </td>
-                                    <td className="p-3 text-right font-mono font-bold">{line.received_quantity.toLocaleString()}</td>
+                                    <td className="p-3 text-right font-mono font-bold">{acceptedQuantity.toLocaleString()}</td>
                                     <td className="p-3 text-right font-mono text-muted-foreground">
                                         <div>{Number(line.line_gross_weight_kg || 0).toFixed(3)}</div>
                                         {line.category_type === "PACKAGING" && (
@@ -88,24 +94,22 @@ export default function LineItemsPostingTable({
                                         )}
                                     </td>
                                     <td className="p-3 text-right font-mono font-bold">
-                                        {isForeignPO ? "$" : "₱"}{price.toFixed(2)}
+                                        {Number.isFinite(price) ? formatCurrency(isForeignPO ? currencyCode : "PHP", price, isForeignPO ? 4 : 2) : "Unavailable"}
                                     </td>
                                     {isForeignPO ? (
                                         <>
-                                            <td className="p-3 text-right font-mono text-muted-foreground">₱{basePhp.toFixed(2)}</td>
+                                            <td className="p-3 text-right font-mono text-muted-foreground">{formatCurrency("PHP", basePhp)}</td>
                                             <td className="p-3 text-right font-mono text-emerald-600 font-bold">
-                                                +₱{line.allocated_expense_php.toFixed(2)}
+                                                +{formatCurrency("PHP", Number(line.allocated_expense_php || 0))}
                                             </td>
                                             <td className="p-3 text-right font-mono font-bold text-amber-600">
-                                                ₱{line.final_landed_unit_cost.toFixed(2)}
+                                                {formatCurrency("PHP", Number(line.final_landed_unit_cost || 0))}
                                             </td>
                                         </>
                                     ) : (
-                                        <>
-                                            <td className="p-3 text-right font-mono font-bold text-emerald-600">
-                                                ₱{lineTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                                            </td>
-                                        </>
+                                        <td className="p-3 text-right font-mono font-bold text-emerald-600">
+                                            {formatCurrency("PHP", lineTotal)}
+                                        </td>
                                     )}
                                 </tr>
                             );
