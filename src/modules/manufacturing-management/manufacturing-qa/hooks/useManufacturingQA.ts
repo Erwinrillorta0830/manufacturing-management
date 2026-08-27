@@ -25,6 +25,7 @@ import {
     fetchDailyQAInspections,
     fetchFinalQAReleases,
     fetchYieldLedger,
+    fetchFinishedGoodsReceipts,
     fetchInventoryLotsData,
     postDailyQAInspection,
     postFinalQARelease
@@ -327,6 +328,7 @@ export function useManufacturingQA() {
     const [manufacturingDate, setManufacturingDate] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
+    const [selectedYieldLedgerId, setSelectedYieldLedgerId] = useState<number | null>(null);
     const [yieldMaterials, setYieldMaterials] = useState<YieldJobOrderMaterial[]>([]);
     const [yieldMaterialsLoading, setYieldMaterialsLoading] = useState(false);
     const [yieldMaterialsError, setYieldMaterialsError] = useState<string | null>(null);
@@ -347,6 +349,9 @@ export function useManufacturingQA() {
     const [lotsProducts, setLotsProducts] = useState<any[]>([]);
     const [loadingDailyQA, setLoadingDailyQA] = useState(false);
     const [loadingFinalQA, setLoadingFinalQA] = useState(false);
+    const [finishedGoodsReceipts, setFinishedGoodsReceipts] = useState<any[]>([]);
+    const [loadingFinishedGoods, setLoadingFinishedGoods] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Daily Audit Dialog states
     const [isDailyAuditOpen, setIsDailyAuditOpen] = useState(false);
@@ -384,6 +389,7 @@ export function useManufacturingQA() {
                 console.error("Job Orders fetch error:", e);
                 toast.error("Failed to retrieve job orders.");
             }
+            throw e instanceof Error ? e : new Error("Failed to retrieve job orders.");
         } finally {
             if (!silent) setLoadingJobOrders(false);
         }
@@ -397,6 +403,7 @@ export function useManufacturingQA() {
             setRejectionReasons(data);
         } catch (e) {
             console.error("Error fetching rejection reasons:", e);
+            throw e instanceof Error ? e : new Error("Failed to load rejection reasons.");
         } finally {
             if (!silent) setLoadingReasons(false);
         }
@@ -410,6 +417,7 @@ export function useManufacturingQA() {
             setInspectionLogs(data);
         } catch (e) {
             console.error("Error fetching QA inspection logs:", e);
+            throw e instanceof Error ? e : new Error("Failed to load inspection logs.");
         } finally {
             if (!silent) setLoadingInspectionLogs(false);
         }
@@ -425,6 +433,7 @@ export function useManufacturingQA() {
             if (!silent) {
                 console.error("QA Logs fetch error:", e);
             }
+            throw e instanceof Error ? e : new Error("Failed to load QA logs.");
         } finally {
             if (!silent) setLoadingLogs(false);
         }
@@ -440,6 +449,7 @@ export function useManufacturingQA() {
             if (!silent) {
                 console.error("Dispositions fetch error:", e);
             }
+            throw e instanceof Error ? e : new Error("Failed to load dispositions.");
         } finally {
             if (!silent) setLoadingDispositions(false);
         }
@@ -464,12 +474,12 @@ export function useManufacturingQA() {
             setDailyInspections(inspections);
 
             const res = await fetch("/api/manufacturing/qa?action=templates");
-            if (res.ok) {
-                const data = await res.json();
-                setQaTemplates(data);
-            }
+            if (!res.ok) throw new Error("Failed to load QA templates");
+            const data = await res.json();
+            setQaTemplates(data);
         } catch (e) {
             console.error("Error loading daily QA data:", e);
+            throw e instanceof Error ? e : new Error("Failed to load daily QA data.");
         } finally {
             if (!silent) setLoadingDailyQA(false);
         }
@@ -485,27 +495,54 @@ export function useManufacturingQA() {
             setLotsProducts(lotsData.products);
         } catch (e) {
             console.error("Error loading final QA data:", e);
+            throw e instanceof Error ? e : new Error("Failed to load final QA data.");
         } finally {
             if (!silent) setLoadingFinalQA(false);
         }
     };
 
+    const loadFinishedGoodsData = async (silent = false) => {
+        if (!silent) setLoadingFinishedGoods(true);
+        try {
+            const receipts = await fetchFinishedGoodsReceipts();
+            setFinishedGoodsReceipts(receipts);
+        } catch (e) {
+            console.error("Error loading finished goods receipts:", e);
+            throw e instanceof Error ? e : new Error("Failed to load finished goods receipts.");
+        } finally {
+            if (!silent) setLoadingFinishedGoods(false);
+        }
+    };
+
     // Refresh all data
-    const refreshAll = useCallback((silent: boolean | any = false) => {
+    const refreshAll = useCallback(async (silent: boolean | any = false): Promise<{ failed: string[] }> => {
         const isSilent = silent === true;
-        loadJobOrders(isSilent);
-        loadRejectionReasons(isSilent);
-        loadInspectionLogs(isSilent);
-        loadQALogs(isSilent);
-        loadDispositions(isSilent);
-        loadDailyQAData(isSilent);
-        loadFinalQAData(isSilent);
+        setIsRefreshing(true);
+        const refreshTasks: Array<[string, Promise<void>]> = [
+            ["job orders", loadJobOrders(isSilent)],
+            ["rejection reasons", loadRejectionReasons(isSilent)],
+            ["inspection logs", loadInspectionLogs(isSilent)],
+            ["QA logs", loadQALogs(isSilent)],
+            ["dispositions", loadDispositions(isSilent)],
+            ["daily QA data", loadDailyQAData(isSilent)],
+            ["final QA data", loadFinalQAData(isSilent)],
+            ["finished goods", loadFinishedGoodsData(isSilent)]
+        ];
+        const results = await Promise.allSettled(refreshTasks.map(([, task]) => task));
+        const failed = results
+            .map((result, index) => result.status === "rejected" ? refreshTasks[index][0] : null)
+            .filter((label): label is string => Boolean(label));
+        setIsRefreshing(false);
+        if (!isSilent && failed.length > 0) {
+            toast.warning(`Console refresh incomplete: ${failed.join(", ")}.`);
+        }
+        return { failed };
     }, []);
 
     // Initial Mount Lifecycle
     useEffect(() => {
-        refreshAll(false);
-        loadBranches();
+        void refreshAll(false);
+        void loadBranches();
     }, [refreshAll]);
 
     // Establish Realtime SSE Connection for inventory movements
@@ -524,7 +561,7 @@ export function useManufacturingQA() {
 
                 eventSource.addEventListener("movement", (event) => {
                     try {
-                        refreshAll(true);
+                        void refreshAll(true);
                     } catch (e) {
                         console.error("[QA Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -671,7 +708,12 @@ export function useManufacturingQA() {
         setYieldMaterialsLoading(false);
         setYieldQty(String(jo.quantity || jo.target_quantity || 0));
         
-        const firstLog = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
+        const yieldLogs = Array.isArray(jo.yield_logs) ? jo.yield_logs : [];
+        const firstLog = yieldLogs.length > 0 ? yieldLogs[0] : null;
+        const ledgerIds = yieldLogs
+            .map((log: any) => Number(log.ledger_id ?? log.id ?? 0))
+            .filter((id: number, index: number, ids: number[]) => id > 0 && ids.indexOf(id) === index);
+        setSelectedYieldLedgerId(ledgerIds.length === 1 ? ledgerIds[0] : null);
         const joNo = jo.job_order_no || jo.jo_id;
         
         if (firstLog) {
@@ -690,10 +732,25 @@ export function useManufacturingQA() {
 
     const handleReprintReceipt = async (jo: JobOrder) => {
         if (!jo) return;
-        const log = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
         const joNo = jo.job_order_no || jo.jo_id;
+
+        let receipt;
+        try {
+            const receipts = await fetchFinishedGoodsReceipts(joNo);
+            receipt = receipts.find(item => item.joId === joNo)
+                || receipts.find(item => Number(item.jobOrderId) === Number(jo.order_id || jo.job_order_id || jo.id))
+                || receipts[0];
+        } catch (error: any) {
+            toast.error(error?.message || "Failed to load the persisted finished-goods receipt.");
+            return;
+        }
+
+        if (!receipt) {
+            toast.error(`No persisted finished-goods receipt was found for ${joNo}.`);
+            return;
+        }
         
-        const branchName = getBranchName(jo.branch_id);
+        const branchName = getBranchName(receipt.branchId || jo.branch_id);
         const verName = jo.recipe_version_name || 
                         jo.version_name || 
                         (jo.version_id ? `Version #${jo.version_id}` : 'Active');
@@ -713,14 +770,14 @@ export function useManufacturingQA() {
         printYieldClosingReceipt({
             jo_no: joNo,
             product_code: jo.product_code || `PROD-${jo.product_id}`,
-            product_name: jo.product_name,
+            product_name: receipt.productName || jo.product_name,
             recipe_version: verName,
-            yield_qty: log ? Number(log.yield_quantity || jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0) : Number(jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0),
-            lot_number: log ? (log.lot_number || log.lot_no || `MFG-${joNo}`) : `MFG-${joNo}`,
-            expiry_date: log ? (log.expiry_date || "N/A") : "N/A",
-            manufacturing_date: log ? (log.manufacturing_date || "N/A") : "N/A",
+            yield_qty: receipt.quantityProduced,
+            lot_number: receipt.lotNumber,
+            expiry_date: receipt.expirationDate || "N/A",
+            manufacturing_date: receipt.manufacturingDate || "N/A",
             branch_name: branchName,
-            unit_cost: log ? Number(log.unit_cost || 0) : 0,
+            unit_cost: receipt.unitCost,
             components: components
         });
     };
@@ -769,6 +826,21 @@ export function useManufacturingQA() {
             toast.error("Please select an expiration date.");
             return;
         }
+        if (!lotNumber.trim()) {
+            toast.error("Please enter a lot number.");
+            return;
+        }
+
+        const parsedManufacturingDate = new Date(`${manufacturingDate}T00:00:00`);
+        const parsedExpiryDate = new Date(`${expiryDate}T00:00:00`);
+        if (Number.isNaN(parsedManufacturingDate.getTime()) || Number.isNaN(parsedExpiryDate.getTime())) {
+            toast.error("Please enter valid manufacturing and expiration dates.");
+            return;
+        }
+        if (parsedManufacturingDate > parsedExpiryDate) {
+            toast.error("Expiration date cannot be earlier than manufacturing date.");
+            return;
+        }
 
         if (!selectedJO.branch_id) {
             toast.error("Error: Job Order is missing branch_id allocation.");
@@ -797,40 +869,44 @@ export function useManufacturingQA() {
                 };
             });
 
-            await postFinishedGoodsReceipt({
+            const selectedYieldLog = selectedJO.yield_logs?.find((log: any) =>
+                Number(log.ledger_id ?? log.id ?? 0) === selectedYieldLedgerId
+                && String(log.lot_number || log.lot_no || log.batch_no || "").trim() === lotNumber.trim()
+            );
+            const closeResult = await postFinishedGoodsReceipt({
                 joId: joNo,
+                yieldLedgerId: selectedYieldLog ? selectedYieldLedgerId : null,
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
                 branchId: Number(selectedJO.branch_id),
-                lotNumber: lotNumber || `MFG-${joNo}`,
-                expirationDate: expiryDate || null,
-                manufacturingDate: manufacturingDate || null,
+                lotNumber: lotNumber.trim(),
+                expirationDate: expiryDate,
+                manufacturingDate,
                 unitCost: Number(unitCost || 0),
                 componentsConsumed: componentsConsumed,
                 completeJobOrder: true
             });
 
-            toast.success(`Job Order ${joNo} successfully completed and WMS ledger receipted!`);
+            const persistedReceipt = closeResult.data;
             setIsYieldDialogOpen(false);
             
             try {
-                const branchName = getBranchName(selectedJO.branch_id);
                 const verName = selectedJO.recipe_version_name || 
                                 selectedJO.version_name || 
                                 (selectedJO.version_id ? `Version #${selectedJO.version_id}` : 'Active');
 
                 printYieldClosingReceipt({
-                    jo_no: joNo,
-                    product_code: selectedJO.product_code || `PROD-${selectedJO.product_id}`,
-                    product_name: selectedJO.product_name,
+                    jo_no: persistedReceipt.joId || joNo,
+                    product_code: selectedJO.product_code || `PROD-${persistedReceipt.productId || selectedJO.product_id}`,
+                    product_name: persistedReceipt.productName || selectedJO.product_name,
                     recipe_version: verName,
-                    yield_qty: Number(yieldQty),
-                    lot_number: lotNumber || `MFG-${joNo}`,
-                    expiry_date: expiryDate || "N/A",
-                    manufacturing_date: manufacturingDate || "N/A",
-                    branch_name: branchName,
-                    unit_cost: Number(unitCost || 0),
+                    yield_qty: persistedReceipt.quantityProduced,
+                    lot_number: persistedReceipt.lotNumber,
+                    expiry_date: persistedReceipt.expirationDate || "N/A",
+                    manufacturing_date: persistedReceipt.manufacturingDate || "N/A",
+                    branch_name: getBranchName(persistedReceipt.branchId || selectedJO.branch_id),
+                    unit_cost: persistedReceipt.unitCost,
                     components: componentsConsumed.map((c: any) => ({
                         product_name: c.component_name,
                         quantity: c.quantity,
@@ -841,7 +917,12 @@ export function useManufacturingQA() {
                 console.error("Auto print failed:", printErr);
             }
 
-            refreshAll();
+            const refreshResult = await refreshAll(false);
+            if (refreshResult.failed.length > 0) {
+                toast.warning(`Job Order ${joNo} was posted, but the console could not refresh ${refreshResult.failed.join(", ")}. Please sync before relying on the displayed queue.`);
+            } else {
+                toast.success(`Job Order ${joNo} successfully completed and WMS ledger receipted!`);
+            }
         } catch (e: any) {
             toast.error(e.message || "An error occurred during finished goods yield closing.");
         } finally {
@@ -1073,7 +1154,9 @@ export function useManufacturingQA() {
         loadingInspectionLogs,
         loadingLogs,
         loadingDispositions,
+        loadingFinishedGoods,
         actionLoading,
+        finishedGoodsReceipts,
 
         // Search & Filters
         logSearch,
@@ -1192,6 +1275,7 @@ export function useManufacturingQA() {
 
         // General
         refreshAll,
+        isRefreshing,
         getBranchName
     };
 }

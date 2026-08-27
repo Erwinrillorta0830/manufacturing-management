@@ -38,7 +38,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,expiry_date,manufacturing_date,created_on`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,product_id,lot_id,branch_id,batch_no,quantity,expiry_date,manufacturing_date,created_on`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -154,18 +154,19 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const joIdInt = Number(jo.job_order_id || jo.id || 0);
 
+            const rawStatus = String(jo.status || "").trim().toLowerCase();
             let mappedStatus = jo.status;
-            if (jo.status === "Draft") {
+            if (rawStatus === "draft") {
                 mappedStatus = "Draft";
-            } else if (jo.status === "Planned") {
+            } else if (rawStatus === "planned") {
                 mappedStatus = "Planned";
-            } else if (jo.status === "Planning") {
+            } else if (rawStatus === "planning") {
                 mappedStatus = "Planning";
-            } else if (jo.status === "Released") {
+            } else if (rawStatus === "released" || rawStatus === "proceed") {
                 mappedStatus = "Proceed";
-            } else if (jo.status === "In Progress") {
+            } else if (rawStatus === "in progress" || rawStatus === "ongoing") {
                 mappedStatus = "Ongoing";
-            } else if (jo.status === "Completed") {
+            } else if (rawStatus === "completed" || rawStatus === "finished" || rawStatus === "closed") {
                 mappedStatus = "Finished";
             }
 
@@ -290,7 +291,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 const movementSourceNo = String(mov.source_document_no ?? "").trim();
                 const sameJobOrder = movementSourceId === joIdInt
                     || (movementSourceId === 0 && movementSourceNo === String(jo.job_order_no ?? "").trim());
-                return getObjId(mov.transaction_type_id) === 2 && sameJobOrder;
+                const sameProduct = getRelationId(mov.product_id, ["product_id"]) === Number(jo.product_id);
+                const movementBranchId = getRelationId(mov.branch_id, ["branch_id"]);
+                const sameBranch = movementBranchId === 0 || movementBranchId === Number(jo.branch_id);
+                return getObjId(mov.transaction_type_id) === 2 && sameJobOrder && sameProduct && sameBranch;
             });
 
             // The yield ledger is the authoritative production-output source. An inventory
@@ -338,6 +342,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             }
 
             const totalProduced = joYieldLogs.reduce((sum: number, l: any) => sum + Number(l.yield_quantity || 0), 0);
+            const completedQuantity = Number(jo.actual_quantity_produced || 0) > 0
+                ? Number(jo.actual_quantity_produced)
+                : totalProduced;
 
             let resolvedParentId = jo.parent_job_order_id ? Number(jo.parent_job_order_id) : null;
             if (!resolvedParentId && jo.job_order_no && jo.job_order_no.includes("-SUB")) {
@@ -380,6 +387,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 sales_orders: salesOrders,
                 routing_tasks: routingTasks,
                 parent_job_order_id: resolvedParentId,
+                completed_quantity: completedQuantity,
                 produced_quantity: totalProduced,
                 yield_logs: joYieldLogs
             };
