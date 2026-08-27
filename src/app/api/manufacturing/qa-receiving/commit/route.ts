@@ -28,6 +28,7 @@ import {
 } from "../_quarantine-disposition";
 import { forceReceivedIntakeMessage } from "../_force-received";
 import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
+import { quantityStatusFromReceivingStatus } from "../_receiving-status";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
@@ -167,7 +168,7 @@ async function persistedResult(
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -192,6 +193,9 @@ async function persistedResult(
         || new Set(receivingRows.map(row => String(row.receipt_no))).size !== receiptNumbers.length
     ) {
         throw new CommitError(409, "The purchase order status changed but its receiving records are incomplete. Reconciliation is required.");
+    }
+    if (input.supplierDocumentTypeId && receivingRows.some(row => relationId(row.receipt_type, "id") !== input.supplierDocumentTypeId)) {
+        throw new CommitError(409, "The selected Supplier Document Type was not persisted on every receiving record. Reconciliation is required.");
     }
     if (input.replacementDispositionId && receivingRows.some(row =>
         !(row.is_replacement === true || Number(row.is_replacement) === 1)
@@ -426,6 +430,8 @@ async function persistedResult(
         idempotentReplay,
         shipmentId: input.shipmentId,
         status: statusLabel(status),
+        quantityStatus: quantityStatusFromReceivingStatus(statusLabel(status)),
+        supplierDocumentTypeId: input.supplierDocumentTypeId ?? null,
         paymentStatus: Number.isFinite(Number(header.payment_status)) ? Number(header.payment_status) : null,
         workflowRevision: Number(header.workflow_revision || input.workflowRevision),
         receivingRecordIds: receivingIds,
@@ -497,7 +503,7 @@ export async function POST(request: Request) {
                 shipmentId: parsed.data.shipmentId,
                 receiptNumber: parsed.data.receiptNumber,
                 receiptDate: parsed.data.receiptDate,
-                receiptType: parsed.data.receiptType,
+                supplierDocumentTypeId: parsed.data.supplierDocumentTypeId ?? null,
                 processOverDelivery: parsed.data.processOverDelivery,
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
                 destinationBranchId: parsed.data.destinationBranchId,
@@ -552,7 +558,7 @@ export async function POST(request: Request) {
             branchId: purchaseOrderBranchId,
             receiptNumber: parsed.data.receiptNumber,
             receiptDate: parsed.data.receiptDate,
-            receiptType: parsed.data.receiptType,
+            quantityStatus: preview.quantityStatus,
             workflowRevision: parsed.data.workflowRevision,
             idempotencyKey,
             createdBy: actor.userId
@@ -578,7 +584,7 @@ export async function POST(request: Request) {
                 replacementDispositionId: parsed.data.replacementDispositionId || null,
                 referenceNumber: parsed.data.receiptNumber,
                 receiptDate: parsed.data.receiptDate,
-                receiptType: parsed.data.receiptType,
+                supplierDocumentTypeId: parsed.data.supplierDocumentTypeId ?? null,
                 processOverDelivery: parsed.data.processOverDelivery,
                 branchId: purchaseOrderBranchId,
                 branchName: preview.destinationBranch.name,

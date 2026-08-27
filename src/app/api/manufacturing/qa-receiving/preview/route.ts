@@ -31,12 +31,13 @@ import {
     rejectedLotAllocationError
 } from "../_lot-allocation";
 import { summarizeReceivingHistory } from "../_receiving-history";
-import { evaluateReceivingStatus } from "../_receiving-status";
+import { evaluateReceivingStatus, quantityStatusFromReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../../procurement/_category-type";
 import { forceReceivedIntakeMessage } from "../_force-received";
 import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
+import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../_supplier-document-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -183,7 +184,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptType, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -197,6 +198,7 @@ export async function POST(request: Request) {
             })
             : null;
         const replacementFlow = Boolean(replacementContext);
+        const supplierDocumentType = await validateReceivingDocumentType(supplierDocumentTypeId, replacementFlow);
         const previewSourceDocumentNo = receiptNumber;
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
@@ -500,13 +502,6 @@ export async function POST(request: Request) {
                 rejectedQuantity: previous.rejected + (current?.rejectedQuantity || 0)
             };
         }));
-        if (!replacementFlow && receiptType === "full" && receivingStatus.status === "Partially Received") {
-            throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.");
-        }
-        if (!replacementFlow && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
-            throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.");
-        }
-
         const receivedMrpEntries = replacementFlow ? [] : evaluated.filter(({ line, result }) => {
             const stored = poLineById.get(line.lineId)!;
             return result.receivedQuantity > 0 && stored.purchase_intent === "MRP_Demand";
@@ -616,7 +611,9 @@ export async function POST(request: Request) {
                 shipmentId,
                 receivingTicketNumber: receiptNumber,
                 receiptDate,
-                receiptType,
+                supplierDocumentTypeId: supplierDocumentType?.id || null,
+                supplierDocumentType,
+                quantityStatus: quantityStatusFromReceivingStatus(receivingStatus.status),
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,
                 workflowRevision: Number(header.workflow_revision || 0),
@@ -630,6 +627,8 @@ export async function POST(request: Request) {
         const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError || error instanceof ProductCategoryTypeValidationError
             ? error.status
             : error instanceof QuarantineDispositionError
+                ? error.statusCode
+            : error instanceof ReceivingDocumentTypeError
                 ? error.statusCode
             : error instanceof ReceivingPreviewError
                 ? error.status

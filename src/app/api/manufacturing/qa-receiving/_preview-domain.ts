@@ -1,6 +1,8 @@
 import type { QaChecklistItemEvaluation } from "../qa/_purchase-specification-domain";
 import type { ReceivingDisposition } from "../qa/_receiving-evaluation";
 import type { ReceivingLotAllocation } from "./_lot-allocation";
+import type { ReceivingDocumentTypeOption } from "./_supplier-document-type";
+import type { ReceivingQuantityStatus } from "./_receiving-status";
 
 export type ReceivingRouteKind = "Passed" | "Rejected";
 
@@ -72,7 +74,9 @@ export interface ReceivingPreviewResult {
     shipmentId: number;
     receivingTicketNumber: string | null;
     receiptDate: string;
-    receiptType: "full" | "partial";
+    supplierDocumentTypeId: number | null;
+    supplierDocumentType: ReceivingDocumentTypeOption | null;
+    quantityStatus: ReceivingQuantityStatus;
     processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;

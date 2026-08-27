@@ -7,6 +7,16 @@ export interface Branch {
     bad_stock_branch_id?: number | Branch | null;
 }
 
+export type ReceivingQuantityStatus = "FULL" | "PARTIAL" | "REJECTED";
+
+export type SupplierDocumentTypeCode = "SI" | "OR" | "DR";
+
+export interface SupplierDocumentType {
+    id: number;
+    code: SupplierDocumentTypeCode;
+    label: string;
+}
+
 export interface StorageLot {
     lot_id: number;
     lot_name: string;
@@ -28,6 +38,8 @@ export interface StorageLotBatch {
 }
 
 export interface ReceivingLotAllocationInput {
+    /** Client-only identity used to keep allocation rows stable while editing. */
+    clientId: string;
     storageLotId: string;
     batchNumber: string;
     manufacturingDate: string;
@@ -114,6 +126,7 @@ export interface ShipmentLineItem {
         branch_id: number | null;
         is_over_received: boolean;
         over_delivery_quantity: number;
+        supplier_document_type_id: number | null;
     } | null;
     base_unit_cost_php: number;
     lot_number?: string;
@@ -185,7 +198,9 @@ export interface ReceivingPreview {
     replacementDispositionId?: number | null;
     receivingTicketNumber: string | null;
     receiptDate: string;
-    receiptType: "full" | "partial";
+    supplierDocumentTypeId: number | null;
+    supplierDocumentType: SupplierDocumentType | null;
+    quantityStatus: ReceivingQuantityStatus;
     processOverDelivery: boolean;
     workflowRevision: number;
     postingEnabled: boolean;
@@ -201,7 +216,7 @@ export interface ReceivingCommitPayload {
     replacementDispositionId?: number | null;
     receiptNumber: string;
     receiptDate: string;
-    receiptType: "full" | "partial";
+    supplierDocumentTypeId: number | null;
     processOverDelivery: boolean;
     destinationBranchId: number;
     lines: Array<{
@@ -237,6 +252,8 @@ export interface ReceivingCommitResult {
     receiptDate: string;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
+    quantityStatus: ReceivingQuantityStatus;
+    supplierDocumentTypeId: number | null;
     paymentStatus?: number | null;
     workflowRevision: number;
     idempotentReplay: boolean;

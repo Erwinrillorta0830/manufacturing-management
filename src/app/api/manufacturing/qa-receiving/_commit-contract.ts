@@ -102,7 +102,7 @@ const receivingRequestSchema = z.object({
     supplierDocumentNumber: serverOwnedNumber,
     referenceNumber: serverOwnedNumber,
     grnNumber: serverOwnedNumber,
-    receiptType: z.enum(["full", "partial"]),
+    supplierDocumentTypeId: z.number().int().positive().nullable().optional(),
     processOverDelivery: z.boolean().default(false),
     destinationBranchId: z.number().int().positive(),
     lines: z.array(receivingCommitLineSchema).min(1)
@@ -187,6 +187,8 @@ export interface ReceivingCommitResult {
     idempotentReplay: boolean;
     shipmentId: number;
     status: "Partially Received" | "Received" | "Rejected";
+    quantityStatus: "FULL" | "PARTIAL" | "REJECTED";
+    supplierDocumentTypeId: number | null;
     paymentStatus: number | null;
     workflowRevision: number;
     receivingRecordIds: number[];

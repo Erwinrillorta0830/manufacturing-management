@@ -1,6 +1,7 @@
 export const RECEIVING_STATUS_EPSILON = 1e-9;
 
 export type ReceivingCompletionStatus = "Partially Received" | "Received" | "Rejected";
+export type ReceivingQuantityStatus = "FULL" | "PARTIAL" | "REJECTED";
 
 export interface ReceivingStatusLineInput {
     orderedQuantity: number;
@@ -13,6 +14,12 @@ export interface ReceivingStatusEvaluation {
     allLinesAccepted: boolean;
     allLinesPhysicallyAccounted: boolean;
     totalAcceptedQuantity: number;
+}
+
+export function quantityStatusFromReceivingStatus(status: ReceivingCompletionStatus): ReceivingQuantityStatus {
+    if (status === "Received") return "FULL";
+    if (status === "Rejected") return "REJECTED";
+    return "PARTIAL";
 }
 
 function nonNegative(value: number): number {

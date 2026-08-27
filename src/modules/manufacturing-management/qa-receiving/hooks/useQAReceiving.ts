@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock } from "../types";
+import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
 import {
     fetchActiveShipments, 
     fetchBranches, 
+    fetchSupplierDocumentTypes,
     fetchShipmentDetails, 
     previewReceivingQa,
     commitReceivingQa,
@@ -20,8 +21,9 @@ import {
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
 import { getTodayReceiptDate, validateReceivingMetadata, validateReceivingReceiptDate, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
-import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery, OVER_DELIVERY_EPSILON } from "@/app/api/manufacturing/qa/_receiving-evaluation";
+import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
+import { evaluateReceivingStatus } from "@/app/api/manufacturing/qa-receiving/_receiving-status";
 
 interface ReceivingCommitContext {
     preview: ReceivingPreview;
@@ -69,6 +71,7 @@ function hydrateStoredAllocations(
 ): ReceivingLotAllocationInput[] {
     if (allocations?.length) {
         return allocations.map(allocation => ({
+            clientId: uuidv4(),
             storageLotId: String(allocation.storage_lot_id),
             batchNumber: allocation.batch_number || fallback.batchNumber,
             manufacturingDate: allocation.manufacturing_date || fallback.manufacturingDate,
@@ -77,7 +80,7 @@ function hydrateStoredAllocations(
         }));
     }
     return fallbackLotId && fallbackQuantity > 0
-        ? [{ storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
+        ? [{ clientId: uuidv4(), storageLotId: String(fallbackLotId), ...fallback, quantity: fallbackQuantity }]
         : [];
 }
 
@@ -101,11 +104,14 @@ export function useQAReceiving() {
     // Core data lists
     const [shipments, setShipments] = useState<Shipment[]>([]);
     const [branches, setBranches] = useState<Branch[]>([]);
+    const [supplierDocumentTypes, setSupplierDocumentTypes] = useState<SupplierDocumentType[]>([]);
     const [storageLotsByProductId, setStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
     const storageLotBatchCache = useRef<Record<string, StorageLotBatch[]>>({});
     const storageLotBatchRequestCache = useRef<Record<string, Promise<StorageLotBatch[]>>>({});
     const [loadingShipments, setLoadingShipments] = useState(false);
     const [loadingBranches, setLoadingBranches] = useState(false);
+    const [loadingSupplierDocumentTypes, setLoadingSupplierDocumentTypes] = useState(false);
+    const [supplierDocumentTypeError, setSupplierDocumentTypeError] = useState<string | null>(null);
 
     // Selected active container details
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
@@ -115,7 +121,7 @@ export function useQAReceiving() {
     // Inspection form state
     const [receivingTicketNumber, setReceivingTicketNumber] = useState<string>("");
     const [receiptDate, setReceiptDate] = useState<string>(() => getTodayReceiptDate());
-    const [receiptType, setReceiptType] = useState<"full" | "partial">("full");
+    const [supplierDocumentTypeId, setSupplierDocumentTypeId] = useState<number | null>(null);
     const [processOverDelivery, setProcessOverDeliveryState] = useState(false);
     const [selectedBranchId, setSelectedBranchId] = useState<string>("");
     const [inspectionRows, setInspectionRows] = useState<Record<number, InspectionRow>>({});
@@ -149,6 +155,19 @@ export function useQAReceiving() {
     const handleReceiptDateChange = useCallback((value: string) => {
         previewController.current?.abort();
         setReceiptDate(value);
+        setQaEvaluationResults({});
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewOpen(false);
+        setPreviewAcknowledged(false);
+        setPreviewError(null);
+        setValidatingInspection(false);
+    }, []);
+
+    const handleSupplierDocumentTypeChange = useCallback((value: string) => {
+        previewController.current?.abort();
+        const parsed = Number(value);
+        setSupplierDocumentTypeId(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null);
         setQaEvaluationResults({});
         setReceivingCommitContext(null);
         setCommittedResult(null);
@@ -195,7 +214,7 @@ export function useQAReceiving() {
         setInspectionRows({});
         setReceivingTicketNumber("");
         setReceiptDate(getTodayReceiptDate());
-        setReceiptType("full");
+        setSupplierDocumentTypeId(null);
         setProcessOverDeliveryState(false);
         setSelectedBranchId("");
         setQaSpecificationStates({});
@@ -320,6 +339,7 @@ export function useQAReceiving() {
     // Load base data
     useEffect(() => {
         loadBranches();
+        loadSupplierDocumentTypes();
         return () => {
             listController.current?.abort();
             detailController.current?.abort();
@@ -358,6 +378,22 @@ export function useQAReceiving() {
             toast.error(e.message || "Failed to load branch list");
         } finally {
             setLoadingBranches(false);
+        }
+    };
+
+    const loadSupplierDocumentTypes = async () => {
+        setLoadingSupplierDocumentTypes(true);
+        setSupplierDocumentTypeError(null);
+        try {
+            const data = await fetchSupplierDocumentTypes();
+            setSupplierDocumentTypes(data || []);
+        } catch (error) {
+            console.error(error);
+            const message = error instanceof Error ? error.message : "Failed to load supplier document types.";
+            setSupplierDocumentTypeError(message);
+            toast.error(message);
+        } finally {
+            setLoadingSupplierDocumentTypes(false);
         }
     };
 
@@ -401,7 +437,7 @@ export function useQAReceiving() {
         setSelectedBranchId(normalizedPurchaseOrderBranchId);
         setReceivingTicketNumber("");
         setReceiptDate(getTodayReceiptDate());
-        setReceiptType(isReplacement || isPartiallyReceived ? "partial" : "full");
+        setSupplierDocumentTypeId(null);
         setProcessOverDeliveryState(false);
         setQaSpecificationStates({});
         setQaReadings({});
@@ -424,6 +460,12 @@ export function useQAReceiving() {
                 throw new Error("The replacement purchase-order line could not be loaded.");
             }
             setLineItems(lines);
+            if (!isReplacement && isReceived) {
+                const storedDocumentTypeId = lines
+                    .map(line => line.latest_receipt?.supplier_document_type_id ?? null)
+                    .find((id): id is number => id !== null && Number.isSafeInteger(id) && id > 0) ?? null;
+                setSupplierDocumentTypeId(storedDocumentTypeId);
+            }
 
             // Prepopulate form states
             const rowsInit: Record<number, InspectionRow> = {};
@@ -733,6 +775,29 @@ export function useQAReceiving() {
         });
     }, [inspectionRows, lineItems, replacementDisposition]);
 
+    const quantityStatus = useMemo<ReceivingQuantityStatus>(() => {
+        if (lineItems.length === 0) return "PARTIAL";
+        const evaluation = evaluateReceivingStatus(lineItems.map(line => {
+            const row = inspectionRows[line.line_id];
+            const received = Number(row?.receivedQty || 0);
+            const accepted = Number(row?.acceptedQty || 0);
+            const rejected = Number.isFinite(received) && Number.isFinite(accepted)
+                ? Math.max(0, deriveRejectedQuantity(received, accepted))
+                : 0;
+            const replacementLine = replacementDisposition?.purchaseOrderLineId === line.line_id;
+            return {
+                orderedQuantity: replacementLine
+                    ? replacementDisposition?.remainingQuantity || 0
+                    : Number(line.quantity_ordered || 0),
+                receivedQuantity: (replacementLine ? 0 : Number(line.previously_received_quantity ?? line.quantity_received ?? 0)) + received,
+                rejectedQuantity: (replacementLine ? 0 : Number(line.previously_rejected_quantity ?? line.quantity_rejected ?? 0)) + rejected
+            };
+        }));
+        if (evaluation.status === "Received") return "FULL";
+        if (evaluation.status === "Rejected") return "REJECTED";
+        return "PARTIAL";
+    }, [inspectionRows, lineItems, replacementDisposition]);
+
     const receivingValidationIssues = useMemo<ReceivingValidationIssue[]>(() => {
         if (isLockedReceivingShipment(selectedShipment, replacementDisposition)) return [];
 
@@ -758,6 +823,9 @@ export function useQAReceiving() {
                 issues.push(issue);
             }
         };
+        if (!replacementDisposition && !supplierDocumentTypeId) {
+            addIssue({ field: "supplierDocumentTypeId", message: "Supplier Document Type is required." });
+        }
         const receivedLines = lineItems.filter(line => Number(inspectionRows[line.line_id]?.receivedQty || 0) > 0);
 
         if (receivedLines.length === 0) {
@@ -807,40 +875,8 @@ export function useQAReceiving() {
             });
         }
 
-        const completesPurchaseOrder = lineItems.length > 0 && lineItems.every(line => {
-            const accepted = Number(inspectionRows[line.line_id]?.acceptedQty || 0);
-            const ordered = Number(line.quantity_ordered || 0);
-            const previouslyAccepted = Number(line.previously_accepted_quantity ?? Math.max(
-                0,
-                Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)
-            ));
-            const remainingAccepted = Math.max(0, Number(line.remaining_accepted_quantity ?? (ordered - previouslyAccepted)));
-            return accepted >= remainingAccepted - OVER_DELIVERY_EPSILON;
-        });
-        const allLinesPhysicallyComplete = lineItems.length > 0 && lineItems.every(line => {
-            const received = Number(inspectionRows[line.line_id]?.receivedQty || 0);
-            const ordered = Number(line.quantity_ordered || 0);
-            const remaining = Math.max(0, Number(line.remaining_quantity ?? (ordered - Number(line.quantity_received || 0))));
-            return received >= remaining - OVER_DELIVERY_EPSILON;
-        });
-        const cumulativeAccepted = lineItems.reduce((total, line) => {
-            const accepted = Number(inspectionRows[line.line_id]?.acceptedQty || 0);
-            const previouslyAccepted = Number(line.previously_accepted_quantity ?? Math.max(
-                0,
-                Number(line.quantity_received || 0) - Number(line.quantity_rejected || 0)
-            ));
-            return total + previouslyAccepted + accepted;
-        }, 0);
-        const fullyRejected = allLinesPhysicallyComplete && cumulativeAccepted <= OVER_DELIVERY_EPSILON;
-        if (!replacementDisposition && receiptType === "full" && !completesPurchaseOrder && !fullyRejected) {
-            addIssue({ field: "receiptType", message: "Full Receipt requires every line to meet or exceed its remaining accepted quantity, or be fully rejected." });
-        }
-        if (!replacementDisposition && receiptType === "partial" && (completesPurchaseOrder || fullyRejected)) {
-            addIssue({ field: "receiptType", message: "Partial Receipt requires at least one line to remain below its remaining accepted quantity." });
-        }
-
         return issues;
-    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receiptType, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment]);
+    }, [inspectionRows, lineItems, overDeliveryLines, processOverDelivery, qaReadings, qaSpecificationStates, receiptDate, receivingTicketNumber, replacementDisposition, selectedBranchId, selectedShipment, supplierDocumentTypeId]);
 
     const handleSubmitInspection = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -955,7 +991,7 @@ export function useQAReceiving() {
                 replacementDispositionId: replacementDisposition?.id || null,
                 receiptNumber: normalizedReceiptNumber,
                 receiptDate,
-                receiptType,
+                supplierDocumentTypeId,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
@@ -969,7 +1005,7 @@ export function useQAReceiving() {
                 replacementDispositionId: replacementDisposition?.id || null,
                 receiptNumber: normalizedReceiptNumber,
                 receiptDate,
-                receiptType,
+                supplierDocumentTypeId,
                 processOverDelivery,
                 destinationBranchId: Number(selectedBranchId),
                 lines: evaluationLines
@@ -1205,8 +1241,12 @@ export function useQAReceiving() {
         handleReceiptNumberChange,
         receiptDate,
         handleReceiptDateChange,
-        receiptType,
-        setReceiptType,
+        supplierDocumentTypes,
+        loadingSupplierDocumentTypes,
+        supplierDocumentTypeError,
+        supplierDocumentTypeId,
+        handleSupplierDocumentTypeChange,
+        quantityStatus,
         processOverDelivery,
         setProcessOverDelivery: handleProcessOverDeliveryChange,
         overDeliveryLines,
