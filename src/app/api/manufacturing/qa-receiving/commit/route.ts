@@ -36,6 +36,7 @@ import {
     markReceivingTicketPosted,
     ReceivingTicketError
 } from "../_receiving-ticket";
+import { LOT_CAPACITY_EPSILON, readLotCapacityAudit } from "../_lot-capacity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -105,7 +106,7 @@ async function movementRowsForCommit(
 ) {
     if (expectedMovementCount === 0) return [];
 
-    const movementFields = "movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id";
+    const movementFields = "movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity";
     const sourceIdParams = new URLSearchParams({
         "filter[source_document_id][_in]": receivingIds.join(","),
         fields: movementFields,
@@ -340,6 +341,15 @@ async function persistedResult(
             if (movement.version_id !== null) {
                 throw new CommitError(409, `${route.kind} movement for line ${line.lineId} has an unexpected BOM version. Reconciliation is required.`);
             }
+            const capacityAudit = readLotCapacityAudit(movement);
+            if (!capacityAudit) {
+                throw new CommitError(409, `${route.kind} movement for line ${line.lineId} is missing capacity-audit data. Reconciliation is required.`);
+            }
+            if (capacityAudit.capacityOverrideQuantity > route.quantity + LOT_CAPACITY_EPSILON
+                || (capacityAudit.capacityOverride && capacityAudit.capacityOverrideQuantity <= LOT_CAPACITY_EPSILON)
+                || (!capacityAudit.capacityOverride && capacityAudit.capacityOverrideQuantity > LOT_CAPACITY_EPSILON)) {
+                throw new CommitError(409, `${route.kind} movement for line ${line.lineId} has inconsistent capacity-audit data. Reconciliation is required.`);
+            }
             const branchId = relationId(movement.branch_id, "id");
             const productId = relationId(movement.product_id, "product_id");
             const storageLotId = relationId(movement.lot_id, "lot_id");
@@ -363,7 +373,10 @@ async function persistedResult(
                 quantity: route.quantity,
                 batchNumber: String(movement.batch_no || route.batchNumber),
                 manufacturingDate: movement.manufacturing_date ? String(movement.manufacturing_date) : null,
-                expirationDate: movement.expiry_date ? String(movement.expiry_date) : null
+                expirationDate: movement.expiry_date ? String(movement.expiry_date) : null,
+                capacityOverride: capacityAudit.capacityOverride,
+                capacityAvailableBeforeReceipt: capacityAudit.capacityAvailableBeforeReceipt,
+                capacityOverrideQuantity: capacityAudit.capacityOverrideQuantity
             });
         }
 

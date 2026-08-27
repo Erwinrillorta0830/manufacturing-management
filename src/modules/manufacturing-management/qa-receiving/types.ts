@@ -306,6 +306,9 @@ export interface FinalReceivingMovement {
     batchNumber?: string;
     manufacturingDate?: string | null;
     expirationDate?: string | null;
+    capacityOverride: boolean;
+    capacityAvailableBeforeReceipt: number | null;
+    capacityOverrideQuantity: number;
 }
 
 export interface FinalReceivingAllocation {
@@ -346,6 +349,9 @@ export interface ReceivingMovementRoute {
     manufacturingDate: string | null;
     expiryDate: string | null;
     remarks: string | null;
+    capacityOverride: boolean;
+    capacityAvailableBeforeReceipt: number | null;
+    capacityOverrideQuantity: number;
     allocationDrafts: ReceivingMrpAllocationDraft[];
     unallocatedQuantity: number;
 }

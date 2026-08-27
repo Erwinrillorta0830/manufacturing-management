@@ -361,6 +361,31 @@ function LotAllocationEditor({
         });
     };
 
+    const capacityWarningByClientId = React.useMemo(() => {
+        const orderedAllocations = disposition === "accepted"
+            ? [...allocations, ...otherAllocations]
+            : [...otherAllocations, ...allocations];
+        const incomingByLot = new Map<string, number>();
+        const warningByClientId = new Map<string, number>();
+
+        for (const allocation of orderedAllocations) {
+            const lotId = String(allocation.storageLotId || "");
+            if (!lotId) continue;
+            const selectedLot = effectiveStorageLots.find(lot => String(lot.lot_id) === lotId);
+            const availableQuantity = selectedLot?.availableQuantity;
+            if (availableQuantity === null || availableQuantity === undefined || !Number.isFinite(Number(availableQuantity))) continue;
+
+            const incomingBeforeAllocation = incomingByLot.get(lotId) || 0;
+            const remainingBeforeAllocation = Math.max(0, Number(availableQuantity) - incomingBeforeAllocation);
+            const quantity = Math.max(0, Number(allocation.quantity) || 0);
+            const capacityOverrideQuantity = Math.max(0, quantity - remainingBeforeAllocation);
+            if (capacityOverrideQuantity > 1e-9) warningByClientId.set(allocation.clientId, capacityOverrideQuantity);
+            incomingByLot.set(lotId, incomingBeforeAllocation + quantity);
+        }
+
+        return warningByClientId;
+    }, [allocations, disposition, effectiveStorageLots, otherAllocations]);
+
     return (
         <div className="space-y-2">
             <div className={`overflow-x-auto rounded-lg border ${tone.border}`}>
@@ -416,6 +441,11 @@ function LotAllocationEditor({
                                                         ? `${groupTotal.toLocaleString()} allocated · ${lotRemaining === null ? "capacity unavailable" : `${Math.max(0, lotRemaining).toLocaleString()} remaining`}`
                                                         : "Select an eligible lot before assigning batches."}
                                                 </span>
+                                                {lotRemaining !== null && lotRemaining < -1e-9 && (
+                                                    <span className="text-[9px] font-bold text-amber-700" role="status" aria-live="polite">
+                                                        Capacity override: {Math.abs(lotRemaining).toLocaleString()} unit(s) over available capacity. Audit review required.
+                                                    </span>
+                                                )}
                                                 {!readOnly && (
                                                     <button
                                                         type="button"
@@ -432,28 +462,18 @@ function LotAllocationEditor({
                                         {selectedLot && (
                                             <div className="mt-1 text-[9px] font-semibold text-muted-foreground">
                                                 {selectedLot.lot_name} · {selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "capacity unavailable"} unit(s) available before this receipt.
-                                                {lotRemaining !== null && lotRemaining < -1e-9 && (
-                                                    <span className="ml-1 text-red-600" role="alert">Incoming allocation exceeds the remaining lot capacity.</span>
-                                                )}
                                             </div>
                                         )}
                                     </th>
                                 </tr>
                                 {group.allocations.map(allocation => {
-                                    const otherIncomingForLot = [
-                                        ...allocations,
-                                        ...otherAllocations
-                                    ]
-                                        .filter(current => String(current.storageLotId) === group.storageLotId && current.clientId !== allocation.clientId)
-                                        .reduce((sum, current) => sum + Math.max(0, Number(current.quantity) || 0), 0);
-                                    const maxQuantity = selectedLot?.availableQuantity === null || selectedLot?.availableQuantity === undefined
-                                        ? undefined
-                                        : Math.max(0, Number(selectedLot.availableQuantity) - otherIncomingForLot);
+                                    const capacityOverrideQuantity = capacityWarningByClientId.get(allocation.clientId) || 0;
                                     const batchOptions = selectedLot ? batchOptionsByLot[selectedLot.lot_id] || [] : [];
                                     const dateRequired = !isPackaging && Number(allocation.quantity) > 0;
                                     const missingBatch = !allocation.batchNumber.trim();
                                     const invalidDates = dateRequired && (!allocation.manufacturingDate || !allocation.expirationDate);
                                     const batchListId = "receiving-batches-" + lineId + "-" + disposition + "-" + allocation.clientId;
+                                    const capacityWarningId = batchListId + "-capacity-warning";
 
                                     return (
                                         <tr key={allocation.clientId} className="bg-background/70 align-top">
@@ -508,18 +528,17 @@ function LotAllocationEditor({
                                                     id={batchListId + "-quantity"}
                                                     type="number"
                                                     min="0"
-                                                    max={maxQuantity}
                                                     step="any"
                                                     value={allocation.quantity}
                                                     disabled={readOnly || !group.storageLotId || !allocation.batchNumber.trim()}
                                                     onChange={event => updateAllocation(group.groupId, allocation.clientId, "quantity", event.target.value === "" ? "" : Number(event.target.value))}
-                                                    className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold text-right outline-none " + (maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity ? "border-red-500" : "border-border") + " " + tone.input}
+                                                    className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold text-right outline-none " + (capacityOverrideQuantity > 1e-9 ? "border-amber-500" : "border-border") + " " + tone.input}
                                                     aria-label={tone.label + " quantity for " + (selectedLot?.lot_name || group.storageLotId)}
-                                                    aria-invalid={maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity}
+                                                    aria-describedby={capacityOverrideQuantity > 1e-9 ? capacityWarningId : undefined}
                                                 />
-                                                {maxQuantity !== undefined && Number(allocation.quantity) > maxQuantity && (
-                                                    <span className="mt-1 block text-[9px] font-semibold text-red-600" role="alert">
-                                                        Quantity exceeds remaining lot capacity.
+                                                {capacityOverrideQuantity > 1e-9 && (
+                                                    <span id={capacityWarningId} className="mt-1 block text-[9px] font-semibold text-amber-700" role="status" aria-live="polite">
+                                                        Capacity override: {capacityOverrideQuantity.toLocaleString()} unit(s) from this batch require audit review.
                                                     </span>
                                                 )}
                                             </td>
@@ -1247,7 +1266,7 @@ export default function ShipmentInspectionForm({
                                         <div className="flex items-center justify-between gap-2">
                                             <div>
                                                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Inventory allocation sequence</p>
-                                                <p className="text-[10px] text-muted-foreground">Select Lot → Batch Number → Manufacturing/Expiry Dates → Quantity. Lots are filtered by Product Type, UOM, and remaining capacity.</p>
+                                                <p className="text-[10px] text-muted-foreground">Select Lot → Batch Number → Manufacturing/Expiry Dates → Quantity. Lots are filtered by Product Type, UOM, and remaining capacity; over-capacity entries remain editable and are flagged for audit review.</p>
                                                 {(lineIssue("acceptedStorageLot") || lineIssue("rejectedStorageLot")) && (
                                                     <p className="text-[9px] font-semibold text-red-600" role="alert">
                                                         {lineIssue("acceptedStorageLot")?.message || lineIssue("rejectedStorageLot")?.message}

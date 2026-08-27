@@ -61,6 +61,7 @@ export async function GET(request: Request) {
         const lotId = searchParams.get("lotId");
         const batchNo = searchParams.get("batchNo");
         const sinceId = searchParams.get("sinceId");
+        const capacityOverride = searchParams.get("capacityOverride");
         const limitVal = searchParams.get("limit") || "100";
 
         const filterParts: string[] = [];
@@ -79,6 +80,11 @@ export async function GET(request: Request) {
         }
         if (sinceId) {
             filterParts.push(`filter[movement_id][_gt]=${sinceId}`);
+        }
+        if (capacityOverride === "true" || capacityOverride === "1") {
+            filterParts.push("filter[is_capacity_override][_eq]=1");
+        } else if (capacityOverride === "false" || capacityOverride === "0") {
+            filterParts.push("filter[is_capacity_override][_eq]=0");
         }
 
         const limit = Math.min(Number(limitVal) || 100, 500);

@@ -141,6 +141,9 @@ export interface FinalReceivingMovement {
     batchNumber: string;
     manufacturingDate: string | null;
     expirationDate: string | null;
+    capacityOverride: boolean;
+    capacityAvailableBeforeReceipt: number | null;
+    capacityOverrideQuantity: number;
 }
 
 export interface FinalReceivingAllocation {
