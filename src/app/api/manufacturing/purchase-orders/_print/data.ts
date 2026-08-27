@@ -13,6 +13,7 @@ import type {
     PurchaseOrderPrintLine,
     PurchaseOrderPrintableSnapshot,
     PurchaseOrderPrintTemplate,
+    ReceivingPrintHeader,
     ReceivingPrintRecord,
     StorageAllocationPrintRecord,
     StorageMovementPrintRecord
@@ -338,7 +339,10 @@ async function loadReceivingData(
         : receivingRows;
     const productById = new Map(lines.map(line => [line.productId, line]));
     const receivingIds = filteredRows.map(row => relationId(row, ["purchase_order_product_id", "id"])).filter((id): id is number => id !== null);
-    const branchIds = [...new Set(filteredRows.map(row => relationId(row.branch_id, ["id", "branch_id"])).filter((id): id is number => id !== null))];
+    const branchIds = [...new Set([
+        ...filteredRows.map(row => relationId(row.branch_id, ["id", "branch_id"])),
+        ...headerRows.map(row => relationId(row.branch_id, ["id", "branch_id"]))
+    ].filter((id): id is number => id !== null))];
     const lotIds = [...new Set(filteredRows.map(row => relationId(row.lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
     const [branchRows, lotRows, movementDateRows] = await Promise.all([
         branchIds.length ? directusRows(`/items/branches?filter[id][_in]=${branchIds.join(",")}&fields=id,branch_name,branch_code&limit=-1`, "Unable to load receiving branches.", true) : [],
@@ -348,6 +352,34 @@ async function loadReceivingData(
     const branches = new Map(branchRows.map(row => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
     const lots = new Map(lotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
     const movementDates = new Map(movementDateRows.map(row => [relationId(row.source_document_id, ["purchase_order_product_id", "id"]), dateText(row.manufacturing_date)]));
+    const committedHeaderIds = new Set(
+        filteredRows
+            .map(row => relationId(row.receiving_header_id, ["id"]))
+            .filter((id): id is number => id !== null)
+    );
+    const printableHeaderRows = (selectedHeader ? [selectedHeader] : headerRows).filter(row => {
+        const postingStatus = text(row.posting_status, "").toLowerCase();
+        if (postingStatus && postingStatus !== "posted") return false;
+        if (selectedHeader) return true;
+        if (committedHeaderIds.size === 0) return true;
+        const headerId = relationId(row, ["id"]);
+        return headerId !== null && committedHeaderIds.has(headerId);
+    });
+    const receivingHeaders: ReceivingPrintHeader[] = printableHeaderRows
+        .map(row => {
+            const headerId = relationId(row, ["id"]);
+            if (!headerId) return null;
+            const branchId = relationId(row.branch_id, ["id", "branch_id"]);
+            return {
+                headerId,
+                receiptNumber: text(row.receiving_ticket_no),
+                receiptDate: dateText(row.receipt_date),
+                branch: branches.get(branchId) || (branchId ? `Branch #${branchId}` : "N/A"),
+                quantityStatus: text(row.quantity_status),
+                postingStatus: text(row.posting_status)
+            };
+        })
+        .filter((header): header is ReceivingPrintHeader => Boolean(header));
     const records: ReceivingPrintRecord[] = filteredRows.map(row => {
         const productLine = productById.get(relationId(row.product_id, ["product_id"]));
         const header = asRecord(row.receiving_header_id);
@@ -383,8 +415,8 @@ async function loadReceivingData(
         };
     });
     const sourceHeaderId = selectedHeaderId
-        || (headerRows.length === 1 ? relationId(headerRows[0], ["id"]) : null);
-    return { headers: selectedHeader ? [selectedHeader] : headerRows, rows: filteredRows, records, sourceHeaderId };
+        || (receivingHeaders.length === 1 ? receivingHeaders[0].headerId : null);
+    return { receivingHeaders, rows: filteredRows, records, sourceHeaderId };
 }
 
 async function loadMovements(
@@ -550,7 +582,7 @@ export async function loadPurchaseOrderPrintableData(input: {
     const needsReceivingData = input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION";
     const receiving = needsReceivingData
         ? await loadReceivingData(input.purchaseOrderId, lines, input.receivingHeaderId || null)
-        : { headers: [], rows: [], records: [], sourceHeaderId: null };
+        : { receivingHeaders: [], rows: [], records: [], sourceHeaderId: null };
     if ((input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION") && receiving.records.length === 0) {
         throw new PurchaseOrderPrintDataError(409, "No committed QA goods-receipt record is available for this purchase order.");
     }
@@ -606,6 +638,7 @@ export async function loadPurchaseOrderPrintableData(input: {
         lines,
         approvals,
         selectedApproval,
+        receivingHeaders: receiving.receivingHeaders,
         receivingRecords: receiving.records,
         movements,
         allocations,
