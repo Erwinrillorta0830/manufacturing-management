@@ -8,6 +8,53 @@ export interface ChartOfAccount {
     account_type?: number;
 }
 
+export interface ExpenseTypeOption {
+    id: number;
+    label: string;
+}
+
+export interface PurchaseOrderOption {
+    purchase_order_id?: number;
+    shipment_id?: number;
+    id?: number;
+    reference_number?: string;
+    purchase_order_no?: string;
+    supplier_name?: string | {
+        id?: number;
+        supplier_name?: string;
+        is_foreign?: number | boolean;
+        default_currency?: string;
+        country?: string;
+    } | null;
+    is_posted?: number | boolean;
+    is_posted_amounts?: number | boolean;
+    inventory_status?: number | null;
+    payment_status?: number | null;
+    status?: string | null;
+    is_import?: number;
+    currency_code?: string;
+    exchange_rate?: number | string;
+    total_amount?: number | string;
+    total_php_value?: number | string;
+    total_foreign_currency?: number | string;
+    [key: string]: unknown;
+}
+
+export interface PurchaseAmountLandingRow {
+    purchaseOrderId: number;
+    purchaseOrderNo: string;
+    supplierName: string;
+    purchaseType: "FOREIGN IMPORT" | "LOCAL PURCHASE";
+    currencyCode: string;
+    totalAmountPhp: number;
+    totalForeignCurrency: number;
+    status: "Awaiting Posting" | "Posted & Capitalized";
+    isPosted: boolean;
+    canEdit: boolean;
+    canViewLedger: boolean;
+    sourceOrder: PurchaseOrderOption;
+}
+
 export interface POLineItem {
     purchase_order_product_id: number;
     product_id: number | {
@@ -23,7 +70,15 @@ export interface POLineItem {
     product_category?: string;
     category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     received_quantity: number;
+    /** Persisted PHP base cost; never treat this as the invoice currency price. */
     unit_price: number;
+    unit_price_foreign?: number | null;
+    base_unit_cost_php: number;
+    accepted_quantity?: number;
+    quantity_received?: number;
+    quantity_rejected?: number;
+    currency_code?: string;
+    exchange_rate?: number;
     gross_weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -44,9 +99,12 @@ export interface POLineItem {
 
 export interface LandedExpenseRow {
     id: string;
-    chart_of_account_id: number;
+    overhead_id: number | null;
+    expense_type: string;
     amount: number;
     allocation_method: string;
+    /** Legacy account association retained only for displaying old records. */
+    legacyChartOfAccountId?: number | null;
 }
 
 export interface PurchaseOrderHeader {

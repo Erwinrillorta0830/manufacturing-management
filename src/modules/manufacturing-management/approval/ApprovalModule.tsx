@@ -327,7 +327,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                                 <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
-                                <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{Number(approvalDetail.order.exchange_rate || 1).toFixed(4)}</div></div>
+                                <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.currency_code === "PHP" ? "1.0000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(4) : "Unavailable"}</div></div>
                                 <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
                             </div>
 
@@ -401,7 +401,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                             <tr>
                                                 <th className="p-2.5">Product Name</th>
                                                 <th className="p-2.5 text-right">Qty</th>
-                                                <th className="p-2.5 text-right">Unit Price</th>
+                                                <th className="p-2.5 text-right">{approvalDetail?.order.currency_code === "PHP" ? "Unit Price (PHP)" : `Invoice Unit Price (${approvalDetail?.order.currency_code || "foreign currency"})`}</th>
                                                 <th className="p-2.5">Discount Type</th>
                                                 <th className="p-2.5 text-right">Net ({approvalDetail?.order.currency_code || "PHP"})</th>
                                             </tr>
@@ -413,8 +413,9 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                                 const productName = product?.product_name || `Product ${line.product_id}`;
                                                 const productCode = product?.product_code ? ` [${product.product_code}]` : "";
                                                 const qty = Number(line.quantity_ordered || 0);
-                                                const unitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
-                                                const gross = qty * unitPrice;
+                                                const unitPrice = Number(currency === "PHP" ? line.base_unit_cost_php : line.unit_price_foreign);
+                                                const hasUnitPrice = Number.isFinite(unitPrice) && unitPrice >= 0;
+                                                const gross = hasUnitPrice ? qty * unitPrice : 0;
 
                                                 const discountMode = line.discount_mode || "Percentage";
                                                 let discPercent = Number(line.discount_percent || 0);
@@ -430,7 +431,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
 
                                                 const discAmount = discountMode === "Fixed Amount"
                                                     ? Number(line.discount_amount_foreign || 0)
-                                                    : Number(calculatePercentageDiscount(qty, unitPrice, discPercent).discountAmount);
+                                                    : Number(calculatePercentageDiscount(qty, hasUnitPrice ? unitPrice : 0, discPercent).discountAmount);
                                                 if (discountMode === "Fixed Amount") {
                                                     dtLabel = `Fixed Amount (${money(discAmount, currency)})`;
                                                 }
@@ -445,7 +446,7 @@ export default function ApprovalModule({ stage }: { stage: PurchaseOrderDecision
                                                             {qty.toLocaleString()}
                                                         </td>
                                                         <td className="p-2.5 text-right font-mono font-medium">
-                                                            {money(unitPrice, currency)}
+                                                            {hasUnitPrice ? money(unitPrice, currency) : "Unavailable"}
                                                         </td>
                                                         <td className="p-2.5 text-xs">
                                                             <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-muted border text-muted-foreground">

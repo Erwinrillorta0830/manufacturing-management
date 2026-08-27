@@ -37,7 +37,6 @@ export async function POST(request: NextRequest, context: RouteParams) {
         }
 
         const piBranchId = extractId(sheet.branch_id);
-        const isOpening = sheet.stock_type === "OPENING";
 
         const body = await request.json();
         const {
@@ -148,11 +147,6 @@ export async function POST(request: NextRequest, context: RouteParams) {
         // 7. Load System Count from Movements API
         const productTypeId = extractId(sheet.product_type_id);
         const systemCount = await getSingleItemSystemOnhand(piBranchId, inventoryLotId, lotId, productId, conditionStr, productTypeId);
-
-        const calculatedVariance = roundQty(physCountNum - systemCount);
-        if (!isOpening && calculatedVariance !== 0 && (!remarks || !String(remarks).trim())) {
-            return NextResponse.json({ success: false, error: "Variance reason is required when a Regular Physical Inventory has a nonzero variance." }, { status: 400 });
-        }
 
         const priceTypeId = extractId(sheet.price_type_id);
         const unitCost = await resolveProductPrice(productId, priceTypeId);

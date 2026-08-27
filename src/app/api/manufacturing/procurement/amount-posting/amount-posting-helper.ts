@@ -1,5 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
-import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
+import { finalizeLandedCost } from "../landed-cost/_domain";
 import {
     resolveProductWeightBreakdown
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
@@ -17,7 +17,10 @@ export interface POLineItemForPosting {
     product_category?: string;
     category_type?: PurchaseOrderCategoryType;
     received_quantity: number;
-    unit_price: number; // in foreign currency or local PHP
+    /** Legacy field retained for compatibility; it is always the persisted PHP base cost. */
+    unit_price: number;
+    base_unit_cost_php?: number;
+    unit_price_foreign?: number | null;
     gross_weight?: number | null; // in kg
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -38,7 +41,9 @@ export interface POLineItemForPosting {
 export interface LandedExpenseEntry {
     po_import_id?: number;
     purchase_order_id: number;
-    chart_of_account_id: number;
+    overhead_id?: number | null;
+    /** Legacy read-only field. Posting never trusts or forwards this value. */
+    chart_of_account_id?: number | null;
     chart_of_account_name?: string;
     amount: number;
     allocation_method?: string; // "hybrid" | "quantity" | "weight" | "value"
@@ -86,8 +91,10 @@ function relationId(value: unknown, key: string): number {
 export function buildProductCostUpdates(
     lineItems: POLineItemForPosting[],
     allocationOutput: HybridAllocationEngineOutput | null,
-    exchangeRate: number
+    _exchangeRate: number
 ): ProductCostUpdate[] {
+    // Kept in the compatibility signature; landed costs are already PHP-denominated.
+    void _exchangeRate;
     const totals = new Map<number, { quantity: number; cost: number }>();
 
     for (const item of lineItems) {
@@ -104,9 +111,10 @@ export function buildProductCostUpdates(
         const allocation = allocationOutput?.allocations.find(
             candidate => candidate.purchase_order_product_id === item.purchase_order_product_id
         );
+        const baseUnitCostPhp = Number(item.base_unit_cost_php ?? item.unit_price) || 0;
         const finalLandedUnitCost = allocation
             ? allocation.final_landed_unit_cost
-            : roundMoney((Number(item.unit_price) || 0) * exchangeRate);
+            : roundMoney(baseUnitCostPhp);
 
         if (!Number.isFinite(finalLandedUnitCost) || finalLandedUnitCost < 0) {
             throw new Error(`Invalid final landed unit cost for receiving line ${item.purchase_order_product_id}.`);
@@ -313,6 +321,7 @@ export function calculateHybridAllocationEngine(
     expenses: LandedExpenseEntry[],
     exchangeRate: number = 1.0
 ): HybridAllocationEngineOutput {
+    void exchangeRate;
     const totalLandedFee = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     for (const item of lineItems) {
@@ -326,7 +335,7 @@ export function calculateHybridAllocationEngine(
             key: item.purchase_order_product_id,
             category_type: item.category_type as PurchaseOrderCategoryType,
             quantity: Number(item.received_quantity) || 0,
-            baseUnitCostPhp: (Number(item.unit_price) || 0) * exchangeRate,
+            baseUnitCostPhp: Number(item.base_unit_cost_php ?? item.unit_price) || 0,
             lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
             volume: 0
         })),
@@ -354,154 +363,19 @@ export async function processPurchaseAmountPosting(payload: {
     purchase_order_id: number;
     is_foreign: boolean;
     exchange_rate?: number;
+    allocation_rule?: string;
     expenses?: LandedExpenseEntry[];
     line_items: POLineItemForPosting[];
 }) {
-    await assertLandedCostPostingEligible(payload.purchase_order_id);
-
-    const exchangeRate = payload.is_foreign ? (payload.exchange_rate || 1.0) : 1.0;
-    const expenses = payload.expenses || [];
-    const lineItems = await resolvePostingLineItems(payload.purchase_order_id, payload.line_items || []);
-
-    let allocationOutput: HybridAllocationEngineOutput | null = null;
-
-    if (payload.is_foreign) {
-        // Run Hybrid Allocation Engine for foreign import PO
-        allocationOutput = calculateHybridAllocationEngine(lineItems, expenses, exchangeRate);
-    }
-
-    // 1. Delete existing purchase_order_import records for this PO if any
-    const existingImportRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_import?filter[purchase_order_id][_eq]=${payload.purchase_order_id}&limit=-1`, { headers }).catch(() => null);
-    if (existingImportRes && existingImportRes.ok) {
-        const existingData = await existingImportRes.json();
-        if (Array.isArray(existingData?.data)) {
-            for (const imp of existingData.data) {
-                const impId = imp.id || imp.po_import_id;
-                if (!impId) continue;
-                // Delete associated allocations
-                await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving_import_allocation?filter[po_import_id][_eq]=${impId}&limit=-1`, { headers }).then(async r => {
-                    if (r.ok) {
-                        const allocData = await r.json();
-                        if (Array.isArray(allocData?.data)) {
-                            for (const a of allocData.data) {
-                                await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving_import_allocation/${a.id}`, { method: "DELETE", headers }).catch(() => {});
-                            }
-                        }
-                    }
-                }).catch(() => {});
-
-                await fetch(`${DIRECTUS_URL}/items/purchase_order_import/${impId}`, { method: "DELETE", headers }).catch(() => {});
-            }
-        }
-    }
-
-    // 2. Insert new purchase_order_import entries if foreign
-    const createdImportRecords: { po_import_id: number; chart_of_account_id: number; amount: number }[] = [];
-    if (payload.is_foreign && expenses.length > 0) {
-        for (const exp of expenses) {
-            const createRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_import`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    purchase_order_id: payload.purchase_order_id,
-                    chart_of_account_id: exp.chart_of_account_id,
-                    amount: exp.amount,
-                    allocation_method: exp.allocation_method || "hybrid"
-                })
-            });
-            if (createRes.ok) {
-                const created = await createRes.json();
-                const createdId = created?.data?.id || created?.data?.po_import_id;
-                if (createdId) {
-                    createdImportRecords.push({
-                        po_import_id: Number(createdId),
-                        chart_of_account_id: exp.chart_of_account_id,
-                        amount: exp.amount
-                    });
-                }
-            }
-        }
-    }
-
-    // 3. Save purchase_order_receiving_import_allocation records
-    if (payload.is_foreign && allocationOutput && createdImportRecords.length > 0) {
-        const mainImportId = createdImportRecords[0].po_import_id;
-        for (const alloc of allocationOutput.allocations) {
-            await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving_import_allocation`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    po_import_id: mainImportId,
-                    purchase_order_product_id: alloc.purchase_order_product_id,
-                    allocated_amount: alloc.allocated_amount,
-                    variance_adjustment: alloc.variance_adjustment
-                })
-            }).catch(() => {});
-        }
-    }
-
-    // 4. Update purchase_order_product line items
-    let calculatedHeaderTotalPHP = 0;
-    let calculatedHeaderForeignTotal = 0;
-
-    for (const item of lineItems) {
-        const itemAlloc = allocationOutput?.allocations.find(a => a.purchase_order_product_id === item.purchase_order_product_id);
-        const allocatedExpensePhp = itemAlloc ? itemAlloc.allocated_expense_php : 0;
-        const finalLandedUnitCost = itemAlloc ? itemAlloc.final_landed_unit_cost : roundMoney((item.unit_price || 0) * exchangeRate);
-        const qty = item.received_quantity || 0;
-        const itemTotalPHP = roundMoney(finalLandedUnitCost * qty);
-
-        calculatedHeaderTotalPHP += itemTotalPHP;
-        calculatedHeaderForeignTotal += roundMoney((item.unit_price || 0) * qty);
-
-        const lineResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${item.purchase_order_product_id}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({
-                allocated_expense_php: allocatedExpensePhp,
-                final_landed_unit_cost: finalLandedUnitCost,
-                total_amount: itemTotalPHP,
-                is_posted_amounts: 1
-            })
-        });
-        if (!lineResponse.ok) {
-            throw new Error(`Failed to update receiving line ${item.purchase_order_product_id}.`);
-        }
-    }
-
-    const productCostUpdates = buildProductCostUpdates(lineItems, allocationOutput, exchangeRate);
-    const productCostCommit = await persistProductCostUpdates(productCostUpdates);
-
-    try {
-        // 5. Update purchase_order header only after receiving lines and products succeed.
-        const headerResponse = await fetch(`${DIRECTUS_URL}/items/purchase_order/${payload.purchase_order_id}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({
-                exchange_rate: exchangeRate,
-                total_foreign_currency: calculatedHeaderForeignTotal,
-                total_amount: calculatedHeaderTotalPHP,
-                is_posted_amounts: 1,
-                is_posted: 1,
-                is_import: payload.is_foreign ? 1 : 0
-            })
-        });
-        if (!headerResponse.ok) {
-            throw new Error(`Failed to update purchase-order ${payload.purchase_order_id}.`);
-        }
-    } catch (error) {
-        try {
-            await productCostCommit.rollback();
-        } catch (rollbackError) {
-            throw new Error(`${(error as Error).message} ${(rollbackError as Error).message}`);
-        }
-        throw error;
-    }
-
-    return {
-        success: true,
-        purchase_order_id: payload.purchase_order_id,
-        exchange_rate: exchangeRate,
-        allocationOutput
-    };
+    void payload.is_foreign;
+    return finalizeLandedCost({
+        purchaseOrderId: payload.purchase_order_id,
+        allocationRule: payload.allocation_rule,
+        expenses: (payload.expenses || []).map(expense => ({
+            overhead_id: expense.overhead_id,
+            amount_php: expense.amount
+        })),
+        exchangeRate: payload.exchange_rate,
+        sourceFlow: "PURCHASE_AMOUNT_POSTING_LEGACY_ADAPTER"
+    });
 }

@@ -28,9 +28,16 @@ import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from 
 import { PURCHASE_ORDER_REVISION_ACTION } from "../../purchase-orders/_domain";
 import {
     hasLandedCostStatus,
-    isLandedCostPostingEligible
+    isLandedCostPostingEligible,
+    isPurchaseOrderPosted
 } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
-import { getLandedCostComputation } from "../landed-cost/_domain";
+import {
+    getLandedCostComputation,
+    LandedCostDomainError,
+    resolveBaseUnitCostPhp,
+    resolveLandedCostCurrency,
+    resolveTransactionUnitPrice
+} from "../landed-cost/_domain";
 import {
     ProductCategoryTypeValidationError,
     resolveProductCategoryTypes,
@@ -38,7 +45,7 @@ import {
     type PurchaseOrderCategoryType
 } from "../_category-type";
 
-const LEGACY_DEFAULT_EXCHANGE_RATE = "58.000000";
+const INVALID_EXCHANGE_RATE = "0.000000";
 
 function normalizeLegacyDecimal(value: unknown, fallback: string, decimalPlaces: number, label: string): string {
     const raw = value == null ? "" : String(value).trim();
@@ -64,16 +71,19 @@ function normalizeLegacyDecimalOrNull(value: unknown, decimalPlaces: number, lab
 
 function normalizeLegacyExchangeRate(value: unknown, label: string): string {
     const raw = value == null ? "" : String(value).trim();
-    if (!raw) return LEGACY_DEFAULT_EXCHANGE_RATE;
+    if (!raw) {
+        console.warn(`[Manufacturing Directus API] Missing exchange rate in ${label}; currency reconciliation is required.`);
+        return INVALID_EXCHANGE_RATE;
+    }
     try {
         const rate = DecimalValue.from(raw);
         if (rate.compare(0) > 0) return rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
     } catch (error) {
-        console.warn(`[Manufacturing Directus API] Invalid exchange rate in ${label}; using ${LEGACY_DEFAULT_EXCHANGE_RATE}.`, error);
-        return LEGACY_DEFAULT_EXCHANGE_RATE;
+        console.warn(`[Manufacturing Directus API] Invalid exchange rate in ${label}; currency reconciliation is required.`, error);
+        return INVALID_EXCHANGE_RATE;
     }
-    console.warn(`[Manufacturing Directus API] Non-positive exchange rate in ${label}; using ${LEGACY_DEFAULT_EXCHANGE_RATE}.`);
-    return LEGACY_DEFAULT_EXCHANGE_RATE;
+    console.warn(`[Manufacturing Directus API] Non-positive exchange rate in ${label}; currency reconciliation is required.`);
+    return INVALID_EXCHANGE_RATE;
 }
 
 interface DirectusPO {
@@ -350,18 +360,25 @@ function mapPurchaseOrder(
     revisionCount = 0
 ) {
     const poLabel = `purchase_order/${po.purchase_order_id}`;
-    const rate = normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
+    const currencyCode = String(po.currency_code || "PHP").trim().toUpperCase();
+    const rate = currencyCode === "PHP"
+        ? "1.000000"
+        : normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
     const totalPhp = normalizeLegacyDecimal(
         po.total_amount ?? po.gross_amount,
         "0.00",
         CURRENCY_DECIMAL_SCALE,
         `${poLabel}.total_amount`
     );
-    const foreignCurrency = normalizeLegacyDecimalOrNull(
+    const storedForeignCurrency = normalizeLegacyDecimalOrNull(
         po.total_foreign_currency,
         CURRENCY_DECIMAL_SCALE,
         `${poLabel}.total_foreign_currency`
-    ) || DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE);
+    );
+    const foreignCurrency = storedForeignCurrency
+        || (DecimalValue.from(rate).compare(0) > 0
+            ? DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE)
+            : "0.00");
     const storedSupplierId = supplierId(po.supplier_name);
     const supplier = storedSupplierId ? suppliers.get(storedSupplierId) || storedSupplierId : null;
     const branchId = resolvePurchaseOrderBranchId(po);
@@ -395,7 +412,7 @@ function mapPurchaseOrder(
         payment_terms: po.payment_terms || null,
         delivery_terms: po.delivery_terms || null,
         price_type: po.price_type || null,
-        currency_code: po.currency_code || "PHP",
+        currency_code: currencyCode as "PHP" | "USD",
         workflow_revision: Number(po.workflow_revision || 0),
         revision_count: revisionCount,
         approver_id: po.approver_id || null,
@@ -650,17 +667,60 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     };
 }
 
+async function fetchFinalizedLandedCostExchangeRates(purchaseOrderIds: readonly number[]): Promise<Map<number, string>> {
+    const ids = [...new Set(purchaseOrderIds.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        "filter[purchase_order_id][_in]": ids.join(","),
+        "filter[status][_eq]": "FINALIZED",
+        fields: "purchase_order_id,exchange_rate,id",
+        sort: "-id",
+        limit: "-1"
+    });
+
+    try {
+        const res = await fetch(`${DIRECTUS_URL}/items/purchase_order_landed_cost_computations?${params.toString()}`, {
+            headers,
+            cache: "no-store"
+        });
+        if (!res.ok) return new Map();
+        const rows = ((await res.json()).data || []) as Array<{ purchase_order_id?: unknown; exchange_rate?: unknown }>;
+        const rates = new Map<number, string>();
+        for (const row of rows) {
+            const purchaseOrderId = Number(row.purchase_order_id);
+            if (!Number.isSafeInteger(purchaseOrderId) || purchaseOrderId <= 0 || rates.has(purchaseOrderId)) continue;
+            const rawRate = row.exchange_rate == null ? "" : String(row.exchange_rate).trim();
+            if (!rawRate) continue;
+            try {
+                const rate = DecimalValue.from(rawRate);
+                if (rate.compare(0) > 0) rates.set(purchaseOrderId, rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE));
+            } catch {
+                // An invalid finalized rate must not replace the purchase-order rate.
+            }
+        }
+        return rates;
+    } catch (error) {
+        console.warn("[Manufacturing Directus API] Failed to load finalized landed-cost exchange rates:", error);
+        return new Map();
+    }
+}
+
 export async function fetchIncomingShipments(options: { landedCostOnly?: boolean; includePosted?: boolean } = {}): Promise<unknown[]> {
     try {
         const landedCostFilter = options.landedCostOnly
-            ? `&filter[inventory_status][_eq]=${INVENTORY_STATUS.RECEIVED}&filter[payment_status][_eq]=${PAYMENT_STATUS.AWAITING_PAYMENT}`
+            ? options.includePosted
+                ? `&filter[inventory_status][_eq]=${INVENTORY_STATUS.RECEIVED}`
+                : `&filter[inventory_status][_eq]=${INVENTORY_STATUS.RECEIVED}&filter[payment_status][_eq]=${PAYMENT_STATUS.AWAITING_PAYMENT}`
             : "";
         const url = `${DIRECTUS_URL}/items/purchase_order?fields=*&sort=-date_encoded&limit=-1${landedCostFilter}`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) return [];
         const fetchedPOList = ((await res.json()).data || []) as DirectusPO[];
         const poList = options.landedCostOnly
-            ? fetchedPOList.filter(row => hasLandedCostStatus(row) && (options.includePosted || isLandedCostPostingEligible(row)))
+            ? fetchedPOList.filter(row => options.includePosted
+                ? isLandedCostPostingEligible(row) || isPurchaseOrderPosted(row)
+                : hasLandedCostStatus(row) && isLandedCostPostingEligible(row))
             : fetchedPOList;
         const revisionCounts = await fetchPurchaseOrderRevisionCounts(poList.map(row => Number(row.purchase_order_id)));
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
@@ -671,7 +731,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             workflowRevision: Number(row.workflow_revision || 0)
         })));
 
-        return poList.map(row => mapPurchaseOrder(
+        const mappedOrders = poList.map(row => mapPurchaseOrder(
             row,
             suppliers,
             paymentModes,
@@ -679,6 +739,16 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             rejectionStages.get(Number(row.purchase_order_id)) || null,
             revisionCounts.get(Number(row.purchase_order_id)) || 0
         ));
+        const finalizedRates = options.includePosted
+            ? await fetchFinalizedLandedCostExchangeRates(poList
+                .filter(row => isPurchaseOrderPosted(row))
+                .map(row => Number(row.purchase_order_id)))
+            : new Map<number, string>();
+
+        return mappedOrders.map(order => {
+            const finalizedRate = finalizedRates.get(Number(order.shipment_id));
+            return finalizedRate ? { ...order, exchange_rate: finalizedRate } : order;
+        });
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch incoming shipments:", e);
         return [];
@@ -692,11 +762,12 @@ export async function fetchShipmentLineItems(
     try {
         // Fetch the header first so force-closed orders can expose zero remaining intake.
         const headerRes = await fetch(
-            `${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,force_received_at`,
+            `${DIRECTUS_URL}/items/purchase_order/${shipmentId}?fields=purchase_order_id,force_received_at,currency_code,is_import,exchange_rate`,
             { headers, cache: "no-store" }
         );
-        const header = headerRes.ok ? ((await headerRes.json()).data || {}) as { force_received_at?: unknown } : {};
+        const header = headerRes.ok ? ((await headerRes.json()).data || {}) as Record<string, unknown> : {};
         const forceClosed = isForceReceived(header.force_received_at);
+        const currency = resolveLandedCostCurrency(header);
 
         // Fetch purchase_order_products
         const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*,product_id.*,product_id.unit_of_measurement.*,discount_type.*&limit=-1`;
@@ -798,7 +869,7 @@ export async function fetchShipmentLineItems(
             return {
                 key: lineId,
                 quantity: qty,
-                baseUnitCost: Number(line.unit_price || 0),
+                baseUnitCostPhp: resolveBaseUnitCostPhp(line, currency),
                 weight: weightBreakdown.grossWeightKg,
                 lineGrossWeightKg: weightBreakdown.grossWeightKg * qty,
                 volume: cbmH * cbmW * cbmL,
@@ -894,7 +965,9 @@ export async function fetchShipmentLineItems(
             const matchingMovement = movementForProduct.find(row => Boolean(row.manufacturing_date));
 
             const allocation = allocations.get(lineId);
-            const finalLandedUnitCost = allocation ? allocation.finalLandedUnitCost : Number(pop.unit_price || 0);
+            const finalLandedUnitCost = allocation
+                ? allocation.finalLandedUnitCost
+                : resolveBaseUnitCostPhp(pop, currency);
 
             return {
                 line_id: pop.purchase_order_product_id, // map line_id to pop.purchase_order_product_id so QA receiving can update it
@@ -921,13 +994,13 @@ export async function fetchShipmentLineItems(
                 // purchase_order_products.unit_price is the PHP base price;
                 // unit_price_foreign is the submitted transaction-currency price.
                 base_unit_cost_php: normalizeLegacyDecimal(
-                    pop.unit_price,
+                    resolveBaseUnitCostPhp(pop, currency),
                     "0.0000",
                     UNIT_PRICE_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.unit_price`
                 ),
                 unit_price_foreign: normalizeLegacyDecimal(
-                    pop.unit_price_foreign ?? pop.unit_price,
+                    resolveTransactionUnitPrice(pop, currency),
                     "0.0000",
                     UNIT_PRICE_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.unit_price_foreign`
@@ -961,7 +1034,7 @@ export async function fetchShipmentLineItems(
         });
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch shipment line items:", e);
-        if (e instanceof ProductCategoryTypeValidationError || e instanceof ProductWeightValidationError) throw e;
+        if (e instanceof ProductCategoryTypeValidationError || e instanceof ProductWeightValidationError || e instanceof LandedCostDomainError) throw e;
         return [];
     }
 }

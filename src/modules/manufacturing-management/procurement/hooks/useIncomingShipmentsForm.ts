@@ -289,11 +289,13 @@ export function useIncomingShipmentsForm({
 
         if (freshLines.length === 0) freshLines = lines;
 
-        const currencyCode = (activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP";
-        const exchangeRate = DecimalValue.from(activeShipment.exchange_rate || 1);
+        const currencyCode = ((activeShipment as IncomingShipment & { currency_code?: "PHP" | "USD" }).currency_code || "PHP").toUpperCase();
         setLinesForm(freshLines.map((l: ShipmentLineItem) => {
             const productId = String(typeof l.product_id === "object" ? l.product_id.product_id : l.product_id);
             const selectedRawMaterial = rawMaterials.find(material => String(material.product_id) === productId);
+            const transactionUnitPrice = currencyCode === "PHP"
+                ? l.base_unit_cost_php
+                : l.unit_price_foreign;
 
             return {
                 product_id: productId,
@@ -301,9 +303,7 @@ export function useIncomingShipmentsForm({
                 product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
                 product_code: typeof l.product_id === "object" ? l.product_id.product_code || "" : "",
                 quantity_ordered: String(l.quantity_ordered || 0),
-                base_unit_cost_php: String(l.unit_price_foreign ?? (currencyCode === "USD"
-                    ? DecimalValue.from(l.base_unit_cost_php || 0).divideRounded(exchangeRate, 4).toFixed(4)
-                    : l.base_unit_cost_php)),
+                base_unit_cost_php: transactionUnitPrice == null ? "" : String(transactionUnitPrice),
                 parent_product_id: String(resolveProductParentId(selectedRawMaterial) || ""),
                 selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
                 uom_options: [],
@@ -317,8 +317,11 @@ export function useIncomingShipmentsForm({
 
         setEditingShipmentId(activeShipment.shipment_id);
         const hasStoredRate = Number(activeShipment.exchange_rate) > 0;
-        setFxRateStatus(hasStoredRate ? "ready" : "error");
-        setFxRateError(hasStoredRate ? null : "The stored purchase-order exchange rate is unavailable.");
+        const missingForeignPrice = currencyCode !== "PHP" && freshLines.some(line => line.unit_price_foreign == null || String(line.unit_price_foreign).trim() === "");
+        setFxRateStatus(missingForeignPrice || !hasStoredRate ? "error" : "ready");
+        setFxRateError(missingForeignPrice
+            ? `One or more ${currencyCode} invoice unit prices are unavailable. Reconcile the purchase-order line before editing.`
+            : hasStoredRate ? null : "The stored purchase-order exchange rate is unavailable.");
         setIsModalOpen(true);
     };
 

@@ -6,7 +6,6 @@ import {
     Search,
     Plus,
     Eye,
-    Edit3,
     CheckCircle2,
     RotateCcw,
     XCircle,
@@ -58,7 +57,6 @@ export default function PhysicalInventoryList({
     onRefresh,
     onCreateNew,
     onView,
-    onEdit,
     onSubmit,
     onReturnToDraft,
     onCommit,
@@ -462,14 +460,6 @@ export default function PhysicalInventoryList({
 
                                                     {s.status === "DRAFT" && (
                                                         <>
-                                                            <button
-                                                                onClick={() => onEdit(s)}
-                                                                className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-md transition-colors"
-                                                                title="Edit Draft"
-                                                            >
-                                                                <Edit3 className="h-4 w-4" />
-                                                            </button>
-
                                                             <button
                                                                 onClick={() => onSubmit(s)}
                                                                 className="p-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-md transition-colors"

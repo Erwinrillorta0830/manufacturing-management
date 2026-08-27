@@ -95,6 +95,9 @@ export default function ManufacturingQAModule() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        yieldMaterialsLoading,
+        yieldMaterialsError,
+        handleRetryYieldMaterials,
         handleOpenYieldDialog,
         handleSubmitYieldClosing,
         handleReprintReceipt,
@@ -430,6 +433,9 @@ export default function ManufacturingQAModule() {
                 setExpiryDate={setExpiryDate}
                 unitCost={unitCost}
                 setUnitCost={setUnitCost}
+                yieldMaterialsLoading={yieldMaterialsLoading}
+                yieldMaterialsError={yieldMaterialsError}
+                handleRetryYieldMaterials={handleRetryYieldMaterials}
                 actionLoading={actionLoading}
                 handleSubmitYieldClosing={handleSubmitYieldClosing}
             />
