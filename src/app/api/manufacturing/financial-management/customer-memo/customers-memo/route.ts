@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE_URL = process.env.SPRING_API_BASE_URL;
+
 const COOKIE_NAME = "vos_access_token";
 
 type DirectusListResponse<T> = {
@@ -324,8 +324,20 @@ export async function GET(req: NextRequest) {
 
                 const filterStr = encodeURIComponent(JSON.stringify(filter));
 
+                type FallbackRow = {
+                    id?: number;
+                    collection_id?: { id?: number; docNo?: string; totalAmount?: number; amount?: number; isPosted?: boolean };
+                    invoice_id?: {
+                        invoice_no?: string;
+                        net_amount?: number;
+                        invoice_date?: string;
+                        customer_id?: { customer_name?: string };
+                        salesman_id?: { salesman_name?: string };
+                        supplier_id?: { supplier_name?: string };
+                    };
+                };
                 try {
-                    const result = await directusFetch<{ data?: any[] }>(
+                    const result = await directusFetch<{ data?: FallbackRow[] }>(
                         `${DIRECTUS_URL}/items/collection_invoices?fields=${fields}&filter=${filterStr}&limit=-1`
                     );
 

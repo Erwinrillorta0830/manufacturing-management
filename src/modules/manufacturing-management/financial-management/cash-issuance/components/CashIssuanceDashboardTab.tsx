@@ -48,19 +48,25 @@ function AttachmentPreview({ docUrl }: { docUrl: string }) {
     const viewUrl = `/api/manufacturing/financial-management/cash-issuance/disbursements/attachments/${encodeURIComponent(fileId)}`;
 
     useEffect(() => {
-        setImgError(false);
+        let mounted = true;
         if (!viewUrl) return;
         const controller = new AbortController();
         fetch(viewUrl, { method: "HEAD", signal: controller.signal })
             .then((res) => {
+                if (!mounted) return;
+                setImgError(false);
                 if (!res.ok) return;
                 const type = res.headers.get("content-type");
                 if (type) setContentType(type.toLowerCase());
             })
             .catch(() => {
+                if (!mounted) return;
                 if (!controller.signal.aborted) setContentType("");
             });
-        return () => controller.abort();
+        return () => {
+            mounted = false;
+            controller.abort();
+        };
     }, [viewUrl]);
 
     const isPdf = docUrl.toLowerCase().endsWith(".pdf") || viewUrl.toLowerCase().endsWith(".pdf") || contentType.includes("pdf");
@@ -99,7 +105,7 @@ function AttachmentPreview({ docUrl }: { docUrl: string }) {
                             title="Supporting Document PDF" 
                         />
                     ) : imgError ? (
-                        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground p-4 text-center">Preview not available. Click "View" above to open.</div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground p-4 text-center">Preview not available. Click &quot;View&quot; above to open.</div>
                     ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img 
