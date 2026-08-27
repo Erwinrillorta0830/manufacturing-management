@@ -25,6 +25,8 @@ export default function SalesOrderApprovalModule() {
         setDateFromFilter,
         dateToFilter,
         setDateToFilter,
+        statusFilter,
+        setStatusFilter,
         totalCount,
         totalPages,
         limit,
@@ -86,6 +88,8 @@ export default function SalesOrderApprovalModule() {
                         setDateFromFilter={setDateFromFilter}
                         dateToFilter={dateToFilter}
                         setDateToFilter={setDateToFilter}
+                        statusFilter={statusFilter}
+                        setStatusFilter={setStatusFilter}
                         totalCount={totalCount}
                         totalPages={totalPages}
                         limit={limit}
