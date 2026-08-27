@@ -61,7 +61,7 @@ export type DisbursementRow = {
     encoder_id?: RelationValue;
     submitted_by?: RelationValue;
     approver_id?: RelationValue;
-    released_by?: RelationValue;
+    released_date?: string | null;
     posted_by?: RelationValue;
     isPosted?: unknown;
     transaction_date?: unknown;
@@ -144,7 +144,7 @@ export type PaymentRow = {
     date?: unknown;
     amount?: unknown;
     remarks?: unknown;
-    released_by?: RelationValue;
+    // removed released_by
     released_date?: unknown;
 };
 
@@ -556,7 +556,7 @@ export async function getLineItems(disbursementIds: number[]) {
     paymentParams.set("limit", "-1");
     paymentParams.set(
         "fields",
-        "id,disbursement_id,coa_id,coa_id.coa_id,coa_id.account_title,bank_id,check_no,date,amount,remarks,released_by,released_date",
+        "id,disbursement_id,coa_id,coa_id.coa_id,coa_id.account_title,bank_id,check_no,date,amount,remarks,released_date",
     );
     paymentParams.set("filter[disbursement_id][_in]", ids.join(","));
 
@@ -583,7 +583,7 @@ export async function loadNormalizedDisbursement(row: DisbursementRow, token: st
     addId(relationId(row.encoder_id, "user_id"));
     addId(relationId(row.approver_id, "user_id"));
     addId(relationId(row.posted_by, "user_id"));
-    payments.forEach((payment) => addId(relationId(payment.released_by, "user_id")));
+    // payments.forEach((payment) => addId(relationId(payment.released_by, "user_id")));
 
     const [userMap, coaMap, divisionMap, bankMap] = await Promise.all([
         getUserMap(token, userIdsToFetch),
@@ -657,7 +657,7 @@ function normalizePayment(
         accountTitle = coaMap.get(rawCoaId) || `Account #${rawCoaId}`;
     }
 
-    const releasedByVal = relationId(row.released_by, "user_id");
+    const releasedByVal = undefined;
     const releasedByName = releasedByVal ? (userMap?.get(String(releasedByVal)) || `User #${releasedByVal}`) : "";
 
     const rawBankId = asNumber(row.bank_id);
@@ -706,7 +706,7 @@ export function normalizeDisbursement(
     const encoderIdVal = relationId(row.encoder_id, "user_id");
     const submittedByVal = relationId(row.submitted_by, "user_id");
     const approverIdVal = relationId(row.approver_id, "user_id");
-    const releasedByVal = relationId(row.released_by, "user_id");
+    const releasedByVal = undefined;
     const postedByVal = relationId(row.posted_by, "user_id");
 
     const encoderName = encoderIdVal ? (userMap?.get(String(encoderIdVal)) || `User #${encoderIdVal}`) : "";
@@ -967,7 +967,7 @@ export async function GET(request: NextRequest) {
             addId(relationId(row.posted_by, "user_id"));
             const payments = lineItems.payments.get(Number(row.id)) || [];
             payments.forEach(p => {
-                addId(relationId(p.released_by, "user_id"));
+                // addId(relationId(p.released_by, "user_id"));
             });
         });
 
@@ -1198,7 +1198,7 @@ export async function POST(request: NextRequest) {
                     date: string | undefined;
                     amount: number;
                     remarks: string;
-                    released_by?: number;
+                    // released_by?: number;
                     released_date?: string;
                 } = {
                     disbursement_id: persistedId,
@@ -1210,7 +1210,7 @@ export async function POST(request: NextRequest) {
                     remarks: line.remarks || ""
                 };
                 if (line.releasedBy != null && line.releasedBy !== "") {
-                    payload.released_by = Number(line.releasedBy);
+                    // payload.released_by = Number(line.releasedBy);
                 }
                 if (line.releasedDate != null && line.releasedDate !== "") {
                     payload.released_date = line.releasedDate;

@@ -365,7 +365,9 @@ export function CashIssuanceCreateDialog({
     const handleAddPayable = useCallback(() => setPayables((prev) => [...prev, {referenceNo: "", date: today, amount: 0, remarks: "", divisionId: undefined}]), [today]);
 
     const handleDivisionSelect = useCallback((index: number, divisionId?: number) => {
-        const nextPayables = updateVatSplitDivision(payables, index, divisionId);
+        const nextPayables = [...payables];
+        nextPayables[index] = { ...nextPayables[index], divisionId };
+        
         setPayables(nextPayables);
         setPayableValidationErrors((current) => {
             const next = new Set(current);

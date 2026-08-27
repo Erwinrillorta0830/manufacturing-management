@@ -27,6 +27,8 @@ interface SalesOrderApprovalTableProps {
     setDateFromFilter?: (date: string) => void;
     dateToFilter?: string;
     setDateToFilter?: (date: string) => void;
+    statusFilter?: string;
+    setStatusFilter?: (status: string) => void;
 }
 
 export function SalesOrderApprovalTable({
@@ -49,6 +51,8 @@ export function SalesOrderApprovalTable({
     setDateFromFilter,
     dateToFilter,
     setDateToFilter,
+    statusFilter,
+    setStatusFilter,
     totalCount,
     totalPages,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -186,6 +190,23 @@ export function SalesOrderApprovalTable({
                             />
                         </div>
 
+                        {/* Status Filter */}
+                        <div className="relative w-full sm:w-auto">
+                            <select
+                                value={statusFilter || "For Approval,On Hold"}
+                                onChange={(e) => setStatusFilter && setStatusFilter(e.target.value)}
+                                className="bg-muted px-3 py-2 text-xs rounded-lg border border-border outline-none text-foreground font-semibold shadow-xs transition-all duration-200 cursor-pointer appearance-none pr-8"
+                            >
+                                <option value="For Approval,On Hold">All Status</option>
+                                <option value="For Approval">For Approval</option>
+                                <option value="On Hold">On Hold</option>
+                            </select>
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground">
+                                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
+                        </div>
 
                     </div>
                 </div>
@@ -223,6 +244,7 @@ export function SalesOrderApprovalTable({
                             <thead className="bg-muted border-b border-border">
                                 <tr>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order No.</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Status</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Customer</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">PO Number</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order Date</th>
@@ -236,6 +258,17 @@ export function SalesOrderApprovalTable({
                                 {salesOrders.map(so => (
                                     <tr key={so.order_id} className="hover:bg-muted/50 transition-colors">
                                         <td className="p-4 font-extrabold text-foreground">{so.order_no}</td>
+                                        <td className="p-4">
+                                            {so.order_status === "On Hold" ? (
+                                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                                    On Hold
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                                    {so.order_status || "For Approval"}
+                                                </span>
+                                            )}
+                                        </td>
                                         <td className="p-4 font-semibold text-foreground">
                                             {so.customer_name ? (
                                                 <div className="flex flex-col">

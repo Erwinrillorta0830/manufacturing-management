@@ -426,9 +426,61 @@ export function SalesOrderDraftEditor({
 
     if (loadingLookups) {
         return (
-            <div className="bg-card p-20 flex flex-col items-center justify-center gap-2 text-muted-foreground rounded-lg border">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <span className="text-xs">Loading dependencies...</span>
+            <div className="bg-card p-6 space-y-6 flex flex-col rounded-lg border animate-pulse">
+                <div className="flex justify-between items-start border-b border-border pb-4">
+                    <div className="space-y-2">
+                        <div className="h-4 w-48 bg-muted rounded"></div>
+                        <div className="h-3 w-64 bg-muted/60 rounded"></div>
+                    </div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {[...Array(4)].map((_, i) => (
+                        <div key={i} className="space-y-2">
+                            <div className="h-3 w-24 bg-muted rounded"></div>
+                            <div className="h-9 w-full bg-muted/50 rounded-md"></div>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {[...Array(4)].map((_, i) => (
+                        <div key={i} className="space-y-2">
+                            <div className="h-3 w-24 bg-muted rounded"></div>
+                            <div className="h-9 w-full bg-muted/50 rounded-md"></div>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="space-y-2">
+                    <div className="h-3 w-32 bg-muted rounded"></div>
+                    <div className="h-16 w-full bg-muted/50 rounded-lg"></div>
+                </div>
+
+                <div className="space-y-3 border-t pt-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="h-4 w-32 bg-muted rounded"></div>
+                        <div className="h-8 w-64 bg-muted/50 rounded-lg"></div>
+                    </div>
+                    
+                    <div className="rounded-md border bg-card">
+                        <div className="border-b bg-muted/40 p-3 flex gap-4">
+                            <div className="h-3 w-24 bg-muted/60 rounded"></div>
+                            <div className="h-3 w-32 bg-muted/60 rounded"></div>
+                            <div className="h-3 w-32 bg-muted/60 rounded"></div>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            {[...Array(2)].map((_, i) => (
+                                <div key={i} className="flex gap-4">
+                                    <div className="h-8 w-32 bg-muted/40 rounded"></div>
+                                    <div className="h-8 w-48 bg-muted/40 rounded"></div>
+                                    <div className="h-8 w-32 bg-muted/40 rounded"></div>
+                                    <div className="h-8 w-full bg-muted/40 rounded"></div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             </div>
         );
     }

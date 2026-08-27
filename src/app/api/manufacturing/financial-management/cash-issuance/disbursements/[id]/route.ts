@@ -215,7 +215,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
                     amount: Number(line.amount) || 0,
                     remarks: line.remarks || "",
                     ...(line.releasedBy != null && line.releasedBy !== ""
-                        ? { released_by: Number(line.releasedBy) }
+                        ? { }
                         : {}),
                     ...(line.releasedDate != null && line.releasedDate !== ""
                         ? { released_date: line.releasedDate }
@@ -530,7 +530,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
                     date: string | undefined;
                     amount: number;
                     remarks: string;
-                    released_by?: number;
+                    // released_by?: number;
                     released_date?: string;
                 } = {
                     disbursement_id: id,
@@ -542,7 +542,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
                     remarks: line.remarks || ""
                 };
                 if (line.releasedBy != null && line.releasedBy !== "") {
-                    payload.released_by = Number(line.releasedBy);
+                    // payload.released_by = Number(line.releasedBy);
                 }
                 if (line.releasedDate != null && line.releasedDate !== "") {
                     payload.released_date = line.releasedDate;

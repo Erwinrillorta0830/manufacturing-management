@@ -31,10 +31,12 @@ interface CashIssuanceViewDialogProps {
 
 function AttachmentPreview({ docUrl }: { docUrl: string }) {
     const [contentType, setContentType] = useState<string>("");
+    const [imgError, setImgError] = useState(false);
     const fileId = docUrl.split(/[/?#]/).filter(Boolean).pop() || "";
     const viewUrl = `/api/manufacturing/financial-management/cash-issuance/disbursements/attachments/${encodeURIComponent(fileId)}`;
 
     useEffect(() => {
+        setImgError(false);
         if (!viewUrl) return;
         const controller = new AbortController();
         fetch(viewUrl, { method: "HEAD", signal: controller.signal })
@@ -84,19 +86,15 @@ function AttachmentPreview({ docUrl }: { docUrl: string }) {
                             className="w-full h-[280px] border-0 rounded-lg" 
                             title="Supporting Document PDF" 
                         />
+                    ) : imgError ? (
+                        <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground p-4 text-center">Preview not available. Click "View" above to open.</div>
                     ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img 
                             src={viewUrl} 
                             alt="Supporting Document" 
                             className="max-h-[280px] max-w-full object-contain rounded-lg shadow-sm"
-                            onError={(e) => {
-                                e.currentTarget.style.display = "none";
-                                const parent = e.currentTarget.parentElement;
-                                if (parent) {
-                                    parent.innerHTML = '<div class="text-[10px] font-black uppercase tracking-widest text-muted-foreground p-4 text-center">Preview not available. Click "View" above to open.</div>';
-                                }
-                            }}
+                            onError={() => setImgError(true)}
                         />
                     )}
                 </div>
