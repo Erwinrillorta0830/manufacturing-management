@@ -74,6 +74,7 @@ interface FinishedGoodsMovement {
     expiry_date?: string | null;
     manufacturing_date?: string | null;
     quantity?: number | string;
+    created_at?: string | null;
     created_on?: string | null;
 }
 
@@ -123,7 +124,7 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const requestedJobOrder = searchParams.get("joId")?.trim() || "";
         const movements = await readDirectusCollection<FinishedGoodsMovement>(
-            `${DIRECTUS_URL}/items/inventory_movements?filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&limit=-1&sort=-created_on`,
+            `${DIRECTUS_URL}/items/inventory_movements?filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&limit=-1&sort=-created_at`,
             "Finished-goods movement lookup"
         );
         const [products, yields, jobOrders, ledgerEntries] = await Promise.all([
@@ -185,7 +186,7 @@ export async function GET(request: Request) {
                 manufacturing_date: dateOnly(movement.manufacturing_date) || dateOnly(matchedYield?.manufacturing_date),
                 expiration_date: dateOnly(movement.expiry_date) || dateOnly(matchedYield?.expiry_date),
                 unit_cost: Number(matchedProduct?.cost_per_unit || 0),
-                date_received: movement.created_on || null,
+                date_received: movement.created_at || movement.created_on || null,
                 legacy_source: false
             };
         });
@@ -306,35 +307,35 @@ export async function POST(request: Request) {
 
         // Helper function to resolve or create master lot in the lots table
         const resolveMasterLotId = async (name: string, typeId: number) => {
-            let lotId = 49; // Default fallback to a valid existing lot ID (e.g. 49) instead of 1
             const mappedTypeId = typeId === 1 ? 390 : 389;
-            try {
-                const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-                const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-                const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
-                if (lotLookup.length > 0) {
-                    lotId = lotLookup[0].lot_id;
-                } else {
-                    const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            lot_name: name,
-                            inventory_type_id: mappedTypeId,
-                            max_batch_capacity: 100000,
-                            created_by: 24
-                        })
-                    });
-                    if (createLotRes.ok) {
-                        lotId = (await createLotRes.json()).data.lot_id;
-                    } else {
-                        console.error(`Failed to create master lot ${name}:`, await createLotRes.text());
-                    }
-                }
-            } catch (err) {
-                console.error(`Error resolving master lot ID for ${name}:`, err);
+            const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
+            const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
+            if (!lotLookupRes.ok) {
+                throw new Error(`Master lot lookup failed with HTTP ${lotLookupRes.status}.`);
             }
-            return lotId;
+            const lotLookup = (await lotLookupRes.json()).data || [];
+            const existingLotId = Number(lotLookup[0]?.lot_id ?? lotLookup[0]?.id ?? 0);
+            if (Number.isFinite(existingLotId) && existingLotId > 0) return existingLotId;
+
+            const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    lot_name: name,
+                    inventory_type_id: mappedTypeId,
+                    max_batch_capacity: 100000,
+                    created_by: 24
+                })
+            });
+            if (!createLotRes.ok) {
+                throw new Error(`Master lot creation failed with HTTP ${createLotRes.status}.`);
+            }
+            const createdLot = (await createLotRes.json()).data;
+            const createdLotId = Number(createdLot?.lot_id ?? createdLot?.id ?? 0);
+            if (!Number.isFinite(createdLotId) || createdLotId <= 0) {
+                throw new Error("Master lot creation returned no valid identifier.");
+            }
+            return createdLotId;
         };
 
         const qty = Number(quantityProduced);

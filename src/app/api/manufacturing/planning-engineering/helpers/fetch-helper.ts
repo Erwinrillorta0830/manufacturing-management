@@ -38,7 +38,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,product_id,lot_id,branch_id,batch_no,quantity,expiry_date,manufacturing_date,created_on`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,product_id,lot_id,branch_id,batch_no,quantity,expiry_date,manufacturing_date,created_at`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -318,7 +318,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     ledger_id: l.ledger_id ?? l.id,
                     lot_number: ledgerLot || String(matchedMov?.batch_no ?? "").trim() || `MFG-${jo.job_order_no}`,
                     expiry_date: l.expiry_date || matchedMov?.expiry_date || null,
-                    manufacturing_date: l.manufacturing_date || matchedMov?.manufacturing_date || (matchedMov?.created_on ? matchedMov.created_on.split("T")[0] : null)
+                    manufacturing_date: l.manufacturing_date || matchedMov?.manufacturing_date || (matchedMov?.created_at ? matchedMov.created_at.split("T")[0] : null)
                 };
             });
 
@@ -333,10 +333,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         shift_name: "Final Close",
                         yield_quantity: String(mov.quantity),
                         qa_status: "Passed",
-                        logged_at: mov.created_on,
+                        logged_at: mov.created_at,
                         lot_number: mov.batch_no || `MFG-${jo.job_order_no}`,
                         expiry_date: mov.expiry_date || null,
-                        manufacturing_date: mov.manufacturing_date || (mov.created_on ? mov.created_on.split("T")[0] : null)
+                        manufacturing_date: mov.manufacturing_date || (mov.created_at ? mov.created_at.split("T")[0] : null)
                     });
                 });
             }
