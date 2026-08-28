@@ -35,7 +35,6 @@ export function QuotationDetailModal({
 
     const [activeHistoryQuoteId, setActiveHistoryQuoteId] = useState<number | null>(null);
     const [historySnapshots, setHistorySnapshots] = useState<QuotationSnapshotNode[]>([]);
-    const [loadingHistory, setLoadingHistory] = useState(false);
 
     React.useEffect(() => {
         if (selectedQuote) {
@@ -49,18 +48,15 @@ export function QuotationDetailModal({
         if (activeHistoryQuoteId === selectedQuote.id) return; // We use the passed `snapshots` prop
 
         let isMounted = true;
-        setLoadingHistory(true);
         fetch(`/api/manufacturing/finished-goods/quotes/snapshots?quoteId=${activeHistoryQuoteId}`)
             .then(res => res.json())
             .then(data => {
                 if (isMounted) {
                     setHistorySnapshots(data);
-                    setLoadingHistory(false);
                 }
             })
             .catch(err => {
                 console.error("Failed to load historical snapshots", err);
-                if (isMounted) setLoadingHistory(false);
             });
         return () => { isMounted = false; };
     }, [activeHistoryQuoteId, selectedQuote]);

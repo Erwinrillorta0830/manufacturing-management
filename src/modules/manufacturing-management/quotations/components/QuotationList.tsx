@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-    FileText, Plus, ShieldAlert,
+    Plus,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X, Printer
 } from "lucide-react";
@@ -299,7 +299,7 @@ export function QuotationList({
                 <div className="relative w-full sm:w-auto min-w-[200px]">
                     <select
                         value={subTab}
-                        onChange={(e) => setSubTab(e.target.value as any)}
+                        onChange={(e) => setSubTab(e.target.value as "all" | "active" | "approved" | "rejected")}
                         className="w-full appearance-none bg-background border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 pr-10 text-xs font-bold text-foreground outline-none focus:ring-1 focus:ring-primary shadow-sm cursor-pointer"
                     >
                         <option value="all">All</option>
@@ -323,7 +323,7 @@ export function QuotationList({
                         <div className="text-center p-20 max-w-md mx-auto">
                             <Folder className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
                             <h4 className="text-sm font-bold text-foreground mb-1">No Projects Found</h4>
-                            <p className="text-xs text-muted-foreground">Adjust your search or filter settings to find what you're looking for.</p>
+                            <p className="text-xs text-muted-foreground">Adjust your search or filter settings to find what you&apos;re looking for.</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">

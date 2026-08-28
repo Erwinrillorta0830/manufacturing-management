@@ -639,8 +639,7 @@ export function CreateSalesOrderModal({
             : remarks;
 
         try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const payload: any = {
+            const payload: Partial<CreateSalesOrderPayload> = {
                 poNo,
                 branchId: Number(branchId),
                 paymentTerms: Number(paymentTermId),
@@ -672,7 +671,7 @@ export function CreateSalesOrderModal({
                 });
             }
 
-            await onSubmit(payload);
+            await onSubmit(payload as CreateSalesOrderPayload);
             onClose();
         } catch (err) {
             console.error(err);
