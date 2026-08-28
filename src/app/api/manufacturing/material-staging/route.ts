@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import {
+    branchProductBatchKey,
+    branchProductKey,
+    branchProductLotBatchKey,
+    normalizeBatchNo
+} from "./_stock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -143,11 +149,16 @@ export async function GET(request: Request) {
             });
         });
 
-        // Compute on-hand stock by product and batch from inventory movements
-        // key: `${productId}:${batchNo}` -> number
-        const stockByProductBatch = new Map<string, number>();
-        const stockByProduct = new Map<number, number>();
-        const lotStockByBranchProductBatch = new Map<string, { lotId: number; batchNo: string; quantity: number }>();
+        // Compute stock using the same branch/product/lot/batch identity used by the transfer API.
+        const stockByBranchProduct = new Map<string, number>();
+        const stockByBranchProductBatchLot = new Map<string, {
+            branchId: number;
+            productId: number;
+            lotId: number;
+            batchNo: string;
+            quantity: number;
+        }>();
+        const lotIdsByBranchProductBatch = new Map<string, Set<number>>();
 
         rawMovements.forEach((m: {
             product_id?: number | { product_id?: number };
@@ -157,23 +168,29 @@ export async function GET(request: Request) {
             quantity?: number;
         }) => {
             const pId = typeof m.product_id === "object" ? Number(m.product_id?.product_id) : Number(m.product_id);
-            const batchNo = (m.batch_no || "LOT-N/A").trim() || "LOT-N/A";
+            const batchNo = String(m.batch_no || "LOT-N/A").trim() || "LOT-N/A";
+            const normalizedBatchNo = normalizeBatchNo(batchNo) || "lot-n/a";
             const qty = Number(m.quantity || 0);
-            if (pId) {
-                const key = `${pId}:${batchNo}`;
-                stockByProductBatch.set(key, (stockByProductBatch.get(key) || 0) + qty);
-                stockByProduct.set(pId, (stockByProduct.get(pId) || 0) + qty);
+            const branchId = Number(m.branch_id || 0);
+            const lotId = Number(m.lot_id || 0);
+            if (pId && branchId) {
+                const productKey = branchProductKey(branchId, pId);
+                stockByBranchProduct.set(productKey, (stockByBranchProduct.get(productKey) || 0) + qty);
 
-                const branchId = Number(m.branch_id || 0);
-                const lotId = Number(m.lot_id || 0);
-                if (branchId && lotId) {
-                    const lotKey = `${branchId}:${pId}:${batchNo.toLowerCase()}`;
-                    const currentLot = lotStockByBranchProductBatch.get(lotKey);
-                    lotStockByBranchProductBatch.set(lotKey, {
+                if (lotId) {
+                    const batchKey = branchProductBatchKey(branchId, pId, normalizedBatchNo);
+                    const lotKey = branchProductLotBatchKey(branchId, pId, lotId, normalizedBatchNo);
+                    const currentLot = stockByBranchProductBatchLot.get(lotKey);
+                    stockByBranchProductBatchLot.set(lotKey, {
+                        branchId,
+                        productId: pId,
                         lotId,
                         batchNo,
                         quantity: (currentLot?.quantity || 0) + qty
                     });
+                    const lotIds = lotIdsByBranchProductBatch.get(batchKey) || new Set<number>();
+                    lotIds.add(lotId);
+                    lotIdsByBranchProductBatch.set(batchKey, lotIds);
                 }
             }
         });
@@ -196,22 +213,49 @@ export async function GET(request: Request) {
 
             const batchNo = String(m.batch_no || "").trim();
             if (!batchNo) return;
-            const key = `${Number(materialMatch[1])}:${batchNo.toLowerCase()}`;
+            const key = `${Number(materialMatch[1])}:${normalizeBatchNo(batchNo)}`;
             if (!stagedDestinationByMaterialBatch.has(key)) {
                 stagedDestinationByMaterialBatch.set(key, targetBin);
             }
         });
 
         const defaultLotByBranchProduct = new Map<string, { lotId: number; batchNo: string; quantity: number }>();
-        lotStockByBranchProductBatch.forEach((lot, lotKey) => {
+        stockByBranchProductBatchLot.forEach((lot) => {
             if (lot.quantity <= 0) return;
-            const keyParts = lotKey.split(":");
-            const branchProductKey = `${keyParts[0]}:${keyParts[1]}`;
-            const currentLot = defaultLotByBranchProduct.get(branchProductKey);
+            const productKey = branchProductKey(lot.branchId, lot.productId);
+            const currentLot = defaultLotByBranchProduct.get(productKey);
             if (!currentLot || lot.quantity > currentLot.quantity) {
-                defaultLotByBranchProduct.set(branchProductKey, lot);
+                defaultLotByBranchProduct.set(productKey, {
+                    lotId: lot.lotId,
+                    batchNo: lot.batchNo,
+                    quantity: lot.quantity
+                });
             }
         });
+
+        const resolveUniqueLot = (branchId: number, productId: number, batchNo: string) => {
+            const batchKey = branchProductBatchKey(branchId, productId, batchNo);
+            const lotIds = [...(lotIdsByBranchProductBatch.get(batchKey) || [])];
+            const lotCandidates = lotIds
+                .map((lotId) => stockByBranchProductBatchLot.get(
+                    branchProductLotBatchKey(branchId, productId, lotId, batchNo)
+                ))
+                .filter((lot): lot is NonNullable<typeof lot> => Boolean(lot && lot.quantity > 0));
+            if (lotCandidates.length === 1) return lotCandidates[0];
+            if (lotCandidates.length > 1 || lotIds.length !== 1) return null;
+            return stockByBranchProductBatchLot.get(
+                branchProductLotBatchKey(branchId, productId, lotIds[0], batchNo)
+            ) || null;
+        };
+
+        const getLotStock = (branchId: number, productId: number, lotId: number, batchNo: string): number => {
+            if (lotId > 0) {
+                return stockByBranchProductBatchLot.get(
+                    branchProductLotBatchKey(branchId, productId, lotId, batchNo)
+                )?.quantity || 0;
+            }
+            return resolveUniqueLot(branchId, productId, batchNo)?.quantity || 0;
+        };
 
         // Map QA & Expiry metadata from receiving & yield ledger
         const lotMetadataMap = new Map<string, { qa_status: string; expiry_date: string | null }>();
@@ -219,7 +263,7 @@ export async function GET(request: Request) {
             const pId = typeof r.product_id === "object" ? Number(r.product_id?.product_id) : Number(r.product_id);
             const batchNo = String(r.batch_no || r.lot_no || "LOT-N/A").trim() || "LOT-N/A";
             if (pId) {
-                lotMetadataMap.set(`${pId}:${batchNo}`, {
+                lotMetadataMap.set(`${pId}:${normalizeBatchNo(batchNo)}`, {
                     qa_status: r.qa_status || "Passed",
                     expiry_date: r.expiry_date || null
                 });
@@ -230,7 +274,7 @@ export async function GET(request: Request) {
             const pId = Number(yl.job_order_id?.product_id);
             const batchNo = String(yl.lot_number || "LOT-N/A").trim() || "LOT-N/A";
             if (pId) {
-                lotMetadataMap.set(`${pId}:${batchNo}`, {
+                lotMetadataMap.set(`${pId}:${normalizeBatchNo(batchNo)}`, {
                     qa_status: yl.qa_status || "Passed",
                     expiry_date: yl.expiry_date || null
                 });
@@ -302,6 +346,7 @@ export async function GET(request: Request) {
             branch_id?: number;
             jo_material_id?: number;
             product_id?: number;
+            lot_id?: number;
             batch_no?: string;
             reserved_quantity?: number;
             created_at?: string;
@@ -312,8 +357,14 @@ export async function GET(request: Request) {
             const productId = Number(res.product_id || material?.product_id || 0);
             const branchId = Number(res.branch_id || 0);
             const batchNo = String(res.batch_no || "").trim();
-            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${batchNo.toLowerCase()}`);
-            const lot = lotStockByBranchProductBatch.get(`${branchId}:${productId}:${batchNo.toLowerCase()}`);
+            const normalizedBatchNo = normalizeBatchNo(batchNo);
+            const reservationLotId = Number(res.lot_id || 0);
+            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${normalizedBatchNo}`);
+            const lot = reservationLotId > 0
+                ? stockByBranchProductBatchLot.get(
+                    branchProductLotBatchKey(branchId, productId, reservationLotId, normalizedBatchNo)
+                )
+                : resolveUniqueLot(branchId, productId, normalizedBatchNo);
             const isHard = Boolean(stagingMovement && stagingMovement.quantity > 0);
             if (joId) {
                 const list = allAllocationsByJo.get(joId) || [];
@@ -323,7 +374,7 @@ export async function GET(request: Request) {
                     branch_id: branchId,
                     jo_material_id: materialId,
                     product_id: productId,
-                    lot_id: stagingMovement?.lotId || lot?.lotId || 0,
+                    lot_id: stagingMovement?.lotId || reservationLotId || lot?.lotId || 0,
                     batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
                     reserved_quantity: Number(res.reserved_quantity || 0),
@@ -391,18 +442,19 @@ export async function GET(request: Request) {
 
                 const allocatedLots = relatedAllocs.map((al, idx) => {
                     const lotNo = (al.batch_no || `LOT-${jo.job_order_no}-${idx + 1}`).trim();
-                    const lotMeta = lotMetadataMap.get(`${mProductId}:${lotNo}`);
-                    const onHandLotQty = stockByProductBatch.get(`${mProductId}:${lotNo}`) ?? 0;
+                    const lotMeta = lotMetadataMap.get(`${mProductId}:${normalizeBatchNo(lotNo)}`);
+                    const lotId = Number(al.lot_id || 0);
+                    const onHandLotQty = getLotStock(Number(jo.branch_id || 0), mProductId, lotId, lotNo);
                     const resStatus = (al.reservation_status === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING")) ? "HARD" : "SOFT";
                     const isStaged = resStatus === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING");
                     const allocationStagingBin = al.staging_bin?.trim();
-                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${lotNo.toLowerCase()}`);
+                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${normalizeBatchNo(lotNo)}`);
                     const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
                     const stagedQty = Number(al.staged_quantity || 0);
 
                     return {
                         allocation_id: al.allocation_id || al.id,
-                        lot_id: al.lot_id || 0,
+                        lot_id: lotId,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
                         staged_quantity: isStaged ? (stagedQty > 0 ? stagedQty : allocQty) : 0,
@@ -421,8 +473,10 @@ export async function GET(request: Request) {
 
                 // If no specific lot allocations exist, synthesize a default allocation from available stock
                 if (allocatedLots.length === 0 && requiredQty > 0) {
-                    const defaultLot = defaultLotByBranchProduct.get(`${Number(jo.branch_id || 0)}:${mProductId}`);
-                    const defaultOnHand = defaultLot?.quantity ?? stockByProduct.get(mProductId) ?? 0;
+                    const defaultLot = defaultLotByBranchProduct.get(
+                        branchProductKey(Number(jo.branch_id || 0), mProductId)
+                    );
+                    const defaultOnHand = defaultLot?.quantity ?? 0;
                     allocatedLots.push({
                         allocation_id: undefined,
                         lot_id: defaultLot?.lotId || 0,
@@ -442,7 +496,9 @@ export async function GET(request: Request) {
 
                 const totalAllocatedQty = allocatedLots.reduce((sum, l) => sum + l.allocated_quantity, 0);
                 const totalStagedQty = allocatedLots.reduce((sum, l) => sum + l.staged_quantity, 0);
-                const onHandStock = stockByProduct.get(mProductId) || 0;
+                const onHandStock = stockByBranchProduct.get(
+                    branchProductKey(Number(jo.branch_id || 0), mProductId)
+                ) || 0;
                 const shortageQty = Math.max(0, requiredQty - onHandStock);
                 const isItemShort = onHandStock < requiredQty && totalStagedQty < requiredQty;
 

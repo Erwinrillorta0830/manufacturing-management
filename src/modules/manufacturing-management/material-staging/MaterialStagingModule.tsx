@@ -53,6 +53,7 @@ export default function MaterialStagingModule() {
         isTransferModalOpen,
         activeTransferItem,
         transferring,
+        batchStageResult,
         handleOpenTransferModal,
         handleCloseTransferModal,
         handlePerformTransfer,
@@ -406,6 +407,7 @@ export default function MaterialStagingModule() {
                         jobOrder={selectedJobOrder}
                         onOpenTransferModal={handleOpenTransferModal}
                         onStageAllAvailable={handleStageAllAvailable}
+                        batchStageResult={batchStageResult}
                         isProcessing={transferring}
                     />
                 </div>

@@ -13,9 +13,13 @@ import {
     Branch,
     StagingStats,
     BinTransferPayload,
-    ShortageWarningInfo
+    ShortageWarningInfo,
+    BatchStageResult,
+    BatchStageMaterialResult,
+    BatchStageLotResult
 } from "../types";
 import { fetchStagingJobOrders, executeBinTransfer } from "../services/staging-api";
+import { buildBatchStagePlan } from "../batch-staging";
 
 export function useMaterialStaging() {
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
@@ -48,6 +52,7 @@ export function useMaterialStaging() {
         lot?: AllocatedLot;
     } | null>(null);
     const [transferring, setTransferring] = useState(false);
+    const [batchStageResult, setBatchStageResult] = useState<BatchStageResult | null>(null);
 
     // Modal state for Shortage Warning
     const [isShortageDialogOpen, setIsShortageDialogOpen] = useState(false);
@@ -148,6 +153,10 @@ export function useMaterialStaging() {
         return filteredJobOrders.find((j) => j.job_order_id === selectedJobOrderId) || filteredJobOrders[0] || null;
     }, [filteredJobOrders, selectedJobOrderId]);
 
+    useEffect(() => {
+        setBatchStageResult(null);
+    }, [selectedJobOrderId]);
+
     // Handler to open transfer modal
     const handleOpenTransferModal = useCallback((
         jobOrder: StagingJobOrder,
@@ -188,7 +197,8 @@ export function useMaterialStaging() {
                     shortage_quantity: res.shortage_quantity ?? (payload.transfer_quantity - (res.available_quantity ?? 0)),
                     source_bin: payload.source_bin,
                     target_bin: payload.target_bin,
-                    jo_material_id: payload.jo_material_id
+                    jo_material_id: payload.jo_material_id,
+                    allocation_id: payload.allocation_id
                 });
                 setIsShortageDialogOpen(true);
                 return;
@@ -222,6 +232,7 @@ export function useMaterialStaging() {
             product_id: shortageWarningInfo.product_id,
             product_name: shortageWarningInfo.material_name,
             lot_id: shortageWarningInfo.lot_id,
+            allocation_id: shortageWarningInfo.allocation_id,
             batch_no: shortageWarningInfo.batch_no,
             transfer_quantity: shortageWarningInfo.transfer_quantity,
             source_bin: shortageWarningInfo.source_bin,
@@ -236,6 +247,7 @@ export function useMaterialStaging() {
 
     // Batch Stage All Available for a Job Order
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
+        setBatchStageResult(null);
         const stagingWorkCenterId = jobOrder.staging_work_center_id;
         const targetBin = jobOrder.suggested_staging_bin;
         if (!stagingWorkCenterId || !targetBin) {
@@ -245,47 +257,117 @@ export function useMaterialStaging() {
 
         try {
             setTransferring(true);
-            let stagedCount = 0;
+            const materialResults: BatchStageMaterialResult[] = [];
 
             for (const mat of jobOrder.materials) {
-                if (mat.is_staged) continue;
+                const plan = buildBatchStagePlan(mat);
+                if (plan.requested_quantity <= 0) continue;
 
-                // Pick first unstaged lot or default
-                const lot = mat.allocations.find((l) => l.reservation_status === "SOFT") || mat.allocations[0];
-                const qtyToStage = mat.required_quantity - mat.staged_quantity;
+                const lotResults: BatchStageLotResult[] = plan.skipped_lots.map((lot) => ({
+                    allocation_id: lot.allocation_id,
+                    lot_id: lot.lot_id,
+                    batch_no: lot.batch_no,
+                    requested_quantity: 0,
+                    staged_quantity: 0,
+                    available_quantity: lot.available_lot_quantity,
+                    status: "SKIPPED",
+                    message: lot.reason
+                }));
+                let materialStagedQuantity = 0;
 
-                if (qtyToStage <= 0) continue;
+                for (const segment of plan.segments) {
+                    const payload: BinTransferPayload = {
+                        job_order_id: jobOrder.job_order_id,
+                        job_order_no: jobOrder.job_order_no,
+                        jo_material_id: mat.jo_material_id,
+                        product_id: mat.product_id,
+                        product_name: mat.product_name,
+                        lot_id: segment.lot_id,
+                        allocation_id: segment.allocation_id,
+                        batch_no: segment.batch_no,
+                        transfer_quantity: segment.quantity,
+                        source_bin: "MAIN-STORE",
+                        target_bin: targetBin,
+                        work_center_id: stagingWorkCenterId,
+                        override_negative: false
+                    };
 
-                // Check on hand
-                if (mat.on_hand_quantity < qtyToStage) {
-                    toast.warning(`Skipping ${mat.product_name}: insufficient on-hand stock (${mat.on_hand_quantity} < ${qtyToStage})`);
-                    continue;
+                    const lotResult: BatchStageLotResult = {
+                        allocation_id: segment.allocation_id,
+                        lot_id: segment.lot_id,
+                        batch_no: segment.batch_no,
+                        requested_quantity: segment.quantity,
+                        staged_quantity: 0,
+                        available_quantity: segment.available_lot_quantity,
+                        status: "FAILED",
+                        message: "Transfer was not completed."
+                    };
+
+                    try {
+                        const res = await executeBinTransfer(payload);
+                        if (res.success) {
+                            lotResult.status = "STAGED";
+                            lotResult.staged_quantity = segment.quantity;
+                            lotResult.message = res.message || "Material staged successfully.";
+                            materialStagedQuantity += segment.quantity;
+                        } else {
+                            lotResult.available_quantity = res.available_quantity ?? lotResult.available_quantity;
+                            lotResult.shortage_quantity = res.shortage_quantity;
+                            lotResult.message = res.message || res.error || "Transfer failed.";
+                        }
+                    } catch (err) {
+                        lotResult.message = err instanceof Error ? err.message : "Transfer failed.";
+                    }
+
+                    lotResults.push(lotResult);
                 }
 
-                const payload: BinTransferPayload = {
-                    job_order_id: jobOrder.job_order_id,
-                    job_order_no: jobOrder.job_order_no,
+                const materialRemainingQuantity = Math.max(0, Number((plan.requested_quantity - materialStagedQuantity).toFixed(6)));
+                const materialStatus = materialRemainingQuantity <= 0.000001
+                    ? "STAGED"
+                    : materialStagedQuantity > 0
+                        ? "PARTIAL"
+                        : plan.segments.length > 0
+                            ? "FAILED"
+                            : "SKIPPED";
+                const materialMessage = materialStatus === "STAGED"
+                    ? `Staged ${materialStagedQuantity} ${mat.uom}.`
+                    : materialStatus === "PARTIAL"
+                        ? `Staged ${materialStagedQuantity} ${mat.uom}; ${materialRemainingQuantity} ${mat.uom} remains.`
+                        : materialStatus === "SKIPPED"
+                            ? "No eligible allocated lot has remaining exact stock and allocation capacity."
+                            : "No planned lot transfer succeeded; review the lot-level errors.";
+
+                materialResults.push({
                     jo_material_id: mat.jo_material_id,
                     product_id: mat.product_id,
                     product_name: mat.product_name,
-                    lot_id: lot ? lot.lot_id : 1,
-                    batch_no: lot ? lot.batch_no : `LOT-${mat.product_id}-MAIN`,
-                    transfer_quantity: qtyToStage,
-                    source_bin: "MAIN-STORE",
-                    target_bin: targetBin,
-                    work_center_id: stagingWorkCenterId,
-                    override_negative: false
-                };
-
-                const res = await executeBinTransfer(payload);
-                if (res.success) {
-                    stagedCount++;
-                }
+                    uom: mat.uom,
+                    requested_quantity: plan.requested_quantity,
+                    staged_quantity: materialStagedQuantity,
+                    remaining_quantity: materialRemainingQuantity,
+                    status: materialStatus,
+                    message: materialMessage,
+                    lot_results: lotResults
+                });
             }
 
-            if (stagedCount > 0) {
-                toast.success(`Batch staged ${stagedCount} material(s) for JO #${jobOrder.job_order_no}`);
-                await loadData();
+            const result: BatchStageResult = {
+                job_order_id: jobOrder.job_order_id,
+                job_order_no: jobOrder.job_order_no,
+                attempted_material_count: materialResults.length,
+                fully_staged_material_count: materialResults.filter((material) => material.status === "STAGED").length,
+                exception_material_count: materialResults.filter((material) => material.status !== "STAGED").length,
+                full_success: materialResults.length > 0 && materialResults.every((material) => material.status === "STAGED"),
+                material_results: materialResults
+            };
+            setBatchStageResult(result);
+            await loadData();
+
+            if (result.full_success) {
+                toast.success(`Batch staged all available material for JO #${jobOrder.job_order_no}`);
+            } else if (result.material_results.length > 0) {
+                toast.warning(`Batch staging completed with exceptions for JO #${jobOrder.job_order_no}. Review the lot results.`);
             } else {
                 toast.info("No unstaged materials with sufficient on-hand stock were found.");
             }
@@ -321,6 +403,7 @@ export function useMaterialStaging() {
         isTransferModalOpen,
         activeTransferItem,
         transferring,
+        batchStageResult,
         handleOpenTransferModal,
         handleCloseTransferModal,
         handlePerformTransfer,
