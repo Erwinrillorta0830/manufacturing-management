@@ -1,6 +1,6 @@
 import React from "react";
 import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
-import { Batch, Lot } from "../types";
+import { Batch, Lot, type BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
 import {

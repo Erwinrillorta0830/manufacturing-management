@@ -447,10 +447,6 @@ export function StockAdjustmentForm({
 
           const resolvedIsPosted = isPostedStatus(data.isPosted);
 
-          // Determine the source type (RFID vs MANUAL vs SERIAL)
-          const srcType = (data as { source_type?: string }).source_type || (data.remarks?.includes("MANUAL") ? "MANUAL" : /-(SERIAL)-/i.test(data.doc_no) ? "SERIAL" : "RFID");
-          setSourceType(srcType);
-
           const resetObj = {
             doc_no: data.doc_no || "",
             branch_id:

@@ -16,6 +16,7 @@ export interface MMLot {
   // UI helpers
   branch_name?: string;
   unit_name?: string;
+  current_stock_quantity?: number;
 }
 
 export interface MMInventoryLot {

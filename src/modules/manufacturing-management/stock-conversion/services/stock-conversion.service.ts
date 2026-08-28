@@ -498,6 +498,7 @@ export const stockConversionService = {
 
       // 2. Create the OUT movement(s) (Source Product) with exact batch and lot tracking
       let outId: number | undefined;
+      let inId: number | undefined;
       const validAllocations = (payload.sourceAllocations || []).filter(a => (a.allocated_quantity || 0) > 0);
 
       // Pre-resolve any missing source lot IDs if batch_no is available
@@ -740,7 +741,7 @@ export const stockConversionService = {
         }
 
         // 4. Create the IN movement for this batch
-        await stockConversionRepo.createStockAdjustment({
+        const inRes = await stockConversionRepo.createStockAdjustment({
           doc_no: docNo, 
           stock_adjustment_id: headerId,
           product_id: targetProductId, 
@@ -764,6 +765,7 @@ export const stockConversionService = {
           date_updated: nowPHT,
           remarks: remarkStr
         });
+        if (!inId) inId = inRes?.data?.id;
       }
 
       // Handle RFIDs for Traceability - Ensure no duplicates and absolute uniqueness
