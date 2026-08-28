@@ -205,9 +205,10 @@ export async function readDispositions(): Promise<StoredDisposition[]> {
         {},
         "Load QA dispositions"
     );
-    const records = payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).data)
-        ? (payload as Record<string, unknown>).data as unknown[]
-        : [];
+    if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
+        throw new DispositionPersistenceError("Load QA dispositions returned an invalid response from Directus.");
+    }
+    const records = (payload as Record<string, unknown>).data as unknown[];
     return records.map(asRecord).filter((record): record is StoredDisposition => record !== null)
         .map(normalizeStoredDisposition);
 }
@@ -219,10 +220,14 @@ export async function getDisposition(dispositionId: string): Promise<StoredDispo
             {},
             "Load QA disposition"
         );
-        const record = payload && typeof payload === "object"
-            ? asRecord((payload as Record<string, unknown>).data)
-            : null;
-        return record ? normalizeStoredDisposition(record) : null;
+        if (!payload || typeof payload !== "object") {
+            throw new DispositionPersistenceError("Load QA disposition returned an invalid response from Directus.");
+        }
+        const record = asRecord((payload as Record<string, unknown>).data);
+        if (!record) {
+            throw new DispositionPersistenceError("Load QA disposition returned an invalid response from Directus.");
+        }
+        return normalizeStoredDisposition(record);
     } catch (error) {
         if (error instanceof DispositionPersistenceError && error.statusCode === 404) {
             return null;
@@ -244,9 +249,10 @@ export async function findPendingDisposition(jobOrderId: number, taskId: number 
         {},
         "Find pending QA disposition"
     );
-    const records = payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).data)
-        ? (payload as Record<string, unknown>).data as unknown[]
-        : [];
+    if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
+        throw new DispositionPersistenceError("Find pending QA disposition returned an invalid response from Directus.");
+    }
+    const records = (payload as Record<string, unknown>).data as unknown[];
     const record = records.map(asRecord).find((candidate): candidate is StoredDisposition => candidate !== null);
     return record ? normalizeStoredDisposition(record) : null;
 }

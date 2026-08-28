@@ -434,7 +434,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Invalid action parameter" }, { status: 400 });
     } catch (e) {
         console.error("API Error in QA GET:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to process QA request" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as Error).message || "Failed to process QA request" },
+            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+        );
     }
 }
 
