@@ -232,7 +232,7 @@ export function StationStartScanner({
                                     </p>
                                     {scanResult.statusHistoryRecord && (
                                         <div className="text-[11px] font-mono text-muted-foreground pt-1">
-                                            History ID: #{scanResult.statusHistoryRecord.history_id || scanResult.statusHistoryRecord.id || "Logged"} • Changed at: {new Date(scanResult.statusHistoryRecord.changed_at).toLocaleTimeString()}
+                                            History ID: #{scanResult.statusHistoryRecord.history_id || scanResult.statusHistoryRecord.id || "Logged"} • Station: {scanResult.statusHistoryRecord.work_center_name || scanResult.workCenter?.work_center_name || "Unassigned"} • Changed at: {new Date(scanResult.statusHistoryRecord.changed_at).toLocaleTimeString()}
                                         </div>
                                     )}
                                 </div>
