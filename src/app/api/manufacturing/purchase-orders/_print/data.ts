@@ -1,7 +1,12 @@
 import { paymentStatusLabel, inventoryStatusToPurchaseOrderStatus } from "../../procurement/_domain";
 import { DIRECTUS_URL, procurementDirectusFetch, procurementDirectusHeaders } from "../../procurement/_directus";
 import { fetchShipmentLineItems } from "../../procurement/shipments/shipments-helper";
-import { getLandedCostComputation } from "../../procurement/landed-cost/_domain";
+import {
+    getLandedCostComputation,
+    resolveBaseUnitCostPhp,
+    resolveLandedCostCurrency,
+    type LandedCostCurrencyContract
+} from "../../procurement/landed-cost/_domain";
 import type {
     ApprovalPrintEntry,
     CompanyHeaderSnapshot,
@@ -13,6 +18,7 @@ import type {
     PurchaseOrderPrintLine,
     PurchaseOrderPrintableSnapshot,
     PurchaseOrderPrintTemplate,
+    ReceivingPrintHeader,
     ReceivingPrintRecord,
     StorageAllocationPrintRecord,
     StorageMovementPrintRecord
@@ -55,6 +61,22 @@ function text(value: unknown, fallback = "N/A"): string {
 function number(value: unknown, fallback = 0): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function requiredNonNegativeNumber(value: unknown, label: string): number {
+    const raw = value == null ? "" : String(value).trim();
+    const parsed = Number(value);
+    if (!raw || !Number.isFinite(parsed) || parsed < 0) {
+        throw new PurchaseOrderPrintDataError(422, `${label} is missing or invalid; reconcile the purchase-order currency values before printing.`);
+    }
+    return parsed;
+}
+
+function transactionUnitPrice(line: DirectusRow, currency: LandedCostCurrencyContract, label: string): number {
+    return requiredNonNegativeNumber(
+        currency.isForeign ? line.unit_price_foreign : line.base_unit_cost_php,
+        `${label} ${currency.isForeign ? "foreign invoice unit price" : "PHP unit price"}`
+    );
 }
 
 function boolean(value: unknown): boolean {
@@ -214,7 +236,7 @@ function paymentArrangement(value: unknown): string {
     }
 }
 
-async function loadLines(purchaseOrderId: number): Promise<PurchaseOrderPrintLine[]> {
+async function loadLines(purchaseOrderId: number, currency: LandedCostCurrencyContract): Promise<PurchaseOrderPrintLine[]> {
     const lines = await fetchShipmentLineItems(purchaseOrderId);
     if (lines.length > 0) {
         return lines.map(line => {
@@ -222,10 +244,12 @@ async function loadLines(purchaseOrderId: number): Promise<PurchaseOrderPrintLin
             const ordered = number(line.quantity_ordered);
             const received = number(line.quantity_received);
             const rejected = number(line.quantity_rejected);
-            const unitPrice = number(line.base_unit_cost_php);
+            const unitPrice = requiredNonNegativeNumber(line.base_unit_cost_php, `Purchase-order line ${line.line_id} PHP base unit cost`);
+            const unitPriceForeign = transactionUnitPrice(line as unknown as DirectusRow, currency, `Purchase-order line ${line.line_id}`);
             const quantity = ordered || received;
-            const discount = number(line.discount_amount_foreign || line.discount_percent && quantity * number(line.unit_price_foreign || line.base_unit_cost_php) * number(line.discount_percent) / 100);
-            const netAmount = Math.max(0, quantity * number(line.unit_price_foreign || unitPrice) - discount);
+            const discount = number(line.discount_amount_foreign)
+                || quantity * unitPriceForeign * number(line.discount_percent) / 100;
+            const netAmount = Math.max(0, quantity * unitPriceForeign - discount);
             const unit = relationText(product.unit_of_measurement, ["unit_shortcut", "unit_name"], "PCS");
             return {
                 lineId: number(line.line_id),
@@ -239,7 +263,7 @@ async function loadLines(purchaseOrderId: number): Promise<PurchaseOrderPrintLin
                 acceptedQuantity: Math.max(0, received - rejected),
                 rejectedQuantity: rejected,
                 unitPrice,
-                unitPriceForeign: number(line.unit_price_foreign || unitPrice),
+                unitPriceForeign,
                 allocatedExpense: number(line.allocated_expense_php),
                 finalLandedUnitCost: number(line.final_landed_unit_cost || unitPrice),
                 discountAmount: discount,
@@ -259,9 +283,20 @@ async function loadLines(purchaseOrderId: number): Promise<PurchaseOrderPrintLin
     return fallbackRows.map(row => {
         const product = asRecord(row.product_id) || {};
         const ordered = number(row.ordered_quantity);
-        const unitPrice = number(row.unit_price);
+        const lineId = relationId(row, ["purchase_order_product_id", "id"]);
+        const unitPrice = resolveBaseUnitCostPhp({
+            purchase_order_product_id: lineId || undefined,
+            unit_price: row.unit_price as number | string | null | undefined,
+            unit_price_foreign: row.unit_price_foreign as number | string | null | undefined
+        }, currency);
+        const unitPriceForeign = transactionUnitPrice({
+            base_unit_cost_php: unitPrice,
+            unit_price_foreign: row.unit_price_foreign
+        }, currency, `Purchase-order line ${lineId || "unknown"}`);
+        const discount = number(row.discount_amount_foreign)
+            || ordered * unitPriceForeign * number(row.discount_percent) / 100;
         return {
-            lineId: relationId(row, ["purchase_order_product_id", "id"]) || 0,
+            lineId: lineId || 0,
             productId: relationId(row.product_id, ["product_id"]),
             productCode: text(product.product_code),
             productName: text(product.product_name, "Unknown product"),
@@ -272,11 +307,11 @@ async function loadLines(purchaseOrderId: number): Promise<PurchaseOrderPrintLin
             acceptedQuantity: number(row.received),
             rejectedQuantity: 0,
             unitPrice,
-            unitPriceForeign: number(row.unit_price_foreign || unitPrice),
+            unitPriceForeign,
             allocatedExpense: number(row.allocated_expense_php),
             finalLandedUnitCost: number(row.final_landed_unit_cost || unitPrice),
-            discountAmount: number(row.discounted_amount || row.discount_amount),
-            netAmount: number(row.net_amount || row.total_amount || ordered * unitPrice),
+            discountAmount: discount,
+            netAmount: Math.max(0, ordered * unitPriceForeign - discount),
             purchaseIntent: text(row.purchase_intent),
             jobOrder: row.job_order_id ? `#${row.job_order_id}` : "N/A",
             batchNumber: "N/A",
@@ -338,7 +373,10 @@ async function loadReceivingData(
         : receivingRows;
     const productById = new Map(lines.map(line => [line.productId, line]));
     const receivingIds = filteredRows.map(row => relationId(row, ["purchase_order_product_id", "id"])).filter((id): id is number => id !== null);
-    const branchIds = [...new Set(filteredRows.map(row => relationId(row.branch_id, ["id", "branch_id"])).filter((id): id is number => id !== null))];
+    const branchIds = [...new Set([
+        ...filteredRows.map(row => relationId(row.branch_id, ["id", "branch_id"])),
+        ...headerRows.map(row => relationId(row.branch_id, ["id", "branch_id"]))
+    ].filter((id): id is number => id !== null))];
     const lotIds = [...new Set(filteredRows.map(row => relationId(row.lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
     const [branchRows, lotRows, movementDateRows] = await Promise.all([
         branchIds.length ? directusRows(`/items/branches?filter[id][_in]=${branchIds.join(",")}&fields=id,branch_name,branch_code&limit=-1`, "Unable to load receiving branches.", true) : [],
@@ -348,6 +386,34 @@ async function loadReceivingData(
     const branches = new Map(branchRows.map(row => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
     const lots = new Map(lotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
     const movementDates = new Map(movementDateRows.map(row => [relationId(row.source_document_id, ["purchase_order_product_id", "id"]), dateText(row.manufacturing_date)]));
+    const committedHeaderIds = new Set(
+        filteredRows
+            .map(row => relationId(row.receiving_header_id, ["id"]))
+            .filter((id): id is number => id !== null)
+    );
+    const printableHeaderRows = (selectedHeader ? [selectedHeader] : headerRows).filter(row => {
+        const postingStatus = text(row.posting_status, "").toLowerCase();
+        if (postingStatus && postingStatus !== "posted") return false;
+        if (selectedHeader) return true;
+        if (committedHeaderIds.size === 0) return true;
+        const headerId = relationId(row, ["id"]);
+        return headerId !== null && committedHeaderIds.has(headerId);
+    });
+    const receivingHeaders: ReceivingPrintHeader[] = printableHeaderRows
+        .map(row => {
+            const headerId = relationId(row, ["id"]);
+            if (!headerId) return null;
+            const branchId = relationId(row.branch_id, ["id", "branch_id"]);
+            return {
+                headerId,
+                receiptNumber: text(row.receiving_ticket_no),
+                receiptDate: dateText(row.receipt_date),
+                branch: branches.get(branchId) || (branchId ? `Branch #${branchId}` : "N/A"),
+                quantityStatus: text(row.quantity_status),
+                postingStatus: text(row.posting_status)
+            };
+        })
+        .filter((header): header is ReceivingPrintHeader => Boolean(header));
     const records: ReceivingPrintRecord[] = filteredRows.map(row => {
         const productLine = productById.get(relationId(row.product_id, ["product_id"]));
         const header = asRecord(row.receiving_header_id);
@@ -383,8 +449,8 @@ async function loadReceivingData(
         };
     });
     const sourceHeaderId = selectedHeaderId
-        || (headerRows.length === 1 ? relationId(headerRows[0], ["id"]) : null);
-    return { headers: selectedHeader ? [selectedHeader] : headerRows, rows: filteredRows, records, sourceHeaderId };
+        || (receivingHeaders.length === 1 ? receivingHeaders[0].headerId : null);
+    return { receivingHeaders, rows: filteredRows, records, sourceHeaderId };
 }
 
 async function loadMovements(
@@ -483,7 +549,7 @@ async function loadLandedCost(
     );
     const accountIds = [...new Set(canonical.expenses.map(expense => relationId(expense.chart_of_account_id, ["id", "coa_id"])).filter((id): id is number => id !== null))];
     const accountRows = accountIds.length
-        ? await directusRows(`/items/chart_of_accounts?filter[id][_in]=${accountIds.join(",")}&fields=*&limit=-1`, "Unable to load landed-cost accounts.", true)
+        ? await directusRows(`/items/chart_of_accounts?filter[coa_id][_in]=${accountIds.join(",")}&fields=coa_id,gl_code,account_title&limit=-1`, "Unable to load landed-cost accounts.", true)
         : [];
     const accounts = new Map(accountRows.map(row => [relationId(row, ["id", "coa_id"]), `${text(row.gl_code, "GL")} ${text(row.account_title || row.account_name, "N/A")}`.trim()]));
     const lineById = new Map(lines.map(line => [line.lineId, line]));
@@ -528,6 +594,7 @@ export async function loadPurchaseOrderPrintableData(input: {
     receivingHeaderId?: number | null;
 }): Promise<PurchaseOrderPrintableSnapshot> {
     const purchaseOrder = await directusRow(`/items/purchase_order/${input.purchaseOrderId}?fields=*`, "Purchase order was not found.");
+    const currency = resolveLandedCostCurrency(purchaseOrder);
     const [supplier, branch, paymentTerms, paymentMode, company, template, lines, approvals] = await Promise.all([
         loadSupplier(purchaseOrder.supplier_name),
         loadBranch(purchaseOrder.branch_id),
@@ -535,7 +602,7 @@ export async function loadPurchaseOrderPrintableData(input: {
         lookupRow("purchase_order_payment_modes", relationId(purchaseOrder.payment_mode, ["id"]), "id,mode_name,code"),
         loadCompanyHeader(),
         loadPrintableTemplate(),
-        loadLines(input.purchaseOrderId),
+        loadLines(input.purchaseOrderId, currency),
         loadApprovalHistory(input.purchaseOrderId)
     ]);
     const selectedApproval = input.historyId
@@ -550,7 +617,7 @@ export async function loadPurchaseOrderPrintableData(input: {
     const needsReceivingData = input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION";
     const receiving = needsReceivingData
         ? await loadReceivingData(input.purchaseOrderId, lines, input.receivingHeaderId || null)
-        : { headers: [], rows: [], records: [], sourceHeaderId: null };
+        : { receivingHeaders: [], rows: [], records: [], sourceHeaderId: null };
     if ((input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION") && receiving.records.length === 0) {
         throw new PurchaseOrderPrintDataError(409, "No committed QA goods-receipt record is available for this purchase order.");
     }
@@ -581,8 +648,8 @@ export async function loadPurchaseOrderPrintableData(input: {
         paymentMode: text(paymentMode?.mode_name || paymentMode?.code, purchaseOrder.payment_mode ? `Payment Mode #${purchaseOrder.payment_mode}` : "N/A"),
         paymentArrangement: paymentArrangement(purchaseOrder.payment_type),
         priceType: text(purchaseOrder.price_type),
-        currencyCode: text(purchaseOrder.currency_code, "PHP"),
-        exchangeRate: number(purchaseOrder.exchange_rate, 1),
+        currencyCode: currency.currencyCode,
+        exchangeRate: currency.exchangeRate,
         inventoryStatus: inventoryStatusToPurchaseOrderStatus(number(purchaseOrder.inventory_status), number(purchaseOrder.payment_status)),
         paymentStatus: paymentStatusLabel(purchaseOrder.payment_status),
         workflowRevision: number(purchaseOrder.workflow_revision),
@@ -606,6 +673,7 @@ export async function loadPurchaseOrderPrintableData(input: {
         lines,
         approvals,
         selectedApproval,
+        receivingHeaders: receiving.receivingHeaders,
         receivingRecords: receiving.records,
         movements,
         allocations,

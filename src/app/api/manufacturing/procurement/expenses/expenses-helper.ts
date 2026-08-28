@@ -3,7 +3,11 @@ import { DirectusShipmentExpense } from "@/modules/manufacturing-management/proc
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
 import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
 import { assertLandedCostPostingEligible } from "../_landed-cost-eligibility";
-import { getLandedCostComputation } from "../landed-cost/_domain";
+import {
+    getLandedCostComputation,
+    resolveLandedCostExpenseInputs,
+    type LandedCostExpenseInput
+} from "../landed-cost/_domain";
 import {
     deriveLineGrossWeightKg,
     resolveProductWeightBreakdown
@@ -11,7 +15,7 @@ import {
 import type { PurchaseOrderCategoryType } from "../_category-type";
 export { toStandardKg } from "@/modules/manufacturing-management/procurement/packaging-weight";
 
-export type AllocationMethod = "Value" | "Weight" | "Volume" | "Hybrid";
+export type AllocationMethod = "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 
 interface ExtendedProduct {
     product_id: number;
@@ -79,7 +83,7 @@ export function legacyToStandardKg(w: number, unitCodeOrShortcut?: string): numb
 export interface LandedCostInput {
     key: number;
     quantity: number;
-    baseUnitCost: number;
+    baseUnitCostPhp: number;
     weight?: number;
     lineGrossWeightKg?: number;
     volume?: number;
@@ -109,6 +113,9 @@ function roundMoney(value: number): number {
 
 export function normalizeAllocationMethod(value: string): AllocationMethod {
     switch (value) {
+        case "Quantity":
+        case "By Quantity":
+            return "Quantity";
         case "Weight":
         case "By Weight":
             return "Weight";
@@ -137,7 +144,7 @@ export function calculateLandedCostAllocations(
                 key: line.key,
                 category_type: line.category_type,
                 quantity: line.quantity,
-                baseUnitCost: line.baseUnitCost,
+                baseUnitCostPhp: line.baseUnitCostPhp,
                 lineGrossWeightKg: line.lineGrossWeightKg ?? deriveLineGrossWeightKg(
                     line.weight || 0,
                     line.weightUnit,
@@ -148,25 +155,28 @@ export function calculateLandedCostAllocations(
         );
     }
 
-    const totalValue = lines.reduce((sum, line) => sum + line.quantity * line.baseUnitCost, 0);
+    const totalQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
+    const totalValue = lines.reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
     const totalWeight = lines.reduce((sum, line) => sum + line.quantity * Number(line.weight || 0), 0);
     const totalVolume = lines.reduce((sum, line) => sum + line.quantity * Number(line.volume || 0), 0);
 
     return new Map(lines.map(line => {
         let ratio: number;
-        if (method === "Weight" && totalWeight > 0) {
+        if (method === "Quantity" && totalQuantity > 0) {
+            ratio = line.quantity / totalQuantity;
+        } else if (method === "Weight" && totalWeight > 0) {
             ratio = line.quantity * Number(line.weight || 0) / totalWeight;
         } else if (method === "Volume" && totalVolume > 0) {
             ratio = line.quantity * Number(line.volume || 0) / totalVolume;
         } else if (totalValue > 0) {
-            ratio = line.quantity * line.baseUnitCost / totalValue;
+            ratio = line.quantity * line.baseUnitCostPhp / totalValue;
         } else {
             ratio = lines.length > 0 ? 1 / lines.length : 0;
         }
 
         const allocatedExpense = roundMoney(ratio * totalExpensesPhp);
         const finalLandedUnitCost = roundMoney(
-            line.baseUnitCost + (line.quantity > 0 ? allocatedExpense / line.quantity : 0)
+            line.baseUnitCostPhp + (line.quantity > 0 ? allocatedExpense / line.quantity : 0)
         );
         return [line.key, { allocatedExpense, finalLandedUnitCost }];
     }));
@@ -225,7 +235,19 @@ export async function processShipmentLandedCosts(
     void lineItemUpdates;
     const allocationMethod = normalizeAllocationMethod(allocationMethodInput);
     const previousExpenses = await fetchShipmentExpenses(shipmentId);
-    const totalExpensesPhp = expenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0);
+    const resolvedExpenses = await resolveLandedCostExpenseInputs(expenses.map(expense => {
+        const record = expense as Partial<DirectusShipmentExpense> & { overhead_id?: unknown; expense_type?: unknown };
+        const overhead = record.overhead_id;
+        const overheadId = overhead && typeof overhead === "object"
+            ? Number((overhead as Record<string, unknown>).id)
+            : Number(overhead);
+        return {
+            overhead_id: Number.isSafeInteger(overheadId) && overheadId > 0 ? overheadId : null,
+            expense_type: typeof record.expense_type === "string" ? record.expense_type : "",
+            amount_php: Number(record.amount_php)
+        } satisfies LandedCostExpenseInput;
+    }));
+    const totalExpensesPhp = resolvedExpenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0);
     const lines = await fetchShipmentLineItems(shipmentId) as ExtendedShipmentLineItem[];
     const inputs: LandedCostInput[] = lines.map(line => {
         const product = line.product_id as unknown as Record<string, unknown>;
@@ -236,7 +258,7 @@ export async function processShipmentLandedCosts(
         return {
             key: line.line_id,
             quantity,
-            baseUnitCost: Number(line.base_unit_cost_php || 0),
+            baseUnitCostPhp: Number(line.base_unit_cost_php || 0),
             weight: weightBreakdown.grossWeightKg,
             lineGrossWeightKg: weightBreakdown.grossWeightKg * quantity,
             volume: Number(product?.cbm_height || 0) * Number(product?.cbm_width || 0) * Number(product?.cbm_length || 0),
@@ -257,12 +279,13 @@ export async function processShipmentLandedCosts(
             }
         }
 
-        for (const expense of expenses) {
+        for (const expense of resolvedExpenses) {
             const amountPhp = Number(expense.amount_php || 0);
             const expenseId = await createExpense({
-                ...expense,
                 amount_php: amountPhp,
                 purchase_order_id: shipmentId,
+                overhead_id: expense.overhead_id,
+                expense_type: expense.expense_type || "",
                 allocation_method: `By ${allocationMethod}`
             });
             if (!expenseId) throw new Error("Directus did not return the created expense ID.");

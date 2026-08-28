@@ -188,12 +188,13 @@ export async function saveLandedCostDraft(
     purchaseOrderId: number,
     allocationRule: LandedCostAllocationRule,
     expenses: LandedCostExpenseDraft[],
-    sourceFlow?: string
+    sourceFlow?: string,
+    exchangeRate?: number
 ): Promise<LandedCostDraftResponse> {
     const res = await fetchWithSessionRetry("/api/manufacturing/procurement/landed-cost", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ purchaseOrderId, allocationRule, expenses, sourceFlow })
+        body: JSON.stringify({ purchaseOrderId, allocationRule, expenses, sourceFlow, exchangeRate })
     });
     return handleResponse(res, "Failed to save landed-cost inputs");
 }
@@ -202,12 +203,14 @@ export async function uploadLandedCostAttachment(
     purchaseOrderId: number,
     computationId: number,
     documentType: LandedCostAttachmentRecord["document_type"],
+    expenseTypeId: number,
     file: File
 ): Promise<LandedCostAttachmentRecord> {
     const formData = new FormData();
     formData.set("purchaseOrderId", String(purchaseOrderId));
     formData.set("computationId", String(computationId));
     formData.set("documentType", documentType);
+    formData.set("expenseTypeId", String(expenseTypeId));
     formData.set("file", file, file.name);
     const res = await fetchWithSessionRetry("/api/manufacturing/procurement/landed-cost/attachments", {
         method: "POST",

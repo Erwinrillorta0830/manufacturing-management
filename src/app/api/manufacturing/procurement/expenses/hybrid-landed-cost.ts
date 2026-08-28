@@ -5,7 +5,7 @@ export interface HybridAllocationLineItem {
     key: number;
     category_type: PurchaseOrderCategoryType;
     quantity: number;
-    baseUnitCost: number;
+    baseUnitCostPhp: number;
     lineGrossWeightKg: number;
 }
 
@@ -25,7 +25,7 @@ export function calculateHybridLandedCostAllocation(
             key: item.key,
             category_type: item.category_type,
             quantity: item.quantity,
-            baseUnitCostPhp: item.baseUnitCost,
+            baseUnitCostPhp: item.baseUnitCostPhp,
             lineGrossWeightKg: item.lineGrossWeightKg,
             volume: 0
         })),

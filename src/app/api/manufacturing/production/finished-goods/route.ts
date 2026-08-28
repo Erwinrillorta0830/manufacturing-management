@@ -1,6 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
+import { YieldMaterialsError } from "../_yield-materials";
 
 
 interface LedgerEntry {
@@ -125,6 +127,36 @@ export async function POST(request: Request) {
 
         if (!joId || !productId || !quantityProduced || !branchId) {
             return NextResponse.json({ error: "Missing required fields (joId, productId, quantityProduced, branchId)" }, { status: 400 });
+        }
+
+        if (completeJobOrder) {
+            try {
+                const result = await completeYieldClosing({
+                    joId,
+                    productId,
+                    productName,
+                    quantityProduced,
+                    branchId,
+                    lotNumber,
+                    expirationDate,
+                    manufacturingDate,
+                    unitCost,
+                    componentsConsumed
+                });
+                return NextResponse.json(result);
+            } catch (error) {
+                if (error instanceof YieldCompletionError) {
+                    return NextResponse.json({
+                        error: error.message,
+                        code: error.code,
+                        ...(error.reconciliation ? { reconciliation: error.reconciliation } : {})
+                    }, { status: error.status });
+                }
+                if (error instanceof YieldMaterialsError) {
+                    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+                }
+                throw error;
+            }
         }
 
         // Helper function to resolve or create master lot in the lots table

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { CustomerDiscountModuleData, CustomerDiscount, Customer } from "../types";
-import { fetchModuleData, fetchCustomerDiscounts, addCustomerDiscount, deleteCustomerDiscount } from "../services/customer-discount";
+import { fetchModuleData, fetchCustomerDiscounts, addCustomerDiscount, updateCustomerDiscount, deleteCustomerDiscount } from "../services/customer-discount";
 import { toast } from "sonner";
 
 export function useCustomerDiscount(userId: number | null) {
@@ -65,6 +65,19 @@ export function useCustomerDiscount(userId: number | null) {
     }
   };
 
+  const handleEditDiscount = async (discountData: Partial<CustomerDiscount> & { id: number }) => {
+    try {
+      await updateCustomerDiscount({ ...discountData, updated_by: userId });
+      toast.success("Discount updated successfully");
+      if (selectedCustomer) {
+        await loadCustomerDiscounts(selectedCustomer.customer_code);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update discount");
+    }
+  };
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -79,6 +92,7 @@ export function useCustomerDiscount(userId: number | null) {
     loadingDiscounts,
     loadCustomerDiscounts,
     handleAddDiscount,
+    handleEditDiscount,
     handleDeleteDiscount,
     refreshData: loadData,
   };

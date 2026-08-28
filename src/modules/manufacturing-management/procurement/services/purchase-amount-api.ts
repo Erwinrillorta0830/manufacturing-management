@@ -5,8 +5,9 @@ export async function fetchEligibleOrders() {
     return Array.isArray(data) ? data : data?.data || [];
 }
 
-export async function fetchPurchaseAmountDetails(poId: number) {
-    const res = await fetch(`/api/manufacturing/procurement/amount-posting?poId=${poId}`);
+export async function fetchPurchaseAmountDetails(poId: number, options: { includePosted?: boolean } = {}) {
+    const postedQuery = options.includePosted ? "&includePosted=true" : "";
+    const res = await fetch(`/api/manufacturing/procurement/amount-posting?poId=${poId}${postedQuery}`);
     if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || "Failed to fetch amount posting details");

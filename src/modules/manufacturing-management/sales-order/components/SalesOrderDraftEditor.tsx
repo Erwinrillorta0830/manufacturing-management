@@ -52,20 +52,8 @@ const isStandardBOMVersion = (version: any): boolean => {
     return name.includes("standard") && !name.includes("custom");
 };
 
-const singularUnitName = (name: string): string => {
-    if (!name) return "";
-    const lower = name.toLowerCase();
-    if (lower.endsWith("ies")) return name.slice(0, -3) + "y";
-    if (lower.endsWith("s")) return name.slice(0, -1);
-    return name;
-};
-
-const formatUomLabel = (product: any, products: any[]): string => {
-    const isParent = Boolean(product.is_parent);
-    const parentProd = products.find(p => Number(p.product_id) === Number(product.parent_product_id));
-    if (isParent || !parentProd) return `1 ${singularUnitName(product.base_unit_of_measure)}`;
-    const count = Number(product.unit_count) || 1;
-    return `${count} ${product.base_unit_of_measure}${count > 1 ? "s" : ""} / ${product.unit_type || "Unit"}`;
+const formatUomLabel = (product: any): string => {
+    return String(product.unit_name || product.unit_shortcut || "Unit");
 };
 
 export function SalesOrderDraftEditor({
@@ -75,6 +63,7 @@ export function SalesOrderDraftEditor({
     onCancel
 }: SalesOrderDraftEditorProps) {
     const [submitting, setSubmitting] = useState(false);
+    const [submitMode, setSubmitMode] = useState<"draft" | "approval">("draft");
     const poInputRef = useRef<HTMLInputElement>(null);
 
     // Lookups
@@ -107,7 +96,7 @@ export function SalesOrderDraftEditor({
 
     const [customerOverrides, setCustomerOverrides] = useState<Record<number, number>>({});
     const [versionStates, setVersionStates] = useState<Record<number, VersionState>>({});
-    const [confirmingAction, setConfirmingAction] = useState<"save" | "cancel" | null>(null);
+    const [confirmingAction, setConfirmingAction] = useState<"draft" | "approval" | "cancel" | null>(null);
     const nextLineIdRef = useRef(1);
     const versionRequestRef = useRef(0);
 
@@ -154,7 +143,7 @@ export function SalesOrderDraftEditor({
     }, [customerId]);
 
     useEffect(() => {
-        const productIds = [...new Set(items.map(item => Number(item.product_id)).filter(Boolean))];
+        const productIds = [...new Set(items.map(item => Number(item.parent_product_id)).filter(Boolean))];
         const requestId = ++versionRequestRef.current;
         const controller = new AbortController();
         if (productIds.length === 0) {
@@ -189,7 +178,7 @@ export function SalesOrderDraftEditor({
             setVersionStates(Object.fromEntries(results.filter(Boolean) as Array<readonly [number, VersionState]>));
         });
         return () => controller.abort();
-    }, [items.map(item => item.product_id).join(","), customerOverrides]);
+    }, [items.map(item => item.parent_product_id).join(","), customerOverrides]);
 
     useEffect(() => {
         setLoadingLookups(true);
@@ -246,7 +235,7 @@ export function SalesOrderDraftEditor({
         try {
             const customer = customers.find(c => String(c.id) === cId);
             if (!customer?.customer_code) return { discountType: null, discountAmount: 0, discountPercent: 0 };
-            const res = await fetch(`/api/manufacturing/financial-management/discount-management/customer-discounting/pricing?customerCode=${customer.customer_code}&productId=${pId}&basePrice=${basePrice}`);
+            const res = await fetch(`/api/manufacturing/sales-order/pricing?customerCode=${customer.customer_code}&productId=${pId}&basePrice=${basePrice}`);
             if (res.ok) {
                 const data = await res.json();
                 const discountAmount = typeof data.finalPrice === 'number' && typeof basePrice === 'number' ? basePrice - data.finalPrice : 0;
@@ -365,8 +354,9 @@ export function SalesOrderDraftEditor({
                 seenProductIds.add(item.product_id);
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
                 const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                if (typeObj?.name === 'Finished Goods') {
-                    const versionState = versionStates[item.product_id];
+                const isFinishedGood = typeObj?.name === 'Finished Goods';
+                if (isFinishedGood) {
+                    const versionState = versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
                     if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
                 }
@@ -386,7 +376,7 @@ export function SalesOrderDraftEditor({
         e.preventDefault();
         if (lookupError || customers.length === 0 || products.length === 0) return toast.error("Lookups not loaded.");
         if (!validateForm()) return;
-        setConfirmingAction("save");
+        setConfirmingAction(submitMode);
     };
 
     const confirmSubmit = async () => {
@@ -416,9 +406,10 @@ export function SalesOrderDraftEditor({
                         discount_type: item.discount_type,
                         discount_amount: item.discount_amount,
                         discount_percent: item.discount_percent,
-                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || null) : null
+                        bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
                     };
-                })
+                }),
+                submitForApproval: submitMode === "approval"
             });
             await onSave();
             toast.success("Sales order updated successfully.");
@@ -612,7 +603,7 @@ export function SalesOrderDraftEditor({
                                     const parentProd = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
                                     const uomProd = products.find(p => Number(p.product_id) === Number(item.product_id));
                                     return (parentProd ? `${parentProd.product_name} ${parentProd.product_code || ""}`.toLowerCase().includes(query) : false) ||
-                                        (uomProd ? formatUomLabel(uomProd, products).toLowerCase().includes(query) : false);
+                                        (uomProd ? formatUomLabel(uomProd).toLowerCase().includes(query) : false);
                                 });
                                 if (filteredItems.length === 0) return <tr className="block md:table-row"><td colSpan={9} className="py-8 text-center text-muted-foreground italic font-semibold">No products match your search.</td></tr>;
                                 return filteredItems.map(item => {
@@ -629,7 +620,7 @@ export function SalesOrderDraftEditor({
                                     const uomOptions = products.filter(p => Number(p.parent_product_id) === Number(item.parent_product_id))
                                         .filter(p => Number(p.product_id) === Number(item.product_id) || !otherSelectedVariantIds.includes(Number(p.product_id)))
                                         .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
-                                        .map(p => ({ value: String(p.product_id), label: formatUomLabel(p, products) }));
+                                        .map(p => ({ value: String(p.product_id), label: formatUomLabel(p) }));
                                     return (
                                         <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
                                             <td className="block p-0 md:table-cell md:p-3 overflow-visible md:w-48">
@@ -644,12 +635,12 @@ export function SalesOrderDraftEditor({
                                             </td>
                                             <td className="block p-0 md:table-cell md:p-3 overflow-visible md:min-w-[14rem]">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                {Number(item.product_id) > 0 && versionStates[item.product_id]?.versions?.length ? (
-                                                    versionStates[item.product_id]?.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                        : versionStates[item.product_id]?.status === "resolved" ? (
-                                                            <select value={item.bom_version_id || versionStates[item.product_id]?.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
-                                                                {versionStates[item.product_id]?.versions?.map((v: any) => (
-                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {Number(v.version_id) === versionStates[item.product_id]?.defaultVersionId ? "(Default)" : ""}</option>
+                                                {Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.versions?.length ? (
+                                                    versionStates[item.parent_product_id]?.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                        : versionStates[item.parent_product_id]?.status === "resolved" ? (
+                                                            <select value={item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
+                                                                {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
+                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}</option>
                                                                 ))}
                                                             </select>
                                                         ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
@@ -702,8 +693,11 @@ export function SalesOrderDraftEditor({
                     </div>
                     <div className="flex justify-end gap-2">
                         <button type="button" onClick={() => setConfirmingAction("cancel")} disabled={submitting} className="h-9 rounded-md border bg-background px-4 text-xs font-semibold transition-colors hover:bg-muted cursor-pointer">Cancel</button>
-                        <button type="submit" disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
-                            <Save className="h-3.5 w-3.5" /> Save Changes
+                        <button type="submit" onClick={() => setSubmitMode("draft")} disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-muted hover:bg-muted/80 text-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
+                            Save as Draft
+                        </button>
+                        <button type="submit" onClick={() => setSubmitMode("approval")} disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
+                            <Save className="h-3.5 w-3.5" /> Submit for Approval
                         </button>
                     </div>
                 </div>
@@ -713,16 +707,16 @@ export function SalesOrderDraftEditor({
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
                     <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95">
                         <div className="flex flex-col items-center text-center space-y-3">
-                            <div className={`p-3 rounded-full ${confirmingAction === "save" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
-                                {confirmingAction === "save" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
+                            <div className={`p-3 rounded-full ${(confirmingAction === "draft" || confirmingAction === "approval") ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                                {confirmingAction === "draft" || confirmingAction === "approval" ? <Save className="h-6 w-6" /> : <AlertCircle className="h-6 w-6" />}
                             </div>
                             <div>
                                 <h3 className="text-lg font-bold text-foreground">
-                                    {confirmingAction === "save" ? "Confirm Save" : "Discard Changes?"}
+                                    {confirmingAction === "draft" ? "Confirm Save Draft" : confirmingAction === "approval" ? "Confirm Submission" : "Discard Changes?"}
                                 </h3>
                                 <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-                                    {confirmingAction === "save"
-                                        ? "Are you sure you want to save these changes? This will update the drafted sales order."
+                                    {confirmingAction === "draft" || confirmingAction === "approval"
+                                        ? `Are you sure you want to ${confirmingAction === "draft" ? "save these changes as a draft" : "submit this sales order for approval"}?`
                                         : "Are you sure you want to discard your unsaved changes? This action cannot be undone."}
                                 </p>
                             </div>
@@ -734,18 +728,18 @@ export function SalesOrderDraftEditor({
                                 disabled={submitting}
                                 className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm font-semibold transition-colors hover:bg-muted cursor-pointer"
                             >
-                                {confirmingAction === "save" ? "Cancel" : "Keep Editing"}
+                                {confirmingAction === "draft" || confirmingAction === "approval" ? "Cancel" : "Keep Editing"}
                             </button>
                             <button
                                 type="button"
-                                onClick={confirmingAction === "save" ? confirmSubmit : () => { setConfirmingAction(null); onCancel(); }}
+                                onClick={confirmingAction === "draft" || confirmingAction === "approval" ? confirmSubmit : () => { setConfirmingAction(null); onCancel(); }}
                                 disabled={submitting}
                                 className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors flex items-center justify-center gap-2 cursor-pointer ${
-                                    confirmingAction === "save" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
+                                    confirmingAction === "draft" || confirmingAction === "approval" ? "bg-primary hover:bg-primary/90" : "bg-destructive hover:bg-destructive/90"
                                 }`}
                             >
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                {confirmingAction === "save" ? "Confirm Save" : "Discard"}
+                                {confirmingAction === "draft" ? "Save Draft" : confirmingAction === "approval" ? "Submit" : "Discard"}
                             </button>
                         </div>
                     </div>

@@ -274,16 +274,95 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Missing receivingId for raw material reservation." }, { status: 400 });
             }
 
+            const numericJoId = Number(joId);
+            const numericMaterialId = Number(materialId);
+            const numericProductId = Number(productId);
+            const numericReceivingId = Number(receivingId);
+            const requestedQty = Number(qty);
+
+            if (
+                !Number.isInteger(numericJoId) || numericJoId <= 0 ||
+                !Number.isInteger(numericMaterialId) || numericMaterialId <= 0 ||
+                !Number.isInteger(numericProductId) || numericProductId <= 0 ||
+                !Number.isInteger(numericReceivingId) || numericReceivingId <= 0 ||
+                !Number.isFinite(requestedQty) || requestedQty <= 0
+            ) {
+                return NextResponse.json({ error: "Invalid reservation parameters." }, { status: 400 });
+            }
+
+            const joRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${numericJoId}?fields=job_order_id,branch_id`,
+                { headers, cache: "no-store" }
+            );
+            if (!joRes.ok) {
+                return NextResponse.json({ error: "Job Order not found for reservation." }, { status: 404 });
+            }
+            const joData = (await joRes.json()).data;
+            const joBranchId = Number(joData?.branch_id);
+            if (!joData || !Number.isInteger(joBranchId) || joBranchId <= 0) {
+                return NextResponse.json({ error: "Job Order has no valid branch assigned." }, { status: 400 });
+            }
+
+            const materialRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}?fields=jo_material_id,job_order_id,product_id,reserved_quantity`,
+                { headers, cache: "no-store" }
+            );
+            if (!materialRes.ok) {
+                return NextResponse.json({ error: "Job Order material not found for reservation." }, { status: 404 });
+            }
+            const materialData = (await materialRes.json()).data;
+            const materialJoId = Number(materialData?.job_order_id?.job_order_id || materialData?.job_order_id);
+            const materialProductId = Number(materialData?.product_id?.product_id || materialData?.product_id);
+            if (materialJoId !== numericJoId) {
+                return NextResponse.json({ error: "Material does not belong to the selected Job Order." }, { status: 400 });
+            }
+            if (materialProductId !== numericProductId) {
+                return NextResponse.json({ error: "Selected receiving lot does not match the material product." }, { status: 400 });
+            }
+
+            const receivingRes = await fetch(
+                `${DIRECTUS_URL}/items/purchase_order_receiving/${numericReceivingId}?fields=purchase_order_product_id,product_id,branch_id,batch_no,qa_status,is_reverted,received_quantity`,
+                { headers, cache: "no-store" }
+            );
+            if (!receivingRes.ok) {
+                return NextResponse.json({ error: "Receiving lot not found for reservation." }, { status: 404 });
+            }
+            const receivingData = (await receivingRes.json()).data;
+            const receivingProductId = Number(receivingData?.product_id?.product_id || receivingData?.product_id);
+            const receivingBranchId = Number(receivingData?.branch_id?.id || receivingData?.branch_id);
+            const batchNo = String(receivingData?.batch_no || "").trim();
+            const qaStatus = String(receivingData?.qa_status || "").trim().toLowerCase();
+            const isReverted = Number(receivingData?.is_reverted || 0) !== 0;
+
+            if (receivingProductId !== materialProductId || receivingProductId !== numericProductId) {
+                return NextResponse.json({ error: "Selected receiving lot does not match the material product." }, { status: 400 });
+            }
+            if (receivingBranchId !== joBranchId) {
+                return NextResponse.json({ error: "Selected receiving lot belongs to a different branch." }, { status: 400 });
+            }
+            if (!batchNo) {
+                return NextResponse.json({ error: "Selected receiving lot has no batch number." }, { status: 400 });
+            }
+            if (isReverted || !["passed", "partially accepted"].includes(qaStatus)) {
+                return NextResponse.json({ error: "Only passed receiving lots can be reserved." }, { status: 400 });
+            }
+            if (Number(receivingData?.received_quantity || 0) <= 0) {
+                return NextResponse.json({ error: "Selected receiving lot has no available received quantity." }, { status: 400 });
+            }
+
             // Create reservation entry
             const reservationPayload = {
-                product_id: Number(productId),
-                jo_material_id: Number(materialId),
-                purchase_order_receiving_id: Number(receivingId),
-                reserved_quantity: Number(qty),
+                product_id: numericProductId,
+                branch_id: receivingBranchId,
+                batch_no: batchNo,
+                jo_material_id: numericMaterialId,
+                purchase_order_receiving_id: numericReceivingId,
+                reserved_quantity: requestedQty,
                 actual_used_quantity: 0
             };
 
-            const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+            const reservationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`;
+            const res = await fetch(reservationUrl, {
                 method: "POST",
                 headers,
                 body: JSON.stringify(reservationPayload)
@@ -294,19 +373,27 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Failed to save materials reservation: ${errTxt}` }, { status: 500 });
             }
 
-            // Update parent requirement row
-            const matRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, { headers });
-            if (matRes.ok) {
-                const matData = (await matRes.json()).data;
-                const newReserved = Number(matData.reserved_quantity || 0) + Number(qty);
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ reserved_quantity: newReserved })
-                });
+            const createdReservation = (await res.json()).data;
+            const createdReservationId = Number(createdReservation?.jo_materials_reservation_id || 0);
+            const currentReserved = Number(materialData?.reserved_quantity || 0);
+            const materialPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ reserved_quantity: currentReserved + requestedQty })
+            });
+            if (!materialPatchRes.ok) {
+                if (createdReservationId > 0) {
+                    await fetch(`${reservationUrl}/${createdReservationId}`, { method: "DELETE", headers });
+                }
+                const errTxt = await materialPatchRes.text();
+                return NextResponse.json({ error: `Failed to update material reservation quantity: ${errTxt}` }, { status: 500 });
             }
 
-            return NextResponse.json({ success: true, message: "Material successfully reserved from lot." });
+            return NextResponse.json({
+                success: true,
+                reservationId: createdReservationId || null,
+                message: "Material successfully reserved from lot."
+            });
         }
 
         if (action === "unreserve-lot") {
@@ -333,31 +420,67 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Missing reservationId for raw material unreservation." }, { status: 400 });
             }
 
+            const numericJoId = Number(joId);
+            const numericMaterialId = Number(materialId);
+            const numericReservationId = Number(reservationId);
+            if (
+                !Number.isInteger(numericJoId) || numericJoId <= 0 ||
+                !Number.isInteger(numericMaterialId) || numericMaterialId <= 0 ||
+                !Number.isInteger(numericReservationId) || numericReservationId <= 0
+            ) {
+                return NextResponse.json({ error: "Invalid unreservation parameters." }, { status: 400 });
+            }
+
             // Fetch the reservation row to get the quantity being unreserved
-            const resUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${reservationId}`;
+            const resUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${numericReservationId}`;
             const resRes = await fetch(resUrl, { headers });
             if (!resRes.ok) {
                 return NextResponse.json({ error: "Reservation record not found." }, { status: 404 });
             }
             const resData = (await resRes.json()).data;
+            const reservationMaterialId = Number(resData?.jo_material_id?.jo_material_id || resData?.jo_material_id);
+            if (reservationMaterialId !== numericMaterialId) {
+                return NextResponse.json({ error: "Reservation does not belong to the selected material." }, { status: 400 });
+            }
             const unreservedQty = Number(resData.reserved_quantity || 0);
+            if (!Number.isFinite(unreservedQty) || unreservedQty <= 0) {
+                return NextResponse.json({ error: "Reservation has no quantity to release." }, { status: 400 });
+            }
+
+            const materialRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}?fields=job_order_id,reserved_quantity`,
+                { headers, cache: "no-store" }
+            );
+            if (!materialRes.ok) {
+                return NextResponse.json({ error: "Job Order material not found for unreservation." }, { status: 404 });
+            }
+            const materialData = (await materialRes.json()).data;
+            const materialJoId = Number(materialData?.job_order_id?.job_order_id || materialData?.job_order_id);
+            if (materialJoId !== numericJoId) {
+                return NextResponse.json({ error: "Material does not belong to the selected Job Order." }, { status: 400 });
+            }
+            const currentReserved = Number(materialData?.reserved_quantity || 0);
+            const newReserved = Math.max(0, currentReserved - unreservedQty);
+
+            // Update the parent requirement first so a failed update leaves the reservation intact.
+            const materialPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ reserved_quantity: newReserved })
+            });
+            if (!materialPatchRes.ok) {
+                return NextResponse.json({ error: "Failed to update material reservation quantity." }, { status: 500 });
+            }
 
             // Delete the reservation row
             const delRes = await fetch(resUrl, { method: "DELETE", headers });
             if (!delRes.ok) {
-                return NextResponse.json({ error: "Failed to delete reservation." }, { status: 500 });
-            }
-
-            // Update parent requirement row
-            const matRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, { headers });
-            if (matRes.ok) {
-                const matData = (await matRes.json()).data;
-                const newReserved = Math.max(0, Number(matData.reserved_quantity || 0) - unreservedQty);
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, {
+                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ reserved_quantity: newReserved })
+                    body: JSON.stringify({ reserved_quantity: currentReserved })
                 });
+                return NextResponse.json({ error: "Failed to delete reservation." }, { status: 500 });
             }
 
             return NextResponse.json({ success: true, message: "Material successfully unreserved." });

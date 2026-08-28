@@ -42,6 +42,7 @@ export default function CustomerDiscountModule({ userName, userId }: { userName:
     loadingDiscounts,
     loadCustomerDiscounts,
     handleAddDiscount,
+    handleEditDiscount,
     handleDeleteDiscount,
   } = useCustomerDiscount(userId);
 
@@ -314,6 +315,7 @@ export default function CustomerDiscountModule({ userName, userId }: { userName:
           storeTypes={data?.storeTypes || []}
           classifications={data?.classifications || []}
           onAdd={handleAddDiscount}
+          onEdit={handleEditDiscount}
           onDelete={handleDeleteDiscount}
           userName={userName}
         />

@@ -183,8 +183,7 @@ export default function ShipmentExpenses({
                             How Ratios Work
                         </h4>
                         <p className="text-[11px] text-muted-foreground leading-relaxed">
-                            Expenses are allocated across container items proportionally. Select:
-                            <br />• <strong>Commercial Value</strong>: Higher value items shoulder more brokerage fees.
+                            Expenses are allocated across container items proportionally. Available methods:
                             <br />• <strong>Weight (KG)</strong>: Heavy items (e.g. raw vegetable oil) carry more trucking weight.
                             <br />• <strong>Volume (CBM)</strong>: Bulky items shoulder more sea freight volume.
                              <br />• <strong>Hybrid</strong>: Raw Materials use Quantity, Packaging items use Gross Weight, and Finished Goods use Commercial Value.
@@ -317,7 +316,7 @@ export default function ShipmentExpenses({
                         >
                             <div className="space-y-1.5 bg-muted/20 p-4 rounded-xl border">
                                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Allocation Logic Method</label>
-                                <div className="grid grid-cols-2 gap-2 mt-1">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
                                     {LANDED_COST_METHOD_OPTIONS.map(({ value, label, description }) => {
                                         const selected = allocationForm.allocation_method === value;
                                         return (
@@ -410,6 +409,10 @@ export default function ShipmentExpenses({
                                  purchaseOrderId={shipment.shipment_id}
                                  allocationRule={allocationForm.allocation_method}
                                  expenses={allocationForm.expenses}
+                                 expenseTypes={overheadTypes
+                                     .map((type) => ({ id: Number(type.id), label: String(type.overhead_name || "") }))
+                                     .filter((type) => type.id > 0 && type.label)}
+                                 exchangeRate={Number(shipment.exchange_rate) || 1}
                                  sourceFlow="SHIPMENT_EXPENSES"
                                  disabled={submitting}
                              />

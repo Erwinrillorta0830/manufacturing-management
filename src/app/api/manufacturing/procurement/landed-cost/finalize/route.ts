@@ -17,15 +17,14 @@ export const dynamic = "force-dynamic";
 const positiveId = z.coerce.number().int().positive();
 const expenseSchema = z.object({
     overhead_id: positiveId.nullish(),
-    chart_of_account_id: positiveId.nullish(),
-    expense_type: z.string().trim().max(150).nullish(),
     amount_php: z.coerce.number().finite().nonnegative()
 });
 const finalizeSchema = z.object({
     purchaseOrderId: positiveId,
     computationId: positiveId.nullish(),
-    allocationRule: z.enum(["Value", "Weight", "Volume", "Hybrid"]).optional(),
+    allocationRule: z.enum(["Quantity", "Value", "Weight", "Volume", "Hybrid"]).optional(),
     expenses: z.array(expenseSchema).optional(),
+    exchangeRate: z.coerce.number().finite().positive().optional(),
     sourceFlow: z.string().trim().max(40).optional()
 });
 
@@ -54,6 +53,7 @@ export async function POST(request: Request) {
             computationId: parsed.data.computationId,
             allocationRule: parsed.data.allocationRule,
             expenses: parsed.data.expenses as LandedCostExpenseInput[] | undefined,
+            exchangeRate: parsed.data.exchangeRate,
             actorId: actor.userId,
             sourceFlow: parsed.data.sourceFlow
         });

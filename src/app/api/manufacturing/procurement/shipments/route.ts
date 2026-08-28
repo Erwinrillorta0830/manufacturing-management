@@ -22,6 +22,7 @@ import { MrpPairValidationError } from "../../purchase-orders/_mrp-validation";
 import { PurchaseOrderDiscountError } from "../../purchase-orders/_domain";
 import { PurchaseOrderPaymentModeError } from "../../purchase-orders/_payment-modes";
 import { ProductCategoryTypeValidationError } from "../_category-type";
+import { isLandedCostError } from "../landed-cost/_domain";
 
 class InvalidTransitionError extends Error {}
 
@@ -60,7 +61,8 @@ export async function GET(request: Request) {
     } catch (e) {
         console.error("API Error fetching shipments:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to fetch shipments" }, {
-            status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError ? e.status : 500
+            status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError || isLandedCostError(e) ? e.status : 500,
+            ...(isLandedCostError(e) ? { code: e.code, details: e.details } : {})
         });
     }
 }

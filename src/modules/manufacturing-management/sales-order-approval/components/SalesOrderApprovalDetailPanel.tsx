@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { SalesOrder, SalesOrderDetail } from "../../sales-order/types";
 import { formatCurrency } from "@/lib/utils";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 interface SalesOrderApprovalDetailPanelProps {
     selectedOrder: SalesOrder | null;
@@ -29,14 +30,7 @@ export function SalesOrderApprovalDetailPanel({
     handleReject,
     handleCancel
 }: SalesOrderApprovalDetailPanelProps) {
-    if (!selectedOrder) {
-        return (
-            <div className="border border-dashed rounded-xl p-8 text-center text-muted-foreground text-xs bg-card/50">
-                <FileText className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-                Select a pending Sales Order from the list to review committed prices, items, and terms.
-            </div>
-        );
-    }
+    if (!selectedOrder) return null;
 
     // Compute pricing sums
     const grossSum = orderDetails.reduce((acc, item) => acc + (item.unit_price * item.ordered_quantity), 0);
@@ -45,7 +39,10 @@ export function SalesOrderApprovalDetailPanel({
     const isZeroNet = netSum <= 0;
 
     return (
-        <div className="border border-border rounded-2xl bg-card p-6 shadow-sm space-y-6 border-t-2 border-t-amber-500">
+        <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+            <DialogContent showCloseButton={false} className="sm:max-w-3xl p-0 gap-0 border-none overflow-hidden bg-transparent shadow-none">
+                <DialogTitle className="sr-only">Review Sales Order {selectedOrder.order_no}</DialogTitle>
+                <div className="border border-border rounded-2xl bg-card p-6 shadow-xl space-y-6 border-t-2 border-t-amber-500 max-h-[90vh] overflow-y-auto w-full">
             {/* Header info */}
             <div className="flex justify-between items-start border-b border-border pb-4">
                 <div>
@@ -308,6 +305,8 @@ export function SalesOrderApprovalDetailPanel({
                     </button>
                 )}
             </div>
-        </div>
+            </div>
+        </DialogContent>
+      </Dialog>
     );
 }

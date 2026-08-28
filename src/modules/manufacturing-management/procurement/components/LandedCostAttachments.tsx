@@ -14,11 +14,14 @@ import type {
     LandedCostExpenseDraft
 } from "../types";
 import { landedCostMethodLabel } from "../landed-cost-methods";
+import type { ExpenseTypeOption } from "./purchase-amount/types";
 
 interface LandedCostAttachmentsProps {
     purchaseOrderId: number;
     allocationRule: LandedCostAllocationRule | "";
     expenses: LandedCostExpenseDraft[];
+    expenseTypes: ExpenseTypeOption[];
+    exchangeRate?: number;
     sourceFlow: string;
     disabled?: boolean;
     onComputationChange?: (computationId: number | null, status?: string) => void;
@@ -41,6 +44,8 @@ export default function LandedCostAttachments({
     purchaseOrderId,
     allocationRule,
     expenses,
+    expenseTypes,
+    exchangeRate,
     sourceFlow,
     disabled = false,
     onComputationChange
@@ -49,6 +54,7 @@ export default function LandedCostAttachments({
     const [computationStatus, setComputationStatus] = useState<string | undefined>();
     const [attachments, setAttachments] = useState<LandedCostAttachmentRecord[]>([]);
     const [documentType, setDocumentType] = useState<LandedCostAttachmentRecord["document_type"]>("OTHER");
+    const [expenseTypeId, setExpenseTypeId] = useState<number | "">("");
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -64,6 +70,7 @@ export default function LandedCostAttachments({
         setLoading(true);
         setError(null);
         setAttachments([]);
+        setExpenseTypeId("");
         updateComputation(null);
         void fetchLandedCostDraft(purchaseOrderId)
             .then(data => {
@@ -83,10 +90,9 @@ export default function LandedCostAttachments({
     }, [purchaseOrderId, updateComputation]);
 
     const ensureDraft = async (): Promise<number> => {
-        if (computationId) return computationId;
         if (!allocationRule) throw new Error("Select an allocation rule before uploading computation documents.");
-        const result = await saveLandedCostDraft(purchaseOrderId, allocationRule, expenses, sourceFlow);
-        const id = result.computation?.id;
+        const result = await saveLandedCostDraft(purchaseOrderId, allocationRule, expenses, sourceFlow, exchangeRate);
+        const id = result.computation?.id || computationId;
         if (!id) throw new Error("The landed-cost draft did not return a computation identifier.");
         updateComputation(id, result.computation?.status);
         return id;
@@ -97,8 +103,9 @@ export default function LandedCostAttachments({
         setBusy(true);
         setError(null);
         try {
+            if (!expenseTypeId) throw new Error("Select an expense type/document tag before uploading a computation document.");
             const id = await ensureDraft();
-            const uploaded = await uploadLandedCostAttachment(purchaseOrderId, id, documentType, file);
+            const uploaded = await uploadLandedCostAttachment(purchaseOrderId, id, documentType, expenseTypeId, file);
             setAttachments(previous => [...previous, uploaded]);
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Failed to upload landed-cost document.");
@@ -146,6 +153,16 @@ export default function LandedCostAttachments({
                     Selected rule: {landedCostMethodLabel(allocationRule)}
                 </div>
                 <select
+                    value={expenseTypeId === "" ? "" : String(expenseTypeId)}
+                    onChange={event => setExpenseTypeId(event.target.value ? Number(event.target.value) : "")}
+                    disabled={locked || loading || expenseTypes.length === 0}
+                    aria-label="Expense Type / Document Tag"
+                    className="h-9 min-w-52 rounded-md border bg-background px-2 text-xs font-semibold"
+                >
+                    <option value="">Select Expense Type / Document Tag</option>
+                    {expenseTypes.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+                </select>
+                <select
                     value={documentType}
                     onChange={event => setDocumentType(event.target.value as LandedCostAttachmentRecord["document_type"])}
                     disabled={locked || loading}
@@ -154,15 +171,15 @@ export default function LandedCostAttachments({
                     {DOCUMENT_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
                 <label
-                    aria-disabled={locked || loading || !allocationRule}
-                    className={`h-9 px-3 rounded-md border text-xs font-bold inline-flex items-center justify-center gap-1.5 ${locked || loading || !allocationRule ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"}`}
+                    aria-disabled={locked || loading || !allocationRule || !expenseTypeId}
+                    className={`h-9 px-3 rounded-md border text-xs font-bold inline-flex items-center justify-center gap-1.5 ${locked || loading || !allocationRule || !expenseTypeId ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"}`}
                 >
                     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     Upload document
                     <input
                         type="file"
                         accept=".pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        disabled={locked || loading || !allocationRule || busy}
+                        disabled={locked || loading || !allocationRule || !expenseTypeId || busy}
                         className="sr-only"
                         onChange={event => {
                             void handleUpload(event.target.files?.[0]);
@@ -171,6 +188,7 @@ export default function LandedCostAttachments({
                     />
                 </label>
                 {!allocationRule && <span className="self-center text-[11px] text-amber-600">Select an allocation rule first.</span>}
+                {allocationRule && !expenseTypeId && <span className="self-center text-[11px] text-amber-600">Select an expense tag before uploading.</span>}
             </div>
 
             {error && <p className="text-[11px] text-red-600 font-semibold">{error}</p>}
@@ -195,7 +213,9 @@ export default function LandedCostAttachments({
                                 <span className="shrink-0 text-muted-foreground">{formatFileSize(attachment.file_size)}</span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[10px] text-muted-foreground uppercase">{attachment.document_type.replaceAll("_", " ")}</span>
+                                <span className="text-[10px] text-muted-foreground uppercase">
+                                    {attachment.expense_type_label || "Unclassified (legacy)"} · {attachment.document_type.replaceAll("_", " ")}
+                                </span>
                                 {!locked && (
                                     <button type="button" onClick={() => void handleDelete(attachment)} disabled={busy} className="text-red-600 hover:bg-red-500/10 rounded p-1" aria-label={`Delete ${attachment.file_name}`}>
                                         <Trash2 className="h-3.5 w-3.5" />

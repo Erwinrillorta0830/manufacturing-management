@@ -1,11 +1,6 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 
-interface DirectusMfgBom {
-    product_id: string | number;
-    bom_id: string | number;
-}
-
 interface DirectusMfgRouting {
     routing_id?: string | number;
     id?: string | number;
@@ -37,13 +32,13 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const fetchList = [
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers: headersNoCache }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=*`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,expiry_date,manufacturing_date,created_on`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -112,9 +107,30 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const getObjId = (obj: any): number => {
             if (!obj) return 0;
             if (typeof obj === "object") {
-                return Number(obj.job_order_id || obj.id || 0);
+                return Number(obj.job_order_id || obj.transaction_type_id || obj.source_document_id || obj.id || 0);
             }
             return Number(obj);
+        };
+
+        const getRelationId = (value: unknown, keys: string[] = []): number => {
+            if (value === null || value === undefined) return 0;
+            if (typeof value !== "object") {
+                const id = Number(value);
+                return Number.isInteger(id) && id > 0 ? id : 0;
+            }
+
+            const record = value as Record<string, unknown>;
+            for (const key of [...keys, "id"]) {
+                const id = Number(record[key]);
+                if (Number.isInteger(id) && id > 0) return id;
+            }
+            return 0;
+        };
+
+        const isEnabledFlag = (value: unknown): boolean => {
+            if (value === true || value === 1) return true;
+            const normalized = String(value ?? "").trim().toLowerCase();
+            return normalized === "1" || normalized === "true" || normalized === "yes";
         };
 
         const versionMap = new Map<number, string>();
@@ -131,7 +147,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         return jos.map((jo: any) => {
             const joNo = jo.job_order_no;
             jo.jo_id = joNo;
-            jo.quantity = Number(jo.target_quantity || 0);
+            const targetQuantity = Number(jo.target_quantity ?? jo.quantity ?? 0);
+            jo.quantity = targetQuantity;
             jo.due_date = jo.end_date || null;
             jo.recipe_version_name = versionMap.get(Number(jo.version_id)) || (jo.version_id ? `Version #${jo.version_id}` : null);
 
@@ -168,11 +185,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     quantity: Number(s.allocated_quantity || 0)
                 }));
 
-            const productBomIds = mfgBoms
-                .filter((b: DirectusMfgBom) => Number(b.product_id) === Number(jo.product_id))
-                .map((b: DirectusMfgBom) => Number(b.bom_id));
-
-            // Map routing tasks relationally and update requires_qa dynamically
+            // Map routing tasks relationally. New job-order routes carry their
+            // master routing/QA metadata; legacy rows resolve it by the persisted
+            // JO version, sequence, and operation instead.
             const routingTasks = tasks
                 .filter((t: any) => getObjId(t.job_order_id) === joIdInt)
                 .map((task: any) => {
@@ -193,35 +208,34 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     const op = operations.find((o: any) => Number(o.id) === Number(task.operation_id));
                     const taskName = op?.operation_name || "Production Step";
 
-                    const liveRout = mfgRoutings.find((mr: any) => Number(mr.route_id || mr.id) === Number(task.routing_id));
-                    let reqQA = liveRout 
-                        ? (liveRout.qa_template_id !== null && liveRout.qa_template_id !== undefined && liveRout.qa_template_id !== 0)
-                        : false;
-
-                    if (!reqQA && taskName) {
-                        reqQA = mfgRoutings.some((mr: any) => 
-                            productBomIds.includes(Number(mr.version_id)) && 
-                            Number(mr.operation_id) === Number(task.operation_id) &&
-                            (mr.qa_template_id !== null && mr.qa_template_id !== undefined && mr.qa_template_id !== 0)
-                        );
-                    }
+                    const taskRoutingId = getRelationId(task.routing_id, ["routing_id", "route_id"]);
+                    const persistedQaTemplateId = getRelationId(task.qa_template_id, ["qa_template_id", "template_id"]);
 
                     const totalHours = taskAssigns.reduce((sum: number, a: any) => sum + Number(a.logged_hours || 0), 0);
                     const totalCost = taskAssigns.reduce((sum: number, a: any) => sum + (Number(a.logged_hours || 0) * Number(a.hourly_rate || 0)), 0);
 
-                    const masterRoute = mfgRoutings.find((mr: any) => 
-                        Number(mr.version_id) === Number(jo.version_id) && 
-                        Number(mr.sequence_order) === Number(task.sequence_order) && 
+                    const masterRouteById = taskRoutingId > 0
+                        ? mfgRoutings.find((mr: any) => getRelationId(mr.route_id, ["route_id", "routing_id"]) === taskRoutingId)
+                        : null;
+                    const masterRoute = masterRouteById || mfgRoutings.find((mr: any) =>
+                        Number(mr.version_id) === Number(jo.version_id) &&
+                        Number(mr.sequence_order) === Number(task.sequence_order) &&
                         Number(mr.operation_id) === Number(task.operation_id)
                     );
-                    const routeId = masterRoute?.route_id || masterRoute?.id;
+                    const masterRoutingId = getRelationId(masterRoute?.route_id, ["route_id", "routing_id"]);
+                    const masterQaTemplateId = getRelationId(masterRoute?.qa_template_id, ["qa_template_id", "template_id"]);
+                    const qaTemplateId = persistedQaTemplateId || masterQaTemplateId || null;
+                    const reqQA = isEnabledFlag(task.requires_qa)
+                        || isEnabledFlag(masterRoute?.requires_qa)
+                        || qaTemplateId !== null;
+                    const routeId = masterRoutingId || taskRoutingId;
                     const stepBoms = routeId ? mfgRoutesBom.filter((b: any) => Number(b.route_id) === Number(routeId)) : [];
                     
                     const stepBomItems = stepBoms.map((b: any) => {
                         const prod = productsList.find((p: any) => Number(p.product_id) === Number(b.product_id));
                         const qtyPerUnit = Number(b.quantity_required || 0);
                         const wastage = 1 + (Number(b.wastage_factor_percentage || 0) / 100);
-                        const totalNeeded = qtyPerUnit * Number(jo.target_quantity || 0) * wastage;
+                        const totalNeeded = qtyPerUnit * targetQuantity * wastage;
                         return {
                             product_id: b.product_id,
                             product_name: prod?.product_name || `Product #${b.product_id}`,
@@ -234,8 +248,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     return {
                         id: task.jo_route_id, // Map primary key jo_route_id to legacy 'id'
                         jo_id: joNo,
-                        routing_id: task.routing_id,
-                        qa_template_id: liveRout ? liveRout.qa_template_id : null,
+                        routing_id: taskRoutingId || masterRoutingId || null,
+                        qa_template_id: qaTemplateId,
                         name: taskName,
                         sequence_order: task.sequence_order,
                         status: task.status,
@@ -271,44 +285,57 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             const matchingBom = mfgBoms.find((b: any) => Number(b.version_id) === Number(jo.version_id));
             const versionStr = matchingBom ? `${matchingBom.version_name || "v" + matchingBom.version_code}` : jo.version_id ? `Version #${jo.version_id}` : "";
 
-            const joYieldLogs = mfgYieldLedger
-                .filter((l: any) => getObjId(l.job_order_id) === joIdInt)
-                .map((l: any) => {
-                    const matchedMov = invMovements.find((mov: any) => 
-                        mov.transaction_type_id === 2 && 
-                        String(mov.source_document_no) === String(jo.job_order_no) &&
-                        String(mov.batch_no) === String(l.lot_number)
-                    );
-                    return {
-                        ...l,
-                        lot_number: l.lot_number || matchedMov?.batch_no || `MFG-${jo.job_order_no}`,
-                        expiry_date: matchedMov?.expiry_date || null,
-                        manufacturing_date: matchedMov?.manufacturing_date || (matchedMov?.created_on ? matchedMov.created_on.split('T')[0] : null)
-                    };
-                });
+            const finalMovements = invMovements.filter((mov: any) => {
+                const movementSourceId = getObjId(mov.source_document_id);
+                const movementSourceNo = String(mov.source_document_no ?? "").trim();
+                const sameJobOrder = movementSourceId === joIdInt
+                    || (movementSourceId === 0 && movementSourceNo === String(jo.job_order_no ?? "").trim());
+                return getObjId(mov.transaction_type_id) === 2 && sameJobOrder;
+            });
 
-            // Also check if there is a final closed movement for this Job Order (transaction_type_id = 2)
-            const finalMovements = invMovements.filter((mov: any) => 
-                mov.transaction_type_id === 2 && 
-                mov.source_document_no === jo.job_order_no
-            );
-            finalMovements.forEach((mov: any) => {
-                // Prevent duplicate logs if already present
-                if (!joYieldLogs.some((l: any) => String(l.lot_number) === String(mov.batch_no))) {
-                    const yieldLog = mfgYieldLedger.find((y: any) => String(y.lot_number) === String(mov.batch_no));
+            // The yield ledger is the authoritative production-output source. An inventory
+            // movement records the same output in the stock ledger and must not be counted
+            // as another yield event.
+            const ledgerRows = mfgYieldLedger.filter((l: any) => getObjId(l.job_order_id) === joIdInt);
+            const joYieldLogs = ledgerRows.map((l: any) => {
+                const ledgerLot = String(l.lot_number ?? "").trim();
+                const ledgerQuantity = Number(l.yield_quantity || 0);
+                const exactMovement = finalMovements.find((mov: any) =>
+                    String(mov.batch_no ?? "").trim() === ledgerLot
+                );
+                const uniqueQuantityMovement = !exactMovement && finalMovements.length === 1
+                    && Number(finalMovements[0].quantity || 0) === ledgerQuantity
+                    ? finalMovements[0]
+                    : null;
+                const matchedMov = exactMovement || uniqueQuantityMovement;
+
+                return {
+                    ...l,
+                    ledger_id: l.ledger_id ?? l.id,
+                    lot_number: ledgerLot || String(matchedMov?.batch_no ?? "").trim() || `MFG-${jo.job_order_no}`,
+                    expiry_date: l.expiry_date || matchedMov?.expiry_date || null,
+                    manufacturing_date: l.manufacturing_date || matchedMov?.manufacturing_date || (matchedMov?.created_on ? matchedMov.created_on.split("T")[0] : null)
+                };
+            });
+
+            // Preserve compatibility for legacy output movements that have no yield-ledger
+            // row. Once a ledger row exists, unmatched movements are intentionally ignored.
+            if (joYieldLogs.length === 0) {
+                finalMovements.forEach((mov: any) => {
+                    const movementId = mov.movement_id ?? mov.id;
                     joYieldLogs.push({
-                        ledger_id: `mfg-${mov.id}`,
+                        ledger_id: movementId !== undefined && movementId !== null ? `mfg-${movementId}` : undefined,
                         job_order_id: joIdInt,
                         shift_name: "Final Close",
                         yield_quantity: String(mov.quantity),
-                        qa_status: yieldLog?.qa_status || "Passed",
+                        qa_status: "Passed",
                         logged_at: mov.created_on,
-                        lot_number: mov.batch_no,
+                        lot_number: mov.batch_no || `MFG-${jo.job_order_no}`,
                         expiry_date: mov.expiry_date || null,
-                        manufacturing_date: mov.manufacturing_date || (mov.created_on ? mov.created_on.split('T')[0] : null)
+                        manufacturing_date: mov.manufacturing_date || (mov.created_on ? mov.created_on.split("T")[0] : null)
                     });
-                }
-            });
+                });
+            }
 
             const totalProduced = joYieldLogs.reduce((sum: number, l: any) => sum + Number(l.yield_quantity || 0), 0);
 
@@ -328,7 +355,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 unit_of_measurement: uomName,
                 uom_name: uomName,
                 uom_shortcut: uomShortcut,
-                quantity: Number(jo.target_quantity || 0),
+                quantity: targetQuantity,
                 bom: jo.version_id ? { version_id: jo.version_id } : null,
                 components: [],
                 routings: simulatedRoutings,
@@ -342,7 +369,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 unit_of_measurement: uomName,
                 uom_name: uomName,
                 uom_shortcut: uomShortcut,
-                quantity: Number(jo.target_quantity || 0),
+                quantity: targetQuantity,
                 status: mappedStatus,
                 bom: jo.version_id ? { version_id: jo.version_id } : null,
                 version_name: versionStr,
