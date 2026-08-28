@@ -2,6 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { resolveJobOrderRelationship } from "../../inventory/_job-order-relationships";
+import {
+    normalizeFinalQARelease,
+    resolveCanonicalLotId,
+    type FinalQAReleaseRecord
+} from "./_domain";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -38,12 +43,7 @@ interface DirectusLot {
     lot_name?: unknown;
 }
 
-interface DirectusRelease {
-    final_release_id?: unknown;
-    id?: unknown;
-    job_order_id?: unknown;
-    lot_id?: unknown;
-}
+type DirectusRelease = FinalQAReleaseRecord;
 
 class FinalQAValidationError extends Error {
     constructor(
@@ -210,6 +210,24 @@ function errorResponse(error: unknown) {
     return NextResponse.json({ error: message }, { status: 500 });
 }
 
+async function ensureNoExistingRelease(lotId: number) {
+    const releases = await directusCollection<DirectusRelease>(
+        `${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=final_release_id,lot_id&limit=-1`,
+        "Existing final QA release lookup"
+    );
+
+    for (const release of releases) {
+        const storedLotId = relationId(release.lot_id, ["lot_id", "id"]);
+        const canonicalLotId = await resolveCanonicalLotId(storedLotId);
+        if (canonicalLotId === lotId) {
+            throw new FinalQAValidationError(
+                "This master lot already has a final QA release and cannot be released again.",
+                409
+            );
+        }
+    }
+}
+
 // GET: Retrieves all final batch QA releases
 export async function GET(request: Request) {
     try {
@@ -222,7 +240,8 @@ export async function GET(request: Request) {
         }
 
         const releases = await directusCollection<DirectusRelease>(url, "Final QA release lookup");
-        return NextResponse.json(releases);
+        const normalizedReleases = await Promise.all(releases.map((release) => normalizeFinalQARelease(release)));
+        return NextResponse.json(normalizedReleases);
     } catch (error) {
         return errorResponse(error);
     }
@@ -256,6 +275,7 @@ export async function POST(request: Request) {
             ? null
             : positiveSafeInteger(body.approvedBy, "approvedBy");
         const relationship = await verifyFinalQALotRelationship({ jobOrderId, lotId, productId, branchId });
+        await ensureNoExistingRelease(relationship.lotId);
         const timestamp = new Date().toISOString();
         const payload = {
             job_order_id: relationship.jobOrderId,
