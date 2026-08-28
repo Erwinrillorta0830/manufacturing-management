@@ -485,13 +485,9 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                             </button>
                                         </td>
                                         <td className="py-2.5 px-4 font-semibold text-foreground">
-                                            <input
-                                                type="text"
-                                                disabled={isVersionLocked}
-                                                value={item.overhead_name}
-                                                onChange={(e) => handleUpdateItem(item.id, "overhead_name", e.target.value)}
-                                                className="w-full bg-transparent border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 outline-none font-semibold text-foreground disabled:opacity-70"
-                                            />
+                                            <span className="truncate block font-semibold text-foreground text-xs">
+                                                {item.overhead_name}
+                                            </span>
                                         </td>
                                         <td className="py-2.5 px-4 text-right font-mono font-bold">
                                             <input

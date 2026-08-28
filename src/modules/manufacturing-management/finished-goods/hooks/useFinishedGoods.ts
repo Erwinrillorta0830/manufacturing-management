@@ -1248,17 +1248,49 @@ export function useFinishedGoods(initialTab: string = "details") {
         const numericProductId = Number(selectedProductId);
         const currentVer = versions.find(v => v.version_id === vId);
 
-        // Validate routes and BOM ingredients before submitting
+        // 1. Validate routing operation steps
+        if (!editedRoutes || editedRoutes.length === 0) {
+            toast.error("Cannot submit for approval: At least one workstation routing operation step is required.");
+            return;
+        }
+
+        // 2. Validate BOM ingredients across all routes
+        const totalBomItems = editedRoutes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
+        if (totalBomItems === 0) {
+            toast.error("Cannot submit for approval: At least one raw material or BOM ingredient component is required.");
+            return;
+        }
+
+        // 3. Validate BOM ingredient rows
         const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
             routeId: route.route_id,
             rowNumber: index + 1,
             item,
             materialType: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
-        }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0);
+        }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0 || !Number.isFinite(Number(row.item.quantity_required)) || Number(row.item.quantity_required) <= 0);
 
         if (invalidBomRow) {
-            const issue = !invalidBomRow.materialType ? "select a Material Type" : "select a Material";
+            const issue = !invalidBomRow.materialType 
+                ? "select a Material Type" 
+                : (!Number.isFinite(Number(invalidBomRow.item.product_id)) || Number(invalidBomRow.item.product_id) <= 0)
+                    ? "select a Material"
+                    : "enter a valid required quantity (> 0)";
             toast.error(`Route ${invalidBomRow.routeId}, BOM row ${invalidBomRow.rowNumber}: ${issue} before submitting.`);
+            return;
+        }
+
+        // 4. Validate Direct Labor positions
+        const laborPositions = editedVersionDetails?.labor_positions || currentVer?.labor_positions || selectedVersion?.labor_positions || [];
+        if (!laborPositions || laborPositions.length === 0) {
+            toast.error("Cannot submit for approval: At least one direct labor position standard is required.");
+            return;
+        }
+
+        // 5. Validate Overhead allocations
+        const overheadItems = editedVersionDetails?.overhead_items || currentVer?.overhead_items || selectedVersion?.overhead_items || [];
+        const customOverhead = Number(editedVersionDetails?.custom_overhead ?? currentVer?.custom_overhead ?? selectedVersion?.custom_overhead ?? 0);
+        if ((!overheadItems || overheadItems.length === 0) && customOverhead <= 0) {
+            toast.error("Cannot submit for approval: At least one version overhead allocation or rate is required.");
             return;
         }
 
