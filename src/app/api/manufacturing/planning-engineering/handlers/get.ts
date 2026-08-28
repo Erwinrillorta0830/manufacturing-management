@@ -1,7 +1,5 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { 
     fetchJobOrders, 
     getProductInventoryAndSafetyStock
@@ -13,6 +11,7 @@ import {
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
+import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -159,16 +158,66 @@ export async function handleGET(request: Request) {
 
         if (action === "job-materials") {
             const joId = searchParams.get("joId");
-            const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joId}&limit=-1`, { headers, cache: "no-store" });
-            const mData = res.ok ? (await res.json()).data || [] : [];
+            const numericJoId = Number(joId);
+            if (!joId || !Number.isFinite(numericJoId) || numericJoId <= 0) {
+                return NextResponse.json({ error: "A valid Job Order ID is required", code: "JOB_MATERIALS_INVALID_ID" }, { status: 400 });
+            }
+
+            let mData: any[];
+            try {
+                const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${encodeURIComponent(joId)}&limit=-1`, { headers, cache: "no-store" });
+                if (!res.ok) {
+                    console.error("Required job-order materials lookup failed:", res.status, res.statusText);
+                    return NextResponse.json(
+                        { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+
+                const materialsPayload = await res.json();
+                if (!Array.isArray(materialsPayload?.data)) {
+                    console.error("Required job-order materials lookup returned an invalid payload.");
+                    return NextResponse.json(
+                        { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+                mData = materialsPayload.data;
+            } catch (error) {
+                console.error("Required job-order materials lookup failed:", error);
+                return NextResponse.json(
+                    { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
+
             const pIds = mData.map((d: any) => Number(d.product_id?.product_id || d.product_id)).filter(Boolean);
             const pMap = new Map<number, any>();
             
             // Get Job Order branch
-            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, { headers, cache: "no-store" });
-            const joData = joRes.ok ? (await joRes.json()).data : null;
+            let joData: any;
+            try {
+                const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(joId)}`, { headers, cache: "no-store" });
+                if (!joRes.ok) {
+                    console.error("Job Order context lookup failed:", joRes.status, joRes.statusText);
+                    return NextResponse.json(
+                        { error: "Job Order context is temporarily unavailable.", code: "JOB_ORDER_CONTEXT_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+
+                const joPayload = await joRes.json();
+                joData = joPayload?.data;
+            } catch (error) {
+                console.error("Job Order context lookup failed:", error);
+                return NextResponse.json(
+                    { error: "Job Order context is temporarily unavailable.", code: "JOB_ORDER_CONTEXT_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
+
             if (!joData?.branch_id) {
-                return NextResponse.json({ error: "Job Order has no branch assigned" }, { status: 400 });
+                return NextResponse.json({ error: "Job Order has no branch assigned", code: "JOB_ORDER_BRANCH_MISSING" }, { status: 400 });
             }
             const branchId = Number(joData.branch_id);
 
@@ -722,15 +771,7 @@ export async function handleGET(request: Request) {
             const opsMap = new Map<number, string>();
             operations.forEach((o: any) => opsMap.set(Number(o.id), o.operation_name));
 
-            let dispositions: any[] = [];
-            try {
-                const dispFile = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
-                if (fs.existsSync(dispFile)) {
-                    dispositions = JSON.parse(fs.readFileSync(dispFile, "utf-8") || "[]");
-                }
-            } catch (err) {
-                console.error("Failed to read dispositions for qa-logs mapping:", err);
-            }
+            const dispositions = await enrichDispositions(await readDispositions());
 
             const groupsMap = new Map<string, any[]>();
             qaRecords.forEach((rec: any) => {
@@ -764,7 +805,9 @@ export async function handleGET(request: Request) {
                 let expected = targetQty;
                 let actual = targetQty;
                 if (!overallPassed && dispositions.length > 0) {
-                    const disp = dispositions.find(d => Number(d.task_id) === routeId);
+                    const disp = dispositions.find(d =>
+                        Number(d.job_order_id) === joId && Number(d.task_id) === routeId
+                    ) || dispositions.find(d => Number(d.task_id) === routeId);
                     if (disp) {
                         expected = Number(disp.expected_quantity || targetQty);
                         actual = Number(disp.actual_quantity || targetQty);

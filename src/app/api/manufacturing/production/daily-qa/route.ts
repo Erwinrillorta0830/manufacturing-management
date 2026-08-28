@@ -1,6 +1,11 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { readDispositions, resolveDispositionMetadata, writeDispositions } from "@/app/api/manufacturing/qa/_dispositions";
+import {
+    createDisposition,
+    findPendingDisposition,
+    resolveDispositionMetadata,
+    updateDisposition
+} from "@/app/api/manufacturing/qa/_dispositions";
 import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -157,7 +162,6 @@ export async function POST(request: Request) {
 
             // 2. Alert the supervisor disposition dashboard with authoritative
             // product, operation, and station metadata.
-            const dispositions = readDispositions();
             const failedInps = inspections.filter((ins: any) =>
                 deriveDailyQAOutcome([ins], []).status === "QA Hold"
             );
@@ -210,23 +214,19 @@ export async function POST(request: Request) {
                     resolved_by: null
                 };
 
-                const existingIndex = dispositions.findIndex((disp: any) =>
-                    disp.disposition_status === "Pending"
-                    && Number(disp.job_order_id || 0) === Number(newDisp.job_order_id)
-                    && Number(disp.task_id || 0) === Number(newDisp.task_id || 0)
+                const existingDisposition = await findPendingDisposition(
+                    Number(newDisp.job_order_id),
+                    Number(newDisp.task_id || 0) || null
                 );
-                if (existingIndex >= 0) {
-                    dispositions[existingIndex] = {
-                        ...dispositions[existingIndex],
-                        ...newDisp,
-                        id: dispositions[existingIndex].id
-                    };
+                if (existingDisposition?.id) {
+                    const { id: _existingId, ...updatePayload } = newDisp;
+                    await updateDisposition(String(existingDisposition.id), {
+                        ...updatePayload
+                    });
                 } else {
-                    dispositions.push(newDisp);
+                    await createDisposition(newDisp);
                 }
             }
-
-            writeDispositions(dispositions);
         }
 
         // Sync QA disposition back to yield ledger (only "Passed" if all steps have been QA'd)
