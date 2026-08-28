@@ -8,15 +8,16 @@ interface SelectedProductsListProps {
     handleAgreedPriceChange: (lineIdOrProductId: number, val: number) => void;
     removeProductFromQuote: (lineIdOrProductId: number) => void;
     changeProductVersion: (lineIdOrProductId: number, versionId: number | null, versionName: string | null) => void;
-    productTypes?: any[];
-    allProducts?: any[];
+    productTypes?: Record<string, unknown>[];
+    allProducts?: CatalogProduct[];
     addEmptyRow?: () => void;
-    updateRow?: (lineId: number, field: string, value: any) => void;
+    updateRow?: (lineId: number, field: string, value: unknown) => void;
     handleRowProductSelect?: (lineId: number, prod: CatalogProduct | null) => void;
 }
 
-const formatUomLabel = (product: any): string => {
-    return String(product.unit_of_measurement?.unit_shortcut || product.unit_shortcut || "Unit");
+const formatUomLabel = (product: Record<string, unknown>): string => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return String((product as any).unit_of_measurement?.unit_shortcut || (product as any).unit_shortcut || "Unit");
 };
 
 export function SelectedProductsList({
@@ -47,11 +48,11 @@ export function SelectedProductsList({
             fetch(`/api/manufacturing/finished-goods/versions?productId=${parentId}`)
                 .then(res => res.ok ? res.json() : [])
                 .then(data => {
-                    const sorted = [...data].sort((a: any, b: any) => {
-                        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-                        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                    const sorted = [...data].sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+                        const timeA = a.created_at ? new Date(a.created_at as string).getTime() : 0;
+                        const timeB = b.created_at ? new Date(b.created_at as string).getTime() : 0;
                         if (timeA !== timeB) return timeB - timeA;
-                        return b.id - a.id;
+                        return (b.id as number) - (a.id as number);
                     });
                     setVersionsMap(prev => ({ ...prev, [parentId]: sorted }));
                     
@@ -137,12 +138,12 @@ export function SelectedProductsList({
                                 <td colSpan={9} className="py-12 text-center text-xs text-muted-foreground bg-muted/25 border-dashed">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <Coins className="h-10 w-10 text-muted-foreground/60 animate-bounce" />
-                                        <span>No products selected. Click "+ Add Product" to add them to this pricing draft.</span>
+                                        <span>No products selected. Click &quot;+ Add Product&quot; to add them to this pricing draft.</span>
                                     </div>
                                 </td>
                             </tr>
-                        ) : selectedProductsList.map((item) => {
-                            const lineId = item.line_id || item.product?.product_id || Math.random();
+                        ) : selectedProductsList.map((item, index) => {
+                            const lineId = item.line_id || item.product?.product_id || index;
                             const pid = item.product?.product_id;
                             const parentId = item.parent_product_id || item.product?.parent_product_id || pid;
                             
@@ -157,17 +158,17 @@ export function SelectedProductsList({
 
                             const otherSelectedVariantIds = selectedProductsList.filter(it => it.line_id !== lineId).map(it => it.product?.product_id).filter(Boolean);
 
-                            const parentOptions = allProducts.filter(p => p.is_parent)
+                            const parentOptions = allProducts.filter(p => (p as unknown as Record<string, unknown>).is_parent)
                                 .filter(p => {
-                                    if (item.product_type_id && Number(p.product_type) !== item.product_type_id) return false;
+                                    if (item.product_type_id && Number((p as unknown as Record<string, unknown>).product_type) !== item.product_type_id) return false;
                                     return true;
                                 })
                                 .map(p => ({ value: String(p.product_id), label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})` }));
 
-                            const uomOptions = allProducts.filter(p => Number(p.parent_product_id) === Number(parentId))
+                            const uomOptions = allProducts.filter(p => Number((p as unknown as Record<string, unknown>).parent_product_id) === Number(parentId))
                                 .filter(p => Number(p.product_id) === Number(pid) || !otherSelectedVariantIds.includes(Number(p.product_id)))
-                                .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
-                                .map(p => ({ value: String(p.product_id), label: formatUomLabel(p) }));
+                                .sort((a, b) => Number((b as unknown as Record<string, unknown>).is_parent) - Number((a as unknown as Record<string, unknown>).is_parent) || Number((a as unknown as Record<string, unknown>).unit_count) - Number((b as unknown as Record<string, unknown>).unit_count))
+                                .map(p => ({ value: String(p.product_id), label: formatUomLabel(p as unknown as Record<string, unknown>) }));
                                 
                             const activeVersions = versionsMap[parentId || 0] || [];
 
@@ -175,7 +176,7 @@ export function SelectedProductsList({
                                 <tr key={lineId} className="hover:bg-muted/35 transition-colors group">
                                     <td className="p-3.5 overflow-visible">
                                         <CreatableSelect 
-                                            options={productTypes.map(t => ({ value: String(t.id), label: t.name }))} 
+                                            options={productTypes.map(t => ({ value: String(t.id), label: String(t.name) }))} 
                                             value={item.product_type_id ? String(item.product_type_id) : ""} 
                                             onValueChange={(val) => {
                                                 if (updateRow) {
@@ -225,7 +226,7 @@ export function SelectedProductsList({
                                             onValueChange={(val) => {
                                                 if (handleRowProductSelect) {
                                                     const variant = allProducts.find(p => String(p.product_id) === val);
-                                                    handleRowProductSelect(lineId, variant || null);
+                                                    handleRowProductSelect(lineId, (variant as unknown as CatalogProduct) || null);
                                                 }
                                             }} 
                                             placeholder="Choose UOM..." 

@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { QuotationHeader, QuotationSnapshotNode, Customer, Project } from "../types";
-import { generateComparativePDF, SkuHistoryItem } from "../utils/exportComparativePDF";
+import { generateComparativePDF } from "../utils/exportComparativePDF";
 
 interface ProjectPortfolioItem {
     projectId: number;

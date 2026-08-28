@@ -50,8 +50,8 @@ export function generateComparativePDF({
     doc.text(`Tracked over ${sortedHistoryQuotes.length} historical revision periods`, pageWidth - margin - 5, 31.5, { align: "right" });
 
     // Build Table Headers dynamically
-    const headerRow1: any[] = [{ content: "FINISHED GOOD SKU", rowSpan: 2, styles: { halign: "left", cellWidth: 35 } }];
-    const headerRow2: any[] = [];
+    const headerRow1: unknown[] = [{ content: "FINISHED GOOD SKU", rowSpan: 2, styles: { halign: "left", cellWidth: 35 } }];
+    const headerRow2: unknown[] = [];
 
     sortedHistoryQuotes.forEach(q => {
         // Extract the last part of the quote number (e.g., "REV1" from "QT-20260818-134539-REV1")
@@ -75,7 +75,7 @@ export function generateComparativePDF({
         const priceDiff = latestVer.price - firstVer.price;
         const costDiff = latestVer.cost - firstVer.cost;
 
-        const row: any[] = [
+        const row: unknown[] = [
             { content: sku.productName, styles: { fontStyle: "bold", textColor: [30, 25, 45] } }
         ];
 
@@ -117,8 +117,10 @@ export function generateComparativePDF({
     autoTable(doc, {
         startY: 40,
         margin: { left: margin, right: margin },
-        head: [headerRow1, headerRow2],
-        body: tableBody,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        head: [headerRow1, headerRow2] as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        body: tableBody as any,
         theme: "plain",
         headStyles: {
             fillColor: [250, 250, 250],

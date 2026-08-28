@@ -94,12 +94,12 @@ export function useQuotation() {
         Promise.all([
             fetch("/api/manufacturing/finished-goods/products?limit=-1").then(r => r.ok ? r.json() : []),
             fetch("/api/manufacturing/sales-order?action=create-lookups").then(r => r.ok ? r.json() : {})
-        ]).then(([productsData, lookupsData]: [any, any]) => {
-            const fgOnly = productsData.filter((p: any) => p.has_versions === true);
-            setCatalogProducts(fgOnly);
+        ]).then(([productsData, lookupsData]: [Record<string, unknown>[], Record<string, unknown>]) => {
+            const fgOnly = productsData.filter((p: Record<string, unknown>) => p.has_versions === true);
+            setCatalogProducts(fgOnly as unknown as CatalogProduct[]);
             
-            if (lookupsData.products) setAllProducts(lookupsData.products);
-            if (lookupsData.productTypes) setProductTypes(lookupsData.productTypes);
+            if (lookupsData.products) setAllProducts(lookupsData.products as unknown as CatalogProduct[]);
+            if (lookupsData.productTypes) setProductTypes(lookupsData.productTypes as Record<string, unknown>[]);
             
             setLoadingProducts(false);
         }).catch(e => {
@@ -295,8 +295,8 @@ export function useQuotation() {
                 let productTypeId = catalogProd.product_type ? Number(catalogProd.product_type) : undefined;
 
                 // Fallback for parent ID if nested
-                if (!parentId && catalogProd.parent_id && (catalogProd.parent_id as any).id) {
-                    parentId = Number((catalogProd.parent_id as any).id);
+                if (!parentId && catalogProd.parent_id && (catalogProd.parent_id as Record<string, unknown>).id) {
+                    parentId = Number((catalogProd.parent_id as Record<string, unknown>).id);
                 }
 
                 // Inherit product_type from parent if missing on child
@@ -360,9 +360,9 @@ export function useQuotation() {
     };
     
     // Catalog and selected products
-    const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
-    const [allProducts, setAllProducts] = useState<any[]>([]);
-    const [productTypes, setProductTypes] = useState<any[]>([]);
+    const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+    const [allProducts, setAllProducts] = useState<CatalogProduct[]>([]);
+    const [productTypes, setProductTypes] = useState<Record<string, unknown>[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
     const [selectedProductsList, setSelectedProductsList] = useState<SelectedQuoteProduct[]>([]);
     const nextLineIdRef = useRef(1);
@@ -400,7 +400,7 @@ export function useQuotation() {
         toast.success(`Added ${prod.product_name} to quotation draft`);
     };
 
-    const updateRow = (lineId: number, field: string, value: any) => {
+    const updateRow = (lineId: number, field: string, value: unknown) => {
         setSelectedProductsList(prev => prev.map(item => {
             if (item.line_id === lineId) {
                 return { ...item, [field]: value };
@@ -572,7 +572,7 @@ export function useQuotation() {
                 node_name: item.product.product_name,
                 node_type: "product_quota",
                 quantity: 1,
-                uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as any).unit_shortcut || "PCS",
+                uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as unknown as Record<string, unknown>).unit_shortcut || "PCS",
                 frozen_unit_cost_php: item.resolvedCost,
                 frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
             }));
@@ -613,7 +613,7 @@ export function useQuotation() {
         if (selectedQuote.project_id) {
             projNameStr = typeof selectedQuote.project_id === "object" && 'project_name' in selectedQuote.project_id
                 ? selectedQuote.project_id.project_name
-                : allProjects.find(p => p.projectId === Number((selectedQuote.project_id as any)?.id || selectedQuote.project_id))?.projectName || "Unknown Project";
+                : allProjects.find(p => p.projectId === Number((selectedQuote.project_id as unknown as Record<string, unknown>)?.id || selectedQuote.project_id))?.projectName || "Unknown Project";
         }
 
         const priceTypeName = priceTypes.find(pt => pt.price_type_id.toString() === selectedPriceTypeId)?.price_type_name || "Custom Price Tier";
@@ -624,7 +624,7 @@ export function useQuotation() {
             try {
                 const sessionUser = localStorage.getItem("user_name") || localStorage.getItem("user_fname");
                 if (sessionUser) createdByStr = sessionUser;
-            } catch (e) {
+            } catch {
                 // ignore
             }
         }
@@ -644,11 +644,11 @@ export function useQuotation() {
                     }
                 }
                 const ptMatch = productTypes.find(pt => pt.id === pTypeId);
-                if (ptMatch) typeName = ptMatch.name;
+                if (ptMatch) typeName = String(ptMatch.name);
             }
 
-            let versionName = snap.version_name || "v1.0";
-            if (prodMatch && prodMatch.has_versions) {
+            const versionName = snap.version_name || "v1.0";
+            if (prodMatch && (prodMatch as unknown as Record<string, unknown>).has_versions) {
                 // If the product has versions, and the snapshot has a version_id but no version_name, try to find it
                 // (Though usually the snapshot will have version_name saved, we fallback just in case)
             }

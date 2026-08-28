@@ -61,7 +61,7 @@ export async function fetchQuotations(): Promise<unknown[]> {
             
             let createdByName = "System Admin";
             if (q.created_by) {
-                const createdById = typeof q.created_by === "object" ? (q.created_by as any)?.id || (q.created_by as any)?.user_id : q.created_by;
+                const createdById = typeof q.created_by === "object" ? (q.created_by as Record<string, unknown>)?.id || (q.created_by as Record<string, unknown>)?.user_id : q.created_by;
                 const userMatch = users.find(u => Number(u.user_id) === Number(createdById));
                 if (userMatch) {
                     createdByName = [userMatch.user_fname, userMatch.user_lname].filter(Boolean).join(" ");

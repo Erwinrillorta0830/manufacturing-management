@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { QuotationHeader, QuotationSnapshotNode } from "../types";
+import { QuotationHeader } from "../types";
 
 interface ExportQuotationPDFParams {
     quote: QuotationHeader;

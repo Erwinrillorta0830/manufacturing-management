@@ -38,7 +38,6 @@ export default function QuotationModule() {
         handlePriceTypeChange,
         confirmPriceTypeChange,
         cancelPriceTypeChange,
-        loadingProducts,
         selectedProductsList,
         savingQuote,
         loadQuotes,
