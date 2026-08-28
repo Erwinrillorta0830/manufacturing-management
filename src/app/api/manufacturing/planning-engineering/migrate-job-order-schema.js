@@ -68,7 +68,9 @@ const collectionsSchema = [
             { field: "operator_id", type: "integer", schema: { is_nullable: false } },
             { field: "logged_hours", type: "float", schema: { is_nullable: false, default_value: 0 } },
             { field: "hourly_rate", type: "float", schema: { is_nullable: true, default_value: 0 } },
-            { field: "logged_at", type: "timestamp", schema: { is_nullable: false } }
+            { field: "logged_at", type: "timestamp", schema: { is_nullable: false } },
+            { field: "started_at", type: "dateTime", schema: { is_nullable: true } },
+            { field: "stopped_at", type: "dateTime", schema: { is_nullable: true } }
         ]
     },
     {
