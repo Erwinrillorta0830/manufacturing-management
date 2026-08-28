@@ -1,6 +1,7 @@
 import {
     MmPhysicalInventorySheet,
     MmPhysicalInventoryDetail,
+    MmOffsetPairing,
     MmLot,
     MmInventoryLot,
     Branch,
@@ -358,3 +359,25 @@ export async function fetchMasterUnits(): Promise<Unit[]> {
         return [];
     }
 }
+
+export async function savePhysicalInventoryOffsetPairings(
+    piId: number,
+    pairings: MmOffsetPairing[]
+): Promise<MmOffsetPairing[]> {
+    try {
+        const res = await fetch(`${API_BASE}/${piId}/details`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ offset_pairings: pairings }),
+        });
+        if (res.ok) {
+            const json = await res.json();
+            return json.data?.offset_pairings || pairings;
+        }
+        return pairings;
+    } catch (e) {
+        console.error("Failed to save offset pairings to backend:", e);
+        return pairings;
+    }
+}
+

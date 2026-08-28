@@ -470,11 +470,13 @@ export default function PhysicalInventoryDetailModal({
                             </div>
                             <SearchableSelect
                                 options={filteredProducts.map((p) => {
-                                    const uName = typeof p.unit_of_measurement === "object" ? p.unit_of_measurement?.unit_shortcut : "";
+                                    const uName = typeof p.unit_of_measurement === "object" ? (p.unit_of_measurement?.unit_shortcut || p.unit_of_measurement?.unit_name) : "";
+                                    const uCount = Number(p.unit_of_measurement_count || 0);
+                                    const countText = uCount > 1 && uName ? ` (${uCount} pcs/${uName.toLowerCase()})` : uCount > 1 ? ` (${uCount} pcs)` : "";
                                     return {
                                         value: p.product_id,
                                         label: `[${p.product_code}] ${p.product_name}`,
-                                        sublabel: uName ? `UOM: ${uName}` : undefined,
+                                        sublabel: uName ? `UOM: ${uName}${countText}` : countText ? `UOM: ${countText.trim()}` : undefined,
                                     };
                                 })}
                                 value={selectedProductId}

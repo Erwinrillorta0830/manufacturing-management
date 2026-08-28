@@ -189,18 +189,7 @@ export default function CreateBatchModal({
                         </div>
                     </div>
 
-                    <div>
-                        <label className="block text-xs font-semibold text-muted-foreground mb-1">Unit Cost (₱) *</label>
-                        <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={unitCost}
-                            onChange={(e) => setUnitCost(e.target.value)}
-                            className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20"
-                            required
-                        />
-                    </div>
+
 
                     <div className="flex items-center justify-end gap-2 pt-3 border-t">
                         <button
