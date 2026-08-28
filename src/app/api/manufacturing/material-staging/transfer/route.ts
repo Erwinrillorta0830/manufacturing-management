@@ -80,6 +80,16 @@ function recordId(record: DirectusRecord): number {
     return relationId(record.allocation_id ?? record.jo_materials_reservation_id ?? record.movement_id ?? record.id);
 }
 
+function compareAllocationRows(left: DirectusRecord, right: DirectusRecord): number {
+    const leftCreatedAt = Date.parse(String(left.created_at ?? ""));
+    const rightCreatedAt = Date.parse(String(right.created_at ?? ""));
+    const safeLeftCreatedAt = Number.isFinite(leftCreatedAt) ? leftCreatedAt : Number.MAX_SAFE_INTEGER;
+    const safeRightCreatedAt = Number.isFinite(rightCreatedAt) ? rightCreatedAt : Number.MAX_SAFE_INTEGER;
+
+    if (safeLeftCreatedAt !== safeRightCreatedAt) return safeLeftCreatedAt - safeRightCreatedAt;
+    return recordId(left) - recordId(right);
+}
+
 function directusErrorMessage(payload: unknown, fallback: string): string {
     if (!payload || typeof payload !== "object") return fallback;
 
@@ -385,9 +395,10 @@ export async function POST(request: Request) {
             : requestedLotIds.size === 1
                 ? stockByBatch.get(requestedBatchKey) || 0
                 : 0;
+        const nonNegativeAvailableStock = Math.max(0, availableStock);
 
-        if ((hasAmbiguousBatchLot || availableStock < data.transfer_quantity) && !data.override_negative) {
-            const shortageQty = Math.max(0, data.transfer_quantity - availableStock);
+        if ((hasAmbiguousBatchLot || nonNegativeAvailableStock < data.transfer_quantity) && !data.override_negative) {
+            const shortageQty = Math.max(0, data.transfer_quantity - nonNegativeAvailableStock);
             const failureCode = hasAmbiguousBatchLot
                 ? "AMBIGUOUS_LOT"
                 : "INSUFFICIENT_LOT_STOCK";
@@ -396,13 +407,14 @@ export async function POST(request: Request) {
                     success: false,
                     shortage: true,
                     failure_code: failureCode,
+                    allocation_id: data.allocation_id,
                     message: hasAmbiguousBatchLot
                         ? "The selected batch maps to multiple inventory lots; select a specific lot before staging."
-                        : `Insufficient stock in the selected lot. Available: ${availableStock.toFixed(2)}, Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQty.toFixed(2)}`,
+                        : `Insufficient stock in the selected lot. Available: ${nonNegativeAvailableStock.toFixed(2)}, Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQty.toFixed(2)}`,
                     product_id: data.product_id,
                     lot_id: data.lot_id,
                     batch_no: data.batch_no,
-                    available_quantity: availableStock,
+                    available_quantity: nonNegativeAvailableStock,
                     required_quantity: data.transfer_quantity,
                     shortage_quantity: shortageQty,
                     source_bin: data.source_bin,
@@ -454,7 +466,7 @@ export async function POST(request: Request) {
             ]
         }));
         const allocationRows = await directusRequest<DirectusRecord[]>(
-            `/items/manufacturing_job_order_materials_reservations?filter=${allocFilter}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity,actual_used_quantity&limit=-1`,
+            `/items/manufacturing_job_order_materials_reservations?filter=${allocFilter}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity,actual_used_quantity,created_at&limit=-1`,
             { headers, cache: "no-store" },
             "Load staging reservation",
             true
@@ -462,9 +474,10 @@ export async function POST(request: Request) {
         const allocationGroup = allocationRows.filter((allocation) =>
             normalizeBatchNo(allocation.batch_no) === requestedBatch
         );
+        const orderedAllocationGroup = [...allocationGroup].sort(compareAllocationRows);
         const existingAllocations = data.allocation_id
-            ? allocationGroup.filter((allocation) => recordId(allocation) === data.allocation_id)
-            : allocationGroup;
+            ? orderedAllocationGroup.filter((allocation) => recordId(allocation) === data.allocation_id)
+            : orderedAllocationGroup;
         if (data.allocation_id && existingAllocations.length !== 1) {
             throw new TransferError(
                 "The selected staging allocation does not belong to this Job Order material and batch.",
@@ -494,19 +507,34 @@ export async function POST(request: Request) {
                 String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]");
             return isStagingMovement ? total + Math.max(0, Number(movement.quantity || 0)) : total;
         }, 0);
-        const allocationCapacity = allocationGroup.reduce(
-            (total, allocation) => total + Number(allocation.reserved_quantity || 0),
-            0
-        ) - stagedQuantityForBatch;
-        if (allocationGroup.length > 0 && !data.override_negative && data.transfer_quantity > Math.max(0, allocationCapacity) + 0.000001) {
-            const availableQuantity = Math.max(0, Math.min(availableStock, allocationCapacity));
+        let stagedQuantityRemaining = stagedQuantityForBatch;
+        const stagedQuantityByAllocation = new Map<number, number>();
+        orderedAllocationGroup.forEach((allocation) => {
+            const allocationId = recordId(allocation);
+            const reservedQuantity = Math.max(0, Number(allocation.reserved_quantity || 0));
+            const assignedQuantity = Math.min(stagedQuantityRemaining, reservedQuantity);
+            if (allocationId) stagedQuantityByAllocation.set(allocationId, assignedQuantity);
+            stagedQuantityRemaining = Math.max(0, stagedQuantityRemaining - assignedQuantity);
+        });
+        const selectedAllocationId = existingAllocation ? recordId(existingAllocation) : 0;
+        const selectedStagedQuantity = selectedAllocationId
+            ? stagedQuantityByAllocation.get(selectedAllocationId) || 0
+            : 0;
+        const allocationCapacity = data.allocation_id
+            ? Math.max(0, existingAllocationQuantity - selectedStagedQuantity)
+            : orderedAllocationGroup.reduce(
+                (total, allocation) => total + Math.max(0, Number(allocation.reserved_quantity || 0)),
+                0
+            ) - stagedQuantityForBatch;
+        if (orderedAllocationGroup.length > 0 && !data.override_negative && data.transfer_quantity > Math.max(0, allocationCapacity) + 0.000001) {
+            const availableQuantity = Math.max(0, Math.min(nonNegativeAvailableStock, allocationCapacity));
             const shortageQuantity = Math.max(0, data.transfer_quantity - availableQuantity);
             return NextResponse.json(
                 {
                     success: false,
                     shortage: true,
                     failure_code: "INSUFFICIENT_ALLOCATION_CAPACITY",
-                    message: `The selected allocation group has ${Math.max(0, allocationCapacity).toFixed(2)} available to stage. Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQuantity.toFixed(2)}`,
+                    message: `${data.allocation_id ? "The selected allocation" : "The selected allocation group"} has ${Math.max(0, allocationCapacity).toFixed(2)} available to stage. Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQuantity.toFixed(2)}`,
                     product_id: data.product_id,
                     lot_id: data.lot_id,
                     allocation_id: data.allocation_id,
@@ -520,8 +548,6 @@ export async function POST(request: Request) {
                 { status: 409 }
             );
         }
-
-        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${targetBin};work_center_id=${data.work_center_id};jo_material_id=${data.jo_material_id}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
 
         if (existingAllocation) {
             transactionState.allocationId = recordId(existingAllocation);
@@ -568,6 +594,8 @@ export async function POST(request: Request) {
                 throw new TransferError("The created staging allocation did not return an ID.", 503);
             }
         }
+
+        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${targetBin};work_center_id=${data.work_center_id};jo_material_id=${data.jo_material_id};allocation_id=${transactionState.allocationId}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
 
         const movementPayloads = [
             {

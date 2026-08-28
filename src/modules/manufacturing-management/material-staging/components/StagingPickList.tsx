@@ -423,6 +423,9 @@ export function StagingPickList({
                                                                             Allocated: <strong className="font-mono text-foreground">{lot.allocated_quantity} {mat.uom}</strong>
                                                                         </div>
                                                                         <div className="text-[11px] text-muted-foreground">
+                                                                            Available: <strong className="font-mono text-foreground">{lot.on_hand_lot_quantity} {mat.uom}</strong>
+                                                                        </div>
+                                                                        <div className="text-[11px] text-muted-foreground">
                                                                             Bin: <code className="font-mono text-foreground font-semibold">{lot.staging_bin}</code>
                                                                         </div>
                                                                         <Badge

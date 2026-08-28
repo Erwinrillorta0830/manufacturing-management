@@ -340,6 +340,7 @@ export async function GET(request: Request) {
 
         // Combine reservations and allocations
         const allAllocationsByJo = new Map<number, DirectusAllocation[]>();
+        const assignedStagingQuantityByBatch = new Map<string, number>();
         rawReservations.forEach((res: {
             jo_materials_reservation_id?: number;
             id?: number;
@@ -365,7 +366,16 @@ export async function GET(request: Request) {
                     branchProductLotBatchKey(branchId, productId, reservationLotId, normalizedBatchNo)
                 )
                 : resolveUniqueLot(branchId, productId, normalizedBatchNo);
-            const isHard = Boolean(stagingMovement && stagingMovement.quantity > 0);
+            const stagingKey = `${joId}:${branchId}:${productId}:${normalizedBatchNo}`;
+            const stagingQuantity = Number(stagingMovement?.quantity || 0);
+            const previouslyAssignedQuantity = assignedStagingQuantityByBatch.get(stagingKey) || 0;
+            const reservedQuantity = Math.max(0, Number(res.reserved_quantity || 0));
+            const stagedQuantity = Math.min(
+                Math.max(0, stagingQuantity - previouslyAssignedQuantity),
+                reservedQuantity
+            );
+            assignedStagingQuantityByBatch.set(stagingKey, previouslyAssignedQuantity + stagedQuantity);
+            const isHard = stagedQuantity > 0;
             if (joId) {
                 const list = allAllocationsByJo.get(joId) || [];
                 list.push({
@@ -378,10 +388,10 @@ export async function GET(request: Request) {
                     batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
                     reserved_quantity: Number(res.reserved_quantity || 0),
-                    staged_quantity: Number(stagingMovement?.quantity || 0),
-                    staging_bin: stagingMovement?.stagingBin || "MAIN-STORE",
+                    staged_quantity: stagedQuantity,
+                    staging_bin: stagedQuantity > 0 ? stagingMovement?.stagingBin || "MAIN-STORE" : "MAIN-STORE",
                     reservation_status: isHard ? "HARD" : "SOFT",
-                    override_negative: Boolean(stagingMovement?.negativeOverride),
+                    override_negative: stagedQuantity > 0 && Boolean(stagingMovement?.negativeOverride),
                     created_at: res.created_at
                 });
                 allAllocationsByJo.set(joId, list);

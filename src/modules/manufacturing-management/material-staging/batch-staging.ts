@@ -53,7 +53,11 @@ function compareAllocations(
 }
 
 function physicalLotKey(allocation: AllocatedLot): string {
-    return `${allocation.lot_id}:${allocation.batch_no.trim().toLowerCase()}`;
+    return `${allocation.lot_id}:${normalizeBatchNo(allocation.batch_no)}`;
+}
+
+function normalizeBatchNo(value: unknown): string {
+    return String(value ?? "").trim().toLowerCase();
 }
 
 export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePlan {
@@ -77,6 +81,8 @@ export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePl
     let remainingQuantity = requestedQuantity;
 
     for (const { allocation } of sortedAllocations) {
+        const batchNo = String(allocation.batch_no ?? "").trim();
+        const sourceBin = String(allocation.source_bin ?? "MAIN-STORE").trim();
         const availableLotQuantity = roundQuantity(allocation.on_hand_lot_quantity);
         const availableAllocationQuantity = roundQuantity(
             allocation.allocated_quantity - allocation.staged_quantity
@@ -84,17 +90,17 @@ export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePl
         const baseLot = {
             allocation_id: allocation.allocation_id,
             lot_id: allocation.lot_id,
-            batch_no: allocation.batch_no,
+            batch_no: batchNo,
             available_lot_quantity: availableLotQuantity,
             available_allocation_quantity: availableAllocationQuantity
         };
 
-        if (!allocation.batch_no.trim()) {
+        if (!batchNo) {
             skippedLots.push({ ...baseLot, reason: "The allocation has no batch number." });
             continue;
         }
 
-        if (allocation.source_bin.trim().toUpperCase() !== "MAIN-STORE") {
+        if (sourceBin.toUpperCase() !== "MAIN-STORE") {
             skippedLots.push({ ...baseLot, reason: "The allocation is not sourced from MAIN-STORE." });
             continue;
         }
@@ -105,7 +111,8 @@ export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePl
         }
 
         const lotKey = physicalLotKey(allocation);
-        const remainingPhysicalQuantity = physicalStockRemaining.has(lotKey)
+        const hasSeenPhysicalLot = physicalStockRemaining.has(lotKey);
+        const remainingPhysicalQuantity = hasSeenPhysicalLot
             ? physicalStockRemaining.get(lotKey) || 0
             : availableLotQuantity;
 
@@ -113,7 +120,9 @@ export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePl
             skippedLots.push({
                 ...baseLot,
                 available_lot_quantity: roundQuantity(remainingPhysicalQuantity),
-                reason: "This physical lot/batch has already been allocated by an earlier reservation row."
+                reason: hasSeenPhysicalLot
+                    ? "This physical lot/batch has already been allocated by an earlier reservation row."
+                    : "This physical lot/batch has no exact on-hand stock."
             });
             continue;
         }
@@ -152,4 +161,3 @@ export function buildBatchStagePlan(material: MaterialStagingItem): BatchStagePl
         skipped_lots: skippedLots
     };
 }
-
