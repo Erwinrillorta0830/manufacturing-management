@@ -62,6 +62,7 @@ export interface CreateSalesOrderPayload {
     salesmanId?: number;
     remarks?: string;
     items: DirectOrderItemPayload[];
+    submitForApproval?: boolean;
 }
 
 export interface QuotationHeader {

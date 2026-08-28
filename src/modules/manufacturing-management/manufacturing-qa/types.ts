@@ -91,14 +91,11 @@ export interface TwoPointQAInspectionPayload {
     rejected_quantity: number;
     rejection_reason_id?: number | null;
     lot_number?: string;
-    lotNumber?: string;
     manufacturing_date?: string;
-    manufacturingDate?: string;
     expiry_date?: string;
-    expiryDate?: string;
     unit_cost?: number;
-    unitCost?: number;
     remarks?: string;
+    user_id?: number;
 }
 
 export interface TwoPointQAInspectionResult {
@@ -117,6 +114,31 @@ export interface TwoPointQAInspectionResult {
         quantity: number;
         batch_no: string;
     } | null;
+}
+
+export interface YieldJobOrderMaterial {
+    materialId: number;
+    jobOrderId: number;
+    productId: number;
+    productName: string;
+    productCode: string;
+    unitOfMeasure: string;
+    allocatedQuantity: number;
+    actualConsumedQuantity: number;
+    scrapQuantity: number;
+    reservedQuantity: number;
+    remainingQuantity: number;
+    // Directus aliases are kept for existing receipt/reprint consumers.
+    jo_material_id: number;
+    job_order_id: number;
+    product_id: number;
+    allocated_quantity: number;
+    actual_consumed_quantity: number;
+    scrap_quantity: number;
+    reserved_quantity: number;
+    product_name: string;
+    product_code: string;
+    unit_shortcut: string;
 }
 
 export interface QALog {
@@ -142,8 +164,12 @@ export interface QALog {
 export interface DispositionRecord {
     id: string;
     jo_id: string;
+    job_order_id?: number | null;
     task_id: string | number;
     task_name: string;
+    station_id?: number | null;
+    station_name?: string;
+    product_id?: number | null;
     product_name: string;
     expected_quantity: number;
     actual_quantity: number;
@@ -159,6 +185,7 @@ export interface DispositionRecord {
     disposition_status: "Pending" | "Resolved";
     decision: "Release with Deviation" | "Rework" | "Scrap" | null;
     supervisor_comments: string;
+    inspection_remarks?: string;
     recorded_at: string;
     resolved_at: string | null;
     resolved_by: number | null;

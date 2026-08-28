@@ -43,6 +43,10 @@ interface BinTransferModalProps {
     isLoading?: boolean;
 }
 
+function getLotOptionValue(allocation: AllocatedLot, index: number): string {
+    return `${allocation.allocation_id ?? allocation.lot_id ?? "lot"}:${allocation.batch_no}:${index}`;
+}
+
 export function BinTransferModal({
     isOpen,
     onClose,
@@ -88,34 +92,48 @@ function BinTransferFormContent({
 }) {
     const { jobOrder, material, lot } = activeItem;
 
-    const defaultWcId = jobOrder.primary_work_center_id
-        ? String(jobOrder.primary_work_center_id)
-        : (workCenters.length > 0 ? String(workCenters[0].work_center_id) : "1");
+    const activeWorkCenters = workCenters.filter((wc) => wc.is_active !== false);
+    const defaultWcId = jobOrder.staging_work_center_id
+        ? String(jobOrder.staging_work_center_id)
+        : "";
 
     const defaultLot = lot || material.allocations[0];
+    const defaultLotIndex = defaultLot
+        ? material.allocations.findIndex((allocation) =>
+            allocation === defaultLot ||
+            (defaultLot.allocation_id != null && allocation.allocation_id === defaultLot.allocation_id)
+        )
+        : -1;
     const defaultBatch = defaultLot ? defaultLot.batch_no : `LOT-${material.product_id}-MAIN`;
+    const defaultLotValue = defaultLot
+        ? getLotOptionValue(defaultLot, defaultLotIndex >= 0 ? defaultLotIndex : 0)
+        : `default:${material.product_id}`;
     const remainingNeeded = Math.max(0, material.required_quantity - material.staged_quantity);
     const defaultLotAlloc = defaultLot ? (defaultLot.allocated_quantity - defaultLot.staged_quantity) : remainingNeeded;
     const initQty = defaultLotAlloc > 0 ? defaultLotAlloc : (remainingNeeded > 0 ? remainingNeeded : material.required_quantity);
 
     const [sourceBin, setSourceBin] = useState("MAIN-STORE");
     const [selectedWorkCenterId, setSelectedWorkCenterId] = useState<string>(defaultWcId);
-    const [targetBin, setTargetBin] = useState(jobOrder.suggested_staging_bin || `FLOOR-STAGING-${defaultWcId}`);
-    const [selectedBatchNo, setSelectedBatchNo] = useState(defaultBatch);
+    const [selectedLotValue, setSelectedLotValue] = useState(defaultLotValue);
     const [transferQty, setTransferQty] = useState<number>(initQty > 0 ? initQty : 1);
     const [remarks, setRemarks] = useState(`Staging materials for JO #${jobOrder.job_order_no}`);
     const [formError, setFormError] = useState<string | null>(null);
 
-    // Handle work center change -> auto updates target bin format: FLOOR-STAGING-[WorkCenterID]
+    const targetBin = selectedWorkCenterId ? `FLOOR-STAGING-${selectedWorkCenterId}` : "";
+
+    // The target bin is derived from the selected work center so the two values cannot diverge.
     const handleWorkCenterChange = (wcId: string) => {
         setSelectedWorkCenterId(wcId);
-        setTargetBin(`FLOOR-STAGING-${wcId}`);
     };
 
     // Calculate active lot details
-    const currentLot = material.allocations.find((l) => l.batch_no === selectedBatchNo) || lot || material.allocations[0];
+    const currentLot = material.allocations.find((allocation, index) =>
+        getLotOptionValue(allocation, index) === selectedLotValue
+    ) || lot || material.allocations[0];
     const availableOnHand = currentLot?.on_hand_lot_quantity ?? material.on_hand_quantity;
     const remainingToStage = Math.max(0, material.required_quantity - material.staged_quantity);
+    const isPartiallyStaged = material.reservation_status === "PARTIAL";
+    const currentReservationStatus = lot?.reservation_status || material.reservation_status;
 
     const handleSetMaxQuantity = () => {
         if (remainingToStage > 0) {
@@ -135,7 +153,18 @@ function BinTransferFormContent({
         }
 
         if (!targetBin.trim()) {
-            setFormError("Target staging bin cannot be empty");
+            setFormError("No active work center is configured for this Job Order");
+            return;
+        }
+
+        const selectedWorkCenter = activeWorkCenters.find((wc) => String(wc.work_center_id) === selectedWorkCenterId);
+        if (!selectedWorkCenter) {
+            setFormError("Please select an active target work center");
+            return;
+        }
+
+        if (targetBin !== `FLOOR-STAGING-${selectedWorkCenter.work_center_id}`) {
+            setFormError("The target staging bin must match the selected work center");
             return;
         }
 
@@ -146,11 +175,11 @@ function BinTransferFormContent({
             product_id: material.product_id,
             product_name: material.product_name,
             lot_id: currentLot?.lot_id || 1,
-            batch_no: selectedBatchNo || `LOT-${material.product_id}-MAIN`,
+            batch_no: currentLot?.batch_no || defaultBatch,
             transfer_quantity: Number(transferQty),
             source_bin: sourceBin.trim() || "MAIN-STORE",
             target_bin: targetBin.trim(),
-            work_center_id: Number(selectedWorkCenterId || 1),
+            work_center_id: selectedWorkCenter.work_center_id,
             override_negative: false,
             remarks: remarks.trim()
         };
@@ -198,7 +227,7 @@ function BinTransferFormContent({
                                     </div>
                                 </div>
                                 <Badge variant={material.is_staged ? "default" : "secondary"} className={material.is_staged ? "bg-emerald-500 text-white" : "bg-amber-500/10 text-amber-500 border-amber-500/20"}>
-                                    {material.is_staged ? "STAGED (HARD)" : "PENDING (SOFT)"}
+                                    {material.is_staged ? "STAGED (HARD)" : isPartiallyStaged ? "PARTIALLY STAGED" : "PENDING (SOFT)"}
                                 </Badge>
                             </div>
 
@@ -245,7 +274,7 @@ function BinTransferFormContent({
                                 <div className="flex items-center gap-2.5 text-right">
                                     <div>
                                         <span className="text-[10px] text-muted-foreground uppercase block">Floor Staging Bin</span>
-                                        <span className="font-mono font-bold text-xs text-emerald-500">{targetBin}</span>
+                                        <span className="font-mono font-bold text-xs text-emerald-500">{targetBin || "No active destination"}</span>
                                     </div>
                                     <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                                         <Boxes className="h-4 w-4" />
@@ -279,7 +308,7 @@ function BinTransferFormContent({
                                             <SelectValue placeholder="Select Work Center" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {workCenters.map((wc) => (
+                                            {activeWorkCenters.map((wc) => (
                                                 <SelectItem key={wc.work_center_id} value={String(wc.work_center_id)} className="text-xs">
                                                     {wc.work_center_name} (WC #{wc.work_center_id})
                                                 </SelectItem>
@@ -297,15 +326,19 @@ function BinTransferFormContent({
                                     Allocated Lot / Batch No
                                 </Label>
                                 <Select
-                                    value={selectedBatchNo}
-                                    onValueChange={setSelectedBatchNo}
+                                    value={selectedLotValue}
+                                    onValueChange={setSelectedLotValue}
                                 >
                                     <SelectTrigger id="lot-batch" className="h-9 font-mono text-xs bg-background">
                                         <SelectValue placeholder="Select Lot / Batch" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         {material.allocations.map((al, idx) => (
-                                            <SelectItem key={idx} value={al.batch_no} className="text-xs font-mono">
+                                            <SelectItem
+                                                key={getLotOptionValue(al, idx)}
+                                                value={getLotOptionValue(al, idx)}
+                                                className="text-xs font-mono"
+                                            >
                                                 {al.batch_no} ({al.allocated_quantity} {material.uom})
                                             </SelectItem>
                                         ))}
@@ -364,7 +397,9 @@ function BinTransferFormContent({
                             <div className="space-y-0.5">
                                 <span className="font-semibold block">Automatic Status Conversion</span>
                                 <p className="text-[11px] text-muted-foreground">
-                                    Confirming transfer will move stock to <code className="font-mono text-foreground font-semibold">{targetBin}</code> and convert allocation status from <strong className="text-amber-500">SOFT</strong> to <strong className="text-emerald-500">HARD (RESERVED / READY FOR FLOOR)</strong>.
+                                    {targetBin
+                                        ? <>Confirming transfer will move stock to <code className="font-mono text-foreground font-semibold">{targetBin}</code> and convert the staging reservation from <strong className="text-amber-500">{currentReservationStatus}</strong> to <strong className="text-emerald-500">HARD (RESERVED / READY FOR FLOOR)</strong>.</>
+                                        : "No active work center is configured, so staging is unavailable for this Job Order."}
                                 </p>
                             </div>
                         </div>
@@ -390,7 +425,7 @@ function BinTransferFormContent({
                         <Button
                             type="submit"
                             size="sm"
-                            disabled={isLoading || transferQty <= 0}
+                            disabled={isLoading || transferQty <= 0 || !selectedWorkCenterId}
                             className="font-semibold shadow-md"
                         >
                             {isLoading ? (

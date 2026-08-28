@@ -68,6 +68,7 @@ export function StagingPickList({
     };
 
     const isAllStaged = jobOrder.all_staged;
+    const isPartiallyStaged = jobOrder.reservation_status === "PARTIAL";
 
     return (
         <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm">
@@ -95,6 +96,10 @@ export function StagingPickList({
                                 <Lock className="h-3 w-3 mr-1" />
                                 HARD RESERVED (READY)
                             </Badge>
+                        ) : isPartiallyStaged ? (
+                            <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px]">
+                                PARTIAL RESERVATION
+                            </Badge>
                         ) : (
                             <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px]">
                                 <Unlock className="h-3 w-3 mr-1" />
@@ -121,7 +126,7 @@ export function StagingPickList({
                         <span>&bull;</span>
                         <span>Work Center: <strong className="text-foreground">{jobOrder.primary_work_center_name}</strong></span>
                         <span>&bull;</span>
-                        <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin}</code></span>
+                        <span>Target Bin: <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{jobOrder.suggested_staging_bin || "No active destination"}</code></span>
                         <span>&bull;</span>
                         <span>Shift: <strong className="text-foreground">{jobOrder.shift_option || "Shift 1"}</strong></span>
                     </div>
@@ -211,6 +216,8 @@ export function StagingPickList({
                             {jobOrder.materials.map((mat) => {
                                 const isExpanded = !!expandedMaterials[mat.jo_material_id];
                                 const hasShortage = mat.has_shortage;
+                                const isHard = mat.reservation_status === "HARD";
+                                const isPartial = mat.reservation_status === "PARTIAL";
 
                                 return (
                                     <React.Fragment key={mat.jo_material_id}>
@@ -265,10 +272,14 @@ export function StagingPickList({
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                {mat.reservation_status === "HARD" ? (
+                                                {isHard ? (
                                                     <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold">
                                                         <Lock className="h-2.5 w-2.5 mr-1" />
                                                         HARD
+                                                    </Badge>
+                                                ) : isPartial ? (
+                                                    <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold">
+                                                        PARTIAL
                                                     </Badge>
                                                 ) : (
                                                     <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold">

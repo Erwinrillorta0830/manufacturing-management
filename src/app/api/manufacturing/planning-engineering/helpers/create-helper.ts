@@ -316,8 +316,19 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                     const plannedLabor = (plannedSetup + plannedRun) * 150;
                     totalEstimatedHours += (plannedSetup + plannedRun);
 
-                    // Insert into JO routes table
-                    const routePayload = {
+                    const masterRoutingId = Number((r as any).route_id || (r as any).routing_id || (r as any).id || 0);
+                    const rawQaTemplate = (r as any).qa_template_id;
+                    const qaTemplateId = rawQaTemplate && typeof rawQaTemplate === "object"
+                        ? Number(rawQaTemplate.template_id || rawQaTemplate.id || 0)
+                        : Number(rawQaTemplate || 0);
+                    const requiresQa = qaTemplateId > 0
+                        || (r as any).requires_qa === true
+                        || Number((r as any).requires_qa) === 1;
+
+                    // Keep the legacy fields shared by both route collections. The
+                    // job-order route receives the master routing/QA metadata when
+                    // the Directus schema supports those optional fields.
+                    const baseRoutePayload = {
                         job_order_id: joIdInt,
                         sequence_order: Number(r.sequence_order || 0),
                         work_center_id: Number(r.work_center_id || 1),
@@ -332,17 +343,49 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
                         status: "Pending"
                     };
 
+                    const jobOrderRoutePayload = {
+                        ...baseRoutePayload,
+                        routing_id: masterRoutingId || null,
+                        qa_template_id: qaTemplateId || null,
+                        requires_qa: requiresQa
+                    };
+
                     await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_operations`, {
                         method: "POST",
                         headers,
-                        body: JSON.stringify(routePayload)
+                        body: JSON.stringify(baseRoutePayload)
                     }).catch(() => {});
 
-                    const routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?fields=jo_route_id`, {
+                    let routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?fields=jo_route_id`, {
                         method: "POST",
                         headers,
-                        body: JSON.stringify(routePayload)
+                        body: JSON.stringify(jobOrderRoutePayload)
                     });
+                    let routeResponseText = "";
+
+                    // Older Directus instances may not yet have the optional QA
+                    // metadata columns. Retry with the legacy payload only for an
+                    // explicit schema/payload-field rejection; other write errors
+                    // must remain visible to the caller.
+                    if (!routeRes.ok) {
+                        routeResponseText = await routeRes.text();
+                        const optionalFieldsUnsupported = /unknown field|invalid payload|does not exist|doesn't exist|field .* not found/i.test(routeResponseText);
+                        if (optionalFieldsUnsupported) {
+                            console.warn("[createJobOrder] JO route QA metadata fields are unavailable; using legacy route payload.", routeResponseText);
+                            routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?fields=jo_route_id`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify(baseRoutePayload)
+                            });
+                            routeResponseText = "";
+                        }
+                    }
+
+                    if (!routeRes.ok) {
+                        const errorText = routeResponseText || await routeRes.text();
+                        throw new Error(`Failed to create Job Order route: ${routeRes.status} - ${errorText}`);
+                    }
+
                     if (routeRes.ok) {
                         const routeJson = await routeRes.json();
                         const newRouteId = routeJson.data?.jo_route_id;

@@ -1,22 +1,181 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { createJobOrder } from "@/app/api/manufacturing/planning-engineering/planning-helper";
+import { twoPointQAInspectionRequestSchema } from "./_two-point-contract";
+import {
+    createDisposition,
+    DispositionPersistenceError,
+    enrichDispositions,
+    getDisposition,
+    readDispositions,
+    updateDisposition,
+    resolveDispositionMetadata
+} from "./_dispositions";
 
-const DISPOSITIONS_FILE = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
+async function getUserIdFromSession(): Promise<number | null> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value;
+        if (token) {
+            const parts = token.split(".");
+            if (parts.length >= 2) {
+                let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+                while (base64.length % 4) base64 += "=";
+                const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+                const rawId = payload?.id || payload?.user_id || payload?.sub;
+                const id = Number(rawId);
+                if (Number.isSafeInteger(id) && id > 0) return id;
+            }
+        }
+    } catch (error) {
+        console.warn("Unable to resolve the QA inspector from the session:", error);
+    }
+    return null;
+}
+
+class QAPersistenceError extends Error {
+    constructor(message: string, readonly statusCode = 502) {
+        super(message);
+    }
+}
+
+function directusErrorMessage(payload: unknown, fallback: string): string {
+    if (payload && typeof payload === "object") {
+        const record = payload as Record<string, any>;
+        const errors = Array.isArray(record.errors) ? record.errors : [];
+        const firstError = errors[0];
+        if (firstError && typeof firstError === "object" && typeof firstError.message === "string" && firstError.message.trim()) {
+            return firstError.message;
+        }
+        if (typeof record.error === "string" && record.error.trim()) return record.error;
+        if (typeof record.message === "string" && record.message.trim()) return record.message;
+    }
+    return fallback;
+}
+
+async function directusMutation(pathname: string, init: RequestInit, operation: string): Promise<Record<string, any>> {
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}${pathname}`, init);
+    } catch (error) {
+        throw new QAPersistenceError(`${operation} could not reach Directus: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const text = await response.text();
+    let payload: unknown = null;
+    try {
+        payload = text ? JSON.parse(text) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        throw new QAPersistenceError(`${operation} failed: ${directusErrorMessage(payload, `Directus returned ${response.status}`)}`);
+    }
+
+    const data = payload && typeof payload === "object" ? (payload as Record<string, any>).data : null;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new QAPersistenceError(`${operation} returned no persisted record from Directus.`);
+    }
+    return data as Record<string, any>;
+}
+
+function numericRecordId(record: Record<string, any>, fields: string[]): number | null {
+    for (const field of fields) {
+        const value = Number(record[field]);
+        if (Number.isSafeInteger(value) && value > 0) return value;
+    }
+    return null;
+}
+
+function numericRelationId(value: unknown, fields: string[]): number | null {
+    if (value && typeof value === "object") {
+        return numericRecordId(value as Record<string, any>, fields);
+    }
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+async function deleteDirectusRecord(pathname: string, operation: string): Promise<void> {
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}${pathname}`, { method: "DELETE", headers });
+    } catch (error) {
+        throw new QAPersistenceError(`${operation} could not reach Directus: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!response.ok) {
+        const text = await response.text();
+        let payload: unknown = null;
+        try {
+            payload = text ? JSON.parse(text) : null;
+        } catch {
+            payload = null;
+        }
+        throw new QAPersistenceError(`${operation} failed: ${directusErrorMessage(payload, `Directus returned ${response.status}`)}`);
+    }
+}
+
+async function rollbackTwoPointWrites(state: {
+    parentJobOrderId: number;
+    previousJobOrder: Record<string, any>;
+    parentJobOrderPatched: boolean;
+    inspectionLogId: number | null;
+    reworkJobOrderId: number | null;
+    statusHistoryId: number | null;
+    inventoryMovementId: number | null;
+    productLedgerId: number | null;
+}): Promise<string[]> {
+    const failures: string[] = [];
+
+    if (state.parentJobOrderPatched) {
+        try {
+            await directusMutation(
+                `/items/manufacturing_job_orders/${state.parentJobOrderId}`,
+                {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify(state.previousJobOrder)
+                },
+                "Rollback Job Order QA state"
+            );
+        } catch (error) {
+            failures.push(error instanceof Error ? error.message : "Rollback Job Order QA state failed.");
+        }
+    }
+
+    const cleanupTargets: Array<[number | null, string, string]> = [
+        [state.productLedgerId, "product_ledger", "Rollback product ledger entry"],
+        [state.inventoryMovementId, "inventory_movements", "Rollback inventory movement"],
+        [state.statusHistoryId, "manufacturing_job_order_status_history", "Rollback status history entry"],
+        [state.inspectionLogId, "qa_jo_inspection_logs", "Rollback QA inspection log"],
+        [state.reworkJobOrderId, "manufacturing_job_orders", "Rollback rework Job Order"]
+    ];
+
+    for (const [id, collection, operation] of cleanupTargets) {
+        if (!id) continue;
+        try {
+            await deleteDirectusRecord(`/items/${collection}/${id}`, operation);
+        } catch (error) {
+            failures.push(error instanceof Error ? error.message : `${operation} failed.`);
+        }
+    }
+
+    return failures;
+}
 
 // Helper to resolve job_order_id (integer) and product_id from job_order_no (string)
-async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId: number } | null> {
+async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId: number; status: string | null } | null> {
     try {
-        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joNo)}&limit=1`, { headers });
+        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joNo)}&fields=job_order_id,product_id,status&limit=1`, { headers });
         if (res.ok) {
             const data = (await res.json()).data?.[0];
             if (data) {
                 return {
                     id: Number(data.job_order_id),
-                    productId: Number(data.product_id)
+                    productId: Number(data.product_id),
+                    status: typeof data.status === "string" ? data.status : null
                 };
             }
         }
@@ -24,6 +183,24 @@ async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId:
         console.error("Failed to resolve job_order_id for", joNo, e);
     }
     return null;
+}
+
+async function getJobOrderById(jobOrderId: number): Promise<{ id: number; productId: number; status: string | null; jobOrderNo: string } | null> {
+    try {
+        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,product_id,status`, { headers });
+        if (!res.ok) return null;
+        const data = (await res.json()).data;
+        if (!data) return null;
+        return {
+            id: Number(data.job_order_id),
+            productId: Number(data.product_id),
+            status: typeof data.status === "string" ? data.status : null,
+            jobOrderNo: typeof data.job_order_no === "string" ? data.job_order_no : `JO-${jobOrderId}`
+        };
+    } catch (e) {
+        console.error("Failed to load job order for QA disposition", jobOrderId, e);
+        return null;
+    }
 }
 
 // Helper to resolve or create master lot in lots collection
@@ -57,38 +234,6 @@ async function resolveMasterLotId(name: string, typeId: number): Promise<number>
         console.error(`Error resolving master lot ID for ${name}:`, err);
     }
     return lotId;
-}
-
-// Helper to ensure the local dispositions database file exists and read it
-function readDispositions(): any[] {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        if (!fs.existsSync(DISPOSITIONS_FILE)) {
-            fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify([]));
-            return [];
-        }
-        const fileContent = fs.readFileSync(DISPOSITIONS_FILE, "utf-8");
-        return JSON.parse(fileContent || "[]");
-    } catch (err) {
-        console.error("Error reading dispositions JSON:", err);
-        return [];
-    }
-}
-
-// Helper to write to local dispositions database
-function writeDispositions(data: any[]): void {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify(data, null, 2));
-    } catch (err) {
-        console.error("Error writing dispositions JSON:", err);
-    }
 }
 
 export async function GET(request: Request) {
@@ -224,14 +369,15 @@ export async function GET(request: Request) {
 
         // Action: Fetch supervisor dispositions
         if (action === "dispositions") {
-            const list = readDispositions();
-            return NextResponse.json(list);
+            const list = await readDispositions();
+            return NextResponse.json(await enrichDispositions(list));
         }
 
         // Action: Match dynamic checklist template for a specific task and product
         if (action === "matching-template") {
             const taskName = searchParams.get("taskName") || "";
             const productId = searchParams.get("productId") || "";
+            const requestedTemplateId = Number(searchParams.get("templateId") || 0);
 
             const [templatesRes, parametersRes] = await Promise.all([
                 fetch(`${DIRECTUS_URL}/items/quality_inspection_templates?limit=-1`, { headers, cache: "no-store" }),
@@ -245,20 +391,40 @@ export async function GET(request: Request) {
             const templates = (await templatesRes.json()).data || [];
             const parameters = (await parametersRes.json()).data || [];
 
-            let matchedTpl = templates.find((tpl: any) => 
-                tpl.is_active && 
-                taskName.toLowerCase().includes(tpl.template_name.toLowerCase())
-            );
+            const isActiveTemplate = (tpl: any): boolean => {
+                if (tpl.is_active === true || tpl.is_active === 1) return true;
+                const normalized = String(tpl.is_active ?? "").trim().toLowerCase();
+                return normalized === "1" || normalized === "true" || normalized === "yes";
+            };
 
-            if (!matchedTpl) {
-                matchedTpl = templates.find((tpl: any) => tpl.is_active);
+            let matchedTpl = null;
+            if (requestedTemplateId > 0) {
+                matchedTpl = templates.find((tpl: any) =>
+                    isActiveTemplate(tpl) && Number(tpl.template_id || tpl.id) === requestedTemplateId
+                );
+                if (!matchedTpl) {
+                    return NextResponse.json(
+                        { error: `QA template ${requestedTemplateId} was not found or is inactive.` },
+                        { status: 404 }
+                    );
+                }
+            } else {
+                matchedTpl = templates.find((tpl: any) =>
+                    isActiveTemplate(tpl) &&
+                    taskName.toLowerCase().includes(String(tpl.template_name || "").toLowerCase())
+                );
+
+                if (!matchedTpl) {
+                    matchedTpl = templates.find((tpl: any) => isActiveTemplate(tpl));
+                }
             }
 
             if (!matchedTpl) {
                 return NextResponse.json({ template: null, parameters: [] });
             }
 
-            const tplParams = parameters.filter((param: any) => param.template_id === matchedTpl.template_id);
+            const matchedTemplateId = Number(matchedTpl.template_id || matchedTpl.id);
+            const tplParams = parameters.filter((param: any) => Number(param.template_id || param.template?.template_id || param.template?.id) === matchedTemplateId);
             return NextResponse.json({
                 template: matchedTpl,
                 parameters: tplParams
@@ -268,7 +434,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Invalid action parameter" }, { status: 400 });
     } catch (e) {
         console.error("API Error in QA GET:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to process QA request" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as Error).message || "Failed to process QA request" },
+            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+        );
     }
 }
 
@@ -276,61 +445,50 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
-        const body = await request.json();
+        const rawBody: unknown = await request.json().catch(() => null);
+        if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+            return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+        }
+        const body = rawBody as Record<string, any>;
         const { action } = body;
 
         // Action: Simplified 2-Point QA Entry & Rework Trigger
         if (action === "two-point-inspection" || action === "2-point-inspection") {
+            const parsed = twoPointQAInspectionRequestSchema.safeParse(body);
+            if (!parsed.success) {
+                return NextResponse.json({
+                    error: "Invalid two-point QA inspection request.",
+                    details: parsed.error.flatten()
+                }, { status: 400 });
+            }
+
             const {
-                jobOrderId,
-                jobOrderNo,
-                inspectedQuantity,
-                passedQuantity,
-                rejectedQuantity,
-                rejectionReasonId,
-                lotNumber,
-                manufacturingDate,
-                expiryDate,
-                unitCost = 0,
-                remarks = "",
-                userId = 1
-            } = body;
+                job_order_id,
+                job_order_no,
+                product_id: requestedProductId,
+                branch_id: requestedBranchId,
+                inspected_quantity,
+                passed_quantity,
+                rejected_quantity,
+                rejection_reason_id,
+                lot_number,
+                manufacturing_date,
+                expiry_date,
+                unit_cost,
+                remarks,
+                user_id
+            } = parsed.data;
 
-            // 1. Validation of required quantities
-            const inspQty = Number(inspectedQuantity);
-            const passQty = Number(passedQuantity);
-            const rejQty = Number(rejectedQuantity);
-
-            if (isNaN(inspQty) || inspQty <= 0) {
-                return NextResponse.json({ error: "Inspected quantity must be a positive number." }, { status: 400 });
-            }
-            if (isNaN(passQty) || passQty < 0) {
-                return NextResponse.json({ error: "Passed quantity cannot be negative." }, { status: 400 });
-            }
-            if (isNaN(rejQty) || rejQty < 0) {
-                return NextResponse.json({ error: "Rejected quantity cannot be negative." }, { status: 400 });
-            }
-            if (Math.abs((passQty + rejQty) - inspQty) > 0.001) {
-                return NextResponse.json({ 
-                    error: `Quantity mismatch: Passed (${passQty}) + Rejected (${rejQty}) must equal Inspected (${inspQty}).` 
-                }, { status: 400 });
-            }
-
-            // Mandatory rejection reason validation if defects exist
-            if (rejQty > 0 && !rejectionReasonId) {
-                return NextResponse.json({ 
-                    error: "Rejection reason is mandatory when rejected quantity is greater than 0." 
-                }, { status: 400 });
-            }
+            const inspQty = inspected_quantity;
+            const passQty = passed_quantity;
+            const rejQty = rejected_quantity;
 
             // 2. Resolve Job Order details from Directus
             let joQuery = "";
-            if (jobOrderId) {
-                joQuery = `filter[job_order_id][_eq]=${Number(jobOrderId)}`;
-            } else if (jobOrderNo) {
-                joQuery = `filter[job_order_no][_eq]=${encodeURIComponent(jobOrderNo)}`;
-            } else {
-                return NextResponse.json({ error: "Missing jobOrderId or jobOrderNo" }, { status: 400 });
+            if (job_order_id) {
+                joQuery = `filter[job_order_id][_eq]=${job_order_id}`;
+            } else if (job_order_no) {
+                joQuery = `filter[job_order_no][_eq]=${encodeURIComponent(job_order_no)}`;
             }
 
             const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?${joQuery}&limit=1`, { headers, cache: "no-store" });
@@ -346,17 +504,25 @@ export async function POST(request: Request) {
             const parentJoIdInt = Number(parentJO.job_order_id);
             const parentJoNo = String(parentJO.job_order_no);
             const productId = Number(parentJO.product_id);
-            const branchId = Number(parentJO.branch_id || body.branchId || 1);
+            const branchId = Number(parentJO.branch_id || requestedBranchId || 1);
+            const userId = user_id ?? await getUserIdFromSession();
+
+            if (job_order_no && parentJoNo !== job_order_no) {
+                return NextResponse.json({ error: "job_order_id and job_order_no identify different Job Orders." }, { status: 409 });
+            }
+            if (requestedProductId !== productId) {
+                return NextResponse.json({ error: "product_id does not match the selected Job Order." }, { status: 409 });
+            }
             const versionId = parentJO.version_id ? Number(parentJO.version_id) : null;
-            const finalLotNo = lotNumber || `MFG-${parentJoNo}`;
-            const finalExpDate = expiryDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
-            const finalMfgDate = manufacturingDate || todayStr;
+            const finalLotNo = lot_number || `MFG-${parentJoNo}`;
+            const finalExpDate = expiry_date || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+            const finalMfgDate = manufacturing_date || todayStr;
 
             // Fetch rejection reason details if present
             let reasonObj: any = null;
-            if (rejectionReasonId) {
+            if (rejection_reason_id) {
                 try {
-                    const rRes = await fetch(`${DIRECTUS_URL}/items/qa_rejection_reasons/${rejectionReasonId}`, { headers, cache: "no-store" });
+                    const rRes = await fetch(`${DIRECTUS_URL}/items/qa_rejection_reasons/${rejection_reason_id}`, { headers, cache: "no-store" });
                     if (rRes.ok) {
                         reasonObj = (await rRes.json()).data;
                     }
@@ -364,185 +530,233 @@ export async function POST(request: Request) {
                     console.warn("Could not fetch rejection reason details:", rErr);
                 }
             }
-            const reasonName = reasonObj?.reason_name || (rejectionReasonId ? `Reason #${rejectionReasonId}` : "");
+            const reasonName = reasonObj?.reason_name || (rejection_reason_id ? `Reason #${rejection_reason_id}` : "");
 
             let spawnedReworkJo: any = null;
             let reworkJoIdInt: number | null = null;
+            let createdLog: any = null;
+            let createdMovement: any = null;
+            const transactionState = {
+                parentJobOrderId: parentJoIdInt,
+                previousJobOrder: {
+                    status: parentJO.status ?? null,
+                    completed_quantity: Number(parentJO.completed_quantity) || 0,
+                    actual_quantity_produced: Number(parentJO.actual_quantity_produced) || 0,
+                    rejected_quantity: Number(parentJO.rejected_quantity) || 0,
+                    modified_at: parentJO.modified_at ?? null
+                },
+                parentJobOrderPatched: false,
+                inspectionLogId: null as number | null,
+                reworkJobOrderId: null as number | null,
+                statusHistoryId: null as number | null,
+                inventoryMovementId: null as number | null,
+                productLedgerId: null as number | null
+            };
 
-            // 3. Auto-spawn Standalone Rework Job Order if rejected_quantity > 0
-            if (rejQty > 0) {
-                // Find existing rework orders for this parent to determine suffix sequence
-                let reworkSequence = 1;
-                try {
+            try {
+                // 3. Auto-spawn Standalone Rework Job Order if rejected_quantity > 0
+                if (rejQty > 0) {
+                    // Find existing rework orders for this parent to determine suffix sequence.
                     const existingReworksRes = await fetch(
                         `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[parent_job_order_id][_eq]=${parentJoIdInt}&fields=job_order_id,job_order_no&limit=-1`,
                         { headers, cache: "no-store" }
                     );
-                    if (existingReworksRes.ok) {
-                        const existingList = (await existingReworksRes.json()).data || [];
-                        reworkSequence = existingList.length + 1;
+                    if (!existingReworksRes.ok) {
+                        throw new QAPersistenceError("Unable to determine the next rework Job Order number.");
                     }
-                } catch (seqErr) {
-                    console.warn("Error checking existing reworks sequence:", seqErr);
-                }
+                    const existingList = (await existingReworksRes.json()).data || [];
+                    const existingReworkIds = new Set<number>(
+                        existingList
+                            .map((row: any) => numericRecordId(row, ["job_order_id"]))
+                            .filter((id: number | null): id is number => id !== null)
+                    );
+                    const reworkSuffix = String(existingList.length + 1).padStart(2, "0");
+                    const reworkJoNo = `JO-RWK-${parentJoNo}-${reworkSuffix}`;
 
-                const reworkSuffix = String(reworkSequence).padStart(2, "0");
-                const reworkJoNo = `JO-RWK-${parentJoNo}-${reworkSuffix}`;
+                    console.log(`[QA Rework Spawner] Spawning standalone rework Job Order: ${reworkJoNo} for target quantity ${rejQty}`);
 
-                console.log(`[QA Rework Spawner] Spawning standalone rework Job Order: ${reworkJoNo} for target quantity ${rejQty}`);
-
-                try {
-                    // Create rework Job Order with parent_job_order_id link and exploded routings
-                    const reworkPayload = {
-                        jo_id: reworkJoNo,
-                        product_id: productId,
-                        quantity: rejQty,
-                        target_quantity: rejQty,
-                        due_date: parentJO.end_date || null,
-                        status: "Released",
-                        branch_id: branchId,
-                        created_by: userId,
-                        parent_job_order_id: parentJoIdInt,
-                        shift_option: parentJO.shift_option || "8",
-                        remarks: `Standalone Rework Job Order spawned from QA Inspection of ${parentJoNo}. Rejection reason: ${reasonName}. Remarks: ${remarks || "None"}`,
-                        bom: versionId ? { version_id: versionId } : null
-                    };
-
-                    const reworkResult = await createJobOrder(reworkPayload, []);
-                    
-                    // Lookup the spawned rework JO integer ID
-                    const lookupRework = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(reworkJoNo)}&limit=1`, { headers });
-                    if (lookupRework.ok) {
-                        const rData = (await lookupRework.json()).data?.[0];
-                        if (rData) {
-                            reworkJoIdInt = Number(rData.job_order_id);
-                            spawnedReworkJo = {
-                                job_order_id: reworkJoIdInt,
-                                job_order_no: reworkJoNo,
-                                target_quantity: rejQty,
-                                status: "Released"
-                            };
-                        }
-                    }
-                } catch (reworkErr: any) {
-                    console.error("[QA Rework Spawner] Error auto-spawning rework JO:", reworkErr);
-                    // If full creation failed, create base record directly
+                    let reworkCreationError: unknown = null;
                     try {
-                        const fallbackReworkRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders`, {
-                            method: "POST",
-                            headers,
-                            body: JSON.stringify({
-                                job_order_no: `JO-RWK-${parentJoNo}-${reworkSuffix}`,
-                                parent_job_order_id: parentJoIdInt,
-                                product_id: productId,
-                                version_id: versionId,
-                                target_quantity: rejQty,
-                                actual_quantity_produced: 0,
-                                completed_quantity: 0,
-                                rejected_quantity: 0,
-                                start_date: todayStr,
-                                status: "Released",
-                                branch_id: branchId,
-                                created_by: userId,
-                                created_at: new Date().toISOString(),
-                                remarks: `Standalone Rework Job Order spawned from QA Inspection of ${parentJoNo}. Rejection: ${reasonName}`
-                            })
-                        });
-                        if (fallbackReworkRes.ok) {
-                            const createdFallback = (await fallbackReworkRes.json()).data;
-                            reworkJoIdInt = Number(createdFallback.job_order_id);
-                            spawnedReworkJo = {
-                                job_order_id: reworkJoIdInt,
-                                job_order_no: createdFallback.job_order_no,
-                                target_quantity: rejQty,
-                                status: "Released"
-                            };
-                        }
-                    } catch (fbErr) {
-                        console.error("Fallback rework creation failed:", fbErr);
+                        // Create rework Job Order with parent_job_order_id link and exploded routings.
+                        await createJobOrder({
+                            jo_id: reworkJoNo,
+                            product_id: productId,
+                            quantity: rejQty,
+                            target_quantity: rejQty,
+                            due_date: parentJO.end_date || null,
+                            status: "Released",
+                            branch_id: branchId,
+                            created_by: userId,
+                            parent_job_order_id: parentJoIdInt,
+                            shift_option: parentJO.shift_option || "8",
+                            remarks: `Standalone Rework Job Order spawned from QA Inspection of ${parentJoNo}. Rejection reason: ${reasonName}. Remarks: ${remarks || "None"}`,
+                            bom: versionId ? { version_id: versionId } : null
+                        }, []);
+                    } catch (reworkErr) {
+                        reworkCreationError = reworkErr;
+                        console.error("[QA Rework Spawner] Error auto-spawning rework JO:", reworkErr);
                     }
+
+                    // Lookup the persisted rework JO, including the parent link used by the audit view.
+                    const lookupRework = await fetch(
+                        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(reworkJoNo)}&fields=job_order_id,job_order_no,parent_job_order_id,target_quantity,status&limit=1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (!lookupRework.ok) {
+                        throw new QAPersistenceError("Unable to verify the rework Job Order after saving.");
+                    }
+                    let rData = (await lookupRework.json()).data?.[0];
+
+                    // Keep the existing bare-record fallback, but only accept it after Directus returns a record.
+                    if (!rData) {
+                        try {
+                            rData = await directusMutation(
+                                "/items/manufacturing_job_orders",
+                                {
+                                    method: "POST",
+                                    headers,
+                                    body: JSON.stringify({
+                                        job_order_no: reworkJoNo,
+                                        parent_job_order_id: parentJoIdInt,
+                                        product_id: productId,
+                                        version_id: versionId,
+                                        target_quantity: rejQty,
+                                        actual_quantity_produced: 0,
+                                        completed_quantity: 0,
+                                        rejected_quantity: 0,
+                                        start_date: todayStr,
+                                        status: "Released",
+                                        branch_id: branchId,
+                                        created_by: userId,
+                                        created_at: new Date().toISOString(),
+                                        remarks: `Standalone Rework Job Order spawned from QA Inspection of ${parentJoNo}. Rejection: ${reasonName}`
+                                    })
+                                },
+                                "Create fallback rework Job Order"
+                            );
+                        } catch (fallbackError) {
+                            throw new QAPersistenceError(
+                                `Rework Job Order could not be persisted${reworkCreationError ? `: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}` : "."}`
+                            );
+                        }
+                    }
+
+                    reworkJoIdInt = numericRecordId(rData, ["job_order_id"]);
+                    if (!reworkJoIdInt) {
+                        throw new QAPersistenceError("The persisted rework Job Order did not return a valid ID.");
+                    }
+                    if (
+                        numericRelationId(rData.parent_job_order_id, ["job_order_id", "id"]) !== parentJoIdInt
+                        || Number(rData.target_quantity) !== rejQty
+                    ) {
+                        throw new QAPersistenceError("The persisted rework Job Order is not linked to the expected parent and quantity.");
+                    }
+                    if (!existingReworkIds.has(reworkJoIdInt)) {
+                        transactionState.reworkJobOrderId = reworkJoIdInt;
+                    }
+                    spawnedReworkJo = {
+                        job_order_id: reworkJoIdInt,
+                        job_order_no: String(rData.job_order_no || reworkJoNo),
+                        target_quantity: Number(rData.target_quantity),
+                        status: String(rData.status || "Released")
+                    };
                 }
-            }
 
-            // 4. Insert Inspection Record into qa_jo_inspection_logs
-            const inspectionLogPayload = {
-                job_order_id: parentJoIdInt,
-                inspected_quantity: inspQty,
-                passed_quantity: passQty,
-                rejected_quantity: rejQty,
-                rejection_reason_id: rejQty > 0 ? Number(rejectionReasonId) : null,
-                rework_job_order_id: reworkJoIdInt,
-                inspected_by: userId ? Number(userId) : 1,
-                inspected_at: new Date().toISOString(),
-                status: rejQty === 0 ? "PASSED" : "REWORK_TRIGGERED",
-                remarks: remarks || (rejQty === 0 ? "100% Passed QA Inspection" : `Rework required: ${rejQty} units due to ${reasonName}`)
-            };
+                // 4. Insert Inspection Record into qa_jo_inspection_logs.
+                const inspectionLogPayload = {
+                    job_order_id: parentJoIdInt,
+                    inspected_quantity: inspQty,
+                    passed_quantity: passQty,
+                    rejected_quantity: rejQty,
+                    rejection_reason_id: rejQty > 0 ? Number(rejection_reason_id) : null,
+                    rework_job_order_id: reworkJoIdInt,
+                    inspected_by: userId,
+                    inspected_at: new Date().toISOString(),
+                    status: rejQty === 0 ? "PASSED" : "REWORK_TRIGGERED",
+                    remarks: remarks || (rejQty === 0 ? "100% Passed QA Inspection" : `Rework required: ${rejQty} units due to ${reasonName}`)
+                };
 
-            let createdLog: any = null;
-            try {
-                const logRes = await fetch(`${DIRECTUS_URL}/items/qa_jo_inspection_logs`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(inspectionLogPayload)
-                });
-                if (logRes.ok) {
-                    createdLog = (await logRes.json()).data;
-                } else {
-                    console.error("Failed to insert into qa_jo_inspection_logs:", await logRes.text());
+                createdLog = await directusMutation(
+                    "/items/qa_jo_inspection_logs",
+                    {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(inspectionLogPayload)
+                    },
+                    "Create QA inspection log"
+                );
+                transactionState.inspectionLogId = numericRecordId(createdLog, ["id"]);
+                if (!transactionState.inspectionLogId) {
+                    throw new QAPersistenceError("The QA inspection log did not return a valid ID.");
                 }
-            } catch (logErr) {
-                console.error("Error creating qa_jo_inspection_logs entry:", logErr);
-            }
 
-            // 5. Update Parent Job Order status and completed/rejected quantities
-            const oldStatus = parentJO.status || "In Progress";
-            const newStatus = "COMPLETED"; // Transitions to COMPLETED on QA inspection signoff
+                if (rejQty > 0) {
+                    const verifyLogRes = await fetch(
+                        `${DIRECTUS_URL}/items/qa_jo_inspection_logs/${transactionState.inspectionLogId}?fields=id,job_order_id,inspected_quantity,passed_quantity,rejected_quantity,rework_job_order_id`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (!verifyLogRes.ok) {
+                        throw new QAPersistenceError("Unable to verify the saved QA inspection log.");
+                    }
+                    const persistedLog = (await verifyLogRes.json()).data;
+                    if (numericRelationId(persistedLog?.rework_job_order_id, ["job_order_id", "id"]) !== reworkJoIdInt) {
+                        throw new QAPersistenceError("The saved QA inspection log is not linked to the rework Job Order.");
+                    }
+                    createdLog = persistedLog;
+                }
 
-            const newCompletedQty = (Number(parentJO.completed_quantity) || 0) + passQty;
-            const newProducedQty = (Number(parentJO.actual_quantity_produced) || 0) + passQty;
-            const newRejectedQty = (Number(parentJO.rejected_quantity) || 0) + rejQty;
+                // 5. Update Parent Job Order status and completed/rejected quantities.
+                const oldStatus = parentJO.status || "In Progress";
+                const newStatus = "COMPLETED"; // Transitions to COMPLETED on QA inspection signoff.
 
-            try {
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${parentJoIdInt}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({
-                        status: newStatus,
-                        completed_quantity: newCompletedQty,
-                        actual_quantity_produced: newProducedQty,
-                        rejected_quantity: newRejectedQty,
-                        modified_at: new Date().toISOString()
-                    })
-                });
-            } catch (joPatchErr) {
-                console.error("Error updating Job Order status:", joPatchErr);
-            }
+                const newCompletedQty = (Number(parentJO.completed_quantity) || 0) + passQty;
+                const newProducedQty = (Number(parentJO.actual_quantity_produced) || 0) + passQty;
+                const newRejectedQty = (Number(parentJO.rejected_quantity) || 0) + rejQty;
 
-            // 6. Insert audit trail into manufacturing_job_order_status_history
-            try {
+                await directusMutation(
+                    `/items/manufacturing_job_orders/${parentJoIdInt}`,
+                    {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({
+                            status: newStatus,
+                            completed_quantity: newCompletedQty,
+                            actual_quantity_produced: newProducedQty,
+                            rejected_quantity: newRejectedQty,
+                            modified_at: new Date().toISOString()
+                        })
+                    },
+                    "Update parent Job Order QA state"
+                );
+                transactionState.parentJobOrderPatched = true;
+
+                // 6. Insert audit trail into manufacturing_job_order_status_history.
                 const statusHistoryPayload = {
                     job_order_id: parentJoIdInt,
                     old_status: oldStatus,
                     new_status: newStatus,
-                    changed_by: userId ? Number(userId) : 1,
+                    changed_by: userId,
                     changed_at: new Date().toISOString(),
                     remarks: rejQty === 0
                         ? `QA Inspection Completed: 100% Passed (${passQty} units). Transitioned status to COMPLETED.`
-                        : `QA Inspection Completed: ${passQty} Passed, ${rejQty} Rejected (${reasonName}). Spawned Rework Job Order ${spawnedReworkJo?.job_order_no || 'JO-RWK'}.`
+                        : `QA Inspection Completed: ${passQty} Passed, ${rejQty} Rejected (${reasonName}). Spawned Rework Job Order ${spawnedReworkJo?.job_order_no || "JO-RWK"}.`
                 };
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(statusHistoryPayload)
-                });
-            } catch (shErr) {
-                console.error("Error logging status history:", shErr);
-            }
+                const createdStatusHistory = await directusMutation(
+                    "/items/manufacturing_job_order_status_history",
+                    {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(statusHistoryPayload)
+                    },
+                    "Create Job Order status history"
+                );
+                transactionState.statusHistoryId = numericRecordId(createdStatusHistory, ["history_id", "id"]);
+                if (!transactionState.statusHistoryId) {
+                    throw new QAPersistenceError("The Job Order status history did not return a valid ID.");
+                }
 
-            // 7. Positive Finished Goods Inventory Movement (if passed_quantity > 0)
-            let createdMovement: any = null;
-            if (passQty > 0) {
-                try {
+                // 7. Positive Finished Goods Inventory Movement (if passed_quantity > 0).
+                if (passQty > 0) {
                     const finishedLotId = await resolveMasterLotId(finalLotNo, 2); // 2 = Finished Goods
                     const movementPayload = {
                         product_id: productId,
@@ -556,52 +770,67 @@ export async function POST(request: Request) {
                         expiry_date: finalExpDate,
                         manufacturing_date: finalMfgDate,
                         quantity: passQty,
-                        created_by: userId || 24,
+                        created_by: userId,
                         remarks: `Positive finished goods receipt from QA Inspection of Job Order ${parentJoNo}`
                     };
 
-                    const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify(movementPayload)
-                    });
-
-                    if (movRes.ok) {
-                        createdMovement = (await movRes.json()).data;
-                    } else {
-                        console.error("Error writing inventory_movements record:", await movRes.text());
+                    createdMovement = await directusMutation(
+                        "/items/inventory_movements",
+                        {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify(movementPayload)
+                        },
+                        "Create finished goods inventory movement"
+                    );
+                    transactionState.inventoryMovementId = numericRecordId(createdMovement, ["movement_id", "id"]);
+                    if (!transactionState.inventoryMovementId) {
+                        throw new QAPersistenceError("The finished goods inventory movement did not return a valid ID.");
                     }
 
                     // Also post to product_ledger for warehouse consistency
-                    await fetch(`${DIRECTUS_URL}/items/product_ledger`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            branchId: branchId,
-                            productId: productId,
-                            quantity: passQty,
-                            documentType: "Job Order Receipt",
-                            documentNo: parentJoNo,
-                            documentDescription: `QA Passed Yield: ${finalLotNo}`,
-                            documentDate: todayStr
-                        })
-                    }).catch(err => console.error("Error writing product_ledger entry:", err));
-
-                } catch (movErr) {
-                    console.error("Error processing finished goods movement:", movErr);
+                    const createdProductLedger = await directusMutation(
+                        "/items/product_ledger",
+                        {
+                            method: "POST",
+                            headers,
+                            body: JSON.stringify({
+                                branchId: branchId,
+                                productId: productId,
+                                quantity: passQty,
+                                documentType: "Job Order Receipt",
+                                documentNo: parentJoNo,
+                                documentDescription: `QA Passed Yield: ${finalLotNo}`,
+                                documentDate: todayStr
+                            })
+                        },
+                        "Create product ledger entry"
+                    );
+                    transactionState.productLedgerId = numericRecordId(createdProductLedger, ["id", "ledger_id"]);
+                    if (!transactionState.productLedgerId) {
+                        throw new QAPersistenceError("The product ledger entry did not return a valid ID.");
+                    }
                 }
-            }
 
-            return NextResponse.json({
-                success: true,
-                message: rejQty === 0 
-                    ? `QA Inspection 100% Passed. Job Order ${parentJoNo} is marked COMPLETED with ${passQty} units released to inventory.`
-                    : `QA Inspection logged: ${passQty} units passed to inventory, ${rejQty} units rejected. Standalone Rework Job Order ${spawnedReworkJo?.job_order_no || 'JO-RWK'} spawned successfully.`,
-                inspectionLog: createdLog || inspectionLogPayload,
-                jobOrderStatus: newStatus,
-                reworkJobOrder: spawnedReworkJo,
-                inventoryMovement: createdMovement
-            });
+                return NextResponse.json({
+                    success: true,
+                    message: rejQty === 0
+                        ? `QA Inspection 100% Passed. Job Order ${parentJoNo} is marked COMPLETED with ${passQty} units released to inventory.`
+                        : `QA Inspection logged: ${passQty} units passed to inventory, ${rejQty} units rejected. Standalone Rework Job Order ${spawnedReworkJo?.job_order_no || "JO-RWK"} spawned successfully.`,
+                    inspectionLog: createdLog,
+                    jobOrderStatus: newStatus,
+                    reworkJobOrder: spawnedReworkJo,
+                    inventoryMovement: createdMovement
+                });
+            } catch (error) {
+                const rollbackFailures = await rollbackTwoPointWrites(transactionState);
+                const message = error instanceof Error ? error.message : "Two-point QA persistence failed.";
+                return NextResponse.json({
+                    error: rollbackFailures.length > 0
+                        ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
+                        : message
+                }, { status: error instanceof QAPersistenceError ? error.statusCode : 502 });
+            }
         }
 
         // Action: Verify a QA routing step checklist
@@ -630,38 +859,78 @@ export async function POST(request: Request) {
             const hasCriticalFailure = verifications?.some((v: any) => v.is_failed && v.is_critical);
 
             if (hasCriticalFailure) {
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: "On Hold" })
-                });
+                const taskIdInt = Number(taskId);
+                if (!Number.isSafeInteger(taskIdInt) || taskIdInt <= 0) {
+                    return NextResponse.json({ error: "Invalid taskId" }, { status: 400 });
+                }
 
-                const dispositions = readDispositions();
+                const metadata = await resolveDispositionMetadata(joIdInt, taskIdInt);
                 const newDisp = {
                     id: `DISP-${Date.now()}`,
-                    jo_id: joId,
-                    task_id: taskId,
-                    task_name: taskName || "Unknown Task",
-                    product_name: productName || "Unknown Product",
-                    expected_quantity: expectedQty,
-                    actual_quantity: actualQty,
+                    job_order_id: joIdInt,
+                    jo_id: metadata.jo_id || joId,
+                    product_id: metadata.product_id || (joInfo.productId > 0 ? joInfo.productId : null),
+                    task_id: metadata.task_id || taskIdInt,
+                    task_name: metadata.task_name || taskName || "Routing Task",
+                    station_id: metadata.station_id,
+                    station_name: metadata.station_name,
+                    product_name: metadata.product_name || productName || "Product unavailable",
+                    expected_quantity: Number(expectedQty ?? metadata.expected_quantity ?? 0),
+                    actual_quantity: Number(actualQty ?? 0),
                     failed_parameters: verifications.filter((v: any) => v.is_failed),
                     disposition_status: "Pending",
                     decision: null,
                     supervisor_comments: "",
+                    inspection_remarks: comments || "",
                     recorded_at: new Date().toISOString(),
                     resolved_at: null,
                     resolved_by: null
                 };
-                dispositions.push(newDisp);
-                writeDispositions(dispositions);
 
-                return NextResponse.json({
-                    success: false,
-                    onHold: true,
-                    message: "Critical parameter failure detected. Job Order has been placed ON HOLD.",
-                    disposition: newDisp
-                });
+                let jobOrderPatched = false;
+                try {
+                    await directusMutation(
+                        `/items/manufacturing_job_orders/${joIdInt}`,
+                        {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ status: "On Hold" })
+                        },
+                        "Place Job Order on QA Hold"
+                    );
+                    jobOrderPatched = true;
+                    const persistedDisposition = await createDisposition(newDisp);
+
+                    return NextResponse.json({
+                        success: false,
+                        onHold: true,
+                        message: "Critical parameter failure detected. Job Order has been placed ON HOLD.",
+                        disposition: persistedDisposition
+                    });
+                } catch (error) {
+                    const rollbackFailures: string[] = [];
+                    if (jobOrderPatched && joInfo.status) {
+                        try {
+                            await directusMutation(
+                                `/items/manufacturing_job_orders/${joIdInt}`,
+                                {
+                                    method: "PATCH",
+                                    headers,
+                                    body: JSON.stringify({ status: joInfo.status })
+                                },
+                                "Rollback Job Order QA Hold"
+                            );
+                        } catch (rollbackError) {
+                            rollbackFailures.push(rollbackError instanceof Error ? rollbackError.message : "Job Order rollback failed.");
+                        }
+                    }
+                    const message = error instanceof Error ? error.message : "QA disposition persistence failed.";
+                    throw new DispositionPersistenceError(
+                        rollbackFailures.length > 0
+                            ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
+                            : message
+                    );
+                }
             } else {
                 return NextResponse.json({
                     success: true,
@@ -678,34 +947,66 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "Missing dispositionId or decision" }, { status: 400 });
             }
 
-            const dispositions = readDispositions();
-            const dispIdx = dispositions.findIndex((d: any) => d.id === dispositionId);
-            if (dispIdx === -1) {
+            const disp = await getDisposition(String(dispositionId));
+            if (!disp) {
                 return NextResponse.json({ error: "Disposition record not found" }, { status: 404 });
             }
 
-            const disp = dispositions[dispIdx];
-            const joInfo = await getJobOrderIdByNo(disp.jo_id);
+            const dispositionJobOrderNo = String(disp.jo_id || "");
+            const storedJobOrderId = Number(disp.job_order_id);
+            const joInfo = Number.isSafeInteger(storedJobOrderId) && storedJobOrderId > 0
+                ? await getJobOrderById(storedJobOrderId)
+                : await getJobOrderIdByNo(dispositionJobOrderNo);
             if (!joInfo) {
-                return NextResponse.json({ error: `Job Order not found: ${disp.jo_id}` }, { status: 404 });
+                return NextResponse.json({ error: `Job Order not found: ${dispositionJobOrderNo}` }, { status: 404 });
             }
             const joIdInt = joInfo.id;
 
             const targetStatus = decision === "Scrap" ? "Cancelled" : "In Progress";
-            await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ status: targetStatus })
-            });
+            let jobOrderPatched = false;
+            try {
+                await directusMutation(
+                    `/items/manufacturing_job_orders/${joIdInt}`,
+                    {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ status: targetStatus })
+                    },
+                    "Update Job Order after QA disposition"
+                );
+                jobOrderPatched = true;
 
-            disp.disposition_status = "Resolved";
-            disp.decision = decision;
-            disp.supervisor_comments = supervisorComments || "";
-            disp.resolved_at = new Date().toISOString();
-            disp.resolved_by = userId || null;
-
-            dispositions[dispIdx] = disp;
-            writeDispositions(dispositions);
+                await updateDisposition(String(dispositionId), {
+                    disposition_status: "Resolved",
+                    decision,
+                    supervisor_comments: supervisorComments || "",
+                    resolved_at: new Date().toISOString(),
+                    resolved_by: Number.isSafeInteger(Number(userId)) && Number(userId) > 0 ? Number(userId) : null
+                });
+            } catch (error) {
+                const rollbackFailures: string[] = [];
+                if (jobOrderPatched && joInfo.status) {
+                    try {
+                        await directusMutation(
+                            `/items/manufacturing_job_orders/${joIdInt}`,
+                            {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify({ status: joInfo.status })
+                            },
+                            "Rollback Job Order after QA disposition failure"
+                        );
+                    } catch (rollbackError) {
+                        rollbackFailures.push(rollbackError instanceof Error ? rollbackError.message : "Job Order rollback failed.");
+                    }
+                }
+                const message = error instanceof Error ? error.message : "QA disposition resolution failed.";
+                throw new DispositionPersistenceError(
+                    rollbackFailures.length > 0
+                        ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
+                        : message
+                );
+            }
 
             return NextResponse.json({
                 success: true,
@@ -716,6 +1017,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Invalid action parameter" }, { status: 400 });
     } catch (e) {
         console.error("API Error in QA POST:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to save QA action" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as Error).message || "Failed to save QA action" },
+            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+        );
     }
 }

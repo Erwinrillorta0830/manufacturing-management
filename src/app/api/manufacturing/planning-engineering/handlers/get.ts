@@ -1,7 +1,5 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { 
     fetchJobOrders, 
     getProductInventoryAndSafetyStock
@@ -12,6 +10,8 @@ import {
 } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
+import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -158,16 +158,66 @@ export async function handleGET(request: Request) {
 
         if (action === "job-materials") {
             const joId = searchParams.get("joId");
-            const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joId}&limit=-1`, { headers, cache: "no-store" });
-            const mData = res.ok ? (await res.json()).data || [] : [];
+            const numericJoId = Number(joId);
+            if (!joId || !Number.isFinite(numericJoId) || numericJoId <= 0) {
+                return NextResponse.json({ error: "A valid Job Order ID is required", code: "JOB_MATERIALS_INVALID_ID" }, { status: 400 });
+            }
+
+            let mData: any[];
+            try {
+                const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${encodeURIComponent(joId)}&limit=-1`, { headers, cache: "no-store" });
+                if (!res.ok) {
+                    console.error("Required job-order materials lookup failed:", res.status, res.statusText);
+                    return NextResponse.json(
+                        { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+
+                const materialsPayload = await res.json();
+                if (!Array.isArray(materialsPayload?.data)) {
+                    console.error("Required job-order materials lookup returned an invalid payload.");
+                    return NextResponse.json(
+                        { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+                mData = materialsPayload.data;
+            } catch (error) {
+                console.error("Required job-order materials lookup failed:", error);
+                return NextResponse.json(
+                    { error: "Required material data is temporarily unavailable.", code: "JOB_MATERIALS_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
+
             const pIds = mData.map((d: any) => Number(d.product_id?.product_id || d.product_id)).filter(Boolean);
             const pMap = new Map<number, any>();
             
             // Get Job Order branch
-            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}`, { headers, cache: "no-store" });
-            const joData = joRes.ok ? (await joRes.json()).data : null;
+            let joData: any;
+            try {
+                const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(joId)}`, { headers, cache: "no-store" });
+                if (!joRes.ok) {
+                    console.error("Job Order context lookup failed:", joRes.status, joRes.statusText);
+                    return NextResponse.json(
+                        { error: "Job Order context is temporarily unavailable.", code: "JOB_ORDER_CONTEXT_UNAVAILABLE" },
+                        { status: 502 }
+                    );
+                }
+
+                const joPayload = await joRes.json();
+                joData = joPayload?.data;
+            } catch (error) {
+                console.error("Job Order context lookup failed:", error);
+                return NextResponse.json(
+                    { error: "Job Order context is temporarily unavailable.", code: "JOB_ORDER_CONTEXT_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
+
             if (!joData?.branch_id) {
-                return NextResponse.json({ error: "Job Order has no branch assigned" }, { status: 400 });
+                return NextResponse.json({ error: "Job Order has no branch assigned", code: "JOB_ORDER_BRANCH_MISSING" }, { status: 400 });
             }
             const branchId = Number(joData.branch_id);
 
@@ -384,7 +434,7 @@ export async function handleGET(request: Request) {
             const reservationsMap = new Map<number, any[]>();
             if (jomIds.length > 0) {
                 try {
-                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=id,jo_material_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
+                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
                     const resRes = await fetch(reservationsUrl, { headers });
                     if (resRes.ok) {
                         const reservations = (await resRes.json()).data || [];
@@ -569,9 +619,16 @@ export async function handleGET(request: Request) {
                         const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
                         const netAvailable = Math.max(0, physicalQty - alreadyReserved);
 
-                        const matchedRes = matReservations.find((mr: any) => mr.batch_no === lotNum);
-                        const reservationId = matchedRes ? (matchedRes.id || matchedRes.jo_material_reservation_id) : null;
-                        const reservedQtyForThisLot = matchedRes ? Number(matchedRes.reserved_quantity || 0) : 0;
+                        const normalizedLotNo = String(lotNum || "").trim();
+                        const matchingReservations = matReservations.filter((mr: any) =>
+                            String(mr.batch_no || "").trim() === normalizedLotNo
+                        );
+                        const matchedRes = matchingReservations[0];
+                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id) : null;
+                        const reservedQtyForThisLot = matchingReservations.reduce(
+                            (total: number, reservation: any) => total + Number(reservation.reserved_quantity || 0),
+                            0
+                        );
 
                         return {
                             receipt_id: recId,
@@ -584,7 +641,7 @@ export async function handleGET(request: Request) {
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };
-                    }).filter((c: any) => c.available > 0 || matReservations.some((mr: any) => mr.batch_no === c.lot_no));
+                    }).filter((c: any) => c.available > 0 || c.reservation_id !== null);
 
                     // Format multi-lot text if reservations exist
                     if (matReservations.length > 0) {
@@ -714,15 +771,7 @@ export async function handleGET(request: Request) {
             const opsMap = new Map<number, string>();
             operations.forEach((o: any) => opsMap.set(Number(o.id), o.operation_name));
 
-            let dispositions: any[] = [];
-            try {
-                const dispFile = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
-                if (fs.existsSync(dispFile)) {
-                    dispositions = JSON.parse(fs.readFileSync(dispFile, "utf-8") || "[]");
-                }
-            } catch (err) {
-                console.error("Failed to read dispositions for qa-logs mapping:", err);
-            }
+            const dispositions = await enrichDispositions(await readDispositions());
 
             const groupsMap = new Map<string, any[]>();
             qaRecords.forEach((rec: any) => {
@@ -756,7 +805,9 @@ export async function handleGET(request: Request) {
                 let expected = targetQty;
                 let actual = targetQty;
                 if (!overallPassed && dispositions.length > 0) {
-                    const disp = dispositions.find(d => Number(d.task_id) === routeId);
+                    const disp = dispositions.find(d =>
+                        Number(d.job_order_id) === joId && Number(d.task_id) === routeId
+                    ) || dispositions.find(d => Number(d.task_id) === routeId);
                     if (disp) {
                         expected = Number(disp.expected_quantity || targetQty);
                         actual = Number(disp.actual_quantity || targetQty);
@@ -791,32 +842,16 @@ export async function handleGET(request: Request) {
             if (!joId) {
                 return NextResponse.json({ error: "Missing joId" }, { status: 400 });
             }
-            const isNumeric = /^\d+$/.test(joId);
-            const filterKey = isNumeric ? "job_order_id" : "job_order_id.job_order_no";
-            const url = `${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[${filterKey}][_eq]=${encodeURIComponent(joId)}&limit=-1`;
-            const res = await fetch(url, { headers, cache: "no-store" });
-            if (!res.ok) throw new Error("Failed to fetch job order materials");
-            const data = await res.json();
-            
-            // Resolve product details for each material for better UI presentation
-            const prodRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,cost_per_unit`, { headers });
-            const products = prodRes.ok ? (await prodRes.json()).data || [] : [];
-            const productsMap = new Map<number, any>();
-            products.forEach((p: any) => {
-                productsMap.set(Number(p.product_id), p);
-            });
-            
-            const enriched = (data.data || []).map((m: any) => {
-                const prod = productsMap.get(Number(m.product_id)) as any;
-                return {
-                    ...m,
-                    product_name: prod?.product_name || `Product #${m.product_id}`,
-                    product_code: prod?.product_code || "",
-                    cost_per_unit: prod?.cost_per_unit || 0
-                };
-            });
-            
-            return NextResponse.json(enriched);
+
+            try {
+                const { materials } = await loadYieldMaterials(joId);
+                return NextResponse.json(materials);
+            } catch (error) {
+                if (error instanceof YieldMaterialsError) {
+                    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+                }
+                throw error;
+            }
         }
 
         if (action === "wizard-step-2") {

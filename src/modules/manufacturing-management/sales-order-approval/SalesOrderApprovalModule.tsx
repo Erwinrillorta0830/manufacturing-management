@@ -19,14 +19,14 @@ export default function SalesOrderApprovalModule() {
         setCurrentPage,
         searchQuery,
         setSearchQuery,
-        statusFilter,
-        setStatusFilter,
         customerCodeFilter,
         setCustomerCodeFilter,
         dateFromFilter,
         setDateFromFilter,
         dateToFilter,
         setDateToFilter,
+        statusFilter,
+        setStatusFilter,
         totalCount,
         totalPages,
         limit,
@@ -65,54 +65,50 @@ export default function SalesOrderApprovalModule() {
             </div>
 
             {/* Main Content Pane */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                <div className="lg:col-span-2 space-y-6">
-                    {loading ? (
-                        <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground bg-card rounded-xl border border-dashed shadow-sm">
-                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                            <span className="text-xs">Loading approval queue...</span>
-                        </div>
-                    ) : (
-                        <SalesOrderApprovalTable
-                            salesOrders={salesOrders}
-                            updatingStatusId={updatingStatusId}
-                            viewOrderDetails={viewOrderDetails}
-                            handleApprove={handleApprove}
-                            handleReject={handleReject}
-                            currentPage={currentPage}
-                            setCurrentPage={setCurrentPage}
-                            searchQuery={searchQuery}
-                            setSearchQuery={setSearchQuery}
-                            statusFilter={statusFilter}
-                            setStatusFilter={setStatusFilter}
-                            customerCodeFilter={customerCodeFilter}
-                            setCustomerCodeFilter={setCustomerCodeFilter}
-                            dateFromFilter={dateFromFilter}
-                            setDateFromFilter={setDateFromFilter}
-                            dateToFilter={dateToFilter}
-                            setDateToFilter={setDateToFilter}
-                            totalCount={totalCount}
-                            totalPages={totalPages}
-                            limit={limit}
-                        />
-                    )}
-                </div>
-
-                {/* Right sidebar - details view */}
-                <div className="space-y-6">
-                    <SalesOrderApprovalDetailPanel
-                        selectedOrder={selectedOrder}
-                        setSelectedOrder={setSelectedOrder}
-                        orderDetails={orderDetails}
-                        loadingDetails={loadingDetails}
+            <div className="space-y-6">
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center p-20 gap-2 text-muted-foreground bg-card rounded-xl border border-dashed shadow-sm">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                        <span className="text-xs">Loading approval queue...</span>
+                    </div>
+                ) : (
+                    <SalesOrderApprovalTable
+                        salesOrders={salesOrders}
                         updatingStatusId={updatingStatusId}
+                        viewOrderDetails={viewOrderDetails}
                         handleApprove={handleApprove}
-                        handleHold={handleHold}
                         handleReject={handleReject}
-                        handleCancel={handleCancel}
+                        currentPage={currentPage}
+                        setCurrentPage={setCurrentPage}
+                        searchQuery={searchQuery}
+                        setSearchQuery={setSearchQuery}
+                        customerCodeFilter={customerCodeFilter}
+                        setCustomerCodeFilter={setCustomerCodeFilter}
+                        dateFromFilter={dateFromFilter}
+                        setDateFromFilter={setDateFromFilter}
+                        dateToFilter={dateToFilter}
+                        setDateToFilter={setDateToFilter}
+                        statusFilter={statusFilter}
+                        setStatusFilter={setStatusFilter}
+                        totalCount={totalCount}
+                        totalPages={totalPages}
+                        limit={limit}
                     />
-                </div>
+                )}
             </div>
+
+            {/* Details Modal */}
+            <SalesOrderApprovalDetailPanel
+                selectedOrder={selectedOrder}
+                setSelectedOrder={setSelectedOrder}
+                orderDetails={orderDetails}
+                loadingDetails={loadingDetails}
+                updatingStatusId={updatingStatusId}
+                handleApprove={handleApprove}
+                handleHold={handleHold}
+                handleReject={handleReject}
+                handleCancel={handleCancel}
+            />
         </div>
     );
 }

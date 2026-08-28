@@ -19,14 +19,13 @@ export const dynamic = "force-dynamic";
 const positiveId = z.coerce.number().int().positive();
 const expenseSchema = z.object({
     overhead_id: positiveId.nullish(),
-    chart_of_account_id: positiveId.nullish(),
-    expense_type: z.string().trim().max(150).nullish(),
     amount_php: z.coerce.number().finite().nonnegative()
 });
 const draftSchema = z.object({
     purchaseOrderId: positiveId,
-    allocationRule: z.enum(["Value", "Weight", "Volume", "Hybrid"]),
+    allocationRule: z.enum(["Quantity", "Value", "Weight", "Volume", "Hybrid"]),
     expenses: z.array(expenseSchema).default([]),
+    exchangeRate: z.coerce.number().finite().positive().optional(),
     sourceFlow: z.string().trim().max(40).optional()
 });
 
@@ -53,7 +52,8 @@ export async function GET(request: Request) {
             preview = await previewLandedCost({
                 purchaseOrderId,
                 allocationRule: data.computation.allocation_rule,
-                expenses: data.expenses as LandedCostExpenseInput[]
+                expenses: data.expenses as LandedCostExpenseInput[],
+                exchangeRate: data.computation.exchange_rate
             });
         }
         return NextResponse.json({ ...data, preview });
@@ -73,6 +73,7 @@ export async function POST(request: Request) {
             purchaseOrderId: parsed.data.purchaseOrderId,
             allocationRule: parsed.data.allocationRule,
             expenses: parsed.data.expenses,
+            exchangeRate: parsed.data.exchangeRate,
             actorId: actor.userId,
             sourceFlow: parsed.data.sourceFlow
         });

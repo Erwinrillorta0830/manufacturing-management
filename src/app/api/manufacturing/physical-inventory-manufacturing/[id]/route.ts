@@ -50,6 +50,18 @@ export async function GET(_request: NextRequest, context: RouteParams) {
     }
 }
 
+function areDatesEqual(d1: unknown, d2: unknown): boolean {
+    if (!d1 && !d2) return true;
+    if (!d1 || !d2) return false;
+    const str1 = String(d1).trim();
+    const str2 = String(d2).trim();
+    if (str1 === str2) return true;
+    const t1 = new Date(str1).getTime();
+    const t2 = new Date(str2).getTime();
+    if (!isNaN(t1) && !isNaN(t2)) return t1 === t2;
+    return false;
+}
+
 /**
  * PATCH /api/manufacturing/physical-inventory-manufacturing/[id]
  * Update draft Physical Inventory header metadata (remarks, dates, product_type_id, price_type_id)
@@ -76,8 +88,29 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
             return NextResponse.json({ success: false, error: "Committed or cancelled physical inventory records cannot be edited." }, { status: 400 });
         }
 
+        // Check if count details already exist for this sheet
+        const detailsCheckUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=1`;
+        const detailsRes = await fetch(detailsCheckUrl, { headers, cache: "no-store" });
+        const existingDetails = detailsRes.ok ? ((await detailsRes.json()).data || []) : [];
+        const hasDetails = existingDetails.length > 0;
+
         const body = await request.json();
         const { starting_date, cutoff_date, remarks, stock_type, product_type_id, price_type_id } = body;
+
+        if (hasDetails) {
+            const hasStartingDateChange = starting_date !== undefined && !areDatesEqual(starting_date, sheet.starting_date);
+            const hasCutoffDateChange = cutoff_date !== undefined && !areDatesEqual(cutoff_date, sheet.cutoff_date);
+            const hasPriceTypeChange = price_type_id !== undefined && extractId(price_type_id) !== extractId(sheet.price_type_id);
+            const hasProductTypeChange = product_type_id !== undefined && extractId(product_type_id) !== extractId(sheet.product_type_id);
+            const hasStockTypeChange = stock_type !== undefined && stock_type !== sheet.stock_type;
+
+            if (hasStartingDateChange || hasCutoffDateChange || hasPriceTypeChange || hasProductTypeChange || hasStockTypeChange) {
+                return NextResponse.json({
+                    success: false,
+                    error: "Critical header controls (Starting Date, Cutoff Date, Price Type Basis, Product Type Filter, Stock Count Type) cannot be modified once line items have been logged in an active audit sheet."
+                }, { status: 400 });
+            }
+        }
 
         const updatePayload: Record<string, unknown> = {};
         if (starting_date) updatePayload.starting_date = starting_date;

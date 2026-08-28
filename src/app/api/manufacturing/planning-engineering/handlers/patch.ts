@@ -11,13 +11,24 @@ export async function handlePATCH(request: Request) {
         // 0. Workstation breakdown handler
         if (body.action === "breakdown") {
             const { jobOrderId, haltedStepId, yieldQty, haltReason, materials } = body;
-            const joPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, {
+            const parsedJobOrderId = Number(jobOrderId);
+            const trimmedHaltReason = typeof haltReason === "string" ? haltReason.trim() : "";
+
+            if (!Number.isInteger(parsedJobOrderId) || parsedJobOrderId <= 0) {
+                return NextResponse.json({ error: "A valid jobOrderId is required." }, { status: 400 });
+            }
+
+            if (!trimmedHaltReason) {
+                return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
+            }
+
+            const joPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${parsedJobOrderId}`, {
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
                     status: "On Hold",
                     actual_quantity_produced: Number(yieldQty),
-                    remarks: `Halted at step ${haltedStepId}. Reason: ${haltReason}`
+                    remarks: `Halted at step ${haltedStepId}. Reason: ${trimmedHaltReason}`
                 })
             });
             if (!joPatchRes.ok) {

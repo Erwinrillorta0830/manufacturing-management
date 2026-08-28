@@ -95,6 +95,9 @@ export default function ManufacturingQAModule() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        yieldMaterialsLoading,
+        yieldMaterialsError,
+        handleRetryYieldMaterials,
         handleOpenYieldDialog,
         handleSubmitYieldClosing,
         handleReprintReceipt,
@@ -166,9 +169,18 @@ export default function ManufacturingQAModule() {
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
         handleSubmitFinalRelease,
+        isFinalQAAuditOpen,
+        setIsFinalQAAuditOpen,
+        selectedFinalQAAudit,
+        loadingFinalQAAudit,
+        finalQAAuditError,
+        handleOpenFinalQAAudit,
+        handlePrintFinalQACoa,
+        coaPrintLoading,
 
         // General
         refreshAll,
+        isRefreshing,
         getBranchName
     } = useManufacturingQA();
 
@@ -186,9 +198,15 @@ export default function ManufacturingQAModule() {
                     </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                    <Button variant="outline" size="sm" onClick={() => refreshAll(false)} className="gap-1.5 text-xs font-semibold">
-                        <RefreshCw className="h-4 w-4" />
-                        Sync Console
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => { await refreshAll(false); }}
+                        disabled={isRefreshing}
+                        className="gap-1.5 text-xs font-semibold"
+                    >
+                        <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                        {isRefreshing ? "Syncing..." : "Sync Console"}
                     </Button>
                 </div>
             </div>
@@ -357,6 +375,7 @@ export default function ManufacturingQAModule() {
                     <FinalQAReleases
                         lots={lots}
                         lotsProducts={lotsProducts}
+                        finalReleases={finalReleases}
                         loadingFinalQA={loadingFinalQA}
                         isFinalReleaseOpen={isFinalReleaseOpen}
                         setIsFinalReleaseOpen={setIsFinalReleaseOpen}
@@ -380,6 +399,14 @@ export default function ManufacturingQAModule() {
                         handleOpenFinalReleaseDialog={handleOpenFinalReleaseDialog}
                         handleSubmitFinalRelease={handleSubmitFinalRelease}
                         actionLoading={actionLoading}
+                        isFinalQAAuditOpen={isFinalQAAuditOpen}
+                        setIsFinalQAAuditOpen={setIsFinalQAAuditOpen}
+                        selectedFinalQAAudit={selectedFinalQAAudit}
+                        loadingFinalQAAudit={loadingFinalQAAudit}
+                        finalQAAuditError={finalQAAuditError}
+                        handleOpenFinalQAAudit={handleOpenFinalQAAudit}
+                        handlePrintFinalQACoa={handlePrintFinalQACoa}
+                        coaPrintLoading={coaPrintLoading}
                     />
                 </TabsContent>
 
@@ -430,6 +457,9 @@ export default function ManufacturingQAModule() {
                 setExpiryDate={setExpiryDate}
                 unitCost={unitCost}
                 setUnitCost={setUnitCost}
+                yieldMaterialsLoading={yieldMaterialsLoading}
+                yieldMaterialsError={yieldMaterialsError}
+                handleRetryYieldMaterials={handleRetryYieldMaterials}
                 actionLoading={actionLoading}
                 handleSubmitYieldClosing={handleSubmitYieldClosing}
             />

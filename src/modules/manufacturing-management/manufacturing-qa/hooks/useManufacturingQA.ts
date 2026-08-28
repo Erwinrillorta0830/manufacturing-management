@@ -8,7 +8,8 @@ import {
     Branch, 
     QARejectionReason, 
     QAJOInspectionLog, 
-    TwoPointQAInspectionPayload 
+    TwoPointQAInspectionPayload,
+    YieldJobOrderMaterial
 } from "../types";
 import {
     fetchQALogs,
@@ -24,10 +25,49 @@ import {
     fetchDailyQAInspections,
     fetchFinalQAReleases,
     fetchYieldLedger,
+    fetchFinishedGoodsReceipts,
     fetchInventoryLotsData,
     postDailyQAInspection,
-    postFinalQARelease
+    postFinalQARelease,
+    fetchFinalQACoa
 } from "../services/qa-api";
+import type { FinalQACoa } from "../services/qa-api";
+
+function relationNumber(value: any, keys: string[] = ["id"]): number {
+    if (value && typeof value === "object") {
+        for (const key of keys) {
+            const candidate = Number(value[key]);
+            if (Number.isSafeInteger(candidate) && candidate > 0) return candidate;
+        }
+        return 0;
+    }
+    const candidate = Number(value || 0);
+    return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : 0;
+}
+
+function canonicalLotId(lot: any): number {
+    return relationNumber(lot?.canonical_lot_id, ["canonical_lot_id"])
+        || relationNumber(lot?.lot_id, ["lot_id", "id"]);
+}
+
+function finalReleaseId(release: any): number {
+    return relationNumber(release?.final_release_id ?? release?.id, ["final_release_id", "id"]);
+}
+
+function escapePrintHtml(value: unknown): string {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function formatAuditDate(value: string | null | undefined): string {
+    if (!value) return "—";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
 
 export interface PrintReceiptComponent {
     product_name: string;
@@ -326,6 +366,10 @@ export function useManufacturingQA() {
     const [manufacturingDate, setManufacturingDate] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
+    const [selectedYieldLedgerId, setSelectedYieldLedgerId] = useState<number | null>(null);
+    const [yieldMaterials, setYieldMaterials] = useState<YieldJobOrderMaterial[]>([]);
+    const [yieldMaterialsLoading, setYieldMaterialsLoading] = useState(false);
+    const [yieldMaterialsError, setYieldMaterialsError] = useState<string | null>(null);
 
     // Supervisor Override Dialog states
     const [selectedDisp, setSelectedDisp] = useState<DispositionRecord | null>(null);
@@ -343,6 +387,9 @@ export function useManufacturingQA() {
     const [lotsProducts, setLotsProducts] = useState<any[]>([]);
     const [loadingDailyQA, setLoadingDailyQA] = useState(false);
     const [loadingFinalQA, setLoadingFinalQA] = useState(false);
+    const [finishedGoodsReceipts, setFinishedGoodsReceipts] = useState<any[]>([]);
+    const [loadingFinishedGoods, setLoadingFinishedGoods] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Daily Audit Dialog states
     const [isDailyAuditOpen, setIsDailyAuditOpen] = useState(false);
@@ -368,6 +415,11 @@ export function useManufacturingQA() {
     const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
     const [coaRefNo, setCoaRefNo] = useState("");
     const [finalRemarks, setFinalRemarks] = useState("");
+    const [isFinalQAAuditOpen, setIsFinalQAAuditOpen] = useState(false);
+    const [selectedFinalQAAudit, setSelectedFinalQAAudit] = useState<FinalQACoa | null>(null);
+    const [loadingFinalQAAudit, setLoadingFinalQAAudit] = useState(false);
+    const [finalQAAuditError, setFinalQAAuditError] = useState<string | null>(null);
+    const [coaPrintLoading, setCoaPrintLoading] = useState(false);
 
     // Load Job Orders
     const loadJobOrders = async (silent = false) => {
@@ -380,6 +432,7 @@ export function useManufacturingQA() {
                 console.error("Job Orders fetch error:", e);
                 toast.error("Failed to retrieve job orders.");
             }
+            throw e instanceof Error ? e : new Error("Failed to retrieve job orders.");
         } finally {
             if (!silent) setLoadingJobOrders(false);
         }
@@ -393,6 +446,7 @@ export function useManufacturingQA() {
             setRejectionReasons(data);
         } catch (e) {
             console.error("Error fetching rejection reasons:", e);
+            throw e instanceof Error ? e : new Error("Failed to load rejection reasons.");
         } finally {
             if (!silent) setLoadingReasons(false);
         }
@@ -406,6 +460,7 @@ export function useManufacturingQA() {
             setInspectionLogs(data);
         } catch (e) {
             console.error("Error fetching QA inspection logs:", e);
+            throw e instanceof Error ? e : new Error("Failed to load inspection logs.");
         } finally {
             if (!silent) setLoadingInspectionLogs(false);
         }
@@ -421,6 +476,7 @@ export function useManufacturingQA() {
             if (!silent) {
                 console.error("QA Logs fetch error:", e);
             }
+            throw e instanceof Error ? e : new Error("Failed to load QA logs.");
         } finally {
             if (!silent) setLoadingLogs(false);
         }
@@ -436,6 +492,7 @@ export function useManufacturingQA() {
             if (!silent) {
                 console.error("Dispositions fetch error:", e);
             }
+            throw e instanceof Error ? e : new Error("Failed to load dispositions.");
         } finally {
             if (!silent) setLoadingDispositions(false);
         }
@@ -460,12 +517,12 @@ export function useManufacturingQA() {
             setDailyInspections(inspections);
 
             const res = await fetch("/api/manufacturing/qa?action=templates");
-            if (res.ok) {
-                const data = await res.json();
-                setQaTemplates(data);
-            }
+            if (!res.ok) throw new Error("Failed to load QA templates");
+            const data = await res.json();
+            setQaTemplates(data);
         } catch (e) {
             console.error("Error loading daily QA data:", e);
+            throw e instanceof Error ? e : new Error("Failed to load daily QA data.");
         } finally {
             if (!silent) setLoadingDailyQA(false);
         }
@@ -481,27 +538,54 @@ export function useManufacturingQA() {
             setLotsProducts(lotsData.products);
         } catch (e) {
             console.error("Error loading final QA data:", e);
+            throw e instanceof Error ? e : new Error("Failed to load final QA data.");
         } finally {
             if (!silent) setLoadingFinalQA(false);
         }
     };
 
+    const loadFinishedGoodsData = async (silent = false) => {
+        if (!silent) setLoadingFinishedGoods(true);
+        try {
+            const receipts = await fetchFinishedGoodsReceipts();
+            setFinishedGoodsReceipts(receipts);
+        } catch (e) {
+            console.error("Error loading finished goods receipts:", e);
+            throw e instanceof Error ? e : new Error("Failed to load finished goods receipts.");
+        } finally {
+            if (!silent) setLoadingFinishedGoods(false);
+        }
+    };
+
     // Refresh all data
-    const refreshAll = useCallback((silent: boolean | any = false) => {
+    const refreshAll = useCallback(async (silent: boolean | any = false): Promise<{ failed: string[] }> => {
         const isSilent = silent === true;
-        loadJobOrders(isSilent);
-        loadRejectionReasons(isSilent);
-        loadInspectionLogs(isSilent);
-        loadQALogs(isSilent);
-        loadDispositions(isSilent);
-        loadDailyQAData(isSilent);
-        loadFinalQAData(isSilent);
+        setIsRefreshing(true);
+        const refreshTasks: Array<[string, Promise<void>]> = [
+            ["job orders", loadJobOrders(isSilent)],
+            ["rejection reasons", loadRejectionReasons(isSilent)],
+            ["inspection logs", loadInspectionLogs(isSilent)],
+            ["QA logs", loadQALogs(isSilent)],
+            ["dispositions", loadDispositions(isSilent)],
+            ["daily QA data", loadDailyQAData(isSilent)],
+            ["final QA data", loadFinalQAData(isSilent)],
+            ["finished goods", loadFinishedGoodsData(isSilent)]
+        ];
+        const results = await Promise.allSettled(refreshTasks.map(([, task]) => task));
+        const failed = results
+            .map((result, index) => result.status === "rejected" ? refreshTasks[index][0] : null)
+            .filter((label): label is string => Boolean(label));
+        setIsRefreshing(false);
+        if (!isSilent && failed.length > 0) {
+            toast.warning(`Console refresh incomplete: ${failed.join(", ")}.`);
+        }
+        return { failed };
     }, []);
 
     // Initial Mount Lifecycle
     useEffect(() => {
-        refreshAll(false);
-        loadBranches();
+        void refreshAll(false);
+        void loadBranches();
     }, [refreshAll]);
 
     // Establish Realtime SSE Connection for inventory movements
@@ -520,7 +604,7 @@ export function useManufacturingQA() {
 
                 eventSource.addEventListener("movement", (event) => {
                     try {
-                        refreshAll(true);
+                        void refreshAll(true);
                     } catch (e) {
                         console.error("[QA Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -662,9 +746,17 @@ export function useManufacturingQA() {
     // Handle Open Yield Dialog
     const handleOpenYieldDialog = (jo: JobOrder) => {
         setSelectedJO(jo);
+        setYieldMaterials([]);
+        setYieldMaterialsError(null);
+        setYieldMaterialsLoading(false);
         setYieldQty(String(jo.quantity || jo.target_quantity || 0));
         
-        const firstLog = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
+        const yieldLogs = Array.isArray(jo.yield_logs) ? jo.yield_logs : [];
+        const firstLog = yieldLogs.length > 0 ? yieldLogs[0] : null;
+        const ledgerIds = yieldLogs
+            .map((log: any) => Number(log.ledger_id ?? log.id ?? 0))
+            .filter((id: number, index: number, ids: number[]) => id > 0 && ids.indexOf(id) === index);
+        setSelectedYieldLedgerId(ledgerIds.length === 1 ? ledgerIds[0] : null);
         const joNo = jo.job_order_no || jo.jo_id;
         
         if (firstLog) {
@@ -683,10 +775,25 @@ export function useManufacturingQA() {
 
     const handleReprintReceipt = async (jo: JobOrder) => {
         if (!jo) return;
-        const log = jo.yield_logs && jo.yield_logs.length > 0 ? jo.yield_logs[0] : null;
         const joNo = jo.job_order_no || jo.jo_id;
+
+        let receipt;
+        try {
+            const receipts = await fetchFinishedGoodsReceipts(joNo);
+            receipt = receipts.find(item => item.joId === joNo)
+                || receipts.find(item => Number(item.jobOrderId) === Number(jo.order_id || jo.job_order_id || jo.id))
+                || receipts[0];
+        } catch (error: any) {
+            toast.error(error?.message || "Failed to load the persisted finished-goods receipt.");
+            return;
+        }
+
+        if (!receipt) {
+            toast.error(`No persisted finished-goods receipt was found for ${joNo}.`);
+            return;
+        }
         
-        const branchName = getBranchName(jo.branch_id);
+        const branchName = getBranchName(receipt.branchId || jo.branch_id);
         const verName = jo.recipe_version_name || 
                         jo.version_name || 
                         (jo.version_id ? `Version #${jo.version_id}` : 'Active');
@@ -695,9 +802,9 @@ export function useManufacturingQA() {
         try {
             const materials = await fetchJobOrderMaterials(joNo);
             components = materials.map((m: any) => ({
-                product_name: m.product_name || `Component #${m.product_id}`,
-                quantity: Number(m.actual_consumed_quantity || m.quantity_required || 0),
-                unit: m.unit_shortcut || "units"
+                product_name: m.productName || m.product_name || `Component #${m.productId || m.product_id}`,
+                quantity: Number(m.actualConsumedQuantity ?? m.actual_consumed_quantity ?? 0),
+                unit: m.unitOfMeasure || m.unit_shortcut || "units"
             }));
         } catch (err) {
             console.error("Failed to load materials for receipt reprint:", err);
@@ -706,16 +813,45 @@ export function useManufacturingQA() {
         printYieldClosingReceipt({
             jo_no: joNo,
             product_code: jo.product_code || `PROD-${jo.product_id}`,
-            product_name: jo.product_name,
+            product_name: receipt.productName || jo.product_name,
             recipe_version: verName,
-            yield_qty: log ? Number(log.yield_quantity || jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0) : Number(jo.completed_quantity || jo.actual_quantity_produced || jo.quantity || 0),
-            lot_number: log ? (log.lot_number || log.lot_no || `MFG-${joNo}`) : `MFG-${joNo}`,
-            expiry_date: log ? (log.expiry_date || "N/A") : "N/A",
-            manufacturing_date: log ? (log.manufacturing_date || "N/A") : "N/A",
+            yield_qty: receipt.quantityProduced,
+            lot_number: receipt.lotNumber,
+            expiry_date: receipt.expirationDate || "N/A",
+            manufacturing_date: receipt.manufacturingDate || "N/A",
             branch_name: branchName,
-            unit_cost: log ? Number(log.unit_cost || 0) : 0,
+            unit_cost: receipt.unitCost,
             components: components
         });
+    };
+
+    const loadYieldClosingMaterials = async (): Promise<YieldJobOrderMaterial[]> => {
+        if (!selectedJO) return [];
+
+        const joNo = selectedJO.job_order_no || selectedJO.jo_id;
+        setYieldMaterialsLoading(true);
+        setYieldMaterialsError(null);
+        try {
+            const materials = await fetchJobOrderMaterials(joNo);
+            setYieldMaterials(materials);
+            return materials;
+        } catch (e: any) {
+            const message = e?.message || "Failed to load material requirements for yield closing.";
+            setYieldMaterials([]);
+            setYieldMaterialsError(message);
+            throw e instanceof Error ? e : new Error(message);
+        } finally {
+            setYieldMaterialsLoading(false);
+        }
+    };
+
+    const handleRetryYieldMaterials = async () => {
+        try {
+            await loadYieldClosingMaterials();
+            toast.success("Material requirements loaded. You may submit the yield closing.");
+        } catch (e: any) {
+            toast.error(e.message || "Failed to load material requirements.");
+        }
     };
 
     // Submit Finished Goods Yield closing
@@ -733,67 +869,87 @@ export function useManufacturingQA() {
             toast.error("Please select an expiration date.");
             return;
         }
+        if (!lotNumber.trim()) {
+            toast.error("Please enter a lot number.");
+            return;
+        }
+
+        const parsedManufacturingDate = new Date(`${manufacturingDate}T00:00:00`);
+        const parsedExpiryDate = new Date(`${expiryDate}T00:00:00`);
+        if (Number.isNaN(parsedManufacturingDate.getTime()) || Number.isNaN(parsedExpiryDate.getTime())) {
+            toast.error("Please enter valid manufacturing and expiration dates.");
+            return;
+        }
+        if (parsedManufacturingDate > parsedExpiryDate) {
+            toast.error("Expiration date cannot be earlier than manufacturing date.");
+            return;
+        }
+
+        if (!selectedJO.branch_id) {
+            toast.error("Error: Job Order is missing branch_id allocation.");
+            return;
+        }
 
         const joNo = selectedJO.job_order_no || selectedJO.jo_id;
         setActionLoading(true);
         try {
-            let componentsConsumed: Array<{
+            const materials = await loadYieldClosingMaterials();
+            const componentsConsumed: Array<{
                 component_product_id: number;
                 required: number;
                 quantity: number;
                 component_name: string;
-            }> = [];
-            try {
-                const materials = await fetchJobOrderMaterials(joNo);
-                componentsConsumed = materials.map((m: any) => ({
-                    component_product_id: m.product_id,
-                    required: m.quantity_required,
-                    quantity: m.quantity_required,
-                    component_name: m.product_name
-                }));
-            } catch (err) {
-                console.warn("Failed to load materials for yield closing consumption:", err);
-            }
+            }> = materials.map(material => {
+                const targetQuantity = Number(selectedJO.target_quantity || selectedJO.quantity || 0);
+                const yieldRatio = targetQuantity > 0 ? Number(yieldQty) / targetQuantity : 0;
+                const scaledRequired = material.allocatedQuantity * yieldRatio;
+                const incrementalQuantity = Math.max(0, scaledRequired - material.actualConsumedQuantity);
+                return {
+                    component_product_id: material.productId,
+                    required: material.allocatedQuantity,
+                    quantity: incrementalQuantity,
+                    component_name: material.productName
+                };
+            });
 
-            if (!selectedJO.branch_id) {
-                toast.error("Error: Job Order is missing branch_id allocation.");
-                return;
-            }
-
-            await postFinishedGoodsReceipt({
+            const selectedYieldLog = selectedJO.yield_logs?.find((log: any) =>
+                Number(log.ledger_id ?? log.id ?? 0) === selectedYieldLedgerId
+                && String(log.lot_number || log.lot_no || log.batch_no || "").trim() === lotNumber.trim()
+            );
+            const closeResult = await postFinishedGoodsReceipt({
                 joId: joNo,
+                yieldLedgerId: selectedYieldLog ? selectedYieldLedgerId : null,
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
                 branchId: Number(selectedJO.branch_id),
-                lotNumber: lotNumber || `MFG-${joNo}`,
-                expirationDate: expiryDate || null,
-                manufacturingDate: manufacturingDate || null,
+                lotNumber: lotNumber.trim(),
+                expirationDate: expiryDate,
+                manufacturingDate,
                 unitCost: Number(unitCost || 0),
                 componentsConsumed: componentsConsumed,
                 completeJobOrder: true
             });
 
-            toast.success(`Job Order ${joNo} successfully completed and WMS ledger receipted!`);
+            const persistedReceipt = closeResult.data;
             setIsYieldDialogOpen(false);
             
             try {
-                const branchName = getBranchName(selectedJO.branch_id);
                 const verName = selectedJO.recipe_version_name || 
                                 selectedJO.version_name || 
                                 (selectedJO.version_id ? `Version #${selectedJO.version_id}` : 'Active');
 
                 printYieldClosingReceipt({
-                    jo_no: joNo,
-                    product_code: selectedJO.product_code || `PROD-${selectedJO.product_id}`,
-                    product_name: selectedJO.product_name,
+                    jo_no: persistedReceipt.joId || joNo,
+                    product_code: selectedJO.product_code || `PROD-${persistedReceipt.productId || selectedJO.product_id}`,
+                    product_name: persistedReceipt.productName || selectedJO.product_name,
                     recipe_version: verName,
-                    yield_qty: Number(yieldQty),
-                    lot_number: lotNumber || `MFG-${joNo}`,
-                    expiry_date: expiryDate || "N/A",
-                    manufacturing_date: manufacturingDate || "N/A",
-                    branch_name: branchName,
-                    unit_cost: Number(unitCost || 0),
+                    yield_qty: persistedReceipt.quantityProduced,
+                    lot_number: persistedReceipt.lotNumber,
+                    expiry_date: persistedReceipt.expirationDate || "N/A",
+                    manufacturing_date: persistedReceipt.manufacturingDate || "N/A",
+                    branch_name: getBranchName(persistedReceipt.branchId || selectedJO.branch_id),
+                    unit_cost: persistedReceipt.unitCost,
                     components: componentsConsumed.map((c: any) => ({
                         product_name: c.component_name,
                         quantity: c.quantity,
@@ -804,9 +960,13 @@ export function useManufacturingQA() {
                 console.error("Auto print failed:", printErr);
             }
 
-            refreshAll();
+            const refreshResult = await refreshAll(false);
+            if (refreshResult.failed.length > 0) {
+                toast.warning(`Job Order ${joNo} was posted, but the console could not refresh ${refreshResult.failed.join(", ")}. Please sync before relying on the displayed queue.`);
+            } else {
+                toast.success(`Job Order ${joNo} successfully completed and WMS ledger receipted!`);
+            }
         } catch (e: any) {
-            console.error("Yield closing error:", e);
             toast.error(e.message || "An error occurred during finished goods yield closing.");
         } finally {
             setActionLoading(false);
@@ -970,8 +1130,24 @@ export function useManufacturingQA() {
         }
     };
 
-    // Handle Open Final QA Release Dialog
+    const getFinalReleaseForLot = useCallback((lot: any) => {
+        const lotId = canonicalLotId(lot);
+        if (lotId <= 0) return null;
+
+        return finalReleases.find((release: any) => {
+            const releaseLotId = relationNumber(release?.canonical_lot_id, ["canonical_lot_id"])
+                || relationNumber(release?.lot_id, ["lot_id", "id"]);
+            return releaseLotId === lotId;
+        }) || null;
+    }, [finalReleases]);
+
+    // Pending lots use the editable release workflow only when no persisted release exists.
     const handleOpenFinalReleaseDialog = (lot: any) => {
+        if (getFinalReleaseForLot(lot)) {
+            toast.error("This lot already has a final QA result. Use its read-only audit action instead.");
+            return;
+        }
+
         setSelectedLot(lot);
         setInspectedQty(String(lot.quantity_received || lot.quantity || 0));
         setDefectQty("0");
@@ -984,18 +1160,70 @@ export function useManufacturingQA() {
         setIsFinalReleaseOpen(true);
     };
 
+    const handleOpenFinalQAAudit = async (lot: any) => {
+        const release = getFinalReleaseForLot(lot);
+        const persistedReleaseId = finalReleaseId(release);
+        if (persistedReleaseId <= 0) {
+            toast.error("The persisted final QA release could not be identified. Refresh the list and try again.");
+            return;
+        }
+
+        setSelectedFinalQAAudit(null);
+        setFinalQAAuditError(null);
+        setLoadingFinalQAAudit(true);
+        setIsFinalQAAuditOpen(true);
+        try {
+            const audit = await fetchFinalQACoa(persistedReleaseId);
+            setSelectedFinalQAAudit(audit);
+        } catch (e: any) {
+            const message = e?.message || "Failed to load the persisted final QA audit.";
+            console.error("Final QA audit lookup error:", e);
+            setFinalQAAuditError(message);
+            toast.error(message);
+        } finally {
+            setLoadingFinalQAAudit(false);
+        }
+    };
+
     // Submit Final QA Release
     const handleSubmitFinalRelease = async () => {
         if (!selectedLot) return;
 
+        if (getFinalReleaseForLot(selectedLot)) {
+            toast.error("This lot already has a final QA result and cannot be released again.");
+            setIsFinalReleaseOpen(false);
+            return;
+        }
+
+        const relationshipStatus = selectedLot.job_order_relationship_status || "unlinked";
+        if (relationshipStatus === "unlinked") {
+            toast.error("This lot has no authoritative Job Order relationship. Ask Inventory or Production to repair it before release.");
+            return;
+        }
+        if (relationshipStatus === "ambiguous") {
+            toast.error("This lot is linked to multiple Job Orders. Resolve the inventory relationship before release.");
+            return;
+        }
+
+        const resolvedJoId = Number(selectedLot.job_order_id);
+        const lotIdValue = selectedLot.lot_id && typeof selectedLot.lot_id === "object"
+            ? selectedLot.lot_id.lot_id
+            : selectedLot.lot_id;
+        const resolvedLotId = Number(lotIdValue);
+        const productId = Number(selectedLot.product_id);
+        const branchId = Number(selectedLot.branch_id);
+        if (![resolvedJoId, resolvedLotId, productId, branchId].every((value) => Number.isSafeInteger(value) && value > 0)) {
+            toast.error("This lot is missing a valid Job Order, product, branch, or master lot reference. Refresh the list and try again.");
+            return;
+        }
+
         setActionLoading(true);
         try {
-            const matchingJO = jobOrders.find(jo => selectedLot.lot_number?.includes(jo.job_order_no || jo.jo_id));
-            const resolvedJoId = matchingJO ? Number(matchingJO.job_order_id || matchingJO.order_id || matchingJO.id || 0) : 0;
-
             await postFinalQARelease({
                 jobOrderId: resolvedJoId,
-                lotId: selectedLot.line_id || selectedLot.id || selectedLot.lot_id,
+                lotId: resolvedLotId,
+                productId,
+                branchId,
                 inspectedQuantity: Number(inspectedQty),
                 defectQuantity: Number(defectQty),
                 microbiologicalStatus,
@@ -1018,6 +1246,110 @@ export function useManufacturingQA() {
         }
     };
 
+    const handlePrintFinalQACoa = () => {
+        if (!selectedFinalQAAudit) {
+            toast.error("Load the persisted final QA audit before printing the COA.");
+            return;
+        }
+
+        const printWindow = window.open("", "_blank", "width=900,height=760");
+        if (!printWindow) {
+            toast.error("Popup blocker prevented the COA print view. Please enable popups and try again.");
+            return;
+        }
+
+        const audit = selectedFinalQAAudit;
+        setCoaPrintLoading(true);
+        try {
+            const disposition = escapePrintHtml(audit.overall_disposition);
+            const status = escapePrintHtml(audit.microbiological_status);
+            printWindow.document.write(`
+                <!doctype html>
+                <html>
+                    <head>
+                        <title>Certificate of Analysis - ${escapePrintHtml(audit.lot_number)}</title>
+                        <style>
+                            @page { size: A4; margin: 18mm; }
+                            * { box-sizing: border-box; }
+                            body { font-family: Arial, sans-serif; color: #172033; margin: 0; font-size: 12px; }
+                            h1 { margin: 0; font-size: 22px; letter-spacing: .04em; }
+                            h2 { margin: 26px 0 10px; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+                            .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #172033; padding-bottom: 12px; }
+                            .subtitle { color: #475569; margin-top: 5px; }
+                            .coa { text-align: right; }
+                            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
+                            .field { border-bottom: 1px solid #e2e8f0; padding: 5px 0; }
+                            .label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+                            .value { margin-top: 3px; font-weight: 600; min-height: 15px; }
+                            .remarks { border: 1px solid #cbd5e1; min-height: 56px; padding: 9px; white-space: pre-wrap; }
+                            .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 60px; }
+                            .signature { border-top: 1px solid #172033; padding-top: 6px; color: #475569; }
+                            .footer { margin-top: 28px; color: #64748b; font-size: 10px; text-align: center; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="header">
+                            <div>
+                                <h1>CERTIFICATE OF ANALYSIS</h1>
+                                <div class="subtitle">Final QA release record</div>
+                            </div>
+                            <div class="coa">
+                                <div class="label">COA Reference</div>
+                                <div class="value">${escapePrintHtml(audit.coa_reference_no || "Not assigned")}</div>
+                            </div>
+                        </div>
+
+                        <h2>Lot identification</h2>
+                        <div class="grid">
+                            <div class="field"><div class="label">Product</div><div class="value">${escapePrintHtml(audit.product_name)}</div></div>
+                            <div class="field"><div class="label">Product code</div><div class="value">${escapePrintHtml(audit.product_code || "—")}</div></div>
+                            <div class="field"><div class="label">Job Order</div><div class="value">${escapePrintHtml(audit.job_order_no || "—")}</div></div>
+                            <div class="field"><div class="label">Branch</div><div class="value">${escapePrintHtml(audit.branch_name || "—")}</div></div>
+                            <div class="field"><div class="label">Lot number</div><div class="value">${escapePrintHtml(audit.lot_number)}</div></div>
+                            <div class="field"><div class="label">Quantity inspected</div><div class="value">${escapePrintHtml(audit.inspected_quantity)}</div></div>
+                            <div class="field"><div class="label">Manufacturing date</div><div class="value">${escapePrintHtml(formatAuditDate(audit.manufacturing_date))}</div></div>
+                            <div class="field"><div class="label">Expiry date</div><div class="value">${escapePrintHtml(formatAuditDate(audit.expiration_date))}</div></div>
+                        </div>
+
+                        <h2>Inspection result</h2>
+                        <div class="grid">
+                            <div class="field"><div class="label">Overall disposition</div><div class="value">${disposition}</div></div>
+                            <div class="field"><div class="label">Defect quantity</div><div class="value">${escapePrintHtml(audit.defect_quantity)}</div></div>
+                            <div class="field"><div class="label">Microbiological analysis</div><div class="value">${status}</div></div>
+                            <div class="field"><div class="label">Packaging seal audit</div><div class="value">${audit.packaging_seal_passed ? "Passed" : "Failed"}</div></div>
+                            <div class="field"><div class="label">Label and expiry compliance</div><div class="value">${audit.label_compliance_passed ? "Passed" : "Failed"}</div></div>
+                            <div class="field"><div class="label">Approved at</div><div class="value">${escapePrintHtml(formatAuditDate(audit.approved_at))}</div></div>
+                        </div>
+
+                        <h2>Release notes</h2>
+                        <div class="remarks">${escapePrintHtml(audit.remarks || "No remarks recorded.")}</div>
+
+                        <div class="signatures">
+                            <div class="signature">QA Inspector</div>
+                            <div class="signature">QA Supervisor / Approver</div>
+                        </div>
+                        <div class="footer">Issued from the persisted Final QA release record.</div>
+                    </body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            window.setTimeout(() => {
+                printWindow.print();
+                setCoaPrintLoading(false);
+            }, 250);
+        } catch (e: any) {
+            console.error("Final QA COA print error:", e);
+            try {
+                printWindow.close();
+            } catch {
+                // Ignore cleanup errors from a blocked or closed print window.
+            }
+            setCoaPrintLoading(false);
+            toast.error(e?.message || "Failed to prepare the COA print view.");
+        }
+    };
+
     return {
         // Tab State
         activeTab,
@@ -1037,7 +1369,9 @@ export function useManufacturingQA() {
         loadingInspectionLogs,
         loadingLogs,
         loadingDispositions,
+        loadingFinishedGoods,
         actionLoading,
+        finishedGoodsReceipts,
 
         // Search & Filters
         logSearch,
@@ -1078,7 +1412,11 @@ export function useManufacturingQA() {
         setExpiryDate,
         unitCost,
         setUnitCost,
+        yieldMaterials,
+        yieldMaterialsLoading,
+        yieldMaterialsError,
         handleOpenYieldDialog,
+        handleRetryYieldMaterials,
         handleSubmitYieldClosing,
         handleReprintReceipt,
 
@@ -1149,9 +1487,18 @@ export function useManufacturingQA() {
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
         handleSubmitFinalRelease,
+        isFinalQAAuditOpen,
+        setIsFinalQAAuditOpen,
+        selectedFinalQAAudit,
+        loadingFinalQAAudit,
+        finalQAAuditError,
+        handleOpenFinalQAAudit,
+        handlePrintFinalQACoa,
+        coaPrintLoading,
 
         // General
         refreshAll,
+        isRefreshing,
         getBranchName
     };
 }

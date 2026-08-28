@@ -24,7 +24,6 @@ import {
     TableCell,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -35,14 +34,14 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
-    Send,
-    DollarSign
+    DollarSign,
+    AlertTriangle
 } from "lucide-react";
 
 interface VersionReviewModalProps {
     item: VersionApprovalItem | null;
     onClose: () => void;
-    onSuccess: () => void;
+    onSuccess: (action: "approve" | "reject" | "revision") => void;
 }
 
 export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
@@ -56,10 +55,16 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     // Decision Form State
-    const [decision, setDecision] = useState<"approve" | "reject">("approve");
     const [setActive, setSetActive] = useState<boolean>(true);
-    const [reason, setReason] = useState<string>("");
-    const [ecnReference, setEcnReference] = useState<string>("");
+    const [remarks, setRemarks] = useState<string>("");
+
+    const isProcessed = item?.status === "Approved" || item?.status === "Active" || item?.status === "Rejected";
+
+    useEffect(() => {
+        if (item) {
+            setRemarks(item.remarks || item.revision_notes || item.rejection_reason || "");
+        }
+    }, [item]);
 
     useEffect(() => {
         if (!item) return;
@@ -111,10 +116,14 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
     if (!item) return null;
 
-    const handleSubmitDecision = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (decision === "reject" && !reason.trim()) {
-            setErrorMsg("Please specify a reason for rejecting this version.");
+    const handleAction = async (action: "approve" | "reject" | "revision") => {
+        if (action === "reject" && !remarks.trim()) {
+            setErrorMsg("Please specify a reason for rejecting this version in the remarks field.");
+            return;
+        }
+
+        if (action === "revision" && !remarks.trim()) {
+            setErrorMsg("Please specify what needs to be revised.");
             return;
         }
 
@@ -123,11 +132,9 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
 
         const payload: DecisionPayload = {
             versionId: item.version_id,
-            action: decision,
-            setActive: decision === "approve" ? setActive : false,
-            remarks: decision === "approve" ? ecnReference.trim() : undefined,
-            rejectionReason: decision === "reject" ? reason.trim() : undefined,
-            reason: decision === "reject" ? reason.trim() : undefined,
+            action: action,
+            setActive: action === "approve" ? setActive : false,
+            remarks: remarks.trim() || undefined,
         };
 
         try {
@@ -143,7 +150,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                 throw new Error(result.error || `Failed to submit decision (${res.status})`);
             }
 
-            onSuccess();
+            onSuccess(action);
             onClose();
         } catch (err: unknown) {
             const error = err as Error;
@@ -152,6 +159,20 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const getHeaderBadge = () => {
+        const st = item.status;
+        if (st === "Pending Approval" || st === "For Approval") {
+            return <Badge className="ml-3 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border-amber-500/30">For Approval</Badge>;
+        }
+        if (st === "Approved" || st === "Active") {
+            return <Badge className="ml-3 bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 border-emerald-500/30">Approved</Badge>;
+        }
+        if (st === "Rejected") {
+            return <Badge className="ml-3 bg-rose-500/15 text-rose-500 hover:bg-rose-500/25 border-rose-500/30">Rejected</Badge>;
+        }
+        return null;
     };
 
     /* Helper functions for version diff rows if needed in comparison tab view */
@@ -164,6 +185,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                     <DialogTitle className="flex items-center gap-2 text-lg font-bold text-foreground">
                         <GitCompare className="text-primary" size={20} />
                         <span>Review Product Version: {item.version_name}</span>
+                        {getHeaderBadge()}
                     </DialogTitle>
                     <DialogDescription className="sr-only">
                         Review product version BOM components, routing cycle times, and submit approval decisions.
@@ -374,101 +396,91 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                     )}
 
                     {/* Section 4: Decision & Action Form */}
-                    <form id="va-decision-form" onSubmit={handleSubmitDecision} className="va-decision-section p-5 bg-background border border-border rounded-xl flex flex-col gap-4 mt-2 shadow-sm">
+                    <div className="va-decision-section p-5 bg-background border border-border rounded-xl flex flex-col gap-4 mt-2 shadow-sm">
                         <div className="va-decision-title font-bold text-foreground text-base pb-1 border-b border-border flex items-center justify-between">
                             <span>4. Review Decision & Action</span>
-                            <span className="text-xs font-normal text-muted-foreground">Select decision and submit</span>
+                            <span className="text-xs font-normal text-muted-foreground">{isProcessed ? "Historical Record" : "Provide remarks and submit"}</span>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="flex flex-col gap-1">
-                                <label className="text-xs font-medium text-muted-foreground">Engineering Change Ref / Note (Optional)</label>
-                                <Input
-                                    type="text"
-                                    className="h-9 bg-background border-input text-foreground text-xs"
-                                    placeholder="e.g. ECN-2026-8809"
-                                    value={ecnReference}
-                                    onChange={(e) => setEcnReference(e.target.value)}
+                        <div className="flex flex-col gap-1.5 mt-1">
+                            <label className="text-xs font-medium text-muted-foreground">
+                                Review Remarks / Note (Required for Rejection & Revision)
+                            </label>
+                            <Textarea
+                                className="bg-background border-input text-foreground placeholder:text-muted-foreground min-h-[80px]"
+                                placeholder="e.g. ECN-2026-8809 or specify rejection reason..."
+                                value={remarks}
+                                onChange={(e) => setRemarks(e.target.value)}
+                                disabled={isProcessed}
+                            />
+                        </div>
+
+                        <div className={`flex flex-col gap-2 mt-1 p-3 bg-muted/30 rounded-lg border border-border/60 ${isProcessed ? 'opacity-70' : ''}`}>
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="setActiveCheckbox"
+                                    checked={setActive}
+                                    onCheckedChange={(checked) => setSetActive(Boolean(checked))}
+                                    disabled={isProcessed}
                                 />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div
-                                className={`va-decision-radio-card p-3 rounded-lg border cursor-pointer flex items-center gap-3 transition-all ${decision === "approve" ? "border-primary bg-primary/10" : "border-border bg-background hover:border-border/80"}`}
-                                onClick={() => setDecision("approve")}
-                            >
-                                <CheckCircle2 className={decision === "approve" ? "text-primary" : "text-muted-foreground"} size={20} />
-                                <div className="flex flex-col">
-                                    <span className="font-semibold text-foreground text-sm">Approve</span>
-                                    <span className="text-xs text-muted-foreground">Accept & approve version</span>
-                                </div>
-                            </div>
-
-                            <div
-                                className={`va-decision-radio-card p-3 rounded-lg border cursor-pointer flex items-center gap-3 transition-all ${decision === "reject" ? "border-rose-500 bg-rose-500/10" : "border-border bg-background hover:border-border/80"}`}
-                                onClick={() => setDecision("reject")}
-                            >
-                                <XCircle className={decision === "reject" ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"} size={20} />
-                                <div className="flex flex-col">
-                                    <span className="font-semibold text-foreground text-sm">Reject</span>
-                                    <span className="text-xs text-muted-foreground">Decline this version</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Extra fields according to selected decision */}
-                        {decision === "approve" && (
-                            <div className="flex flex-col gap-2 mt-1 p-3 bg-muted/30 rounded-lg border border-border/60">
-                                <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                        id="setActiveCheckbox"
-                                        checked={setActive}
-                                        onCheckedChange={(checked) => setSetActive(Boolean(checked))}
-                                    />
-                                    <label htmlFor="setActiveCheckbox" className="text-xs text-foreground font-medium cursor-pointer">
-                                        Set as Primary immediately upon approval
-                                    </label>
-                                </div>
-
-                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground pt-1.5 border-t border-border/40 pl-6">
-                                    <span>Current Primary Version:</span>
-                                    {comparisonData?.baseVersion?.version_name ? (
-                                        <span className="font-semibold text-foreground bg-background px-2 py-0.5 rounded border border-border text-[11px]">
-                                            {comparisonData.baseVersion.version_name}
-                                        </span>
-                                    ) : (
-                                        <span className="italic text-muted-foreground/70 text-[11px]">None</span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {decision === "reject" && (
-                            <div className="flex flex-col gap-1.5 mt-1">
-                                <label className="text-xs font-semibold text-rose-700 dark:text-rose-300">
-                                    Rejection Reason (Required)
+                                <label htmlFor="setActiveCheckbox" className={`text-xs text-foreground font-medium ${isProcessed ? 'cursor-default' : 'cursor-pointer'}`}>
+                                    Set as Primary immediately upon approval
                                 </label>
-                                <Textarea
-                                    className="bg-background border-rose-500/40 text-foreground placeholder:text-muted-foreground min-h-[80px]"
-                                    placeholder="Specify why this product version is being rejected..."
-                                    value={reason}
-                                    onChange={(e) => setReason(e.target.value)}
-                                />
                             </div>
-                        )}
-                    </form>
+
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground pt-1.5 border-t border-border/40 pl-6">
+                                <span>Current Primary Version:</span>
+                                {comparisonData?.baseVersion?.version_name ? (
+                                    <span className="font-semibold text-foreground bg-background px-2 py-0.5 rounded border border-border text-[11px]">
+                                        {comparisonData.baseVersion.version_name}
+                                    </span>
+                                ) : (
+                                    <span className="italic text-muted-foreground/70 text-[11px]">None</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Footer */}
                 <DialogFooter className="p-4 bg-muted/30 border-t border-border flex flex-row justify-end gap-2">
                     <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
-                        Cancel
+                        {isProcessed ? "Close" : "Cancel"}
                     </Button>
-                    <Button type="submit" form="va-decision-form" disabled={submitting} className="gap-2 px-5">
-                        <Send size={15} />
-                        <span>{submitting ? "Submitting..." : "Submit Decision"}</span>
-                    </Button>
+                    {!isProcessed && (
+                        <>
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                disabled={submitting}
+                                onClick={() => handleAction("reject")}
+                                className="gap-2 px-5 bg-rose-600 hover:bg-rose-700"
+                            >
+                                <XCircle size={15} />
+                                <span>Reject</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={submitting}
+                                onClick={() => handleAction("revision")}
+                                className="gap-2 px-5 text-blue-600 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20"
+                            >
+                                <AlertTriangle size={15} />
+                                <span>Revise</span>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="default"
+                                disabled={submitting}
+                                onClick={() => handleAction("approve")}
+                                className="gap-2 px-5"
+                            >
+                                <CheckCircle2 size={15} />
+                                <span>Approve</span>
+                            </Button>
+                        </>
+                    )}
                 </DialogFooter>
             </DialogContent>
         </Dialog>

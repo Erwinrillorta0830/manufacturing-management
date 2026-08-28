@@ -1,7 +1,5 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 
 // Directus configuration
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -14,7 +12,8 @@ if (DIRECTUS_STATIC_TOKEN) {
     headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
 }
 
-const LOCAL_DB_PATH = path.join(process.cwd(), "src", "app", "api", "manufacturing", "production", "route-operators", "db.json");
+const COLLECTION = "manufacturing_job_order_route_operators";
+const ROUTE_OPERATOR_FIELDS = "jo_route_operator_id,jo_route_id,operator_id,logged_hours,hourly_rate,logged_at,started_at,stopped_at";
 
 interface RouteOperatorRecord {
     id: number;
@@ -29,30 +28,108 @@ interface RouteOperatorRecord {
     labor_cost: number;
 }
 
-// Read from the local JSON database (fallback)
-function readLocalDb(): RouteOperatorRecord[] {
-    try {
-        if (!fs.existsSync(LOCAL_DB_PATH)) {
-            fs.mkdirSync(path.dirname(LOCAL_DB_PATH), { recursive: true });
-            fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify([]), "utf8");
-            return [];
-        }
-        const data = fs.readFileSync(LOCAL_DB_PATH, "utf8");
-        return JSON.parse(data);
-    } catch (e) {
-        console.error("Failed to read local route operators DB:", e);
-        return [];
+interface DirectusRouteOperator {
+    jo_route_operator_id: number;
+    jo_route_id: number;
+    operator_id: number;
+    logged_hours?: number | string | null;
+    hourly_rate?: number | string | null;
+    logged_at?: string | null;
+    started_at?: string | null;
+    stopped_at?: string | null;
+}
+
+class DirectusRouteOperatorError extends Error {
+    status: number;
+
+    constructor(status: number, message: string) {
+        super(message);
+        this.name = "DirectusRouteOperatorError";
+        this.status = status;
     }
 }
 
-// Write to the local JSON database (fallback)
-function writeLocalDb(data: RouteOperatorRecord[]) {
-    try {
-        fs.mkdirSync(path.dirname(LOCAL_DB_PATH), { recursive: true });
-        fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf8");
-    } catch (e) {
-        console.error("Failed to write local route operators DB:", e);
+function parseDirectusDateTime(value: string): number {
+    const normalized = value.trim().includes("T") ? value.trim() : value.trim().replace(" ", "T");
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+    return Date.parse(hasTimezone ? normalized : `${normalized}Z`);
+}
+
+async function directusRequest<T>(resource: string, init: RequestInit = {}): Promise<T> {
+    if (!DIRECTUS_URL) {
+        throw new DirectusRouteOperatorError(503, "Manufacturing Directus is not configured.");
     }
+
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}${resource}`, {
+            ...init,
+            headers,
+            cache: "no-store"
+        });
+    } catch (error) {
+        throw new DirectusRouteOperatorError(503, `Manufacturing Directus is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const text = await response.text();
+    let payload: any = null;
+    try {
+        payload = text ? JSON.parse(text) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        const detail = payload?.errors?.[0]?.message || payload?.error || text || response.statusText;
+        throw new DirectusRouteOperatorError(response.status, `Directus route-operator request failed: ${detail}`);
+    }
+
+    return payload as T;
+}
+
+function recordsUrl(taskId?: number, userId?: number, activeOnly = false): string {
+    const params = new URLSearchParams({ limit: "-1", fields: ROUTE_OPERATOR_FIELDS });
+    if (taskId !== undefined) params.set("filter[jo_route_id][_eq]", String(taskId));
+    if (userId !== undefined) params.set("filter[operator_id][_eq]", String(userId));
+    if (activeOnly) {
+        params.set("filter[started_at][_nnull]", "true");
+        params.set("filter[stopped_at][_null]", "true");
+    }
+    return `/items/${COLLECTION}?${params.toString()}`;
+}
+
+async function fetchDirectusRecords(taskId?: number, userId?: number, activeOnly = false): Promise<DirectusRouteOperator[]> {
+    const payload = await directusRequest<{ data?: DirectusRouteOperator[] }>(recordsUrl(taskId, userId, activeOnly));
+    return Array.isArray(payload?.data) ? payload.data : [];
+}
+
+async function findDirectusRecord(taskId: number, userId: number, activeOnly = false): Promise<DirectusRouteOperator | null> {
+    const records = await fetchDirectusRecords(taskId, userId, activeOnly);
+    return records[0] || null;
+}
+
+function mapDirectusRecord(record: DirectusRouteOperator, joId = ""): RouteOperatorRecord {
+    const actualHours = Number(record.logged_hours || 0);
+    const hourlyRate = Number(record.hourly_rate || 0);
+    return {
+        id: Number(record.jo_route_operator_id),
+        jo_id: joId,
+        routing_id: Number(record.jo_route_id),
+        task_id: Number(record.jo_route_id),
+        user_id: Number(record.operator_id),
+        started_at: record.started_at || null,
+        stopped_at: record.stopped_at || null,
+        actual_hours: actualHours,
+        hourly_rate: hourlyRate,
+        labor_cost: Math.round(actualHours * hourlyRate * 100) / 100
+    };
+}
+
+function responseRecord(payload: { data?: DirectusRouteOperator } | null, joId: string): RouteOperatorRecord {
+    if (!payload?.data) {
+        throw new DirectusRouteOperatorError(502, "Directus returned no route-operator record.");
+    }
+    return mapDirectusRecord(payload.data, joId);
 }
 
 // Fetch all users to resolve their metadata (names, rates, positions)
@@ -70,7 +147,7 @@ async function fetchUsersMap(): Promise<Map<number, { name: string; position: st
                 const lname = u.user_lname || u.last_name || "";
                 const fullName = `${fname} ${lname}`.trim() || `User #${uId}`;
                 const position = u.user_position || u.position || "Operator";
-                
+
                 let rate = 150;
                 if (u.hourly_rate !== undefined && u.hourly_rate !== null) {
                     rate = Number(u.hourly_rate);
@@ -82,11 +159,9 @@ async function fetchUsersMap(): Promise<Map<number, { name: string; position: st
                         rate = 250;
                     } else if (posLower.includes("qa") || posLower.includes("qc") || posLower.includes("inspector")) {
                         rate = 180;
-                    } else {
-                        rate = 150;
                     }
                 }
-                
+
                 userMap.set(uId, { name: fullName, position, rate });
             });
         }
@@ -96,119 +171,52 @@ async function fetchUsersMap(): Promise<Map<number, { name: string; position: st
     return userMap;
 }
 
+async function enrichRecords(records: RouteOperatorRecord[]): Promise<RouteOperatorRecord[]> {
+    const usersMap = await fetchUsersMap();
+    return records.map(record => {
+        const userMeta = usersMap.get(Number(record.user_id)) || {
+            name: `Operator #${record.user_id}`,
+            position: "Operator",
+            rate: record.hourly_rate || 150
+        };
+        const rate = record.hourly_rate || userMeta.rate;
+        const laborCost = record.actual_hours * rate;
+        return {
+            ...record,
+            user_name: userMeta.name,
+            user_position: userMeta.position,
+            hourly_rate: rate,
+            labor_cost: Math.round(laborCost * 100) / 100
+        } as RouteOperatorRecord;
+    });
+}
+
+function errorResponse(error: unknown, fallbackMessage: string) {
+    if (error instanceof DirectusRouteOperatorError) {
+        const status = error.status >= 400 && error.status < 500 ? error.status : 502;
+        return NextResponse.json({ error: error.message }, { status });
+    }
+    return NextResponse.json({ error: error instanceof Error ? error.message : fallbackMessage }, { status: 500 });
+}
+
 // GET handler
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const taskId = searchParams.get("taskId");
-        const joId = searchParams.get("joId");
+        const taskIdParam = searchParams.get("taskId");
+        const taskId = taskIdParam === null ? undefined : Number(taskIdParam);
+        const joId = searchParams.get("joId") || "";
         const activeOnly = searchParams.get("activeOnly") === "true";
 
-        let records: RouteOperatorRecord[] = [];
-        let usingFallback = false;
-
-        // If we only care about active timers, skip the Directus fetch completely
-        if (activeOnly) {
-            const localRecords = readLocalDb();
-            records = localRecords.filter(r => r.started_at !== null && r.stopped_at === null);
-            
-            // Enrich records with user metadata
-            const usersMap = await fetchUsersMap();
-            const enrichedRecords = records.map(r => {
-                const uId = Number(r.user_id);
-                const userMeta = usersMap.get(uId) || { name: `Operator #${uId}`, position: "Operator", rate: r.hourly_rate || 150 };
-                
-                const rate = r.hourly_rate || userMeta.rate;
-                const laborCost = r.labor_cost || (r.actual_hours * rate);
-
-                return {
-                    ...r,
-                    user_name: userMeta.name,
-                    user_position: userMeta.position,
-                    hourly_rate: rate,
-                    labor_cost: Math.round(laborCost * 100) / 100
-                };
-            });
-
-            return NextResponse.json({
-                data: enrichedRecords,
-                summary: { total_hours: 0, total_labor_cost: 0 }
-            });
+        if (taskId !== undefined && (!Number.isInteger(taskId) || taskId <= 0)) {
+            return NextResponse.json({ error: "taskId must be a positive integer" }, { status: 400 });
         }
 
-        try {
-            let directusUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?limit=-1`;
-            if (taskId) {
-                directusUrl += `&filter[jo_route_id][_eq]=${taskId}`;
-            }
-
-            const res = await fetch(directusUrl, { headers, cache: "no-store" });
-            if (res.ok) {
-                const json = await res.json();
-                const raw = json.data || [];
-                records = raw.map((r: any) => ({
-                    id: r.jo_route_operator_id,
-                    jo_id: joId || "",
-                    routing_id: Number(taskId || 0),
-                    task_id: Number(r.jo_route_id),
-                    user_id: Number(r.operator_id),
-                    started_at: null,
-                    stopped_at: null,
-                    actual_hours: Number(r.logged_hours || 0),
-                    hourly_rate: Number(r.hourly_rate || 0),
-                    labor_cost: Number(r.logged_hours || 0) * Number(r.hourly_rate || 0)
-                }));
-            } else {
-                console.warn(`Directus returned status ${res.status}. Falling back to local JSON DB.`);
-                usingFallback = true;
-            }
-        } catch (err) {
-            console.error("Directus route operators fetch failed. Falling back to local JSON DB.", err);
-            usingFallback = true;
-        }
-
-        // If local JSON fallback is needed or active timers exist locally, merge them
-        const localRecords = readLocalDb();
-        const activeLocalTimers = localRecords.filter(r => r.started_at !== null && r.stopped_at === null);
-        
-        if (taskId) {
-            const matchedTimers = activeLocalTimers.filter(r => Number(r.task_id) === Number(taskId));
-            records = [...records, ...matchedTimers];
-        } else {
-            records = [...records, ...activeLocalTimers];
-        }
-
-        if (usingFallback) {
-            let fallbackRecords = localRecords;
-            if (taskId) {
-                fallbackRecords = fallbackRecords.filter(r => Number(r.task_id) === Number(taskId));
-            }
-            if (joId) {
-                fallbackRecords = fallbackRecords.filter(r => r.jo_id === joId);
-            }
-            records = fallbackRecords;
-        }
-
-        // Enrich records with user metadata
-        const usersMap = await fetchUsersMap();
-        const enrichedRecords = records.map(r => {
-            const uId = Number(r.user_id);
-            const userMeta = usersMap.get(uId) || { name: `Operator #${uId}`, position: "Operator", rate: r.hourly_rate || 150 };
-            
-            const rate = r.hourly_rate || userMeta.rate;
-            const laborCost = r.labor_cost || (r.actual_hours * rate);
-
-            return {
-                ...r,
-                user_name: userMeta.name,
-                user_position: userMeta.position,
-                hourly_rate: rate,
-                labor_cost: Math.round(laborCost * 100) / 100
-            };
-        });
-
-        const totalHours = enrichedRecords.reduce((sum, r) => sum + (r.actual_hours || 0), 0);
-        const totalLaborCost = enrichedRecords.reduce((sum, r) => sum + (r.labor_cost || 0), 0);
+        const directusRecords = await fetchDirectusRecords(taskId, undefined, activeOnly);
+        const records = directusRecords.map(record => mapDirectusRecord(record, joId));
+        const enrichedRecords = await enrichRecords(records);
+        const totalHours = enrichedRecords.reduce((sum, record) => sum + record.actual_hours, 0);
+        const totalLaborCost = enrichedRecords.reduce((sum, record) => sum + record.labor_cost, 0);
 
         return NextResponse.json({
             data: enrichedRecords,
@@ -217,293 +225,177 @@ export async function GET(request: Request) {
                 total_labor_cost: Math.round(totalLaborCost * 100) / 100
             }
         });
-    } catch (e) {
-        console.error("Error in route-operators GET API:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to fetch route operators logs" }, { status: 500 });
+    } catch (error) {
+        console.error("Error in route-operators GET API:", error);
+        return errorResponse(error, "Failed to fetch route operators logs");
     }
 }
 
 // POST handler
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { action, taskId, userId, joId, routingId, actualHours, hourlyRate } = body;
+        const body = await request.json().catch(() => null) as Record<string, any> | null;
+        if (!body || typeof body !== "object") {
+            return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+        }
 
+        const action = String(body.action || "");
         if (!action) {
             return NextResponse.json({ error: "Missing required field 'action'" }, { status: 400 });
         }
 
-        const usersMap = await fetchUsersMap();
-        const userMeta = usersMap.get(Number(userId)) || { name: `Operator #${userId}`, position: "Operator", rate: 150 };
-        const determinedRate = Number(hourlyRate || userMeta.rate);
+        const taskId = Number(body.taskId);
+        const userId = Number(body.userId);
+        if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(userId) || userId <= 0) {
+            return NextResponse.json({ error: "taskId and userId must be positive integers" }, { status: 400 });
+        }
 
-        let records = readLocalDb();
-        let directusSuccess = false;
-        let resultRecord: any = null;
+        const joId = String(body.joId || "");
+        const usersMap = await fetchUsersMap();
+        const userMeta = usersMap.get(userId) || { name: `Operator #${userId}`, position: "Operator", rate: 150 };
+        const requestedRate = Number(body.hourlyRate);
+        const determinedRate = Number.isFinite(requestedRate) && requestedRate > 0 ? requestedRate : userMeta.rate;
 
         if (action === "start-timer") {
-            if (!taskId || !userId) {
-                return NextResponse.json({ error: "Missing taskId or userId for start-timer" }, { status: 400 });
-            }
-
-            // Check if there is an active timer running locally
-            const activeRecord = records.find(r => Number(r.task_id) === Number(taskId) && Number(r.user_id) === Number(userId) && r.started_at !== null && r.stopped_at === null);
+            const activeRecord = await findDirectusRecord(taskId, userId, true);
             if (activeRecord) {
-                return NextResponse.json({ success: true, message: "Timer already running", data: activeRecord });
+                return NextResponse.json({
+                    success: true,
+                    message: "Timer already running",
+                    data: {
+                        ...mapDirectusRecord(activeRecord, joId),
+                        user_name: userMeta.name,
+                        user_position: userMeta.position,
+                        hourly_rate: determinedRate
+                    }
+                });
             }
 
-            const newRecord = {
-                id: records.length > 0 ? Math.max(...records.map(r => r.id)) + 1 : 1,
-                jo_id: joId || "",
-                routing_id: Number(routingId || 0),
-                task_id: Number(taskId),
-                user_id: Number(userId),
-                started_at: new Date().toISOString(),
+            const now = new Date().toISOString();
+            const existingRecord = await findDirectusRecord(taskId, userId);
+            const payload = {
+                started_at: now,
                 stopped_at: null,
-                actual_hours: 0,
                 hourly_rate: determinedRate,
-                labor_cost: 0
+                logged_at: now
             };
+            const saved = existingRecord
+                ? await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify(payload)
+                })
+                : await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}`, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        jo_route_id: taskId,
+                        operator_id: userId,
+                        logged_hours: 0,
+                        ...payload
+                    })
+                });
+            const mapped = responseRecord(saved, joId);
+            return NextResponse.json({
+                success: true,
+                data: {
+                    ...mapped,
+                    user_name: userMeta.name,
+                    user_position: userMeta.position,
+                    hourly_rate: determinedRate,
+                    labor_cost: 0
+                }
+            });
+        }
 
-            // Save active timer locally
-            records.push(newRecord);
-            writeLocalDb(records);
-            resultRecord = newRecord;
-        } 
-        else if (action === "stop-timer") {
-            if (!taskId || !userId) {
-                return NextResponse.json({ error: "Missing taskId or userId for stop-timer" }, { status: 400 });
+        if (action === "stop-timer") {
+            const activeRecord = await findDirectusRecord(taskId, userId, true);
+            if (!activeRecord) {
+                return NextResponse.json({ error: "No running timer found for this operator and task" }, { status: 400 });
             }
 
-            // Find running timer locally
-            const localIndex = records.findIndex(r => Number(r.task_id) === Number(taskId) && Number(r.user_id) === Number(userId) && r.started_at !== null && r.stopped_at === null);
-            if (localIndex === -1) {
-                return NextResponse.json({ error: "No running timer found locally for this operator and task" }, { status: 400 });
+            const startedAt = activeRecord.started_at ? parseDirectusDateTime(activeRecord.started_at) : Number.NaN;
+            if (!Number.isFinite(startedAt)) {
+                return NextResponse.json({ error: "The active timer has no valid start time" }, { status: 409 });
             }
 
-            const activeRecord = records[localIndex];
             const stoppedAt = new Date().toISOString();
-            const startMs = new Date(activeRecord.started_at!).getTime();
-            const stopMs = new Date(stoppedAt).getTime();
-            const elapsedHours = Math.max(0.01, (stopMs - startMs) / (1000 * 60 * 60)); // at least 0.01 hours
-            
-            const totalHours = Math.round(((activeRecord.actual_hours || 0) + elapsedHours) * 100) / 100;
-            const cost = Math.round((totalHours * (activeRecord.hourly_rate || determinedRate)) * 100) / 100;
-
-            // Remove active timer from local database
-            records.splice(localIndex, 1);
-            writeLocalDb(records);
-
-            // Write completed log to Directus
-            const dataPayload = {
-                jo_route_id: Number(taskId),
-                operator_id: Number(userId),
-                logged_hours: totalHours,
-                hourly_rate: determinedRate,
-                logged_at: stoppedAt
-            };
-
-            // Check if there is an existing database record to update or overwrite
-            let directusRecordId = null;
-            try {
-                const checkUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?filter[jo_route_id][_eq]=${taskId}&filter[operator_id][_eq]=${userId}&limit=1`;
-                const checkRes = await fetch(checkUrl, { headers, cache: "no-store" });
-                if (checkRes.ok) {
-                    const checkData = await checkRes.json();
-                    if (checkData.data && checkData.data.length > 0) {
-                        directusRecordId = checkData.data[0].jo_route_operator_id;
-                    }
-                }
-            } catch (err) {
-                console.error("Directus existence check failed in stop-timer:", err);
-            }
-
-            try {
-                const res = directusRecordId 
-                    ? await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${directusRecordId}`, {
-                          method: "PATCH",
-                          headers,
-                          body: JSON.stringify({
-                              logged_hours: totalHours,
-                              hourly_rate: determinedRate
-                          })
-                      })
-                    : await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
-                          method: "POST",
-                          headers,
-                          body: JSON.stringify(dataPayload)
-                      });
-
-                if (res.ok) {
-                    const json = await res.json();
-                    resultRecord = {
-                        id: json.data.jo_route_operator_id,
-                        jo_id: joId || "",
-                        task_id: json.data.jo_route_id,
-                        user_id: json.data.operator_id,
-                        actual_hours: Number(json.data.logged_hours),
-                        hourly_rate: Number(json.data.hourly_rate),
-                        labor_cost: Number(json.data.logged_hours) * Number(json.data.hourly_rate)
-                    };
-                    directusSuccess = true;
-                }
-            } catch (err) {
-                console.error("Directus write failed for stop-timer:", err);
-            }
-
-            if (!directusSuccess) {
-                // If Directus write fails, save the completed log back locally
-                const localRec = {
-                    id: activeRecord.id,
-                    jo_id: joId || "",
-                    routing_id: Number(routingId || 0),
-                    task_id: Number(taskId),
-                    user_id: Number(userId),
-                    started_at: null,
+            const elapsedHours = Math.max(0.01, (Date.now() - startedAt) / (1000 * 60 * 60));
+            const totalHours = Math.round((Number(activeRecord.logged_hours || 0) + elapsedHours) * 100) / 100;
+            const hourlyRate = Number(activeRecord.hourly_rate || determinedRate);
+            const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${activeRecord.jo_route_operator_id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    logged_hours: totalHours,
+                    hourly_rate: hourlyRate,
                     stopped_at: stoppedAt,
-                    actual_hours: totalHours,
-                    hourly_rate: determinedRate,
-                    labor_cost: cost
-                };
-                records.push(localRec);
-                writeLocalDb(records);
-                resultRecord = localRec;
-            }
-        } 
-        else if (action === "log-hours") {
-            if (!taskId || !userId || actualHours === undefined) {
-                return NextResponse.json({ error: "Missing required fields (taskId, userId, actualHours) for log-hours" }, { status: 400 });
-            }
-
-            const totalHours = Math.round(Number(actualHours) * 100) / 100;
-            const cost = Math.round((totalHours * determinedRate) * 100) / 100;
-
-            let directusRecordId = null;
-            try {
-                const checkUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?filter[jo_route_id][_eq]=${taskId}&filter[operator_id][_eq]=${userId}&limit=1`;
-                const checkRes = await fetch(checkUrl, { headers, cache: "no-store" });
-                if (checkRes.ok) {
-                    const checkData = await checkRes.json();
-                    if (checkData.data && checkData.data.length > 0) {
-                        directusRecordId = checkData.data[0].jo_route_operator_id;
-                    }
+                    logged_at: stoppedAt
+                })
+            });
+            const mapped = responseRecord(saved, joId);
+            return NextResponse.json({
+                success: true,
+                data: {
+                    ...mapped,
+                    user_name: userMeta.name,
+                    user_position: userMeta.position
                 }
-            } catch (err) {
-                console.error("Directus check failed in log-hours:", err);
-            }
-
-            const dataPayload = {
-                jo_route_id: Number(taskId),
-                operator_id: Number(userId),
-                logged_hours: totalHours,
-                hourly_rate: determinedRate,
-                logged_at: new Date().toISOString()
-            };
-
-            try {
-                const res = directusRecordId 
-                    ? await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${directusRecordId}`, {
-                          method: "PATCH",
-                          headers,
-                          body: JSON.stringify({
-                              logged_hours: totalHours,
-                              hourly_rate: determinedRate
-                          })
-                      })
-                    : await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
-                          method: "POST",
-                          headers,
-                          body: JSON.stringify(dataPayload)
-                      });
-
-                if (res.ok) {
-                    const json = await res.json();
-                    resultRecord = {
-                        id: json.data.jo_route_operator_id,
-                        jo_id: joId || "",
-                        task_id: json.data.jo_route_id,
-                        user_id: json.data.operator_id,
-                        actual_hours: Number(json.data.logged_hours),
-                        hourly_rate: Number(json.data.hourly_rate),
-                        labor_cost: Number(json.data.logged_hours) * Number(json.data.hourly_rate)
-                    };
-                    directusSuccess = true;
-                }
-            } catch (err) {
-                console.error("Directus save failed in log-hours:", err);
-            }
-
-            if (!directusSuccess) {
-                const localIdx = records.findIndex(r => Number(r.task_id) === Number(taskId) && Number(r.user_id) === Number(userId));
-                const localRec = {
-                    id: localIdx > -1 ? records[localIdx].id : (records.length > 0 ? Math.max(...records.map(r => r.id)) + 1 : 1),
-                    jo_id: joId || "",
-                    routing_id: Number(routingId || 0),
-                    task_id: Number(taskId),
-                    user_id: Number(userId),
-                    started_at: null,
-                    stopped_at: null,
-                    actual_hours: totalHours,
-                    hourly_rate: determinedRate,
-                    labor_cost: cost
-                };
-
-                if (localIdx > -1) {
-                    records[localIdx] = localRec;
-                } else {
-                    records.push(localRec);
-                }
-                writeLocalDb(records);
-                resultRecord = localRec;
-            }
-        } 
-        else if (action === "remove-operator") {
-            if (!taskId || !userId) {
-                return NextResponse.json({ error: "Missing taskId or userId for remove-operator" }, { status: 400 });
-            }
-
-            let deletedFromDirectus = false;
-            try {
-                const checkUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?filter[jo_route_id][_eq]=${taskId}&filter[operator_id][_eq]=${userId}&limit=1`;
-                const checkRes = await fetch(checkUrl, { headers, cache: "no-store" });
-                if (checkRes.ok) {
-                    const checkData = await checkRes.json();
-                    if (checkData.data && checkData.data.length > 0) {
-                        const directusRecordId = checkData.data[0].jo_route_operator_id;
-                        const delRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${directusRecordId}`, {
-                            method: "DELETE",
-                            headers
-                        });
-                        if (delRes.ok) {
-                            deletedFromDirectus = true;
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error("Failed to delete record from Directus:", err);
-            }
-
-            // Clean up fallback local timers/logs too
-            const filteredRecords = records.filter(r => !(Number(r.task_id) === Number(taskId) && Number(r.user_id) === Number(userId)));
-            writeLocalDb(filteredRecords);
-
-            return NextResponse.json({ success: true, deletedFromDirectus });
-        }
-        else {
-            return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+            });
         }
 
-        const enrichedRecord = resultRecord ? {
-            ...resultRecord,
-            user_name: userMeta.name,
-            user_position: userMeta.position,
-            hourly_rate: Number(resultRecord.hourly_rate || determinedRate),
-            labor_cost: Number(resultRecord.labor_cost || 0)
-        } : null;
+        if (action === "log-hours") {
+            if (body.actualHours === undefined) {
+                return NextResponse.json({ error: "Missing required field actualHours for log-hours" }, { status: 400 });
+            }
 
-        return NextResponse.json({ success: true, data: enrichedRecord });
-    } catch (e) {
-        console.error("Error in route-operators POST API:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to process request" }, { status: 500 });
+            const totalHours = Math.round(Number(body.actualHours) * 100) / 100;
+            if (!Number.isFinite(totalHours) || totalHours < 0) {
+                return NextResponse.json({ error: "actualHours must be a non-negative number" }, { status: 400 });
+            }
+
+            const now = new Date().toISOString();
+            const existingRecord = await findDirectusRecord(taskId, userId);
+            const saved = existingRecord
+                ? await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        logged_hours: totalHours,
+                        hourly_rate: determinedRate,
+                        logged_at: now
+                    })
+                })
+                : await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}`, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        jo_route_id: taskId,
+                        operator_id: userId,
+                        logged_hours: totalHours,
+                        hourly_rate: determinedRate,
+                        logged_at: now,
+                        started_at: null,
+                        stopped_at: null
+                    })
+                });
+            const mapped = responseRecord(saved, joId);
+            return NextResponse.json({
+                success: true,
+                data: {
+                    ...mapped,
+                    user_name: userMeta.name,
+                    user_position: userMeta.position
+                }
+            });
+        }
+
+        if (action === "remove-operator") {
+            const existingRecord = await findDirectusRecord(taskId, userId);
+            if (existingRecord) {
+                await directusRequest(`/items/${COLLECTION}/${existingRecord.jo_route_operator_id}`, { method: "DELETE" });
+            }
+            return NextResponse.json({ success: true, deletedFromDirectus: Boolean(existingRecord) });
+        }
+
+        return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+    } catch (error) {
+        console.error("Error in route-operators POST API:", error);
+        return errorResponse(error, "Failed to process request");
     }
 }

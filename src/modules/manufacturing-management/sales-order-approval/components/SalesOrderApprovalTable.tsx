@@ -20,14 +20,15 @@ interface SalesOrderApprovalTableProps {
     limit: number;
 
     // New Filter props
-    statusFilter?: string;
-    setStatusFilter?: (status: string) => void;
+
     customerCodeFilter?: string;
     setCustomerCodeFilter?: (code: string) => void;
     dateFromFilter?: string;
     setDateFromFilter?: (date: string) => void;
     dateToFilter?: string;
     setDateToFilter?: (date: string) => void;
+    statusFilter?: string;
+    setStatusFilter?: (status: string) => void;
 }
 
 export function SalesOrderApprovalTable({
@@ -43,14 +44,15 @@ export function SalesOrderApprovalTable({
     setCurrentPage,
     searchQuery,
     setSearchQuery,
-    statusFilter,
-    setStatusFilter,
+
     customerCodeFilter,
     setCustomerCodeFilter,
     dateFromFilter,
     setDateFromFilter,
     dateToFilter,
     setDateToFilter,
+    statusFilter,
+    setStatusFilter,
     totalCount,
     totalPages,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -189,20 +191,23 @@ export function SalesOrderApprovalTable({
                         </div>
 
                         {/* Status Filter */}
-                        <div className="flex items-center gap-2">
+                        <div className="relative w-full sm:w-auto">
                             <select
-                                value={statusFilter || "For Approval"}
+                                value={statusFilter || "For Approval,On Hold"}
                                 onChange={(e) => setStatusFilter && setStatusFilter(e.target.value)}
-                                className="bg-background border border-input rounded-lg px-3 py-2 text-xs font-bold text-foreground focus:ring-1 focus:ring-primary outline-none cursor-pointer transition-all shadow-xs"
+                                className="bg-muted px-3 py-2 text-xs rounded-lg border border-border outline-none text-foreground font-semibold shadow-xs transition-all duration-200 cursor-pointer appearance-none pr-8"
                             >
-                                <option value="All Status">All Statuses</option>
+                                <option value="For Approval,On Hold">All Status</option>
                                 <option value="For Approval">For Approval</option>
-                                <option value="For Invoicing">For Invoicing</option>
                                 <option value="On Hold">On Hold</option>
-                                <option value="Draft">Draft</option>
-                                <option value="Cancelled">Cancelled</option>
                             </select>
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground">
+                                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -239,12 +244,13 @@ export function SalesOrderApprovalTable({
                             <thead className="bg-muted border-b border-border">
                                 <tr>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order No.</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Status</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Customer</th>
+                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">PO Number</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Order Date</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px]">Delivery Date</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Selling Total</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-right">Gross Total</th>
-                                    <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-center">Status</th>
                                     <th className="p-4.5 font-extrabold text-muted-foreground uppercase tracking-wider text-[10px] text-center">Actions</th>
                                 </tr>
                             </thead>
@@ -252,6 +258,17 @@ export function SalesOrderApprovalTable({
                                 {salesOrders.map(so => (
                                     <tr key={so.order_id} className="hover:bg-muted/50 transition-colors">
                                         <td className="p-4 font-extrabold text-foreground">{so.order_no}</td>
+                                        <td className="p-4">
+                                            {so.order_status === "On Hold" ? (
+                                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                                    On Hold
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                                    {so.order_status || "For Approval"}
+                                                </span>
+                                            )}
+                                        </td>
                                         <td className="p-4 font-semibold text-foreground">
                                             {so.customer_name ? (
                                                 <div className="flex flex-col">
@@ -261,6 +278,9 @@ export function SalesOrderApprovalTable({
                                             ) : (
                                                 <span className="font-mono">{so.customer_code}</span>
                                             )}
+                                        </td>
+                                        <td className="p-4 font-semibold text-foreground">
+                                            {so.po_no ? <span className="font-mono text-xs">{so.po_no}</span> : <span className="text-muted-foreground italic font-normal">N/A</span>}
                                         </td>
                                         <td className="p-4 text-muted-foreground font-medium">
                                             {so.order_date ? new Date(so.order_date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "N/A"}
@@ -274,20 +294,7 @@ export function SalesOrderApprovalTable({
                                         <td className="p-4 text-right font-bold text-muted-foreground font-mono">
                                             {formatCurrency(so.total_amount)}
                                         </td>
-                                        <td className="p-4 text-center">
-                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap uppercase tracking-wider ${so.order_status === "For Invoicing" || so.order_status === "For Picking"
-                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
-                                                : so.order_status === "On Hold"
-                                                    ? "bg-amber-50 text-amber-800 border border-amber-300/60"
-                                                    : so.order_status === "Cancelled"
-                                                        ? "bg-destructive/10 text-destructive border border-destructive/20"
-                                                        : so.order_status === "Draft"
-                                                            ? "bg-slate-100 text-slate-700 border border-slate-200"
-                                                            : "bg-amber-50 text-amber-700 border border-amber-200/60"
-                                                }`}>
-                                                {so.order_status || "For Approval"}
-                                            </span>
-                                        </td>
+
                                         <td className="p-4 text-center">
                                             <button
                                                 onClick={() => viewOrderDetails(so)}

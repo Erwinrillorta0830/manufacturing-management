@@ -31,12 +31,20 @@ import {
     rejectedLotAllocationError
 } from "../_lot-allocation";
 import { summarizeReceivingHistory } from "../_receiving-history";
-import { evaluateReceivingStatus } from "../_receiving-status";
+import { evaluateReceivingStatus, quantityStatusFromReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByLot } from "../_movement-stock";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../../procurement/_category-type";
 import { forceReceivedIntakeMessage } from "../_force-received";
 import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
+import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../_supplier-document-type";
+import {
+    allocationCapacityKey,
+    evaluateLotCapacities,
+    normalizeLotCapacity,
+    type LotCapacityAllocationInput,
+    type LotCapacityAllocationAudit
+} from "../_lot-capacity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -183,7 +191,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, receiptType, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -197,6 +205,7 @@ export async function POST(request: Request) {
             })
             : null;
         const replacementFlow = Boolean(replacementContext);
+        const supplierDocumentType = await validateReceivingDocumentType(supplierDocumentTypeId, replacementFlow);
         const previewSourceDocumentNo = receiptNumber;
         const lineIds = lines.map(line => line.lineId);
         if (new Set(lineIds).size !== lineIds.length) {
@@ -369,8 +378,8 @@ export async function POST(request: Request) {
             throw new ReceivingPreviewError("One or more storage lots do not exist.");
         }
         const occupiedByLot = sumMovementQuantitiesByLot(rows(await lotInventoryResponse.json()));
-        const incomingByLot = new Map<number, number>();
         const productTypesByLot = new Map<number, Set<number>>();
+        const lotCapacityInputs: LotCapacityAllocationInput[] = [];
         const normalizedAllocationsByLine = new Map<number, { accepted: ReceivingLotAllocation[]; rejected: ReceivingLotAllocation[] }>();
         for (const line of lines) {
             const accepted = normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations);
@@ -378,6 +387,20 @@ export async function POST(request: Request) {
             normalizedAllocationsByLine.set(line.lineId, { accepted, rejected });
             const productAllocation = productAllocationMetadata.get(line.productId);
             if (!productAllocation) throw new ReceivingPreviewError(`Product ${line.productId} must have a Product Type and UOM before inventory allocation.`);
+            accepted.forEach((allocation, index) => {
+                lotCapacityInputs.push({
+                    key: allocationCapacityKey(line.lineId, "Passed", index),
+                    lotId: allocation.storageLotId,
+                    quantity: allocation.quantity
+                });
+            });
+            rejected.forEach((allocation, index) => {
+                lotCapacityInputs.push({
+                    key: allocationCapacityKey(line.lineId, "Rejected", index),
+                    lotId: allocation.storageLotId,
+                    quantity: allocation.quantity
+                });
+            });
             for (const allocation of [...accepted, ...rejected]) {
                 if (!allocation.batchNumber.trim()) {
                     throw new ReceivingPreviewError(`Every allocation for product ${line.productId} must include a batch number.`);
@@ -393,9 +416,7 @@ export async function POST(request: Request) {
                 const lotTypeId = relationId(lot.inventory_type_id, ["product_type_id", "type_id", "id"]);
                 const lotUomId = relationId(lot.unit_id, ["unit_id", "id"]);
                 const occupied = Math.max(0, occupiedByLot.get(allocation.storageLotId) || 0);
-                const capacity = lot.max_batch_capacity === null || lot.max_batch_capacity === undefined || lot.max_batch_capacity === ""
-                    ? null
-                    : Number(lot.max_batch_capacity);
+                const capacity = normalizeLotCapacity(lot.max_batch_capacity);
                 const emptyUnassignedLot = !lotTypeId && occupied <= 1e-9;
                 if (!lotUomId || lotUomId !== productAllocation.uomId) {
                     throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${line.productId}.`);
@@ -409,7 +430,6 @@ export async function POST(request: Request) {
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
                 typeSet.add(productAllocation.productTypeId);
                 productTypesByLot.set(allocation.storageLotId, typeSet);
-                incomingByLot.set(allocation.storageLotId, (incomingByLot.get(allocation.storageLotId) || 0) + allocation.quantity);
             }
         }
         for (const [lotId, typeSet] of productTypesByLot) {
@@ -417,13 +437,15 @@ export async function POST(request: Request) {
                 throw new ReceivingPreviewError(`Storage lot ${lotId} cannot be assigned to multiple Product Types in one receiving submission.`);
             }
         }
-        for (const [lotId, incomingQuantity] of incomingByLot) {
-            const lot = storageLotById.get(lotId);
-            const rawCapacity = lot?.max_batch_capacity;
-            const capacity = rawCapacity === null || rawCapacity === undefined || rawCapacity === "" ? null : Number(rawCapacity);
-            if (capacity === null || !Number.isFinite(capacity) || capacity <= 0 || (Math.max(0, occupiedByLot.get(lotId) || 0) + incomingQuantity > capacity + 1e-9)) {
-                throw new ReceivingPreviewError(`Storage lot ${String(lot?.lot_name || lotId)} has only ${capacity === null || !Number.isFinite(capacity) ? 0 : Math.max(0, capacity - (occupiedByLot.get(lotId) || 0))} unit(s) available.`);
-            }
+        const capacityByLot = new Map<number, number | null>();
+        for (const lot of storageLots) {
+            const lotId = positiveInteger(lot.lot_id);
+            if (lotId) capacityByLot.set(lotId, normalizeLotCapacity(lot.max_batch_capacity));
+        }
+        const capacityEvaluations = evaluateLotCapacities(capacityByLot, occupiedByLot, lotCapacityInputs);
+        const capacityAuditsByAllocationKey = new Map<string, LotCapacityAllocationAudit>();
+        for (const evaluation of capacityEvaluations.values()) {
+            for (const audit of evaluation.allocations) capacityAuditsByAllocationKey.set(audit.key, audit);
         }
 
         const movementTypes = rows(await movementTypeResponse.json()) as DirectusMovementType[];
@@ -500,13 +522,6 @@ export async function POST(request: Request) {
                 rejectedQuantity: previous.rejected + (current?.rejectedQuantity || 0)
             };
         }));
-        if (!replacementFlow && receiptType === "full" && receivingStatus.status === "Partially Received") {
-            throw new ReceivingPreviewError("Full Receipt requires every line to meet or exceed its remaining accepted quantity.");
-        }
-        if (!replacementFlow && receiptType === "partial" && receivingStatus.status !== "Partially Received") {
-            throw new ReceivingPreviewError("Partial Receipt requires at least one line to remain below its remaining accepted quantity.");
-        }
-
         const receivedMrpEntries = replacementFlow ? [] : evaluated.filter(({ line, result }) => {
             const stored = poLineById.get(line.lineId)!;
             return result.receivedQuantity > 0 && stored.purchase_intent === "MRP_Demand";
@@ -596,6 +611,7 @@ export async function POST(request: Request) {
                 routes: result.receivedQuantity === 0
                     ? []
                     : buildReceivingRoutes({
+                    lineId: line.lineId,
                     acceptedQuantity: result.acceptedQuantity,
                     acceptedLotAllocations,
                     rejectedQuantity: result.rejectedQuantity,
@@ -606,7 +622,8 @@ export async function POST(request: Request) {
                     remarks: line.remarks?.trim() || null,
                     rejectionReason: result.rejectionReason,
                     allocationDrafts,
-                    unallocatedQuantity
+                    unallocatedQuantity,
+                    capacityAuditsByAllocationKey
                 }, passedBranch, rejectedBranch, passedType, rejectedType)
             };
         });
@@ -616,7 +633,9 @@ export async function POST(request: Request) {
                 shipmentId,
                 receivingTicketNumber: receiptNumber,
                 receiptDate,
-                receiptType,
+                supplierDocumentTypeId: supplierDocumentType?.id || null,
+                supplierDocumentType,
+                quantityStatus: quantityStatusFromReceivingStatus(receivingStatus.status),
                 processOverDelivery,
                 replacementDispositionId: replacementDispositionId || null,
                 workflowRevision: Number(header.workflow_revision || 0),
@@ -630,6 +649,8 @@ export async function POST(request: Request) {
         const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError || error instanceof ProductCategoryTypeValidationError
             ? error.status
             : error instanceof QuarantineDispositionError
+                ? error.statusCode
+            : error instanceof ReceivingDocumentTypeError
                 ? error.statusCode
             : error instanceof ReceivingPreviewError
                 ? error.status

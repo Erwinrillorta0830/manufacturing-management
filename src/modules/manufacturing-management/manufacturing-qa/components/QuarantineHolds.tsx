@@ -48,8 +48,10 @@ export function QuarantineHolds({
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Job Order No</TableHead>
-                                    <TableHead>Station / Routing Task</TableHead>
+                                    <TableHead>Station</TableHead>
+                                    <TableHead>Routing Task</TableHead>
                                     <TableHead>Product</TableHead>
+                                    <TableHead>Inspection Remarks</TableHead>
                                     <TableHead className="text-right">Expected Qty</TableHead>
                                     <TableHead className="text-right">Actual Qty</TableHead>
                                     <TableHead>Failed Parameter Check</TableHead>
@@ -63,8 +65,12 @@ export function QuarantineHolds({
                                         <TableCell className="font-bold text-destructive">
                                             {hold.jo_id}
                                         </TableCell>
+                                        <TableCell className="font-medium">{hold.station_name || (hold.station_id ? `Station #${hold.station_id}` : "Station unavailable")}</TableCell>
                                         <TableCell className="font-medium">{hold.task_name}</TableCell>
                                         <TableCell className="max-w-[200px] truncate">{hold.product_name}</TableCell>
+                                        <TableCell className="max-w-[240px] truncate text-muted-foreground" title={hold.inspection_remarks || ""}>
+                                            {hold.inspection_remarks || "No remarks recorded."}
+                                        </TableCell>
                                         <TableCell className="text-right font-mono">{hold.expected_quantity.toLocaleString()}</TableCell>
                                         <TableCell className="text-right font-mono font-bold text-destructive">{hold.actual_quantity.toLocaleString()}</TableCell>
                                         <TableCell>

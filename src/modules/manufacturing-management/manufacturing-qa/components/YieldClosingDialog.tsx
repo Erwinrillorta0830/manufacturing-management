@@ -29,6 +29,9 @@ interface YieldClosingDialogProps {
     setExpiryDate: (date: string) => void;
     unitCost: string;
     setUnitCost: (cost: string) => void;
+    yieldMaterialsLoading: boolean;
+    yieldMaterialsError: string | null;
+    handleRetryYieldMaterials: () => void;
     actionLoading: boolean;
     handleSubmitYieldClosing: () => void;
 }
@@ -48,6 +51,9 @@ export function YieldClosingDialog({
     setExpiryDate,
     unitCost,
     setUnitCost,
+    yieldMaterialsLoading,
+    yieldMaterialsError,
+    handleRetryYieldMaterials,
     actionLoading,
     handleSubmitYieldClosing
 }: YieldClosingDialogProps) {
@@ -100,6 +106,41 @@ export function YieldClosingDialog({
                                         : 'Active')}
                                 </span>
                             </div>
+                        </div>
+
+                        <div
+                            className={yieldMaterialsError
+                                ? "rounded-md border border-destructive/40 bg-destructive/5 p-3"
+                                : "rounded-md border bg-muted/20 p-3"}
+                            aria-live="polite"
+                        >
+                            {yieldMaterialsLoading ? (
+                                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                    Verifying material requirements before posting...
+                                </div>
+                            ) : yieldMaterialsError ? (
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-start gap-2 text-xs text-destructive">
+                                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        <span>{yieldMaterialsError}</span>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleRetryYieldMaterials}
+                                        disabled={actionLoading}
+                                        className="h-7 shrink-0 text-[11px]"
+                                    >
+                                        Retry
+                                    </Button>
+                                </div>
+                            ) : (
+                                <p className="text-xs text-muted-foreground">
+                                    Material requirements will be verified before this yield is posted.
+                                </p>
+                            )}
                         </div>
 
                         {/* Inputs */}
@@ -188,10 +229,15 @@ export function YieldClosingDialog({
                     <Button 
                         variant="default"
                         onClick={handleSubmitYieldClosing}
-                        disabled={actionLoading}
+                        disabled={actionLoading || yieldMaterialsLoading || Boolean(yieldMaterialsError)}
                         className="h-9 text-xs font-semibold gap-1.5"
                     >
-                        {actionLoading ? (
+                        {yieldMaterialsLoading ? (
+                            <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                Verifying materials...
+                            </>
+                        ) : actionLoading ? (
                             <>
                                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                                 Finalizing...

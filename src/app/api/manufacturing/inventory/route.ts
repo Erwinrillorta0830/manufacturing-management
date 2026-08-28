@@ -3,6 +3,7 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { canonicalBatchNumber } from "@/app/api/manufacturing/procurement/_domain";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "@/app/api/manufacturing/qa-receiving/_movement-stock";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { resolveJobOrderRelationship } from "./_job-order-relationships";
 
 
 interface InventoryLot {
@@ -22,6 +23,9 @@ interface InventoryLot {
     source_type?: string | null;
     remarks?: string | null;
     version_id?: number | null;
+    job_order_id?: number | null;
+    job_order_no?: string | null;
+    job_order_relationship_status?: "linked" | "unlinked" | "ambiguous";
     reserved_quantity?: number;
     on_hand_quantity?: number;
     available_quantity?: number;
@@ -40,12 +44,25 @@ interface DirectusMovementRaw {
     quantity: number | string;
     remarks?: string | null;
     transaction_type_id?: number | {
+        transaction_type_id?: number | null;
         type_name?: string | null;
     } | null;
     version_id?: number | { version_id?: number } | null;
     expiry_date?: string | null;
     created_at?: string | null;
+    source_document_id?: number | { id?: number; job_order_id?: number } | null;
     source_document_no?: string | null;
+}
+
+interface DirectusJobOrderRaw {
+    job_order_id?: number | null;
+    job_order_no?: string | null;
+}
+
+interface DirectusFinalQAReleaseRaw {
+    lot_id?: number | { lot_id?: number; id?: number } | null;
+    overall_disposition?: string | null;
+    approved_at?: string | null;
 }
 
 interface DirectusReceiptRaw {
@@ -71,11 +88,13 @@ interface DirectusYieldRaw {
 
 export async function GET() {
     try {
-        const [ledgerRes, movementsRes, productsRes, branchesRes] = await Promise.all([
+        const [ledgerRes, movementsRes, productsRes, branchesRes, jobOrdersRes, finalQARes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/product_ledger?limit=100&sort=-id`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=*,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=*,source_document_id,source_document_no,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.transaction_type_id,transaction_type_id.type_name&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/products?limit=500&fields=product_id,product_name,product_code,product_brand.brand_id,product_brand.brand_name,product_category.category_id,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,cost_per_unit,product_shelf_life,parent_id,product_type`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/branches?limit=-1`, { headers, cache: "no-store" })
+            fetch(`${DIRECTUS_URL}/items/branches?limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?fields=job_order_id,job_order_no&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=lot_id,overall_disposition,approved_at&limit=-1&sort=-approved_at`, { headers, cache: "no-store" })
         ]);
 
         let ledger = [];
@@ -92,10 +111,33 @@ export async function GET() {
         if (!movementsRes.ok) throw new Error("Failed to fetch inventory_movements from Directus");
         if (!productsRes.ok) throw new Error("Failed to fetch products from Directus");
         if (!branchesRes.ok) throw new Error("Failed to fetch branches from Directus");
+        if (!jobOrdersRes.ok) throw new Error("Failed to fetch manufacturing_job_orders from Directus");
 
         const rawMovements = (await movementsRes.json()).data || [];
         const productsData = (await productsRes.json()).data || [];
         const branches = (await branchesRes.json()).data || [];
+        const jobOrders = (await jobOrdersRes.json()).data as DirectusJobOrderRaw[] || [];
+        const finalQaStatusByLotId = new Map<number, string>();
+        if (finalQARes.ok) {
+            const finalQaReleases = (await finalQARes.json()).data as DirectusFinalQAReleaseRaw[] || [];
+            finalQaReleases.forEach((release) => {
+                const lotId = typeof release.lot_id === "object" && release.lot_id
+                    ? Number(release.lot_id.lot_id || release.lot_id.id || 0)
+                    : Number(release.lot_id || 0);
+                if (lotId <= 0 || finalQaStatusByLotId.has(lotId)) return;
+                const disposition = String(release.overall_disposition || "").trim();
+                const status = disposition === "Approved"
+                    ? "Passed"
+                    : disposition === "Rejected"
+                        ? "Failed"
+                        : disposition === "Quarantined"
+                            ? "Quarantined"
+                            : null;
+                if (status) finalQaStatusByLotId.set(lotId, status);
+            });
+        } else {
+            console.warn("Directus manufacturing_final_qa_releases fetch failed; retaining source QA statuses.");
+        }
 
         const movementStock = sumMovementQuantitiesByStock(
             rawMovements as unknown as Array<Record<string, unknown>>
@@ -184,9 +226,13 @@ export async function GET() {
             const product = productsData.find((p: { product_id: number }) => Number(p.product_id) === productId);
             const resolvedUnitCost = batchCostMap.get(lookupKey) || Number(product?.cost_per_unit || 0);
 
-            const qaStatus = batchStatusMap.get(lookupKey) || "Passed";
+            const masterLotId = typeof lotIdObj === "object" && lotIdObj
+                ? Number(lotIdObj.lot_id || 0)
+                : Number(lotIdObj || 0);
+            const qaStatus = finalQaStatusByLotId.get(masterLotId) || batchStatusMap.get(lookupKey) || "Passed";
             const expiryDate = batchExpiryMap.get(lookupKey) || creationMvt.expiry_date || null;
             const createdOnVal = batchCreatedMap.get(lookupKey) || creationMvt.created_at || null;
+            const jobOrderRelationship = resolveJobOrderRelationship(list, jobOrders);
 
             porData.push({
                 id: creationMvt.movement_id,
@@ -204,7 +250,10 @@ export async function GET() {
                 source_reference: creationMvt.source_document_no || null,
                 source_type: typeof creationMvt.transaction_type_id === "object" ? creationMvt.transaction_type_id?.type_name || null : null,
                 remarks: creationMvt.remarks || null,
-                version_id: creationMvt.version_id ? (typeof creationMvt.version_id === "object" ? creationMvt.version_id.version_id : creationMvt.version_id) : null
+                version_id: creationMvt.version_id ? (typeof creationMvt.version_id === "object" ? creationMvt.version_id.version_id : creationMvt.version_id) : null,
+                job_order_id: jobOrderRelationship.jobOrderId,
+                job_order_no: jobOrderRelationship.jobOrderNo,
+                job_order_relationship_status: jobOrderRelationship.status
             });
         }
 
@@ -315,7 +364,10 @@ export async function GET() {
                 source_reference: b.source_reference || null,
                 source_type: b.source_type || null,
                 remarks: resolvedRemarks,
-                transaction_type: resolvedTxnType
+                transaction_type: resolvedTxnType,
+                job_order_id: b.job_order_id ?? null,
+                job_order_no: b.job_order_no ?? null,
+                job_order_relationship_status: b.job_order_relationship_status || "unlinked"
             };
         });
 

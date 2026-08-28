@@ -1,20 +1,20 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-    ChartOfAccount,
+    ExpenseTypeOption,
     POLineItem,
     LandedExpenseRow,
-    HybridCalculationResult
+    HybridCalculationResult,
+    PurchaseAmountLandingRow,
+    PurchaseOrderOption
 } from "../components/purchase-amount/types";
 import {
     fetchEligibleOrders,
     fetchPurchaseAmountDetails,
     postPurchaseAmounts
 } from "../services/purchase-amount-api";
-import { isForeignCountry } from "../supplier-country";
 import {
-    hasLandedCostStatus,
     isLandedCostPostingEligible,
     isPurchaseOrderPosted
 } from "../landed-cost-eligibility";
@@ -22,30 +22,107 @@ import { resolveProductWeightBreakdown } from "../packaging-weight";
 import { calculateLandedCost } from "../landed-cost-calculation";
 import type { LandedCostAllocationRule } from "../types";
 
-export interface PurchaseOrderOption {
-    purchase_order_id?: number;
-    shipment_id?: number;
-    id?: number;
-    reference_number?: string;
-    purchase_order_no?: string;
-    supplier_name?: string | {
-        id?: number;
-        supplier_name?: string;
-        is_foreign?: number | boolean;
-        default_currency?: string;
-        country?: string;
-    } | null;
-    is_posted?: number | boolean;
-    is_posted_amounts?: number | boolean;
-    inventory_status?: number | null;
-    payment_status?: number | null;
-    status?: string | null;
-    is_import?: number;
-    currency_code?: string;
-    exchange_rate?: number;
-    total_amount?: number;
-    total_foreign_currency?: number;
-    [key: string]: unknown;
+const ALLOCATION_RULES = ["Quantity", "Value", "Weight", "Volume", "Hybrid"] as const;
+
+export type { PurchaseOrderOption } from "../components/purchase-amount/types";
+
+interface PurchaseAmountExpenseRecord extends Record<string, unknown> {
+    overhead_id?: number | string | null;
+    chart_of_account_id?: number | string | null;
+    expense_type?: string | null;
+    amount?: number | string | null;
+    amount_php?: number | string | null;
+    po_import_id?: number | string | null;
+}
+
+interface PurchaseAmountDetails {
+    purchaseOrder?: PurchaseOrderOption;
+    lineItems?: Array<Record<string, unknown>>;
+    importExpenses?: PurchaseAmountExpenseRecord[];
+    expenseTypes?: ExpenseTypeOption[];
+    exchangeRate?: number | string | null;
+    landedCost?: {
+        computation?: {
+            allocation_rule?: string | null;
+            exchange_rate?: number | string | null;
+        } | null;
+        expenses?: PurchaseAmountExpenseRecord[];
+    };
+}
+
+function isAllocationRule(value: unknown): value is LandedCostAllocationRule {
+    return typeof value === "string" && (ALLOCATION_RULES as readonly string[]).includes(value);
+}
+
+function emptyExpenseRow(id = "1"): LandedExpenseRow {
+    return {
+        id,
+        overhead_id: null,
+        expense_type: "",
+        amount: 0,
+        allocation_method: ""
+    };
+}
+
+function positiveNumber(value: unknown): number | null {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function roundPhp(value: number): number {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function purchaseOrderId(order: PurchaseOrderOption | null | undefined): number | null {
+    const value = order?.purchase_order_id || order?.shipment_id || order?.id;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function supplierName(order: PurchaseOrderOption): string {
+    if (typeof order.supplier_name === "object" && order.supplier_name !== null) {
+        return String(order.supplier_name.supplier_name || (order.supplier_name.id ? `Supplier #${order.supplier_name.id}` : "N/A"));
+    }
+    return String(order.supplier_name || "N/A");
+}
+
+function finiteNumber(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeLandingRows(orders: PurchaseOrderOption[]): PurchaseAmountLandingRow[] {
+    const rowsByPurchaseOrderId = new Map<number, PurchaseAmountLandingRow>();
+
+    for (const order of orders) {
+        const id = purchaseOrderId(order);
+        if (!id) continue;
+
+        const isPosted = isPurchaseOrderPosted(order);
+        const isEligible = isLandedCostPostingEligible(order);
+        if (!isPosted && !isEligible) continue;
+
+        const existing = rowsByPurchaseOrderId.get(id);
+        if (existing?.isPosted && !isPosted) continue;
+
+        const currencyCode = String(order.currency_code || (order.is_import === 1 ? "USD" : "PHP")).trim().toUpperCase();
+        rowsByPurchaseOrderId.set(id, {
+            purchaseOrderId: id,
+            purchaseOrderNo: String(order.purchase_order_no || order.reference_number || `PO #${id}`),
+            supplierName: supplierName(order),
+            purchaseType: currencyCode === "PHP" ? "LOCAL PURCHASE" : "FOREIGN IMPORT",
+            currencyCode,
+            totalAmountPhp: finiteNumber(order.total_amount ?? order.total_php_value),
+            totalForeignCurrency: finiteNumber(order.total_foreign_currency),
+            status: isPosted ? "Posted & Capitalized" : "Awaiting Posting",
+            isPosted,
+            canEdit: !isPosted && isEligible,
+            canViewLedger: isPosted,
+            sourceOrder: order
+        });
+    }
+
+    return [...rowsByPurchaseOrderId.values()];
 }
 
 export function usePurchaseAmountPosting(
@@ -58,32 +135,42 @@ export function usePurchaseAmountPosting(
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>([]);
-    const [exchangeRate, setExchangeRate] = useState<number>(58.50);
+    const [expenseTypes, setExpenseTypes] = useState<ExpenseTypeOption[]>([]);
+    const [exchangeRate, setExchangeRate] = useState<number>(1);
+    const [currencyCode, setCurrencyCode] = useState("PHP");
     const [lineItems, setLineItems] = useState<POLineItem[]>([]);
-    
-    // Landed cost entries
-    const [landedExpenses, setLandedExpenses] = useState<LandedExpenseRow[]>([
-        { id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "" }
-    ]);
+    const [landedExpenses, setLandedExpenses] = useState<LandedExpenseRow[]>([emptyExpenseRow()]);
     const [allocationRule, setAllocationRule] = useState<LandedCostAllocationRule | "">("");
 
     const [fetchedOrders, setFetchedOrders] = useState<PurchaseOrderOption[]>([]);
     const [internalSelected, setInternalSelected] = useState<PurchaseOrderOption | null>(null);
 
-    // Fetch purchase orders directly from API to ensure full is_posted status tracking
     useEffect(() => {
+        let active = true;
+        setLoading(true);
         fetchEligibleOrders()
-            .then(list => setFetchedOrders(list))
-            .catch(() => {});
+            .then(list => {
+                if (active) setFetchedOrders(list);
+            })
+            .catch(error => {
+                if (active) setErrorMessage((error as Error).message || "Failed to fetch purchase orders.");
+            })
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+        return () => {
+            active = false;
+        };
     }, [propShipments]);
 
-    // The filtered API response is authoritative. Do not fall back to the broad
-    // shipment prop when it is empty, otherwise ineligible POs can re-enter the queue.
-    const allOrders = useMemo(() => fetchedOrders, [fetchedOrders]);
+    // The API response is authoritative. The broad shipment prop is not used
+    // as a fallback because it can contain POs that are no longer eligible.
+    const allOrders = fetchedOrders;
+
+    const landingRows = useMemo(() => normalizeLandingRows(allOrders), [allOrders]);
 
     const postedOrders = useMemo(() => {
-        return allOrders.filter(po => hasLandedCostStatus(po) && isPurchaseOrderPosted(po));
+        return allOrders.filter(isPurchaseOrderPosted);
     }, [allOrders]);
 
     const eligibleOrders = useMemo(() => {
@@ -93,49 +180,79 @@ export function usePurchaseAmountPosting(
     const selectedShipment = useMemo(() => {
         if (propSelectedShipment && isLandedCostPostingEligible(propSelectedShipment)) return propSelectedShipment;
         if (internalSelected && isLandedCostPostingEligible(internalSelected)) return internalSelected;
-        return eligibleOrders[0] || null;
-    }, [eligibleOrders, internalSelected, propSelectedShipment]);
+        return null;
+    }, [internalSelected, propSelectedShipment]);
 
     const handleSelectPO = (po: PurchaseOrderOption) => {
+        setErrorMessage(null);
+        setSuccessMessage(null);
+        if (!isLandedCostPostingEligible(po)) {
+            setErrorMessage("Only eligible, unposted purchase orders can be edited.");
+            return;
+        }
         if (propSetSelectedShipment) propSetSelectedShipment(po);
         setInternalSelected(po);
     };
 
-    const isForeignPO = useMemo(() => {
-        if (!selectedShipment) return false;
-        const supp = selectedShipment.supplier_name;
-        const suppIsForeign = typeof supp === "object" && supp !== null && (
-            supp?.is_foreign === 1 ||
-            supp?.is_foreign === true ||
-            (supp as { default_currency?: string })?.default_currency === "USD" ||
-            isForeignCountry(supp?.country)
-        );
-        return selectedShipment.is_import === 1 || selectedShipment.currency_code === "USD" || Boolean(suppIsForeign);
-    }, [selectedShipment]);
+    const clearSelectedPO = () => {
+        if (propSetSelectedShipment) propSetSelectedShipment(null);
+        setInternalSelected(null);
+    };
 
-    // Fetch PO details when active selection changes
+    const isForeignPO = useMemo(() => currencyCode !== "PHP", [currencyCode]);
+
+    // Fetch PO details when the user selects an eligible PO.
     useEffect(() => {
-        if (!selectedShipment?.purchase_order_id && !selectedShipment?.shipment_id) return;
-        const poId = selectedShipment.purchase_order_id || selectedShipment.shipment_id;
-        if (!poId) return;
+        const poId = purchaseOrderId(selectedShipment);
+        if (!poId) {
+            setLineItems([]);
+            setLandedExpenses([emptyExpenseRow()]);
+            setExpenseTypes([]);
+            setAllocationRule("");
+            setCurrencyCode("PHP");
+            setExchangeRate(1);
+            return;
+        }
 
+        let active = true;
         setLoading(true);
         setErrorMessage(null);
         setSuccessMessage(null);
         setAllocationRule("");
-        setLandedExpenses([{ id: "1", chart_of_account_id: 0, amount: 0, allocation_method: "" }]);
+        setLandedExpenses([emptyExpenseRow()]);
+        setExpenseTypes([]);
+        setCurrencyCode("PHP");
+        setExchangeRate(1);
+        setLineItems([]);
 
         fetchPurchaseAmountDetails(poId)
-            .then(data => {
-                if (data.chartOfAccounts) {
-                    setChartOfAccounts(data.chartOfAccounts);
+            .then(rawData => {
+                if (!active) return;
+                const data = rawData as PurchaseAmountDetails;
+                const persistedCurrencyCode = String(data.purchaseOrder?.currency_code || "PHP").trim().toUpperCase();
+                const persistedExchangeRate = Number(
+                    data.landedCost?.computation?.exchange_rate
+                    ?? data.exchangeRate
+                    ?? data.purchaseOrder?.exchange_rate
+                );
+
+                setCurrencyCode(persistedCurrencyCode);
+                setExchangeRate(persistedCurrencyCode === "PHP"
+                    ? 1
+                    : Number.isFinite(persistedExchangeRate) && persistedExchangeRate > 0
+                        ? persistedExchangeRate
+                        : 0);
+                if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(persistedExchangeRate) || persistedExchangeRate <= 0)) {
+                    throw new Error(`A valid persisted exchange rate is required for ${persistedCurrencyCode} purchase orders.`);
                 }
-                if (data.activeForexRate) {
-                    setExchangeRate(data.purchaseOrder?.exchange_rate || data.activeForexRate || 58.50);
-                }
+
+                setExpenseTypes(Array.isArray(data.expenseTypes) ? data.expenseTypes : []);
+
                 if (data.lineItems) {
-                    setLineItems(data.lineItems.map((item: Record<string, unknown>) => {
-                        const prodObj = typeof item.product_id === "object" && item.product_id !== null ? (item.product_id as Record<string, unknown>) : null;
+                    setLineItems(data.lineItems.map(item => {
+                        const prodObj = typeof item.product_id === "object" && item.product_id !== null
+                            ? item.product_id as Record<string, unknown>
+                            : null;
                         const categoryType = item.category_type;
                         if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING" && categoryType !== "FINISHED_GOODS") {
                             throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
@@ -145,9 +262,18 @@ export function usePurchaseAmountPosting(
                             requireComplete: categoryType === "PACKAGING"
                         });
                         const persistedLineGrossWeight = Number(item.line_gross_weight_kg);
+                        const receivedQuantity = Number(item.received_quantity || 0);
                         const lineGrossWeightKg = Number.isFinite(persistedLineGrossWeight)
                             ? persistedLineGrossWeight
-                            : weightBreakdown.grossWeightKg * Number(item.received_quantity || 0);
+                            : weightBreakdown.grossWeightKg * receivedQuantity;
+                        const baseUnitCostPhp = Number(item.base_unit_cost_php);
+                        const unitPriceForeign = Number(item.unit_price_foreign);
+                        if (!Number.isFinite(baseUnitCostPhp) || baseUnitCostPhp < 0) {
+                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid PHP base unit cost.`);
+                        }
+                        if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(unitPriceForeign) || unitPriceForeign < 0)) {
+                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid ${persistedCurrencyCode} invoice unit price.`);
+                        }
 
                         return {
                             ...item,
@@ -161,39 +287,71 @@ export function usePurchaseAmountPosting(
                             unit_net_weight_kg: weightBreakdown.netWeightKg,
                             unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
                             unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
-                            line_gross_weight_kg: lineGrossWeightKg
+                            line_gross_weight_kg: lineGrossWeightKg,
+                            unit_price: baseUnitCostPhp,
+                            unit_price_foreign: Number.isFinite(unitPriceForeign) ? unitPriceForeign : baseUnitCostPhp,
+                            base_unit_cost_php: baseUnitCostPhp,
+                            accepted_quantity: Number(item.accepted_quantity ?? item.received_quantity) || 0
                         } as POLineItem;
                     }));
                 }
+
                 const canonicalExpenses = Array.isArray(data.landedCost?.expenses) && data.landedCost.expenses.length > 0
                     ? data.landedCost.expenses
                     : (Array.isArray(data.importExpenses) ? data.importExpenses : []);
                 const storedRule = data.landedCost?.computation?.allocation_rule;
+                if (isAllocationRule(storedRule)) setAllocationRule(storedRule);
+
                 if (canonicalExpenses.length > 0) {
-                    if (storedRule === "Value" || storedRule === "Weight" || storedRule === "Volume" || storedRule === "Hybrid") {
-                        setAllocationRule(storedRule);
-                    }
-                    setLandedExpenses(canonicalExpenses.map((exp: Record<string, unknown>, index: number) => ({
-                        id: String(exp.po_import_id || index + 1),
-                        chart_of_account_id: Number(exp.chart_of_account_id) || 0,
-                        amount: Number(exp.amount ?? exp.amount_php) || 0,
-                        allocation_method: storedRule || ""
-                    })));
-                } else if (storedRule) {
-                    if (storedRule === "Value" || storedRule === "Weight" || storedRule === "Volume" || storedRule === "Hybrid") {
-                        setAllocationRule(storedRule);
-                    }
+                    setLandedExpenses(canonicalExpenses.map((expense, index) => {
+                        const overheadId = positiveNumber(expense.overhead_id);
+                        const amount = Number(expense.amount ?? expense.amount_php ?? 0);
+                        const typeOption = overheadId
+                            ? data.expenseTypes?.find(type => type.id === overheadId)
+                            : undefined;
+                        return {
+                            id: String(expense.po_import_id || expense.id || index + 1),
+                            overhead_id: overheadId,
+                            expense_type: String(expense.expense_type || typeOption?.label || ""),
+                            amount: Number.isFinite(amount) && amount >= 0 ? amount : 0,
+                            allocation_method: storedRule || "",
+                            legacyChartOfAccountId: positiveNumber(expense.chart_of_account_id)
+                        };
+                    }));
                 }
             })
-            .catch(err => {
-                setErrorMessage((err as Error).message || "Failed to load PO amount posting details");
+            .catch(error => {
+                if (active) setErrorMessage((error as Error).message || "Failed to load PO amount posting details.");
             })
-            .finally(() => setLoading(false));
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+
+        return () => {
+            active = false;
+        };
     }, [selectedShipment]);
 
-    // Shared landed-cost allocation engine preview
+    const validExpenseTypeIds = useMemo(() => new Set(expenseTypes.map(type => type.id)), [expenseTypes]);
+
+    const hasInvalidExpenseRows = useMemo(() => landedExpenses.some(expense => {
+        const amount = Number(expense.amount);
+        if (!Number.isFinite(amount) || amount < 0) return true;
+        if (expense.overhead_id && amount <= 0) return true;
+        return amount > 0 && (!expense.overhead_id || !validExpenseTypeIds.has(expense.overhead_id));
+    }), [landedExpenses, validExpenseTypeIds]);
+
     const calculationResult = useMemo<HybridCalculationResult>(() => {
-        const totalLandedFee = landedExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+        const totalLandedFee = landedExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+        const effectiveBaseUnitCost = (item: POLineItem): number => {
+            if (isForeignPO) {
+                const invoiceUnitPrice = Number(item.unit_price_foreign);
+                if (Number.isFinite(invoiceUnitPrice) && Number.isFinite(exchangeRate) && exchangeRate > 0) {
+                    return roundPhp(invoiceUnitPrice * exchangeRate);
+                }
+            }
+            return Number(item.base_unit_cost_php) || 0;
+        };
         const calculationInputs = lineItems.map(item => {
             const product = typeof item.product_id === "object" && item.product_id !== null
                 ? item.product_id
@@ -201,25 +359,30 @@ export function usePurchaseAmountPosting(
             return {
                 key: item.purchase_order_product_id,
                 category_type: item.category_type || "RAW_MATERIAL",
-                quantity: Number(item.received_quantity) || 0,
-                baseUnitCostPhp: (Number(item.unit_price) || 0) * (isForeignPO ? exchangeRate : 1),
+                quantity: Number(item.accepted_quantity ?? item.received_quantity) || 0,
+                baseUnitCostPhp: effectiveBaseUnitCost(item),
                 lineGrossWeightKg: Number(item.line_gross_weight_kg) || 0,
                 volume: Number(product?.cbm_height || 0)
                     * Number(product?.cbm_width || 0)
                     * Number(product?.cbm_length || 0)
             };
         });
-        const missingWeightItems = allocationRule === "Hybrid"
+        const missingWeightItems = allocationRule === "Weight"
             ? lineItems
-                .filter(item => item.category_type === "PACKAGING")
                 .filter(item => !Number.isFinite(Number(item.line_gross_weight_kg)) || Number(item.line_gross_weight_kg) <= 0)
                 .map(item => item.product_name || `Product #${item.product_id}`)
-            : [];
+            : allocationRule === "Hybrid"
+                ? lineItems
+                    .filter(item => item.category_type === "PACKAGING")
+                    .filter(item => !Number.isFinite(Number(item.line_gross_weight_kg)) || Number(item.line_gross_weight_kg) <= 0)
+                    .map(item => item.product_name || `Product #${item.product_id}`)
+                : [];
         const baseLineCalculations = lineItems.map(item => {
-            const price = Number(item.unit_price) || 0;
-            const basePhp = isForeignPO ? price * exchangeRate : price;
+            const basePhp = effectiveBaseUnitCost(item);
             return {
                 ...item,
+                base_unit_cost_php: basePhp,
+                unit_price: basePhp,
                 allocated_amount: 0,
                 variance_adjustment: 0,
                 allocated_expense_php: 0,
@@ -241,54 +404,92 @@ export function usePurchaseAmountPosting(
         }
 
         const calculated = calculateLandedCost(calculationInputs, totalLandedFee, allocationRule);
+        const subPool = (category: POLineItem["category_type"]) => calculated.lines
+            .filter(line => line.category_type === category)
+            .reduce((sum, line) => sum + line.allocatedExpense, 0);
+
         return {
             lineCalculations: lineItems.map(item => {
                 const result = calculated.lines.find(line => line.key === item.purchase_order_product_id);
+                const basePhp = effectiveBaseUnitCost(item);
                 return {
                     ...item,
+                    base_unit_cost_php: basePhp,
+                    unit_price: basePhp,
                     allocated_amount: result?.allocatedExpense || 0,
                     variance_adjustment: result?.roundingVariance || 0,
                     allocated_expense_php: result?.addedUnitCost || 0,
-                    final_landed_unit_cost: result?.finalLandedUnitCost || 0
+                    final_landed_unit_cost: result?.finalLandedUnitCost || basePhp
                 };
             }),
-            rmSubPool: allocationRule === "Hybrid" ? calculated.rmFeePool : 0,
-            pkgSubPool: allocationRule === "Hybrid" ? calculated.pkgFeePool : 0,
-            fgSubPool: allocationRule === "Hybrid" ? calculated.fgFeePool : 0,
+            rmSubPool: allocationRule === "Hybrid" ? calculated.rmFeePool : subPool("RAW_MATERIAL"),
+            pkgSubPool: allocationRule === "Hybrid" ? calculated.pkgFeePool : subPool("PACKAGING"),
+            fgSubPool: allocationRule === "Hybrid" ? calculated.fgFeePool : subPool("FINISHED_GOODS"),
             totalLandedFee: calculated.totalLandedFee,
             roundingVariance: calculated.roundingVariance,
             hasMissingWeight: false,
             missingWeightItems: []
         };
-    }, [lineItems, landedExpenses, exchangeRate, isForeignPO, allocationRule]);
+    }, [allocationRule, exchangeRate, isForeignPO, landedExpenses, lineItems]);
+
+    const canPost = Boolean(
+        selectedShipment
+        && lineItems.length > 0
+        && allocationRule
+        && (!isForeignPO || Number.isFinite(exchangeRate) && exchangeRate > 0)
+        && !hasInvalidExpenseRows
+        && !calculationResult.hasMissingWeight
+        && !loading
+        && !posting
+    );
+
+    const postDisabledReason = useMemo(() => {
+        if (!selectedShipment) return "Select a received purchase order first.";
+        if (loading) return "Loading purchase-order details...";
+        if (lineItems.length === 0) return "No accepted line items are available for posting.";
+        if (isForeignPO && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) return "Enter a positive forex exchange rate.";
+        if (!allocationRule) return "Select an allocation rule before posting purchase amounts.";
+        if (hasInvalidExpenseRows) return "Select a valid operational expense type for every expense amount.";
+        if (calculationResult.hasMissingWeight) return "Complete the required packaging or line weights before posting.";
+        return "";
+    }, [allocationRule, calculationResult.hasMissingWeight, exchangeRate, hasInvalidExpenseRows, isForeignPO, lineItems.length, loading, selectedShipment]);
 
     const handleAddExpenseRow = () => {
-        const defaultCoa = chartOfAccounts[0]?.coa_id || chartOfAccounts[0]?.id || 0;
-        setLandedExpenses(prev => [
-            ...prev,
-            { id: String(Date.now()), chart_of_account_id: defaultCoa, amount: 0, allocation_method: allocationRule }
+        setLandedExpenses(previous => [
+            ...previous,
+            emptyExpenseRow(String(Date.now()))
         ]);
     };
 
     const handleRemoveExpenseRow = (id: string) => {
-        setLandedExpenses(prev => prev.filter(e => e.id !== id));
+        setLandedExpenses(previous => previous.filter(expense => expense.id !== id));
     };
 
-    const handleUpdateExpenseRow = (id: string, field: keyof LandedExpenseRow, value: LandedExpenseRow[keyof LandedExpenseRow]) => {
-        setLandedExpenses(prev => prev.map(e => e.id === id ? { ...e, [field]: value } : e));
+    const handleUpdateExpenseRow = (
+        id: string,
+        field: keyof LandedExpenseRow,
+        value: LandedExpenseRow[keyof LandedExpenseRow]
+    ) => {
+        setLandedExpenses(previous => previous.map(expense => expense.id === id ? { ...expense, [field]: value } : expense));
     };
 
-    const handleExecutePosting = async () => {
-        if (!selectedShipment) return;
-
+    const handleExecutePosting = async (): Promise<boolean> => {
+        if (!selectedShipment) return false;
         if (!allocationRule) {
             setErrorMessage("Select an allocation rule before posting purchase amounts.");
-            return;
+            return false;
         }
-
-        if (isForeignPO && calculationResult.hasMissingWeight) {
-            setErrorMessage(`Complete net, outer carton, and pallet weights are required for Packaging items (${calculationResult.missingWeightItems.join(", ")}).`);
-            return;
+        if (isForeignPO && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) {
+            setErrorMessage("Enter a positive forex exchange rate before posting.");
+            return false;
+        }
+        if (hasInvalidExpenseRows) {
+            setErrorMessage("Select a valid operational expense type for every expense amount before posting.");
+            return false;
+        }
+        if (calculationResult.hasMissingWeight) {
+            setErrorMessage(`Complete the required weights for: ${calculationResult.missingWeightItems.join(", ")}.`);
+            return false;
         }
 
         setPosting(true);
@@ -296,21 +497,30 @@ export function usePurchaseAmountPosting(
         setSuccessMessage(null);
 
         try {
-            const poId = selectedShipment.purchase_order_id || selectedShipment.shipment_id;
+            const poId = purchaseOrderId(selectedShipment);
+            if (!poId) throw new Error("The selected purchase order has no valid identifier.");
             const payload = {
                 purchase_order_id: poId,
                 is_foreign: isForeignPO,
                 exchange_rate: isForeignPO ? exchangeRate : 1.0,
                 allocation_rule: allocationRule,
-                expenses: isForeignPO ? landedExpenses.filter(e => e.chart_of_account_id > 0 && e.amount > 0) : [],
+                expenses: landedExpenses
+                    .filter(expense => Number(expense.amount) > 0)
+                    .map(expense => ({
+                        overhead_id: expense.overhead_id,
+                        amount_php: Number(expense.amount)
+                    })),
                 line_items: calculationResult.lineCalculations.map(calc => ({
                     purchase_order_product_id: calc.purchase_order_product_id,
-                    product_id: typeof calc.product_id === "object" && calc.product_id !== null ? (calc.product_id as { product_id: number }).product_id : calc.product_id,
+                    product_id: typeof calc.product_id === "object" && calc.product_id !== null
+                        ? calc.product_id.product_id
+                        : calc.product_id,
                     category_type: calc.category_type,
                     gross_weight: calc.gross_weight,
                     line_gross_weight_kg: calc.line_gross_weight_kg,
                     received_quantity: calc.received_quantity,
                     unit_price: calc.unit_price,
+                    base_unit_cost_php: calc.base_unit_cost_php,
                     discount_type: calc.discount_type,
                     discounted_amount: calc.discounted_amount,
                     vat_amount: calc.vat_amount,
@@ -322,20 +532,14 @@ export function usePurchaseAmountPosting(
             };
 
             await postPurchaseAmounts(payload);
-            setSuccessMessage("Purchase amounts & landed cost allocations posted successfully! Inventory costs and PO totals updated.");
-
-            // Refresh orders list
-            fetchEligibleOrders().then(list => setFetchedOrders(list)).catch(() => {});
-            
-            // Mark selected PO as posted in local state
-            if (selectedShipment) {
-                setFetchedOrders(prev => prev.map(p => {
-                    const pId = p.purchase_order_id || p.shipment_id || p.id;
-                    return pId === poId ? { ...p, is_posted: 1, is_posted_amounts: 1 } : p;
-                }));
-            }
-        } catch (err) {
-            setErrorMessage((err as Error).message || "Failed to post purchase amounts");
+            setSuccessMessage("Purchase amounts and landed-cost allocations posted successfully. Costs are now locked.");
+            const refreshed = await fetchEligibleOrders().catch(() => null);
+            if (refreshed) setFetchedOrders(refreshed);
+            clearSelectedPO();
+            return true;
+        } catch (error) {
+            setErrorMessage((error as Error).message || "Failed to post purchase amounts.");
+            return false;
         } finally {
             setPosting(false);
         }
@@ -348,9 +552,12 @@ export function usePurchaseAmountPosting(
         errorMessage,
         eligibleOrders,
         postedOrders,
+        landingRows,
         selectedShipment,
         handleSelectPO,
+        clearSelectedPO,
         isForeignPO,
+        currencyCode,
         exchangeRate,
         setExchangeRate,
         lineItems,
@@ -358,7 +565,10 @@ export function usePurchaseAmountPosting(
         landedExpenses,
         allocationRule,
         setAllocationRule,
-        chartOfAccounts,
+        expenseTypes,
+        hasInvalidExpenseRows,
+        canPost,
+        postDisabledReason,
         calculationResult,
         handleAddExpenseRow,
         handleRemoveExpenseRow,

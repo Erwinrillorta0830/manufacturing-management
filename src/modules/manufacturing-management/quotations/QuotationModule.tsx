@@ -69,7 +69,6 @@ export default function QuotationModule() {
                      loadingQuotes={loadingQuotes}
                      loadQuotes={loadQuotes}
                      viewQuoteDetails={viewQuoteDetails}
-                     reviseQuotation={reviseQuotation}
                      allProjects={allProjects}
                      customers={customers}
                      handleSearchCustomers={handleSearchCustomers}

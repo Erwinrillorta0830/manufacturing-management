@@ -10,6 +10,73 @@ interface UserRecord {
     user_lname?: string;
 }
 
+const STATION_WORK_CENTER_FIELDS = [
+    "work_center_id",
+    "work_center_name",
+    "is_active",
+    "asset_id.id",
+    "asset_id.barcode",
+    "asset_id.rfid_code",
+    "asset_id.serial",
+    "department_id.department_id",
+    "department_id.department_name"
+].join(",");
+
+class DirectusRequestError extends Error {
+    constructor(
+        public readonly operation: string,
+        public readonly upstreamStatus: number | null,
+        public readonly responseBody: string
+    ) {
+        super(`${operation}${upstreamStatus ? ` failed with HTTP ${upstreamStatus}` : " failed"}`);
+        this.name = "DirectusRequestError";
+    }
+}
+
+async function directusData<T>(url: string, operation: string, init: RequestInit = {}): Promise<T> {
+    let response: Response;
+
+    try {
+        response = await fetch(url, {
+            ...init,
+            headers,
+            cache: "no-store"
+        });
+    } catch (error) {
+        throw new DirectusRequestError(operation, null, error instanceof Error ? error.message : String(error));
+    }
+
+    const responseBody = await response.text();
+    let payload: any = null;
+
+    try {
+        payload = responseBody ? JSON.parse(responseBody) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        throw new DirectusRequestError(operation, response.status, responseBody);
+    }
+
+    if (!payload || payload.data === undefined || payload.data === null) {
+        throw new DirectusRequestError(operation, response.status, responseBody || "No response data");
+    }
+
+    return payload.data as T;
+}
+
+function directusErrorResponse(error: unknown, fallbackMessage: string) {
+    if (error instanceof DirectusRequestError) {
+        console.error(`${error.message}:`, error.responseBody.slice(0, 2000));
+        return NextResponse.json({ success: false, error: fallbackMessage }, { status: 502 });
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    return NextResponse.json({ success: false, error: message || fallbackMessage }, { status: 500 });
+}
+
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
     try {
@@ -69,6 +136,8 @@ export async function GET(request: Request) {
 
             const enrichedHistory = historyList.map((h: any) => ({
                 ...h,
+                previous_status: h.previous_status ?? h.old_status ?? null,
+                status: h.status ?? h.new_status ?? "",
                 changed_by_name: userMap.get(Number(h.changed_by)) || (h.changed_by ? `User #${h.changed_by}` : "System"),
                 work_center_name: wcMap.get(Number(h.work_center_id)) || (h.work_center_id ? `Station #${h.work_center_id}` : "Unassigned")
             }));
@@ -76,17 +145,17 @@ export async function GET(request: Request) {
             return NextResponse.json({ success: true, data: enrichedHistory });
         }
 
-        // 2. Fetch all active work centers with barcodes
-        const [wcRes, assetsRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=*,asset_id.id,asset_id.item_image,asset_id.serial,asset_id.rfid_code,asset_id.barcode,asset_id.condition,asset_id.item_id.item_name,department_id.department_id,department_id.department_name`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/assets?limit=-1&fields=id,barcode,rfid_code,serial,item_name`, { headers, cache: "no-store" }).catch(() => null)
-        ]);
+        // 2. Fetch all active work centers with barcodes. Keep this projection
+        // aligned with the POST resolver and avoid unsupported relation paths.
+        const wcData = await directusData<any[]>(
+            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}`,
+            "Station work-center lookup"
+        );
 
-        if (!wcRes.ok) {
-            throw new Error(`Failed to fetch work centers: ${wcRes.status}`);
+        if (!Array.isArray(wcData)) {
+            throw new Error("Station work-center lookup returned an invalid data set.");
         }
 
-        const wcData = (await wcRes.json()).data || [];
         const mappedWorkCenters = wcData.map((wc: any) => {
             const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
             const barcode = asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(wc.work_center_id).padStart(3, "0")}`;
@@ -103,7 +172,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ success: true, data: mappedWorkCenters });
     } catch (e: any) {
         console.error("Error in station-scan GET API:", e);
-        return NextResponse.json({ error: e.message || "Failed to handle station query" }, { status: 500 });
+        return directusErrorResponse(e, "Work-center lookup is temporarily unavailable. Please try again.");
     }
 }
 
@@ -112,20 +181,25 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const { workCenterBarcode, jobOrderBarcode, workCenterId, jobOrderId } = body;
+        const hasWorkCenterId = workCenterId !== undefined && workCenterId !== null && String(workCenterId).trim() !== "";
+        const hasJobOrderId = jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "";
 
         const currentUserId = await getUserIdFromSession();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
 
-        // 1. Fetch All Work Centers to resolve work center
-        const wcRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=*,asset_id.id,asset_id.barcode,asset_id.rfid_code,asset_id.serial,asset_id.item_name,department_id.department_name`, { headers, cache: "no-store" });
-        if (!wcRes.ok) {
-            throw new Error("Failed to load work centers from system");
+        // 1. Fetch work centers using only fields supported by the Directus schema.
+        const allWorkCenters = await directusData<any[]>(
+            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}`,
+            "Station work-center lookup"
+        );
+
+        if (!Array.isArray(allWorkCenters)) {
+            throw new Error("Station work-center lookup returned an invalid data set.");
         }
-        const allWorkCenters = (await wcRes.json()).data || [];
 
         let matchedWorkCenter: any = null;
 
-        if (workCenterId) {
+        if (hasWorkCenterId) {
             matchedWorkCenter = allWorkCenters.find((w: any) => Number(w.work_center_id) === Number(workCenterId));
         }
 
@@ -153,20 +227,20 @@ export async function POST(request: Request) {
             });
         }
 
-        // 2. Fetch Job Orders to resolve Job Order
-        const joFilterQuery = jobOrderId 
-            ? `filter[job_order_id][_eq]=${jobOrderId}`
+        // 2. Fetch Job Orders to resolve the Job Order.
+        const joFilterQuery = hasJobOrderId
+            ? `filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}`
             : "";
         const joUrl = `${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id${joFilterQuery ? "&" + joFilterQuery : ""}`;
-        const allJoRes = await fetch(joUrl, { headers, cache: "no-store" });
-        if (!allJoRes.ok) {
-            throw new Error("Failed to load job orders");
+        const allJos = await directusData<any[]>(joUrl, "Station job-order lookup");
+
+        if (!Array.isArray(allJos)) {
+            throw new Error("Station job-order lookup returned an invalid data set.");
         }
-        const allJos = (await allJoRes.json()).data || [];
 
         let matchedJobOrder: any = null;
 
-        if (jobOrderId) {
+        if (hasJobOrderId) {
             matchedJobOrder = allJos.find((j: any) => Number(j.job_order_id) === Number(jobOrderId));
         }
 
@@ -180,7 +254,7 @@ export async function POST(request: Request) {
             });
         }
 
-        // If neither was matched, return specific error
+        // If neither was matched, return a specific error.
         if (!matchedWorkCenter && workCenterBarcode) {
             return NextResponse.json({
                 success: false,
@@ -195,7 +269,7 @@ export async function POST(request: Request) {
             }, { status: 404 });
         }
 
-        // If only looking up without both
+        // Preserve the two-step scan behavior when only one side is identified.
         if (!matchedJobOrder) {
             return NextResponse.json({
                 success: true,
@@ -212,103 +286,129 @@ export async function POST(request: Request) {
             });
         }
 
-        // 3. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION
-        const oldStatus = matchedJobOrder.status || "Draft";
-        let statusTransitioned = false;
-        const targetStatus = "In Progress";
-
-        // Transition status if not already In Progress or Completed
-        if (oldStatus !== "In Progress" && oldStatus !== "Ongoing" && oldStatus !== "Completed" && oldStatus !== "Finished") {
-            const joPatchPayload: Record<string, any> = {
-                status: targetStatus,
-                primary_work_center_id: matchedWorkCenter.work_center_id,
-                modified_by: currentUserId,
-                modified_at: manilaTimestamp
-            };
-
-            const patchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${matchedJobOrder.job_order_id}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify(joPatchPayload)
-            });
-
-            if (!patchRes.ok) {
-                console.error("Failed to patch Job Order status on station start:", await patchRes.text());
-            } else {
-                statusTransitioned = true;
-                matchedJobOrder.status = targetStatus;
-            }
+        const jobOrderIdNumber = Number(matchedJobOrder.job_order_id);
+        const workCenterIdNumber = Number(matchedWorkCenter.work_center_id);
+        if (!Number.isInteger(jobOrderIdNumber) || jobOrderIdNumber <= 0 || !Number.isInteger(workCenterIdNumber) || workCenterIdNumber <= 0) {
+            return NextResponse.json({
+                success: false,
+                error: "The scanned job order or work center has an invalid identifier."
+            }, { status: 422 });
         }
 
-        // 4. Record entry in `manufacturing_job_order_status_history`
+        // 3. Resolve the active routing step before changing any records.
+        const routes = await directusData<any[]>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderIdNumber}&sort=sequence_order&limit=-1`,
+            "Station routing lookup"
+        );
+
+        if (!Array.isArray(routes)) {
+            throw new Error("Station routing lookup returned an invalid data set.");
+        }
+
+        const isOpenRoute = (route: any) => !route.status || route.status === "Pending" || route.status === "Ongoing";
+        let activeOperation = routes.find((route: any) => Number(route.work_center_id) === workCenterIdNumber && isOpenRoute(route));
+        if (!activeOperation) {
+            activeOperation = routes.find((route: any) => isOpenRoute(route));
+        }
+
+        if (!activeOperation) {
+            return NextResponse.json({
+                success: false,
+                error: `No pending or ongoing routing operation is available for Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber}.`
+            }, { status: 409 });
+        }
+
+        const routeId = activeOperation.jo_route_id || activeOperation.id;
+        if (!routeId) {
+            throw new Error("The active routing operation has no valid identifier.");
+        }
+
+        // 4. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION.
+        const oldStatus = String(matchedJobOrder.status || "Draft");
+        if (oldStatus === "Completed" || oldStatus === "Finished") {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is already finished and cannot be restarted.`
+            }, { status: 409 });
+        }
+
+        const isAlreadyActive = oldStatus === "In Progress" || oldStatus === "Ongoing";
+        const targetStatus = isAlreadyActive ? oldStatus : "In Progress";
+        const statusTransitioned = !isAlreadyActive;
+        const primaryWorkCenterChanged = Number(matchedJobOrder.primary_work_center_id) !== workCenterIdNumber;
+        let updatedJobOrder = matchedJobOrder;
+
+        if (statusTransitioned || primaryWorkCenterChanged) {
+            updatedJobOrder = await directusData<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderIdNumber}`,
+                "Station job-order transition",
+                {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        status: targetStatus,
+                        primary_work_center_id: workCenterIdNumber,
+                        modified_by: currentUserId,
+                        modified_at: manilaTimestamp
+                    })
+                }
+            );
+        }
+
+        const routeNeedsUpdate = activeOperation.status !== "Ongoing"
+            || Number(activeOperation.work_center_id) !== workCenterIdNumber;
+        if (routeNeedsUpdate) {
+            const updatedOperation = await directusData<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${routeId}`,
+                "Station routing transition",
+                {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        status: "Ongoing",
+                        work_center_id: workCenterIdNumber
+                    })
+                }
+            );
+            activeOperation = { ...activeOperation, ...updatedOperation, status: "Ongoing", work_center_id: workCenterIdNumber };
+        }
+
+        // 5. Record only a real status transition; repeated scans remain idempotent.
         let statusHistoryRecord: any = null;
-        try {
-            const historyPayload = {
-                job_order_id: Number(matchedJobOrder.job_order_id),
-                work_center_id: Number(matchedWorkCenter.work_center_id),
-                previous_status: oldStatus,
-                status: targetStatus,
-                changed_by: currentUserId,
-                changed_at: manilaTimestamp,
-                remarks: `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${matchedWorkCenter.work_center_id})`
-            };
-
-            const historyRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify(historyPayload)
-            });
-
-            if (historyRes.ok) {
-                statusHistoryRecord = (await historyRes.json()).data;
-            } else {
-                console.warn("Directus insert into manufacturing_job_order_status_history returned:", historyRes.status);
-            }
-        } catch (histErr) {
-            console.error("Error creating status history record:", histErr);
+        if (statusTransitioned) {
+            statusHistoryRecord = await directusData<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_status_history`,
+                "Station status-history insert",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        job_order_id: jobOrderIdNumber,
+                        work_center_id: workCenterIdNumber,
+                        old_status: oldStatus,
+                        new_status: targetStatus,
+                        changed_by: currentUserId,
+                        changed_at: manilaTimestamp,
+                        remarks: `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${workCenterIdNumber})`
+                    })
+                }
+            );
         }
 
-        // 5. Match and start the Operation / Routing Step for this Work Center
-        let activeOperation: any = null;
-        try {
-            // Fetch routing tasks for this Job Order
-            const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${matchedJobOrder.job_order_id}&sort=sequence_order&limit=-1`, { headers, cache: "no-store" });
-            if (routesRes.ok) {
-                const routes = (await routesRes.json()).data || [];
-                
-                // Find operation matched with this work center, or the first pending operation
-                activeOperation = routes.find((r: any) => Number(r.work_center_id) === Number(matchedWorkCenter.work_center_id));
-                if (!activeOperation) {
-                    activeOperation = routes.find((r: any) => r.status === "Pending" || r.status === "Ongoing") || routes[0];
-                }
-
-                if (activeOperation && (activeOperation.status === "Pending" || !activeOperation.status)) {
-                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${activeOperation.jo_route_id || activeOperation.id}`, {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({
-                            status: "Ongoing",
-                            work_center_id: matchedWorkCenter.work_center_id
-                        })
-                    }).catch(() => {});
-                    activeOperation.status = "Ongoing";
-                }
-            }
-        } catch (opErr) {
-            console.error("Error updating operation step on station scan:", opErr);
-        }
+        const returnedJobOrder = {
+            ...matchedJobOrder,
+            ...(updatedJobOrder || {}),
+            status: targetStatus,
+            primary_work_center_id: workCenterIdNumber
+        };
 
         return NextResponse.json({
             success: true,
-            message: `Station Start Verified! Job Order ${matchedJobOrder.job_order_no} is now IN PROGRESS at workstation "${matchedWorkCenter.work_center_name}".`,
+            message: `Station Start Verified! Job Order ${returnedJobOrder.job_order_no} is now IN PROGRESS at workstation "${matchedWorkCenter.work_center_name}".`,
             workCenter: matchedWorkCenter,
-            jobOrder: matchedJobOrder,
+            jobOrder: returnedJobOrder,
             activeOperation,
             statusTransitioned,
             statusHistoryRecord
         });
     } catch (e: any) {
-        console.error("Error in station-scan POST API:", e);
-        return NextResponse.json({ error: e.message || "Failed to process station scan" }, { status: 500 });
+        return directusErrorResponse(e, "Station start is temporarily unavailable. Please try again.");
     }
 }

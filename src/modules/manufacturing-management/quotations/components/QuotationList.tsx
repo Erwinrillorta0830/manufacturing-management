@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
-    FileText, Plus, Eye, History, ShieldAlert,
+    FileText, Plus, ShieldAlert,
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
     Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X
 } from "lucide-react";
@@ -22,7 +22,6 @@ interface QuotationListProps {
     loadingQuotes: boolean;
     loadQuotes: () => void;
     viewQuoteDetails: (quote: QuotationHeader) => void;
-    reviseQuotation: (quote: QuotationHeader) => void;
     allProjects: ProjectPortfolioItem[];
     customers: Customer[];
     handleSearchCustomers: (search: string) => void;
@@ -36,7 +35,6 @@ export function QuotationList({
     loadingQuotes,
     loadQuotes,
     viewQuoteDetails,
-    reviseQuotation,
     allProjects,
     customers,
     handleSearchCustomers,
@@ -46,17 +44,35 @@ export function QuotationList({
     const [subTab, setSubTab] = useState<"pipeline" | "sheets" | "rejected">("pipeline");
     const [listSearchQuery, setListSearchQuery] = useState("");
     const [listPage, setListPage] = useState(1);
-    const listItemsPerPage = 10;
+    const [listItemsPerPage, setListItemsPerPage] = useState(10);
 
     // Project selector modal states
     const [projectSelectorOpen, setProjectSelectorOpen] = useState(false);
     const [selectorTab, setSelectorTab] = useState<"select" | "register">("select");
+    const [projectSearch, setProjectSearch] = useState("");
+    const [projectDisplayLimit, setProjectDisplayLimit] = useState(10);
+
     const [newProjName, setNewProjName] = useState("");
     const [newProjCustSearch, setNewProjCustSearch] = useState("");
     const [selectedCustId, setSelectedCustId] = useState<number | null>(null);
     const [selectedCustName, setSelectedCustName] = useState("");
     const [custSearchFocused, setCustSearchFocused] = useState(false);
+    const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+    const [formErrors, setFormErrors] = useState<{ name?: string; cust?: string }>({});
     const custSearchContainerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (custSearchFocused && custSearchContainerRef.current) {
+            const rect = custSearchContainerRef.current.getBoundingClientRect();
+            setDropdownStyle({
+                position: 'fixed',
+                top: rect.bottom + 4,
+                left: rect.left,
+                width: rect.width,
+                zIndex: 9999
+            });
+        }
+    }, [custSearchFocused, newProjCustSearch, customers]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -163,6 +179,15 @@ export function QuotationList({
         });
     }, [rejectedProjects, listSearchQuery]);
 
+    const filteredSelectorProjects = React.useMemo(() => {
+        if (!projectSearch.trim()) return allProjects;
+        const query = projectSearch.toLowerCase().trim();
+        return allProjects.filter(p => 
+            p.projectName.toLowerCase().includes(query) || 
+            p.customerName.toLowerCase().includes(query)
+        );
+    }, [allProjects, projectSearch]);
+
     const filteredAllQuotes = React.useMemo(() => {
         if (!listSearchQuery.trim()) return quotes;
         const query = listSearchQuery.toLowerCase().trim();
@@ -182,17 +207,17 @@ export function QuotationList({
     const paginatedActiveProjects = React.useMemo(() => {
         const start = (listPage - 1) * listItemsPerPage;
         return filteredActiveProjects.slice(start, start + listItemsPerPage);
-    }, [filteredActiveProjects, listPage]);
+    }, [filteredActiveProjects, listPage, listItemsPerPage]);
 
     const paginatedAllQuotes = React.useMemo(() => {
         const start = (listPage - 1) * listItemsPerPage;
         return filteredAllQuotes.slice(start, start + listItemsPerPage);
-    }, [filteredAllQuotes, listPage]);
+    }, [filteredAllQuotes, listPage, listItemsPerPage]);
 
     const paginatedRejectedProjects = React.useMemo(() => {
         const start = (listPage - 1) * listItemsPerPage;
         return filteredRejectedProjects.slice(start, start + listItemsPerPage);
-    }, [filteredRejectedProjects, listPage]);
+    }, [filteredRejectedProjects, listPage, listItemsPerPage]);
 
     const activeTotalPages = Math.ceil(filteredActiveProjects.length / listItemsPerPage) || 1;
     const allQuotesTotalPages = Math.ceil(filteredAllQuotes.length / listItemsPerPage) || 1;
@@ -368,7 +393,6 @@ export function QuotationList({
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Agreed Price</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Revisions</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Status</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Project Decision</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y">
@@ -376,18 +400,25 @@ export function QuotationList({
                                             const q = proj.latest;
                                             const custName = (q.customer_id && typeof q.customer_id === "object") 
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : `Cust ID: ${q.customer_id}`;
+                                                : "Customer Deleted";
                                             const sellingPrice = Number(q.total_selling_price || 0);
 
                                             return (
-                                                <tr key={proj.projectName} className="hover:bg-muted/30 transition-colors">
-                                                    <td className="p-3 font-bold text-primary">{proj.projectName}</td>
+                                                <tr 
+                                                    key={proj.projectName} 
+                                                    onClick={() => viewQuoteDetails(q)}
+                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                                                >
+                                                    <td className="p-3 font-bold text-primary group-hover:text-primary/80 transition-colors">{proj.projectName}</td>
                                                     <td className="p-3 font-medium text-foreground">{custName}</td>
                                                     <td className="p-3 font-mono text-muted-foreground font-bold">{q.quote_number}</td>
                                                     <td className="p-3 text-right font-extrabold text-foreground">₱{sellingPrice.toFixed(2)}</td>
                                                     <td className="p-3 text-center text-muted-foreground font-semibold">
                                                         <button 
-                                                            onClick={() => handleViewSkuHistory(proj.projectName, proj.history)}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleViewSkuHistory(proj.projectName, proj.history);
+                                                            }}
                                                             className="hover:underline text-primary font-bold inline-flex items-center gap-1"
                                                         >
                                                             <Clock className="h-3 w-3" />
@@ -398,15 +429,6 @@ export function QuotationList({
                                                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
                                                             {q.status || "Draft Proposal"}
                                                         </span>
-                                                    </td>
-                                                    <td className="p-3 text-center flex items-center justify-center gap-2">
-                                                        <button
-                                                            onClick={() => viewQuoteDetails(q)}
-                                                            className="inline-flex items-center justify-center p-1 rounded-md border hover:bg-muted text-muted-foreground transition-all"
-                                                            title="View Sheet Snapshot"
-                                                        >
-                                                            <Eye className="h-4 w-4" />
-                                                        </button>
                                                     </td>
                                                 </tr>
                                             );
@@ -433,8 +455,8 @@ export function QuotationList({
                                             <th className="p-3 font-semibold text-muted-foreground uppercase">Customer</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase">Last Quote Version</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Selling Total</th>
+                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Revisions</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase">Date Updated</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y">
@@ -442,32 +464,33 @@ export function QuotationList({
                                             const q = proj.latest;
                                             const custName = (q.customer_id && typeof q.customer_id === "object") 
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : `Cust ID: ${q.customer_id}`;
+                                                : "Customer Deleted";
                                             const sellingPrice = Number(q.total_selling_price || 0);
 
                                             return (
-                                                <tr key={proj.projectName} className="hover:bg-muted/30 transition-colors">
-                                                    <td className="p-3 font-bold text-destructive">{proj.projectName}</td>
+                                                <tr 
+                                                    key={proj.projectName} 
+                                                    onClick={() => viewQuoteDetails(proj.latest)}
+                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                                                >
+                                                    <td className="p-3 font-bold text-destructive group-hover:text-destructive/80 transition-colors">{proj.projectName}</td>
                                                     <td className="p-3 font-medium text-foreground">{custName}</td>
                                                     <td className="p-3 font-mono text-muted-foreground font-semibold">{q.quote_number}</td>
                                                     <td className="p-3 text-right text-muted-foreground font-semibold">₱{sellingPrice.toFixed(2)}</td>
-                                                    <td className="p-3 text-muted-foreground">{q.quote_date ? new Date(q.quote_date).toLocaleDateString() : "—"}</td>
-                                                    <td className="p-3 text-center flex items-center justify-center gap-1.5">
+                                                    <td className="p-3 text-center">
                                                         <button 
-                                                            onClick={() => handleViewSkuHistory(proj.projectName, proj.history)}
-                                                            className="inline-flex items-center justify-center p-1 rounded-md border hover:bg-muted text-primary font-bold transition-all"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleViewSkuHistory(proj.projectName, proj.history);
+                                                            }}
+                                                            className="hover:underline text-primary font-bold inline-flex items-center gap-1 text-xs"
                                                             title="View SKU Revisions History"
                                                         >
-                                                            <Clock className="h-4 w-4" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => viewQuoteDetails(proj.latest)}
-                                                            className="inline-flex items-center justify-center p-1 rounded-md border hover:bg-muted text-muted-foreground transition-all"
-                                                            title="View Sheet Breakdown"
-                                                        >
-                                                            <Eye className="h-4 w-4" />
+                                                            <Clock className="h-3 w-3" />
+                                                            {proj.history.length} sheet(s)
                                                         </button>
                                                     </td>
+                                                    <td className="p-3 text-muted-foreground">{q.quote_date ? new Date(q.quote_date).toLocaleDateString() : "—"}</td>
                                                 </tr>
                                             );
                                         })}
@@ -495,14 +518,13 @@ export function QuotationList({
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Agreed Price</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Estimated GP</th>
                                             <th className="p-3 font-semibold text-muted-foreground uppercase">Status</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y">
                                         {paginatedAllQuotes.map(q => {
                                             const custName = (q.customer_id && typeof q.customer_id === "object") 
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : `Cust ID: ${q.customer_id}`;
+                                                : "Customer Deleted";
                                             const simulatedCost = Number(q.total_simulated_cost || 0);
                                             const sellingPrice = Number(q.total_selling_price || 0);
                                             const gp = sellingPrice - simulatedCost;
@@ -512,8 +534,12 @@ export function QuotationList({
                                             const dispProjName = projObj?.project_name || "—";
 
                                             return (
-                                                <tr key={q.id} className="hover:bg-muted/30 transition-colors">
-                                                    <td className="p-3 font-bold text-foreground">{q.quote_number}</td>
+                                                <tr 
+                                                    key={q.id} 
+                                                    onClick={() => viewQuoteDetails(q)}
+                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                                                >
+                                                    <td className="p-3 font-bold text-foreground group-hover:text-primary transition-colors">{q.quote_number}</td>
                                                     <td className="p-3 font-semibold text-primary">{dispProjName}</td>
                                                     <td className="p-3 font-medium text-foreground">{custName}</td>
                                                     <td className="p-3 text-right text-muted-foreground font-semibold">₱{simulatedCost.toFixed(2)}</td>
@@ -532,24 +558,6 @@ export function QuotationList({
                                                             {q.status || "Draft"}
                                                         </span>
                                                     </td>
-                                                    <td className="p-3 text-center flex items-center justify-center gap-1.5 pt-4">
-                                                        <button
-                                                            onClick={() => viewQuoteDetails(q)}
-                                                            className="inline-flex items-center justify-center p-1 rounded-md border hover:bg-muted text-muted-foreground transition-all"
-                                                            title="View Snapshot Breakdown"
-                                                        >
-                                                            <Eye className="h-4 w-4" />
-                                                        </button>
-                                                        {q.status !== "Converted to SO" && (
-                                                            <button
-                                                                onClick={() => reviseQuotation(q)}
-                                                                className="inline-flex items-center justify-center p-1 rounded-md border hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 text-muted-foreground transition-all"
-                                                                title="Revise / Create New Version"
-                                                            >
-                                                                <History className="h-4 w-4" />
-                                                            </button>
-                                                        )}
-                                                    </td>
                                                 </tr>
                                             );
                                         })}
@@ -560,31 +568,47 @@ export function QuotationList({
                     )}
 
                     {/* Pagination Controls */}
-                    {currentTotalPagesCount > 1 && (
-                        <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 select-none">
+                    <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 select-none">
+                        <div className="flex items-center gap-4">
+                            <div className="text-[10px] text-muted-foreground font-semibold flex items-center gap-2">
+                                <span>Rows per page:</span>
+                                <select 
+                                    value={listItemsPerPage}
+                                    onChange={(e) => {
+                                        setListItemsPerPage(Number(e.target.value));
+                                        setListPage(1);
+                                    }}
+                                    className="bg-transparent border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                                >
+                                    <option value={10}>10</option>
+                                    <option value={25}>25</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                </select>
+                            </div>
                             <div className="text-[10px] text-muted-foreground font-semibold">
                                 Showing page <span className="text-foreground font-bold">{listPage}</span> of <span className="text-foreground font-bold">{currentTotalPagesCount}</span>
                             </div>
-                            <div className="flex items-center gap-1.5">
-                                <button
-                                    type="button"
-                                    disabled={listPage <= 1}
-                                    onClick={() => setListPage(prev => Math.max(1, prev - 1))}
-                                    className="p-1 rounded-lg border bg-background text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:hover:bg-background transition-colors cursor-pointer"
-                                >
-                                    <ChevronLeft className="h-4 w-4" />
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={listPage >= currentTotalPagesCount}
-                                    onClick={() => setListPage(prev => Math.min(currentTotalPagesCount, prev + 1))}
-                                    className="p-1 rounded-lg border bg-background text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:hover:bg-background transition-colors cursor-pointer"
-                                >
-                                    <ChevronRight className="h-4 w-4" />
-                                </button>
-                            </div>
                         </div>
-                    )}
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                type="button"
+                                disabled={listPage <= 1}
+                                onClick={() => setListPage(prev => Math.max(1, prev - 1))}
+                                className="p-1 rounded-lg border bg-background text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:hover:bg-background transition-colors cursor-pointer"
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                disabled={listPage >= currentTotalPagesCount}
+                                onClick={() => setListPage(prev => Math.min(currentTotalPagesCount, prev + 1))}
+                                className="p-1 rounded-lg border bg-background text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:hover:bg-background transition-colors cursor-pointer"
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -731,7 +755,7 @@ export function QuotationList({
                                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
                                 }`}
                             >
-                                Choose Existing Portfolio ({allProjects.length})
+                                Choose Existing Project ({filteredSelectorProjects.length})
                             </button>
                             <button
                                 onClick={() => setSelectorTab("register")}
@@ -748,22 +772,38 @@ export function QuotationList({
                         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
                             {selectorTab === "select" ? (
                                 <div className="space-y-4">
-                                    {allProjects.length === 0 ? (
-                                        <div className="text-center py-8">
-                                            <Folder className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
-                                            <p className="text-xs text-muted-foreground font-semibold">No registered project portfolios yet.</p>
-                                            <button
-                                                onClick={() => setSelectorTab("register")}
-                                                className="mt-3 text-xs text-primary font-bold hover:underline"
-                                            >
-                                                Register a new project now
-                                            </button>
+                                    <div className="space-y-3">
+                                        <div className="sticky top-0 bg-card z-10 pb-2 flex items-center justify-between gap-3 pt-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase block whitespace-nowrap">Select Portfolio</label>
+                                            <input
+                                                type="text"
+                                                placeholder="Search by project or customer..."
+                                                value={projectSearch}
+                                                onChange={e => {
+                                                    setProjectSearch(e.target.value);
+                                                    setProjectDisplayLimit(10);
+                                                }}
+                                                className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-semibold"
+                                            />
                                         </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase block">Select Portfolio</label>
+                                        {filteredSelectorProjects.length === 0 ? (
+                                            <div className="text-center py-8">
+                                                <Folder className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
+                                                <p className="text-xs text-muted-foreground font-semibold">
+                                                    {projectSearch.trim() ? "No projects found matching your search." : "No registered projects yet."}
+                                                </p>
+                                                {!projectSearch.trim() && (
+                                                    <button
+                                                        onClick={() => setSelectorTab("register")}
+                                                        className="mt-3 text-xs text-primary font-bold hover:underline"
+                                                    >
+                                                        Register a new project now
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
                                             <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                                                {allProjects.map(proj => (
+                                                {filteredSelectorProjects.slice(0, projectDisplayLimit).map(proj => (
                                                     <button
                                                         key={proj.projectName}
                                                         onClick={() => {
@@ -781,32 +821,50 @@ export function QuotationList({
                                                         </div>
                                                     </button>
                                                 ))}
+                                                {filteredSelectorProjects.length > projectDisplayLimit && (
+                                                    <button
+                                                        onClick={() => setProjectDisplayLimit(prev => prev + 10)}
+                                                        className="w-full py-2 mt-2 text-xs font-bold text-primary hover:bg-primary/5 rounded-lg border border-transparent hover:border-primary/20 transition-all cursor-pointer"
+                                                    >
+                                                        Load More
+                                                    </button>
+                                                )}
                                             </div>
-                                        </div>
-                                    )}
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="space-y-4">
                                     {/* New Project Name */}
                                     <div>
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">Project Portfolio Name</label>
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
+                                            Project Portfolio Name <span className="text-destructive">*</span>
+                                        </label>
                                         <input
                                             type="text"
                                             value={newProjName}
-                                            onChange={e => setNewProjName(e.target.value)}
+                                            onChange={e => {
+                                                setNewProjName(e.target.value);
+                                                setFormErrors(prev => ({ ...prev, name: undefined }));
+                                            }}
                                             placeholder="e.g. PROJECT VERTEX PH-2"
-                                            className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-bold uppercase"
+                                            aria-invalid={Boolean(formErrors.name)}
+                                            className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-bold aria-invalid:border-destructive"
                                         />
+                                        {formErrors.name && <p className="text-xs text-destructive mt-1">{formErrors.name}</p>}
                                     </div>
 
                                     {/* Customer Selection */}
-                                    <div className="relative" ref={custSearchContainerRef}>
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">Customer / Client</label>
+                                    <div className="relative mt-2" ref={custSearchContainerRef}>
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
+                                            Customer / Client <span className="text-destructive">*</span>
+                                        </label>
                                         <div className="relative">
                                             <input
                                                 type="text"
                                                 placeholder="Type to search customers..."
                                                 value={newProjCustSearch}
+                                                aria-invalid={Boolean(formErrors.cust)}
                                                 onFocus={() => {
                                                     setCustSearchFocused(true);
                                                     if (customers.length === 0) handleSearchCustomers("");
@@ -815,8 +873,9 @@ export function QuotationList({
                                                     setCustSearchFocused(true);
                                                     handleSearchCustomers(e.target.value);
                                                     setNewProjCustSearch(e.target.value);
+                                                    setFormErrors(prev => ({ ...prev, cust: undefined }));
                                                 }}
-                                                className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background pl-3 pr-8 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-semibold"
+                                                className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background pl-3 pr-8 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-semibold aria-invalid:border-destructive"
                                             />
                                             {selectedCustId && (
                                                 <button
@@ -833,27 +892,33 @@ export function QuotationList({
                                             )}
 
                                             {custSearchFocused && !selectedCustId && (
-                                                <div className="absolute left-0 right-0 top-full mt-1 max-h-[160px] overflow-y-auto border bg-card rounded-md shadow-lg z-50 divide-y">
-                                                    {customers.slice(0, 10).map(c => (
-                                                        <button
-                                                            key={c.id}
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setSelectedCustId(Number(c.id));
-                                                                setSelectedCustName(c.customer_name);
-                                                                setNewProjCustSearch(`${c.customer_name} (${c.customer_code})`);
-                                                                setCustSearchFocused(false);
-                                                            }}
-                                                            className="w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors font-semibold text-foreground block cursor-pointer"
-                                                        >
-                                                            {c.customer_name} ({c.customer_code})
-                                                        </button>
-                                                    ))}
-                                                    {customers.length === 0 && (
-                                                        <div className="px-3 py-2 text-xs text-muted-foreground text-center">
-                                                            No customers found.
-                                                        </div>
-                                                    )}
+                                                <div 
+                                                    className="fixed border bg-card rounded-md shadow-lg divide-y overflow-hidden flex flex-col z-[60]"
+                                                    style={dropdownStyle}
+                                                >
+                                                    <div className="overflow-y-auto max-h-[160px]">
+                                                        {customers.slice(0, 10).map(c => (
+                                                            <button
+                                                                key={c.id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setSelectedCustId(Number(c.id));
+                                                                    setSelectedCustName(c.customer_name);
+                                                                    setNewProjCustSearch(`${c.customer_name} (${c.customer_code})`);
+                                                                    setCustSearchFocused(false);
+                                                                    setFormErrors(prev => ({ ...prev, cust: undefined }));
+                                                                }}
+                                                                className="w-full text-left px-3 py-3 text-xs hover:bg-muted transition-colors font-semibold text-foreground block cursor-pointer"
+                                                            >
+                                                                {c.customer_name} ({c.customer_code})
+                                                            </button>
+                                                        ))}
+                                                        {customers.length === 0 && (
+                                                            <div className="px-3 py-2 text-xs text-muted-foreground text-center">
+                                                                No customers found.
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -863,23 +928,46 @@ export function QuotationList({
                                     <button
                                         type="button"
                                         onClick={async () => {
-                                            if (!newProjName.trim()) {
-                                                toast.error("Please enter a project portfolio name");
-                                                return;
+                                            let valid = true;
+                                            const errors: { name?: string; cust?: string } = {};
+                                            const normalizedName = newProjName.trim();
+                                            
+                                            if (!normalizedName) {
+                                                errors.name = "Project name is required";
+                                                valid = false;
+                                            } else {
+                                                // Uniqueness check
+                                                const isDuplicate = allProjects.some(
+                                                    p => p.projectName.toLowerCase() === normalizedName.toLowerCase()
+                                                );
+                                                if (isDuplicate) {
+                                                    errors.name = "A project with this name already exists.";
+                                                    valid = false;
+                                                }
                                             }
+                                            
                                             if (!selectedCustId) {
-                                                toast.error("Please select a customer");
-                                                return;
+                                                errors.cust = "Customer selection is required";
+                                                valid = false;
                                             }
-                                            const newProj = await registerNewProject(newProjName, selectedCustId, selectedCustName);
-                                            if (newProj && newProj.id) {
-                                                startCreateQuoteForProject(newProj.project_name, selectedCustId, newProj.id);
-                                                setProjectSelectorOpen(false);
-                                                // Reset inputs
-                                                setNewProjName("");
-                                                setSelectedCustId(null);
-                                                setSelectedCustName("");
-                                                setNewProjCustSearch("");
+
+                                            setFormErrors(errors);
+                                            if (!valid) return;
+
+                                            try {
+                                                const newProj = await registerNewProject(normalizedName, selectedCustId!, selectedCustName);
+                                                if (newProj && newProj.id) {
+                                                    startCreateQuoteForProject(newProj.project_name, selectedCustId!, newProj.id);
+                                                    setProjectSelectorOpen(false);
+                                                    // Reset inputs
+                                                    setNewProjName("");
+                                                    setSelectedCustId(null);
+                                                    setSelectedCustName("");
+                                                    setNewProjCustSearch("");
+                                                }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                            } catch (e: any) {
+                                                toast.error(e.message || "Failed to register project");
                                             }
                                         }}
                                         className="w-full rounded-lg bg-primary py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-md mt-2 cursor-pointer text-center"

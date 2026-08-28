@@ -14,6 +14,7 @@ import {
     Unlock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -38,6 +39,8 @@ export default function MaterialStagingModule() {
         branches,
         stats,
         loading,
+        loadError,
+        hasSuccessfulLoad,
         searchQuery,
         setSearchQuery,
         selectedBranchId,
@@ -61,6 +64,8 @@ export default function MaterialStagingModule() {
         handleProceedWithNegativeStock,
         refreshData
     } = useMaterialStaging();
+
+    const showInitialLoadError = Boolean(loadError) && !hasSuccessfulLoad;
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
@@ -101,6 +106,50 @@ export default function MaterialStagingModule() {
                     </div>
                 </div>
             </div>
+
+            {showInitialLoadError ? (
+                <Alert variant="destructive" className="items-start gap-3 p-5">
+                    <AlertTriangle className="h-5 w-5" />
+                    <div className="space-y-3">
+                        <AlertTitle>Unable to load Material Staging</AlertTitle>
+                        <AlertDescription>
+                            {loadError}
+                        </AlertDescription>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => refreshData(true)}
+                            disabled={loading}
+                        >
+                            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                            Retry
+                        </Button>
+                    </div>
+                </Alert>
+            ) : (
+                <>
+            {loadError && hasSuccessfulLoad && (
+                <Alert variant="destructive" className="items-start gap-3">
+                    <AlertTriangle className="h-4 w-4" />
+                    <div>
+                        <AlertTitle>Material Staging refresh failed</AlertTitle>
+                        <AlertDescription>
+                            <div className="space-y-2">
+                                <p>{loadError} Showing the last successfully loaded results. Retry to load current data.</p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => refreshData(true)}
+                                    disabled={loading}
+                                >
+                                    <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                                    Retry
+                                </Button>
+                            </div>
+                        </AlertDescription>
+                    </div>
+                </Alert>
+            )}
 
             {/* KPI Metric Summary Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -245,7 +294,7 @@ export default function MaterialStagingModule() {
                         </span>
                     </div>
 
-                    {loading ? (
+                    {loading && !hasSuccessfulLoad ? (
                         <div className="space-y-3">
                             {[1, 2, 3, 4].map((i) => (
                                 <div key={i} className="h-28 bg-muted/40 rounded-xl animate-pulse border border-border/50" />
@@ -323,7 +372,7 @@ export default function MaterialStagingModule() {
                                             </div>
                                             <div className="flex items-center gap-1 font-mono text-[11px]">
                                                 <Warehouse className="h-3 w-3 text-muted-foreground" />
-                                                <span className="text-emerald-600 dark:text-emerald-400 font-medium">{jo.suggested_staging_bin}</span>
+                                                <span className="text-emerald-600 dark:text-emerald-400 font-medium">{jo.suggested_staging_bin || "No active destination"}</span>
                                             </div>
                                         </div>
 
@@ -361,6 +410,8 @@ export default function MaterialStagingModule() {
                     />
                 </div>
             </div>
+                </>
+            )}
 
             {/* Bin Transfer Modal */}
             <BinTransferModal

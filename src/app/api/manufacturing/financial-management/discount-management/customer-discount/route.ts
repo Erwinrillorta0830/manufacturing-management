@@ -35,7 +35,7 @@ export async function GET() {
       fetchDirectus("store_type", "limit=-1&fields=id,store_type"),
       fetchDirectus("customer_classification", "limit=-1&fields=id,classification_name"),
       fetchDirectus("payment_terms", "limit=-1&fields=id,payment_name,payment_days"),
-      fetchDirectus("suppliers", "limit=-1&fields=id,supplier_name&filter[isActive][_eq]=1&filter[supplier_type][_eq]=TRADE"),
+      fetchDirectus("suppliers", "limit=-1&fields=id,supplier_name&filter[isActive][_eq]=1&filter[supplier_type][_eq]=TRADE&filter[nonBuy][_eq]=0"),
       fetchDirectus("categories", "limit=-1&fields=category_id,category_name"),
       fetchDirectus("discount_type", "limit=-1&fields=id,discount_type,total_percent"),
     ]);

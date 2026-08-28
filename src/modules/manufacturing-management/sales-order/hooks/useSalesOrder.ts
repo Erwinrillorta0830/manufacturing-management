@@ -50,6 +50,9 @@ export function useSalesOrder() {
         if (!order) {
             setOrderDetails([]);
             setLoadingDetails(false);
+        } else {
+            setOrderDetails([]);
+            setLoadingDetails(true);
         }
     };
 

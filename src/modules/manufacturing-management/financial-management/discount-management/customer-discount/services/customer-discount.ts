@@ -40,3 +40,16 @@ export async function deleteCustomerDiscount(id: number, userId: number | null):
     throw new Error(err.error || "Failed to delete customer discount");
   }
 }
+
+export async function updateCustomerDiscount(data: Partial<CustomerDiscount> & { id: number; updated_by: number | null }): Promise<CustomerDiscount> {
+  const res = await fetch("/api/manufacturing/financial-management/discount-management/customer-discount/discounts", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to update customer discount");
+  }
+  return res.json();
+}

@@ -91,7 +91,7 @@ export const receivingSubmissionSchema = z.object({
                 && date.getUTCMonth() === month - 1
                 && date.getUTCDate() === day;
         }, "Date of Receipt must be a valid date."),
-    receiptType: z.enum(["full", "partial"]),
+    supplierDocumentTypeId: z.number().int().positive().nullable().optional(),
     processOverDelivery: z.boolean().default(false),
     branchId: positiveId,
     branchName: z.string().trim().min(1),
@@ -137,7 +137,7 @@ export const expenseAllocationSchema = z.object({
         expense_type: z.string().trim().default(""),
         amount_php: nonNegativeNumber
     })),
-    allocationMethod: z.enum(["Value", "Weight", "Volume", "Hybrid", "By Value", "By Weight", "By Volume", "By Hybrid"]),
+    allocationMethod: z.enum(["Quantity", "Value", "Weight", "Volume", "Hybrid", "By Quantity", "By Value", "By Weight", "By Volume", "By Hybrid"]),
     lineItemUpdates: z.array(z.object({
         line_id: positiveId,
         quantity_received: nonNegativeNumber

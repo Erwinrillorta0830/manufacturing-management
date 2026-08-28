@@ -359,16 +359,22 @@ export function ShipmentDetailView({
                             </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">USD Total</span>
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{activeShipment.currency_code === "PHP" ? "Foreign Total" : `${activeShipment.currency_code || "Foreign"} Total`}</span>
                             <span className="text-xs font-extrabold text-foreground">
-                                {activeShipment.currency_code === "USD"
-                                    ? formatMoney(activeShipment.total_foreign_currency, "USD")
+                                {activeShipment.currency_code && activeShipment.currency_code !== "PHP"
+                                    ? formatMoney(activeShipment.total_foreign_currency, activeShipment.currency_code)
                                     : "N/A"}
                             </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate (PHP/USD)</span>
-                            <span className="text-xs font-extrabold text-foreground">{formatMoney(activeShipment.exchange_rate)}</span>
+                            <span className="text-xs font-extrabold text-foreground">
+                                {activeShipment.currency_code === "PHP"
+                                    ? "1.0000"
+                                    : Number(activeShipment.exchange_rate) > 0
+                                        ? Number(activeShipment.exchange_rate).toFixed(4)
+                                        : "Unavailable"}
+                            </span>
                         </div>
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Revision Count</span>
@@ -406,7 +412,7 @@ export function ShipmentDetailView({
                                         <th className="p-3 font-semibold text-muted-foreground">Product Name</th>
                                         <th className="p-3 font-semibold text-muted-foreground">UOM</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">Qty</th>
-                                        <th className="p-3 font-semibold text-muted-foreground text-right">Unit Price</th>
+                                        <th className="p-3 font-semibold text-muted-foreground text-right">{activeShipment.currency_code === "PHP" ? "Unit Price (PHP)" : `Invoice Unit Price (${activeShipment.currency_code || "foreign currency"})`}</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">Discount</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">ImpFreight Cost</th>
                                     </tr>
@@ -427,11 +433,12 @@ export function ShipmentDetailView({
                                                 (() => {
                                                     const currency = activeShipment?.currency_code || "PHP";
                                                     const discountMode = line.discount_mode || "Percentage";
-                                                    const transactionUnitPrice = Number(line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
+                                                    const transactionUnitPrice = Number(currency === "PHP" ? line.base_unit_cost_php : line.unit_price_foreign);
+                                                    const hasUnitPrice = Number.isFinite(transactionUnitPrice) && transactionUnitPrice >= 0;
                                                     const quantity = Number(line.quantity_ordered || 0);
                                                     const percentageDiscount = calculatePercentageDiscount(
                                                         quantity,
-                                                        transactionUnitPrice,
+                                                        hasUnitPrice ? transactionUnitPrice : 0,
                                                         Number(line.discount_percent || 0)
                                                     );
                                                     const discountAmount = discountMode === "Fixed Amount"
@@ -456,7 +463,10 @@ export function ShipmentDetailView({
                                                         </div>
                                                     </td>
                                                     <td className="p-3 text-right font-mono text-[11px]">
-                                                        {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}
+                                                        <div>{hasUnitPrice ? formatMoney(transactionUnitPrice, currency, UNIT_PRICE_DECIMAL_SCALE) : "Unavailable"}</div>
+                                                        {currency !== "PHP" && (
+                                                            <div className="text-[9px] text-muted-foreground">Base: {formatMoney(line.base_unit_cost_php, "PHP", UNIT_PRICE_DECIMAL_SCALE)}</div>
+                                                        )}
                                                     </td>
                                                     <td className="p-3 text-right font-mono text-[11px]">
                                                         {formatMoney(discountAmount, currency)}

@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import {
-    ACTIVE_DISBURSEMENT_STATUSES,
     activeReceivingRowsByPurchaseOrder,
     isFullyPostedPurchaseOrder,
     purchaseOrderReferenceKey,
     purchaseOrderReferenceKeyFromParts,
-    postedReceivingRowsByPurchaseOrder,
+    postedReceivingRowsByPurchaseOrder
 } from "../../_purchase-order-eligibility";
 
 export const runtime = "nodejs";
@@ -20,6 +19,8 @@ interface DirectusPurchaseOrder {
     date?: string | null;
     payment_type?: number;
     payment_status?: number;
+    total_amount?: number;
+    gross_amount?: number;
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ supplierId: string }> }) {
@@ -48,7 +49,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 "purchase_order_no",
                 "date",
                 "payment_type",
-                "payment_status"
+                "payment_status",
+                "total_amount",
+                "gross_amount"
             ].join(","),
             limit: "-1"
         });
@@ -67,10 +70,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             return NextResponse.json([]);
         }
 
-        // Fetch active disbursements for this supplier (to avoid 403 relational filter issue)
+        // Fetch active disbursements system-wide to prevent duplicate tagging
         const disbursementQuery = new URLSearchParams({
-            "filter[payee][_eq]": String(supplierId),
-            "filter[status][_in]": ACTIVE_DISBURSEMENT_STATUSES.join(","),
+            "filter[status][_in]": ["Draft", "Submitted", "Approved", "Released"].join(","),
             fields: "id",
             limit: "-1",
         });
@@ -139,13 +141,34 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             if (Number(po.payment_type) === 1) {
                 // CWO (Cash With Order)
                 const activeReceivings = activeReceivingsByPoId.get(poId) || [];
-                // Product lines do not carry the financial posting marker. Keep
-                // CWO receipt rows hidden until every active receiving row is posted.
-                if (!isFullyPostedPurchaseOrder(activeReceivings)) continue;
-                if (taggedPurchaseOrderKeys.has(purchaseOrderReferenceKeyFromParts(poNo, "ADVANCE-CWO"))) continue;
+                // If there ARE receiving rows, they must all be fully posted.
+                if (activeReceivings.length > 0 && !isFullyPostedPurchaseOrder(activeReceivings)) {
+                    continue;
+                }
+                
+                const cwoRefKey = purchaseOrderReferenceKeyFromParts(poNo, "ADVANCE-CWO");
+                if (taggedPurchaseOrderKeys.has(cwoRefKey)) {
+                    continue;
+                }
+
+                const remainingDue = Math.max(0, Number(po.total_amount || po.gross_amount || 0));
+                if (remainingDue > 0.01) {
+                    unpaidPos.push({
+                        uniqueKey: `${poNo}-ADVANCE-CWO`,
+                        poId,
+                        poNo,
+                        receiptNo: "ADVANCE-CWO",
+                        date: po.date ? po.date.split("T")[0] : null,
+                        amountDue: Number(remainingDue.toFixed(2)),
+                        type: "CWO"
+                    });
+                }
+                
+                // Do not process individual receiving rows for CWO, as liability is based on PO total.
+                continue;
             }
 
-            // Only receipt rows posted to inventory and to financial amounts
+            // Standard POs: Only receipt rows posted to inventory and to financial amounts
             // may contribute to the disbursement selection list.
             const receivings = postedReceivingsByPoId.get(poId) || [];
             const grouped: Record<string, { transDate: string | null, totalLiability: number }> = {};
@@ -181,7 +204,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                         receiptNo,
                         date: data.transDate || (po.date ? po.date.split("T")[0] : null),
                         amountDue: Number(remainingDue.toFixed(2)),
-                        type: Number(po.payment_type) === 1 ? "CWO" : "RECEIPT"
+                        type: "RECEIPT"
                     });
                 }
             }

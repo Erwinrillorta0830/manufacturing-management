@@ -27,7 +27,16 @@ export async function GET(request: NextRequest) {
         }
 
         const json = await res.json();
-        return NextResponse.json({ success: true, data: json.data || [] });
+        const rawList: Array<Record<string, unknown>> = json.data || [];
+        const targetBranchId = Number(branchId);
+
+        // Strict branch isolation filter
+        const filteredList = rawList.filter((item) => {
+            const itemBranchId = extractId(item.branch_id);
+            return itemBranchId === targetBranchId;
+        });
+
+        return NextResponse.json({ success: true, data: filteredList });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";
         return NextResponse.json({ success: false, error: msg }, { status: 500 });
