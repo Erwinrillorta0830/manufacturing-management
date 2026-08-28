@@ -57,8 +57,12 @@ export async function PATCH(request: Request) {
         const body = await request.json();
         const { quoteId, projectId, status } = body;
 
-        if (!quoteId || !status) {
-            return NextResponse.json({ error: "Missing quoteId or status" }, { status: 400 });
+        if (!status) {
+            return NextResponse.json({ error: "Missing status" }, { status: 400 });
+        }
+        
+        if (!quoteId && !projectId) {
+            return NextResponse.json({ error: "Missing quoteId or projectId" }, { status: 400 });
         }
 
         const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -72,16 +76,18 @@ export async function PATCH(request: Request) {
         
         const userId = await getUserIdFromToken().catch(() => null);
 
-        // Update the quotation header status
-        const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
-            method: "PATCH",
-            headers: reqHeaders,
-            body: JSON.stringify({ status, modified_by: userId })
-        });
+        // Update the quotation header status if quoteId is provided
+        if (quoteId) {
+            const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
+                method: "PATCH",
+                headers: reqHeaders,
+                body: JSON.stringify({ status, modified_by: userId })
+            });
 
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+            }
         }
 
         // Also update the parent project status if projectId is provided and status is "Rejected"

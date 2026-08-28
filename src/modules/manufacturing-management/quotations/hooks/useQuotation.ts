@@ -203,6 +203,10 @@ export function useQuotation() {
         const matchedCust = customers.find(c => Number(c.id) === customerId);
         if (matchedCust) {
             setCustomerSearchText(`${matchedCust.customer_name} (${matchedCust.customer_code})`);
+            // Auto-Fill the Price Type Template!
+            if (matchedCust.price_type_id) {
+                handlePriceTypeChange(String(matchedCust.price_type_id));
+            }
         } else {
             setCustomerSearchText(`Customer ID: ${customerId}`);
         }
@@ -291,8 +295,8 @@ export function useQuotation() {
                     unit_of_measurement: { unit_shortcut: item.uom }
                 };
 
-                let parentId = catalogProd.parent_product_id ? Number(catalogProd.parent_product_id) : undefined;
-                let productTypeId = catalogProd.product_type ? Number(catalogProd.product_type) : undefined;
+                let parentId = item.parent_id ? Number(item.parent_id) : (catalogProd.parent_product_id ? Number(catalogProd.parent_product_id) : undefined);
+                let productTypeId = item.product_type_id ? Number(item.product_type_id) : (catalogProd.product_type ? Number(catalogProd.product_type) : undefined);
 
                 // Fallback for parent ID if nested
                 if (!parentId && catalogProd.parent_id && (catalogProd.parent_id as Record<string, unknown>).id) {
@@ -343,6 +347,14 @@ export function useQuotation() {
                 ? `${(quote.customer_id as Customer).customer_name} (${(quote.customer_id as Customer).customer_code})`
                 : `Cust ID: ${quote.customer_id}`;
             setCustomerSearchText(custNameStr);
+
+            // Fetch and set price type template if customer has one
+            const matchedCust = customers.find(c => String(c.id) === custIdStr);
+            if (matchedCust && matchedCust.price_type_id) {
+                handlePriceTypeChange(String(matchedCust.price_type_id));
+            } else {
+                setSelectedPriceTypeId("");
+            }
 
             setRemarks(quote.remarks || "");
             
@@ -489,8 +501,8 @@ export function useQuotation() {
 
         // Customer-Driven Price Type Auto-Fill
         const customer = customers.find(c => c.id.toString() === id);
-        if (customer && customer.default_price_type_id) {
-            handlePriceTypeChange(String(customer.default_price_type_id));
+        if (customer && customer.price_type_id) {
+            handlePriceTypeChange(String(customer.price_type_id));
         }
     };
 
@@ -566,16 +578,34 @@ export function useQuotation() {
                 quote_date: quoteDateStr
             };
 
-            const snapshots = validProducts.map(item => ({
-                product_id: item.product.product_id,
-                version_id: item.versionId || 1, // Store the selected version ID
-                node_name: item.product.product_name,
-                node_type: "product_quota",
-                quantity: 1,
-                uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as unknown as Record<string, unknown>).unit_shortcut || "PCS",
-                frozen_unit_cost_php: item.resolvedCost,
-                frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
-            }));
+            const snapshots = validProducts.map(item => {
+                let pName = null;
+                let pType = null;
+                
+                if (item.parent_product_id) {
+                    const pMatch = allProducts.find(p => p.product_id === item.parent_product_id) || catalogProducts.find(p => p.product_id === item.parent_product_id);
+                    if (pMatch) pName = pMatch.product_name;
+                }
+                if (item.product_type_id) {
+                    const tMatch = productTypes.find(pt => pt.id === item.product_type_id);
+                    if (tMatch) pType = String(tMatch.name);
+                }
+
+                return {
+                    product_id: item.product.product_id,
+                    parent_id: item.parent_product_id || null,
+                    parent_product_name: pName || null,
+                    product_type_id: item.product_type_id || null,
+                    product_type_name: pType || null,
+                    version_id: item.versionId || 1, // Store the selected version ID
+                    node_name: item.product.product_name,
+                    node_type: "product_quota",
+                    quantity: 1,
+                    uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as unknown as Record<string, unknown>).unit_shortcut || "PCS",
+                    frozen_unit_cost_php: item.resolvedCost,
+                    frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
+                };
+            });
 
             const res = await fetch("/api/manufacturing/finished-goods/quotes", {
                 method: "POST",
@@ -634,8 +664,8 @@ export function useQuotation() {
         const resolvedSnapshots = snapshots.map(snap => {
             const prodMatch = allProducts.find(p => String(p.product_id) === String(snap.product_id)) || catalogProducts.find(p => String(p.product_id) === String(snap.product_id));
             
-            let typeName = "Finished Goods";
-            if (prodMatch) {
+            let typeName = snap.product_type_name || "Finished Goods";
+            if (!snap.product_type_name && prodMatch) {
                 let pTypeId = prodMatch.product_type ? Number(prodMatch.product_type) : undefined;
                 if (!pTypeId && prodMatch.parent_product_id) {
                     const parentProd = allProducts.find(p => String(p.product_id) === String(prodMatch.parent_product_id));

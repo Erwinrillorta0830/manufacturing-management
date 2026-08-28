@@ -14,6 +14,7 @@ interface QuotationDetailModalProps {
     reviseQuotation: (quote: QuotationHeader) => void;
     handlePrintQuotation: () => void;
     loadQuotes?: () => void;
+    projectQuoteHistory?: QuotationHeader[];
 }
 
 export function QuotationDetailModal({
@@ -24,12 +25,45 @@ export function QuotationDetailModal({
     setIsDetailModalOpen,
     reviseQuotation,
     handlePrintQuotation,
-    loadQuotes
+    loadQuotes,
+    projectQuoteHistory = []
 }: QuotationDetailModalProps) {
     const router = useRouter();
     const [rejecting, setRejecting] = useState(false);
     const [routing, setRouting] = useState(false);
     const [isRejectConfirmOpen, setIsRejectConfirmOpen] = useState(false);
+
+    const [activeHistoryQuoteId, setActiveHistoryQuoteId] = useState<number | null>(null);
+    const [historySnapshots, setHistorySnapshots] = useState<QuotationSnapshotNode[]>([]);
+    const [loadingHistory, setLoadingHistory] = useState(false);
+
+    React.useEffect(() => {
+        if (selectedQuote) {
+            setActiveHistoryQuoteId(selectedQuote.id);
+            setHistorySnapshots([]);
+        }
+    }, [selectedQuote]);
+
+    React.useEffect(() => {
+        if (!activeHistoryQuoteId || !selectedQuote) return;
+        if (activeHistoryQuoteId === selectedQuote.id) return; // We use the passed `snapshots` prop
+
+        let isMounted = true;
+        setLoadingHistory(true);
+        fetch(`/api/manufacturing/finished-goods/quotes/snapshots?quoteId=${activeHistoryQuoteId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (isMounted) {
+                    setHistorySnapshots(data);
+                    setLoadingHistory(false);
+                }
+            })
+            .catch(err => {
+                console.error("Failed to load historical snapshots", err);
+                if (isMounted) setLoadingHistory(false);
+            });
+        return () => { isMounted = false; };
+    }, [activeHistoryQuoteId, selectedQuote]);
 
     const handleRejectProject = async () => {
         if (!selectedQuote) return;
@@ -83,6 +117,8 @@ export function QuotationDetailModal({
                 quoteNumber: selectedQuote.quote_number,
                 snapshots: snapshots.map(s => ({
                     productId: s.product_id,
+                    parentId: s.parent_id,
+                    productTypeId: s.product_type_id,
                     versionId: s.version_id,
                     productName: s.node_name,
                     quantity: s.quantity,
@@ -102,8 +138,18 @@ export function QuotationDetailModal({
 
     if (!isDetailModalOpen || !selectedQuote) return null;
 
-    const simulatedCost = Number(selectedQuote.total_simulated_cost || 0);
-    const sellingPrice = Number(selectedQuote.total_selling_price || 0);
+    const displayQuote = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
+        ? projectQuoteHistory.find(q => q.id === activeHistoryQuoteId) || selectedQuote
+        : selectedQuote;
+    
+    const displaySnapshots = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
+        ? historySnapshots
+        : snapshots;
+    
+    const isHistoryView = displayQuote.id !== selectedQuote.id;
+
+    const simulatedCost = Number(displayQuote.total_simulated_cost || 0);
+    const sellingPrice = Number(displayQuote.total_selling_price || 0);
     const netMargin = sellingPrice - simulatedCost;
     const marginPct = sellingPrice > 0 ? (netMargin / sellingPrice) * 100 : 0;
 
@@ -113,11 +159,38 @@ export function QuotationDetailModal({
                 {/* Header */}
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                     <div>
-                        <h3 className="text-base font-bold text-foreground">Quote Snapshot Detail</h3>
-                        <p className="text-xs text-muted-foreground">Quote Number: <strong className="text-foreground">{selectedQuote.quote_number}</strong> | Status: <span className="font-bold text-primary">{selectedQuote.status || "Draft"}</span></p>
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className="text-base font-bold text-foreground">Quote Snapshot Detail</h3>
+                            {displayQuote.status === "Converted to SO" && (
+                                <span className="text-[10px] bg-teal-500/10 text-teal-600 px-2 py-0.5 rounded-full font-bold border border-teal-500/20">
+                                    🔒 Approved & Converted
+                                </span>
+                            )}
+                            {isHistoryView && (
+                                <span className="text-[10px] bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded-full font-bold border border-amber-500/20">
+                                    Viewing Previous Revision (Read-only)
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <p className="text-xs text-muted-foreground">Quote Number: <strong className="text-foreground">{displayQuote.quote_number}</strong> | Status: <span className="font-bold text-primary">{displayQuote.status || "Draft"}</span></p>
+                            {projectQuoteHistory.length > 1 && (
+                                <select 
+                                    value={activeHistoryQuoteId || selectedQuote.id}
+                                    onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
+                                    className="text-[10px] border border-slate-200 dark:border-slate-800 rounded px-2 py-1 bg-background text-foreground cursor-pointer font-bold outline-none focus:ring-1 focus:ring-primary shadow-sm"
+                                >
+                                    {projectQuoteHistory.map(q => (
+                                        <option key={q.id} value={q.id}>
+                                            {q.quote_number} {q.id === selectedQuote.id ? "(Latest)" : ""} - {q.status || "Draft"}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                        </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {selectedQuote.status !== "Converted to SO" && selectedQuote.status !== "Rejected" && (
+                        {!isHistoryView && displayQuote.status !== "Converted to SO" && displayQuote.status !== "Rejected" && (
                             <>
                                 <button
                                     disabled={rejecting || routing}
@@ -153,15 +226,17 @@ export function QuotationDetailModal({
                             <Printer className="w-3.5 h-3.5" />
                             Print Report
                         </button>
-                        <button
-                            onClick={() => {
-                                reviseQuotation(selectedQuote);
-                                setIsDetailModalOpen(false);
-                            }}
-                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs"
-                        >
-                            Revise Quote
-                        </button>
+                        {!isHistoryView && displayQuote.status !== "Converted to SO" && displayQuote.status !== "Rejected" && (
+                            <button
+                                onClick={() => {
+                                    reviseQuotation(displayQuote);
+                                    setIsDetailModalOpen(false);
+                                }}
+                                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs"
+                            >
+                                Revise Quote
+                            </button>
+                        )}
                         <button
                             onClick={() => setIsDetailModalOpen(false)}
                             className="text-muted-foreground hover:text-foreground text-xs font-semibold rounded-lg border px-3 py-1.5 hover:bg-muted"
@@ -205,21 +280,21 @@ export function QuotationDetailModal({
                             <div className="rounded-xl border shadow-sm overflow-hidden">
                                 <div className="bg-muted/30 px-4 py-3 border-b flex items-center justify-between">
                                     <h4 className="text-sm font-bold text-foreground">Frozen Quotation Items</h4>
-                                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{snapshots.length} item(s)</span>
+                                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{displaySnapshots.length} item(s)</span>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-xs text-left">
                                         <thead className="bg-muted/20 text-muted-foreground font-bold">
                                             <tr>
                                                 <th className="p-2.5 uppercase">Product / Node Name</th>
-                                                <th className="p-2.5 text-right uppercase">Qty</th>
+                                                <th className="p-2.5 uppercase">Qty</th>
                                                 <th className="p-2.5 uppercase">UOM</th>
-                                                <th className="p-2.5 text-right uppercase">Unit Cost (₱)</th>
-                                                <th className="p-2.5 text-right uppercase">Ext Cost (₱)</th>
+                                                <th className="p-2.5 uppercase text-right">Unit Cost (₱)</th>
+                                                <th className="p-2.5 uppercase text-right">Ext Cost (₱)</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
-                                            {snapshots.map(item => {
+                                            {displaySnapshots.map((item) => {
                                                 const unitCost = Number(item.frozen_unit_cost_php || 0);
                                                 const totalCost = Number(item.frozen_total_cost_php || 0);
                                                 return (

@@ -4,7 +4,7 @@ import { selectPreferredActiveVersion } from "../finished-goods/versions/version
 type Row = Record<string, any>;
 
 export const SALES_ORDER_FIELDS = [
-    "order_id", "order_no", "po_no", "customer_code", "order_date", "order_status",
+    "order_id", "order_no", "po_no", "quotation_id", "customer_code", "order_date", "order_status",
     "total_amount", "net_amount", "remarks", "created_date", "discount_amount",
     "delivery_date", "due_date", "payment_terms", "salesman_id", "branch_id"
 ].join(",");

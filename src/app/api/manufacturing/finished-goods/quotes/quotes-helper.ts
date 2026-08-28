@@ -90,6 +90,10 @@ export async function saveQuotation(
     },
     snapshots: Array<{
         product_id: number;
+        parent_id?: number | null;
+        parent_product_name?: string | null;
+        product_type_id?: number | null;
+        product_type_name?: string | null;
         version_id: number;
         node_name: string;
         node_type: string;

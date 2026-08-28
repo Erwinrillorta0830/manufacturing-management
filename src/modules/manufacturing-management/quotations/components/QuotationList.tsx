@@ -42,7 +42,7 @@ export function QuotationList({
     registerNewProject,
     startCreateQuoteForProject
 }: QuotationListProps) {
-    const [subTab, setSubTab] = useState<"pipeline" | "sheets" | "rejected">("pipeline");
+    const [subTab, setSubTab] = useState<"all" | "active" | "approved" | "rejected">("all");
     const [listSearchQuery, setListSearchQuery] = useState("");
     const [listPage, setListPage] = useState(1);
     const [listItemsPerPage, setListItemsPerPage] = useState(10);
@@ -135,50 +135,43 @@ export function QuotationList({
         return groups;
     }, [quotes, allProjects]);
 
-    // Active project proposals pipeline: projects where latest version is NOT Rejected and NOT converted to SO
-    const activeProjects = React.useMemo(() => {
+    const allProjectsList = React.useMemo(() => {
         return Object.entries(projectGroups)
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            .filter(([_, group]) => group.latest.status !== "Rejected" && group.latest.status !== "Converted to SO")
-            .map(([name, group]) => ({ projectName: name, ...group }));
+            .map(([name, group]) => ({ projectName: name, ...group }))
+            .sort((a, b) => {
+                const tA = a.latest.quote_date ? new Date(a.latest.quote_date).getTime() : 0;
+                const tB = b.latest.quote_date ? new Date(b.latest.quote_date).getTime() : 0;
+                return tB - tA; // descending
+            });
     }, [projectGroups]);
 
-    // Rejected projects list
-    const rejectedProjects = React.useMemo(() => {
-        return Object.entries(projectGroups)
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            .filter(([_, group]) => group.latest.status === "Rejected")
-            .map(([name, group]) => ({ projectName: name, ...group }));
-    }, [projectGroups]);
+    const filteredProjects = React.useMemo(() => {
+        let filtered = allProjectsList;
 
-    // Filters based on search query
-    const filteredActiveProjects = React.useMemo(() => {
-        if (!listSearchQuery.trim()) return activeProjects;
-        const query = listSearchQuery.toLowerCase().trim();
-        return activeProjects.filter(p => {
-            const matchProjectName = p.projectName.toLowerCase().includes(query);
-            const matchQuoteNo = p.latest.quote_number.toLowerCase().includes(query);
-            const customerName = p.latest.customer_id && typeof p.latest.customer_id === "object"
-                ? (p.latest.customer_id as Customer).customer_name
-                : "";
-            const matchCustomer = customerName.toLowerCase().includes(query);
-            return matchProjectName || matchQuoteNo || matchCustomer;
-        });
-    }, [activeProjects, listSearchQuery]);
+        // Status filter
+        if (subTab === "active") {
+            filtered = filtered.filter(p => p.latest.status !== "Rejected" && p.latest.status !== "Converted to SO");
+        } else if (subTab === "approved") {
+            filtered = filtered.filter(p => p.latest.status === "Converted to SO");
+        } else if (subTab === "rejected") {
+            filtered = filtered.filter(p => p.latest.status === "Rejected");
+        }
 
-    const filteredRejectedProjects = React.useMemo(() => {
-        if (!listSearchQuery.trim()) return rejectedProjects;
-        const query = listSearchQuery.toLowerCase().trim();
-        return rejectedProjects.filter(p => {
-            const matchProjectName = p.projectName.toLowerCase().includes(query);
-            const matchQuoteNo = p.latest.quote_number.toLowerCase().includes(query);
-            const customerName = p.latest.customer_id && typeof p.latest.customer_id === "object"
-                ? (p.latest.customer_id as Customer).customer_name
-                : "";
-            const matchCustomer = customerName.toLowerCase().includes(query);
-            return matchProjectName || matchQuoteNo || matchCustomer;
-        });
-    }, [rejectedProjects, listSearchQuery]);
+        // Search filter
+        if (listSearchQuery.trim()) {
+            const query = listSearchQuery.toLowerCase().trim();
+            filtered = filtered.filter(p => {
+                const matchProjectName = p.projectName.toLowerCase().includes(query);
+                const matchQuoteNo = p.latest.quote_number.toLowerCase().includes(query);
+                const customerName = p.latest.customer_id && typeof p.latest.customer_id === "object"
+                    ? (p.latest.customer_id as Customer).customer_name
+                    : "";
+                const matchCustomer = customerName.toLowerCase().includes(query);
+                return matchProjectName || matchQuoteNo || matchCustomer;
+            });
+        }
+        return filtered;
+    }, [allProjectsList, subTab, listSearchQuery]);
 
     const filteredSelectorProjects = React.useMemo(() => {
         if (!projectSearch.trim()) return allProjects;
@@ -189,46 +182,13 @@ export function QuotationList({
         );
     }, [allProjects, projectSearch]);
 
-    const filteredAllQuotes = React.useMemo(() => {
-        if (!listSearchQuery.trim()) return quotes;
-        const query = listSearchQuery.toLowerCase().trim();
-        return quotes.filter(q => {
-            const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
-            const matchProjectName = (projObj?.project_name || "").toLowerCase().includes(query);
-            const matchQuoteNo = q.quote_number.toLowerCase().includes(query);
-            const customerName = q.customer_id && typeof q.customer_id === "object"
-                ? (q.customer_id as Customer).customer_name
-                : "";
-            const matchCustomer = customerName.toLowerCase().includes(query);
-            return matchProjectName || matchQuoteNo || matchCustomer;
-        });
-    }, [quotes, listSearchQuery]);
-
-    // Paginated slices
-    const paginatedActiveProjects = React.useMemo(() => {
+    // Paginated slice
+    const paginatedProjects = React.useMemo(() => {
         const start = (listPage - 1) * listItemsPerPage;
-        return filteredActiveProjects.slice(start, start + listItemsPerPage);
-    }, [filteredActiveProjects, listPage, listItemsPerPage]);
+        return filteredProjects.slice(start, start + listItemsPerPage);
+    }, [filteredProjects, listPage, listItemsPerPage]);
 
-    const paginatedAllQuotes = React.useMemo(() => {
-        const start = (listPage - 1) * listItemsPerPage;
-        return filteredAllQuotes.slice(start, start + listItemsPerPage);
-    }, [filteredAllQuotes, listPage, listItemsPerPage]);
-
-    const paginatedRejectedProjects = React.useMemo(() => {
-        const start = (listPage - 1) * listItemsPerPage;
-        return filteredRejectedProjects.slice(start, start + listItemsPerPage);
-    }, [filteredRejectedProjects, listPage, listItemsPerPage]);
-
-    const activeTotalPages = Math.ceil(filteredActiveProjects.length / listItemsPerPage) || 1;
-    const allQuotesTotalPages = Math.ceil(filteredAllQuotes.length / listItemsPerPage) || 1;
-    const rejectedTotalPages = Math.ceil(filteredRejectedProjects.length / listItemsPerPage) || 1;
-
-    const currentTotalPagesCount = subTab === "pipeline"
-        ? activeTotalPages
-        : subTab === "sheets"
-            ? allQuotesTotalPages
-            : rejectedTotalPages;
+    const currentTotalPagesCount = Math.ceil(filteredProjects.length / listItemsPerPage) || 1;
 
     const handleViewSkuHistory = async (projName: string, historyList: QuotationHeader[]) => {
         setHistoryProjectName(projName);
@@ -323,47 +283,33 @@ export function QuotationList({
                 </div>
             </div>
 
-            {/* Sub-navigation tabs and search bar */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex border-b bg-muted/10 shrink-0 rounded-xl overflow-hidden border w-full max-w-lg">
-                    <button
-                        onClick={() => setSubTab("pipeline")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "pipeline"
-                                ? "border-primary text-primary bg-background"
-                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                            }`}
-                    >
-                        <Folder className="h-4 w-4" /> Active Projects ({activeProjects.length})
-                    </button>
-                    <button
-                        onClick={() => setSubTab("sheets")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "sheets"
-                                ? "border-primary text-primary bg-background"
-                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                            }`}
-                    >
-                        <FileText className="h-4 w-4" /> All Quotation Sheets ({quotes.length})
-                    </button>
-                    <button
-                        onClick={() => setSubTab("rejected")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "rejected"
-                                ? "border-primary text-primary bg-background"
-                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                            }`}
-                    >
-                        <ShieldAlert className="h-4 w-4" /> Rejected Projects ({rejectedProjects.length})
-                    </button>
-                </div>
-
-                <div className="relative w-full max-w-xs shrink-0">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-start gap-4 mb-4">
+                <div className="relative w-full sm:max-w-xs shrink-0">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                     <input
                         type="text"
                         placeholder="Search project, quote, customer..."
-                        className="pl-9 w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold"
+                        className="pl-9 w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary text-foreground font-semibold shadow-sm"
                         value={listSearchQuery}
                         onChange={(e) => setListSearchQuery(e.target.value)}
                     />
+                </div>
+
+                <div className="relative w-full sm:w-auto min-w-[200px]">
+                    <select
+                        value={subTab}
+                        onChange={(e) => setSubTab(e.target.value as any)}
+                        className="w-full appearance-none bg-background border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 pr-10 text-xs font-bold text-foreground outline-none focus:ring-1 focus:ring-primary shadow-sm cursor-pointer"
+                    >
+                        <option value="all">All</option>
+                        <option value="active">Active</option>
+                        <option value="approved">Approved</option>
+                        <option value="rejected">Rejected</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground">
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
                 </div>
             </div>
 
@@ -373,195 +319,73 @@ export function QuotationList({
                 </div>
             ) : (
                 <div className="overflow-hidden border rounded-xl bg-card shadow-sm">
-                    {subTab === "pipeline" && (
-                        filteredActiveProjects.length === 0 ? (
-                            <div className="text-center p-20 max-w-md mx-auto">
-                                <Folder className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                                <h4 className="text-sm font-bold text-foreground mb-1">No Active Project Proposals</h4>
-                                <p className="text-xs text-muted-foreground">All draft quotes are approved (SO created) or rejected.</p>
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full border-collapse text-left text-xs">
-                                    <thead className="bg-muted/50 border-b">
-                                        <tr>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Project Name</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Customer</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Latest Quotation</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Agreed Price</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Revisions</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y">
-                                        {paginatedActiveProjects.map(proj => {
-                                            const q = proj.latest;
-                                            const custName = (q.customer_id && typeof q.customer_id === "object")
-                                                ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : "Customer Deleted";
-                                            const sellingPrice = Number(q.total_selling_price || 0);
+                    {filteredProjects.length === 0 ? (
+                        <div className="text-center p-20 max-w-md mx-auto">
+                            <Folder className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                            <h4 className="text-sm font-bold text-foreground mb-1">No Projects Found</h4>
+                            <p className="text-xs text-muted-foreground">Adjust your search or filter settings to find what you're looking for.</p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-left text-xs">
+                                <thead className="bg-muted/50 border-b">
+                                    <tr>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase">Project Name</th>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase">Customer</th>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase">Latest Quotation</th>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Agreed Price</th>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Revisions</th>
+                                        <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {paginatedProjects.map(proj => {
+                                        const q = proj.latest;
+                                        const custName = (q.customer_id && typeof q.customer_id === "object")
+                                            ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
+                                            : "Customer Deleted";
+                                        const sellingPrice = Number(q.total_selling_price || 0);
 
-                                            return (
-                                                <tr
-                                                    key={proj.projectName}
-                                                    onClick={() => viewQuoteDetails(q)}
-                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
-                                                >
-                                                    <td className="p-3 font-bold text-primary group-hover:text-primary/80 transition-colors">{proj.projectName}</td>
-                                                    <td className="p-3 font-medium text-foreground">{custName}</td>
-                                                    <td className="p-3 font-mono text-muted-foreground font-bold">{q.quote_number}</td>
-                                                    <td className="p-3 text-right font-extrabold text-foreground">₱{sellingPrice.toFixed(2)}</td>
-                                                    <td className="p-3 text-center text-muted-foreground font-semibold">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleViewSkuHistory(proj.projectName, proj.history);
-                                                            }}
-                                                            className="hover:underline text-primary font-bold inline-flex items-center gap-1"
-                                                        >
-                                                            <Clock className="h-3 w-3" />
-                                                            {proj.history.length} sheet(s)
-                                                        </button>
-                                                    </td>
-                                                    <td className="p-3 text-center">
-                                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                                                            {q.status || "Draft Proposal"}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )
-                    )}
-
-                    {subTab === "rejected" && (
-                        filteredRejectedProjects.length === 0 ? (
-                            <div className="text-center p-20 max-w-md mx-auto">
-                                <ShieldAlert className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                                <h4 className="text-sm font-bold text-foreground mb-1">No Rejected Projects</h4>
-                                <p className="text-xs text-muted-foreground">Proposals you mark as Rejected will accumulate in this archival registry.</p>
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full border-collapse text-left text-xs">
-                                    <thead className="bg-muted/50 border-b">
-                                        <tr>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Project Name</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Customer</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Last Quote Version</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Selling Total</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-center">Revisions</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Date Updated</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y">
-                                        {paginatedRejectedProjects.map(proj => {
-                                            const q = proj.latest;
-                                            const custName = (q.customer_id && typeof q.customer_id === "object")
-                                                ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : "Customer Deleted";
-                                            const sellingPrice = Number(q.total_selling_price || 0);
-
-                                            return (
-                                                <tr
-                                                    key={proj.projectName}
-                                                    onClick={() => viewQuoteDetails(proj.latest)}
-                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
-                                                >
-                                                    <td className="p-3 font-bold text-destructive group-hover:text-destructive/80 transition-colors">{proj.projectName}</td>
-                                                    <td className="p-3 font-medium text-foreground">{custName}</td>
-                                                    <td className="p-3 font-mono text-muted-foreground font-semibold">{q.quote_number}</td>
-                                                    <td className="p-3 text-right text-muted-foreground font-semibold">₱{sellingPrice.toFixed(2)}</td>
-                                                    <td className="p-3 text-center">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleViewSkuHistory(proj.projectName, proj.history);
-                                                            }}
-                                                            className="hover:underline text-primary font-bold inline-flex items-center gap-1 text-xs"
-                                                            title="View SKU Revisions History"
-                                                        >
-                                                            <Clock className="h-3 w-3" />
-                                                            {proj.history.length} sheet(s)
-                                                        </button>
-                                                    </td>
-                                                    <td className="p-3 text-muted-foreground">{q.quote_date ? new Date(q.quote_date).toLocaleDateString() : "—"}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )
-                    )}
-
-                    {subTab === "sheets" && (
-                        filteredAllQuotes.length === 0 ? (
-                            <div className="text-center p-20 max-w-md mx-auto">
-                                <FileText className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                                <h4 className="text-sm font-bold text-foreground mb-1">No Quotation Sheets Found</h4>
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full border-collapse text-left text-xs">
-                                    <thead className="bg-muted/50 border-b">
-                                        <tr>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Quote Number</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Project Name</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Customer</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Production Cost</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Agreed Price</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase text-right">Estimated GP</th>
-                                            <th className="p-3 font-semibold text-muted-foreground uppercase">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y">
-                                        {paginatedAllQuotes.map(q => {
-                                            const custName = (q.customer_id && typeof q.customer_id === "object")
-                                                ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
-                                                : "Customer Deleted";
-                                            const simulatedCost = Number(q.total_simulated_cost || 0);
-                                            const sellingPrice = Number(q.total_selling_price || 0);
-                                            const gp = sellingPrice - simulatedCost;
-                                            const margin = sellingPrice > 0 ? (gp / sellingPrice) * 100 : 0;
-
-                                            const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
-                                            const dispProjName = projObj?.project_name || "—";
-
-                                            return (
-                                                <tr
-                                                    key={q.id}
-                                                    onClick={() => viewQuoteDetails(q)}
-                                                    className="hover:bg-muted/50 transition-colors cursor-pointer group"
-                                                >
-                                                    <td className="p-3 font-bold text-foreground group-hover:text-primary transition-colors">{q.quote_number}</td>
-                                                    <td className="p-3 font-semibold text-primary">{dispProjName}</td>
-                                                    <td className="p-3 font-medium text-foreground">{custName}</td>
-                                                    <td className="p-3 text-right text-muted-foreground font-semibold">₱{simulatedCost.toFixed(2)}</td>
-                                                    <td className="p-3 text-right font-bold text-foreground">₱{sellingPrice.toFixed(2)}</td>
-                                                    <td className={`p-3 text-right font-extrabold ${gp >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                                        ₱{gp.toFixed(2)} ({margin.toFixed(1)}%)
-                                                    </td>
-                                                    <td className="p-3 text-center">
-                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${q.status === "Converted to SO"
-                                                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                : q.status === "Rejected"
-                                                                    ? "bg-destructive/10 text-destructive border border-destructive/20"
-                                                                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                            }`}>
-                                                            {q.status || "Draft"}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )
+                                        return (
+                                            <tr
+                                                key={proj.projectName}
+                                                onClick={() => viewQuoteDetails(q)}
+                                                className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                                            >
+                                                <td className="p-3 font-bold text-primary group-hover:text-primary/80 transition-colors">
+                                                    {proj.projectName}
+                                                </td>
+                                                <td className="p-3 font-medium text-foreground">{custName}</td>
+                                                <td className="p-3 font-mono text-muted-foreground font-bold">{q.quote_number || "No Quotes Yet"}</td>
+                                                <td className="p-3 text-right font-extrabold text-foreground">₱{sellingPrice.toFixed(2)}</td>
+                                                <td className="p-3 text-center text-muted-foreground font-semibold">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleViewSkuHistory(proj.projectName, proj.history);
+                                                        }}
+                                                        className="hover:underline text-primary font-bold inline-flex items-center gap-1"
+                                                    >
+                                                        <Clock className="h-3 w-3" />
+                                                        {proj.history.length} sheet(s)
+                                                    </button>
+                                                </td>
+                                                <td className="p-3 text-center">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${q.status === "Converted to SO"
+                                                        ? "bg-teal-500/10 text-teal-600 border-teal-500/20"
+                                                        : q.status === "Rejected"
+                                                            ? "bg-destructive/10 text-destructive border-destructive/20"
+                                                            : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                                                        }`}>
+                                                        {q.status === "Converted to SO" ? "Approved" : (q.status || "Draft")}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
                     )}
 
                     {/* Pagination Controls */}
@@ -759,8 +583,8 @@ export function QuotationList({
                             <button
                                 onClick={() => setSelectorTab("select")}
                                 className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "select"
-                                        ? "border-primary text-primary bg-background"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
+                                    ? "border-primary text-primary bg-background"
+                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
                                     }`}
                             >
                                 Choose Existing Project ({filteredSelectorProjects.length})
@@ -768,8 +592,8 @@ export function QuotationList({
                             <button
                                 onClick={() => setSelectorTab("register")}
                                 className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "register"
-                                        ? "border-primary text-primary bg-background"
-                                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
+                                    ? "border-primary text-primary bg-background"
+                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
                                     }`}
                             >
                                 ＋ Register New Project

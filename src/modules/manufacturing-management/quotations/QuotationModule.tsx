@@ -65,6 +65,26 @@ export default function QuotationModule() {
         selectedProjectId
     } = useQuotation();
 
+    const projectQuoteHistory = React.useMemo(() => {
+        if (!selectedQuote) return [];
+        const projectId = typeof selectedQuote.project_id === 'object' && selectedQuote.project_id !== null
+            ? (selectedQuote.project_id as { id: number }).id
+            : selectedQuote.project_id;
+        
+        if (!projectId) return [selectedQuote];
+        
+        return quotes.filter(q => {
+            const pId = typeof q.project_id === 'object' && q.project_id !== null
+                ? (q.project_id as { id: number }).id
+                : q.project_id;
+            return pId === projectId;
+        }).sort((a, b) => {
+            const tA = a.quote_date ? new Date(a.quote_date).getTime() : 0;
+            const tB = b.quote_date ? new Date(b.quote_date).getTime() : 0;
+            return tB - tA;
+        });
+    }, [quotes, selectedQuote]);
+
     return (
         <div className="space-y-6">
             {view === "list" ? (
@@ -143,6 +163,7 @@ export default function QuotationModule() {
             <QuotationDetailModal
                 isDetailModalOpen={isDetailModalOpen}
                 selectedQuote={selectedQuote}
+                projectQuoteHistory={projectQuoteHistory}
                 snapshots={snapshots}
                 loadingSnapshots={loadingSnapshots}
                 setIsDetailModalOpen={setIsDetailModalOpen}

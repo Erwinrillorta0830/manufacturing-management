@@ -40,12 +40,22 @@ export function generateComparativePDF({
     doc.setFontSize(18);
     doc.text("Project SKU Comparative Pricing Sheet", margin, 20);
 
+    // Extract additional metadata from the first quote
+    const firstQuote = sortedHistoryQuotes[0];
+    const customerCode = firstQuote && typeof firstQuote.customer_id === "object" && firstQuote.customer_id
+        ? (firstQuote.customer_id as { customer_code?: string }).customer_code || "N/A"
+        : "N/A";
+    const createdBy = firstQuote?.created_by_name || "System Admin";
+
     // Meta Box
     doc.setFillColor(240, 240, 245);
-    doc.rect(margin, 25, pageWidth - (margin * 2), 10, "F");
+    doc.rect(margin, 25, pageWidth - (margin * 2), 20, "F");
     doc.setFontSize(10);
     doc.setTextColor(50, 50, 60);
     doc.text(`PROJECT NAME: ${projectName.toUpperCase()}`, margin + 5, 31.5);
+    doc.text(`CUSTOMER CODE: ${customerCode}`, margin + 5, 37.5);
+    doc.text(`CREATED BY: ${createdBy.toUpperCase()}`, margin + 5, 43.5);
+
     doc.setFont("helvetica", "normal");
     doc.text(`Tracked over ${sortedHistoryQuotes.length} historical revision periods`, pageWidth - margin - 5, 31.5, { align: "right" });
 
@@ -115,7 +125,7 @@ export function generateComparativePDF({
     });
 
     autoTable(doc, {
-        startY: 40,
+        startY: 50,
         margin: { left: margin, right: margin },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         head: [headerRow1, headerRow2] as any,
