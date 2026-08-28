@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StockAdjustmentDetailView } from "@/modules/manufacturing-management/stock-adjustment-registration/components/StockAdjustmentDetailView";
+import { StockAdjustmentDetailView } from "@/modules/manufacturing-management/stock-adjustment-posting/components/StockAdjustmentDetailView";
 import { X } from "lucide-react";
 
 interface StockAdjustmentDetailModalProps {
@@ -21,7 +21,11 @@ export function StockAdjustmentDetailModal({
 }: StockAdjustmentDetailModalProps) {
   return (
     <Dialog open={id !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent showCloseButton={false} className="max-w-6xl w-full sm:max-w-6xl max-h-[90vh] overflow-y-auto p-0 gap-0 rounded-2xl border border-border shadow-xl">
+      <DialogContent
+        showCloseButton={false}
+        className="!max-w-[1400px] !w-[95vw] sm:!max-w-[1400px] md:!max-w-[1400px] lg:!max-w-[1400px] max-h-[90vh] overflow-y-auto p-0 gap-0 rounded-2xl border border-border shadow-xl"
+        style={{ maxWidth: "1400px", width: "95vw" }}
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>Stock Adjustment Details</DialogTitle>
           <DialogDescription>View detailed information for stock adjustment</DialogDescription>

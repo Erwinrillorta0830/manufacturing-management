@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask } from "../types";
+import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, matchesProductionWorkflowStatus } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -587,11 +587,7 @@ export function useProductionWorkflow() {
                 return false;
             }
 
-            if (statusFilter === "All") return true;
-            if (statusFilter === "Active") {
-                return jo.status === "Proceed" || jo.status === "Ongoing";
-            }
-            return jo.status === statusFilter;
+            return matchesProductionWorkflowStatus(jo.status, statusFilter);
         });
     }, [jobOrders, searchQuery, statusFilter, selectedBranchFilter]);
 

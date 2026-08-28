@@ -29,7 +29,9 @@ export default function ItemClassificationsTable({ classifications, onEdit }: It
 
     // Reset page to 1 when search results change or page size changes
     React.useEffect(() => {
-        setCurrentPage(1);
+        queueMicrotask(() => {
+            setCurrentPage(1);
+        });
     }, [classifications.length, pageSize]);
 
     const totalPages = Math.ceil(classifications.length / pageSize);

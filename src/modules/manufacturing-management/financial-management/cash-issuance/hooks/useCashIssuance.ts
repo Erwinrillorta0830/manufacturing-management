@@ -1,9 +1,12 @@
 "use client";
 
-import {useState, useCallback, useEffect, useRef} from "react";
-import {Disbursement, DisbursementPayload, DisbursementStatusResult, DisbursementSubmitResult, PaymentLine, SupplierDto, DivisionDto, DepartmentDto} from "../types";
-import {disbursementProvider, DisbursementRequestError} from "../providers/fetchProvider";
-import {toast} from "sonner";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Disbursement, SupplierDto, DivisionDto, DepartmentDto } from "../types";
+import { disbursementProvider } from "../providers/fetchProvider";
+import { toast } from "sonner";
+import { useCashIssuanceDrafts } from "./useCashIssuanceDrafts";
+import { useCashIssuanceApprovals } from "./useCashIssuanceApprovals";
+import { useCashIssuanceReleasing } from "./useCashIssuanceReleasing";
 
 type AppliedListFilters = {
     supplierSearch: string;
@@ -18,8 +21,6 @@ type AppliedListFilters = {
 export function useCashIssuance(initialStatusFilter = "All") {
     const [data, setData] = useState<Disbursement[]>([]);
     const [loading, setLoading] = useState(true);
-    const [actionLoading, setActionLoading] = useState(false);
-    const createRequestLockRef = useRef(false);
     const listRequestIdRef = useRef(0);
 
     const [page, setPage] = useState(0);
@@ -31,7 +32,6 @@ export function useCashIssuance(initialStatusFilter = "All") {
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
 
-    // 🚀 NEW FILTER STATES
     const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
     const [divisionFilter, setDivisionFilter] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("");
@@ -142,93 +142,20 @@ export function useCashIssuance(initialStatusFilter = "All") {
         setPage(0);
     };
 
-    const create = async (payload: DisbursementPayload): Promise<DisbursementSubmitResult> => {
-        if (createRequestLockRef.current) return {success: false};
-        createRequestLockRef.current = true;
-        setActionLoading(true);
-        try {
-            await disbursementProvider.createDisbursement(payload);
-            toast.success("Voucher created successfully");
-            applyFilters();
-            return {success: true};
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : "Creation failed";
-            toast.error(message);
-            return {success: false, message};
-        } finally {
-            createRequestLockRef.current = false;
-            setActionLoading(false);
-        }
-    };
-
-    const update = async (id: number, payload: DisbursementPayload): Promise<DisbursementSubmitResult> => {
-        setActionLoading(true);
-        try {
-            await disbursementProvider.updateDisbursement(id, payload);
-            toast.success("Voucher updated successfully");
-            applyFilters();
-            return {success: true};
-        } catch (error: unknown) { // 🚀 FIX: Replaced 'any'
-            const msg = error instanceof Error ? error.message : "Update failed";
-            toast.error(msg);
-            return {success: false, message: msg};
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const updatePaymentAllocation = async (id: number, payments: PaymentLine[]): Promise<DisbursementSubmitResult> => {
-        setActionLoading(true);
-        try {
-            await disbursementProvider.updatePaymentAllocation(id, payments);
-            toast.success("Payment allocation saved successfully");
-            applyFilters();
-            return {success: true};
-        } catch (error: unknown) {
-            const msg = error instanceof Error ? error.message : "Payment allocation update failed";
-            toast.error(msg);
-            return {success: false, message: msg};
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const changeStatus = async (id: number, status: string): Promise<DisbursementStatusResult> => {
-        setActionLoading(true);
-        try {
-            await disbursementProvider.updateStatus(id, status);
-            toast.success(`Status updated to ${status}`);
-            applyFilters();
-            return {success: true};
-        } catch (error: unknown) {
-            const message = error instanceof DisbursementRequestError
-                ? error.message
-                : error instanceof Error
-                    ? error.message
-                    : "Status update failed";
-            const detail = error instanceof DisbursementRequestError ? error.detail : undefined;
-
-            if (detail) {
-                toast.error(message, {description: detail});
-            } else {
-                toast.error(message);
-            }
-
-            return {success: false, message, detail};
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
     const changeSize = (newSize: number) => {
         setSize(newSize);
         setPage(0);
     };
 
+    // 🚀 Composer: Delegate mutations to sub-hooks
+    const { create, update, draftsLoading } = useCashIssuanceDrafts(applyFilters);
+    const { changeStatus, approvalsLoading } = useCashIssuanceApprovals(applyFilters);
+    const { updatePaymentAllocation, releasingLoading } = useCashIssuanceReleasing(applyFilters);
+
     return {
         data,
         loading,
-        actionLoading,
+        actionLoading: draftsLoading || approvalsLoading || releasingLoading,
         page,
         setPage,
         size,
@@ -256,6 +183,8 @@ export function useCashIssuance(initialStatusFilter = "All") {
         applyFilters,
         clearFilters,
         refresh: applyFilters,
+        
+        // Composed mutations
         create,
         update,
         updatePaymentAllocation,

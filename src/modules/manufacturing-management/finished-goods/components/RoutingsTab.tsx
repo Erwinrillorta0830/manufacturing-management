@@ -31,7 +31,6 @@ export const RoutingsTab: React.FC<RoutingsTabProps> = ({
     editedOverheads,
     setEditedOverheads,
     overheadTypes,
-    setOverheadTypes,
     
     operationTypes,
     setOperationTypes
@@ -61,31 +60,6 @@ export const RoutingsTab: React.FC<RoutingsTabProps> = ({
             }
         } catch (e) {
             console.error("Failed to create new operation type on the fly:", e);
-        }
-    };
-
-    const handleCreateOverheadType = async (name: string, rowId: string) => {
-        try {
-            const res = await fetch("/api/manufacturing/finished-goods/overhead-types", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.success && data.type) {
-                    const newType = data.type;
-                    updateOverheadRow(rowId, { overheadId: newType.id, overheadName: newType.overhead_name });
-                    
-                    // Refresh the types list in the parent hook
-                    const refreshRes = await fetch("/api/manufacturing/finished-goods/overhead-types");
-                    if (refreshRes.ok && setOverheadTypes) {
-                        setOverheadTypes(await refreshRes.json());
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Failed to create new overhead type on the fly:", e);
         }
     };
 
@@ -518,49 +492,10 @@ export const RoutingsTab: React.FC<RoutingsTabProps> = ({
                             <tbody>
                                 {editedOverheads.map((item, index) => (
                                     <tr key={item.id} className="border-b last:border-0 hover:bg-muted/5 transition-colors">
-                                        <td className="p-1 border-r border-muted/20 align-middle">
-                                            <input 
-                                                type="text"
-                                                value={item.overheadName || ""}
-                                                list="overhead-types-datalist"
-                                                autoFocus={item.overheadName === ""}
-                                                data-index={index}
-                                                className="oh-name-input w-full bg-transparent border-0 focus:ring-1 focus:ring-primary focus:bg-background focus:outline-hidden py-1.5 px-2.5 text-sm font-medium text-foreground rounded-sm transition-all"
-                                                placeholder="Type or select overhead..."
-                                                onChange={e => {
-                                                    const val = e.target.value;
-                                                    updateOverheadRow(item.id, { overheadName: val });
-                                                    
-                                                    const matched = overheadTypes.find(t => t.overhead_name.toLowerCase() === val.trim().toLowerCase());
-                                                    if (matched) {
-                                                        updateOverheadRow(item.id, { overheadId: matched.id, overheadName: matched.overhead_name });
-                                                    } else {
-                                                        updateOverheadRow(item.id, { overheadId: 0 });
-                                                    }
-                                                }}
-                                                onBlur={async (e) => {
-                                                    const val = e.target.value.trim();
-                                                    if (!val) return;
-                                                    const matched = overheadTypes.find(t => t.overhead_name.toLowerCase() === val.toLowerCase());
-                                                    if (!matched) {
-                                                        await handleCreateOverheadType(val, item.id);
-                                                    }
-                                                }}
-                                                onKeyDown={e => {
-                                                    if (e.key === "ArrowDown") {
-                                                        e.preventDefault();
-                                                        const el = document.querySelector(`.oh-name-input[data-index="${index + 1}"]`) as HTMLInputElement;
-                                                        if (el) el.focus();
-                                                    } else if (e.key === "ArrowUp") {
-                                                        e.preventDefault();
-                                                        const el = document.querySelector(`.oh-name-input[data-index="${index - 1}"]`) as HTMLInputElement;
-                                                        if (el) el.focus();
-                                                    } else if (e.key === "ArrowRight") {
-                                                        const el = document.querySelector(`.oh-amount-input[data-index="${index}"]`) as HTMLInputElement;
-                                                        if (el) el.focus();
-                                                    }
-                                                }}
-                                            />
+                                        <td className="p-2.5 border-r border-muted/20 align-middle">
+                                            <span className="text-sm font-medium text-foreground block truncate">
+                                                {item.overheadName || "Overhead Item"}
+                                            </span>
                                         </td>
                                         <td className="p-1 border-r border-muted/20 align-middle">
                                             <div className="relative flex items-center px-2">

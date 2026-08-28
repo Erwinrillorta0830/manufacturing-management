@@ -145,6 +145,8 @@ export function AssetSearchableSelect({
   );
 }
 
+export const AssetUomSelect = AssetSearchableSelect;
+
 // 2. Creatable & Searchable Select for Item Type, Classification, etc.
 export function AssetCreatableSelect({
   options,

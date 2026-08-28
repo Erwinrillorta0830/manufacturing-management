@@ -58,7 +58,9 @@ export function useStockAdjustment(defaultStatus?: string) {
   }, [debouncedSearch, branchId, type]);
 
   useEffect(() => {
-    refresh();
+    queueMicrotask(() => {
+      refresh();
+    });
   }, [refresh]);
 
   // Client-side status and date range filter — avoids Directus boolean/date inconsistencies

@@ -95,14 +95,15 @@ export const columns: ColumnDef<AssetTableData>[] = [
     cell: ({ row, table }) => {
       const name = row.original.item_name;
       const isValid = name && name !== "N/A";
-      // const barcode = row.original.barcode;
-      // const rfid = row.original.rfid_code;
-      // const serial = row.original.serial;
       const meta = table.options.meta as AssetTableMeta;
+      const origin = row.original.asset_origin || "New";
+      const isExisting = origin === "Existing";
+      const method = row.original.depreciation_method || "Straight Line";
+      const isUOP = method === "Units of Production";
 
       return (
         <div
-          className="flex items-center gap-3 group max-w-62.5 cursor-pointer"
+          className="flex items-center gap-3 group min-w-48 max-w-72 cursor-pointer"
           title={name || "Unnamed Asset"}
           onClick={(e) => {
             e.stopPropagation();
@@ -110,10 +111,10 @@ export const columns: ColumnDef<AssetTableData>[] = [
           }}
         >
           <AssetCell imageId={row.original.item_image} itemName={name} />
-          <div className="flex flex-col min-w-0">
+          <div className="flex flex-col min-w-0 gap-1">
             <span
               title={name || undefined}
-              className={`font-semibold truncate group-hover:text-primary transition-colors ${
+              className={`font-semibold text-sm truncate group-hover:text-primary transition-colors ${
                 !isValid ? "text-muted-foreground italic" : "text-foreground"
               }`}
             >
@@ -125,21 +126,26 @@ export const columns: ColumnDef<AssetTableData>[] = [
                   Missing Item Link
                 </span>
               )}
-              {/* {barcode && (
-                <span className="text-[10px] text-muted-foreground font-medium">
-                  BC: {barcode}
-                </span>
-              )}
-              {rfid && !barcode && (
-                <span className="text-[10px] text-muted-foreground font-medium">
-                  RFID: {rfid}
-                </span>
-              )}
-              {serial && !barcode && !rfid && (
-                <span className="text-[10px] text-muted-foreground font-medium">
-                  SN: {serial}
-                </span>
-              )} */}
+              <Badge
+                variant="outline"
+                className={`text-[10px] px-1.5 py-0 h-4 font-semibold tracking-wide ${
+                  isExisting
+                    ? "border-amber-500/40 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/40"
+                    : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/40"
+                }`}
+              >
+                {isExisting ? "Existing" : "New"}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={`text-[10px] px-1.5 py-0 h-4 font-medium tracking-wide ${
+                  isUOP
+                    ? "border-blue-500/40 text-blue-700 dark:text-blue-400 bg-blue-50/60 dark:bg-blue-950/40"
+                    : "border-slate-300 text-slate-700 dark:text-slate-300 bg-slate-50/50 dark:bg-slate-900/30"
+                }`}
+              >
+                {isUOP ? "Units of Production" : "Straight Line"}
+              </Badge>
             </div>
           </div>
         </div>
@@ -172,6 +178,44 @@ export const columns: ColumnDef<AssetTableData>[] = [
         </span>
       ) : (
         <span className="text-muted-foreground italic">N/A</span>
+      );
+    },
+  },
+  {
+    accessorKey: "asset_origin",
+    enableSorting: false,
+    header: () => (
+      <span className="text-xs font-semibold tracking-wider text-muted-foreground select-none">
+        Origin
+      </span>
+    ),
+    meta: {
+      label: "Origin",
+      variant: "multiSelect",
+      options: [
+        { label: "New", value: "New" },
+        { label: "Existing", value: "Existing" },
+      ],
+    },
+    filterFn: (row, id, value: string[]) => {
+      if (!value || value.length === 0) return true;
+      const cellVal = (row.getValue(id) as string) || "New";
+      return value.includes(cellVal);
+    },
+    cell: ({ row }) => {
+      const origin = row.original.asset_origin || "New";
+      const isExisting = origin === "Existing";
+      return (
+        <Badge
+          variant="outline"
+          className={`whitespace-nowrap font-medium ${
+            isExisting
+              ? "border-amber-500/40 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/40"
+              : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/40"
+          }`}
+        >
+          {isExisting ? "Existing" : "New"}
+        </Badge>
       );
     },
   },
@@ -333,7 +377,19 @@ export const columns: ColumnDef<AssetTableData>[] = [
         row.original.acquisition_cost != null && Number(row.original.acquisition_cost) > 0
           ? Number(row.original.acquisition_cost)
           : Number(row.original.cost_per_item || 0) * Number(row.original.quantity || 1);
-      return <div className="font-semibold text-foreground">{formatPHP(acqCost)}</div>;
+      const opening = row.original.opening_book_value != null ? Number(row.original.opening_book_value) : null;
+      const isLegacy = row.original.asset_origin === "Existing" || (opening != null && opening < acqCost);
+
+      return (
+        <div className="flex flex-col">
+          <span className="font-semibold text-foreground">{formatPHP(acqCost)}</span>
+          {isLegacy && (
+            <span className="text-[10px] text-primary/80 font-medium whitespace-nowrap" title="Opening Carrying Value at System Cutover">
+              Opening: {formatPHP(opening)}
+            </span>
+          )}
+        </div>
+      );
     },
   },
   {

@@ -1,8 +1,8 @@
 /* eslint-disable */
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer } from "lucide-react";
+import React, { useState, useMemo, useRef } from "react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
 import { JOFilterBar } from "./components/JOFilterBar";
 import { JOTable } from "./components/JOTable";
 import { JobOrderTraveler } from "./components/JobOrderTraveler";
+import { fetchJobMaterials } from "./services/planning-api";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -35,6 +36,38 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+type MaterialLoadState = {
+    status: "idle" | "loading" | "success" | "error";
+    message?: string;
+};
+
+function MaterialLoadErrorState({ message, onRetry }: { message?: string; onRetry: () => void }) {
+    return (
+        <div role="alert" className="flex flex-col items-center justify-center gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-6 py-8 text-center">
+            <AlertTriangle className="h-8 w-8 text-red-600 dark:text-red-400" />
+            <div className="space-y-1">
+                <p className="font-bold text-red-700 dark:text-red-300">Required materials unavailable</p>
+                <p className="max-w-xl text-sm text-muted-foreground">
+                    {message || "The BOM could not be loaded."} Allocation and release are disabled until the materials are available.
+                </p>
+            </div>
+            <Button type="button" variant="outline" onClick={onRetry} className="font-bold border-red-500/30 text-red-700 hover:bg-red-500/10 dark:text-red-300">
+                Retry materials
+            </Button>
+        </div>
+    );
+}
+
+function NoMaterialsState() {
+    return (
+        <div role="status" className="flex flex-col items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-6 py-8 text-center">
+            <Database className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
+            <p className="font-bold text-emerald-700 dark:text-emerald-300">No materials required</p>
+            <p className="text-sm text-muted-foreground">This Job Order has no BOM material rows. Material reservation is not applicable.</p>
+        </div>
+    );
+}
 
 export default function PlanningEngineeringModule() {
     const {
@@ -87,8 +120,11 @@ export default function PlanningEngineeringModule() {
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
     const [loadingMaterials, setLoadingMaterials] = useState(false);
+    const [materialLoadState, setMaterialLoadState] = useState<MaterialLoadState>({ status: "idle" });
     const [familyActiveTab, setFamilyActiveTab] = useState<string>("family-all");
     const [childJoMaterials, setChildJoMaterials] = useState<Record<string, any[]>>({});
+    const [childMaterialLoadStates, setChildMaterialLoadStates] = useState<Record<string, MaterialLoadState>>({});
+    const materialRequestIdRef = useRef(0);
     const [isTravelerOpen, setIsTravelerOpen] = useState(false);
 
     // Filter bar state for JO Queue
@@ -232,56 +268,102 @@ export default function PlanningEngineeringModule() {
 
     const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
 
-    const handleOpenDetails = async (jo: any, silent = false, tabToRestore = "family-all") => {
+    const activeMaterialLoadState = useMemo<MaterialLoadState>(() => {
+        if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
+            return materialLoadState;
+        }
+        return childMaterialLoadStates[activeFamilyJo.jo_id] || { status: "idle" };
+    }, [activeFamilyJo, childMaterialLoadStates, familyActiveTab, materialLoadState]);
+
+    const familyMaterialsReady = materialLoadState.status === "success" && familyChildJobs.every(
+        (child: any) => childMaterialLoadStates[child.jo_id]?.status === "success"
+    );
+    const materialActionsReady = !loadingMaterials && (
+        isFamilyOverview ? familyMaterialsReady : activeMaterialLoadState.status === "success"
+    );
+
+    const handleOpenDetails = async (jo: any, tabToRestore = "family-all") => {
+        const requestId = ++materialRequestIdRef.current;
         setSelectedUnreleasedJo(jo);
         setFamilyActiveTab(tabToRestore);
-        if (!silent) setLoadingMaterials(true);
+        setJoMaterials([]);
+        setChildJoMaterials({});
+        setMaterialLoadState({ status: "loading" });
+        setChildMaterialLoadStates({});
+        setLoadingMaterials(true);
+
+        const joNo = String(jo.jo_id || jo.job_order_no || "");
+        const parentNo = joNo.includes("-SUB") ? joNo.split("-SUB")[0] : joNo;
+        const pId = Number(jo.parent_job_order_id || 0);
+
+        const relatedJobs = unreleasedJobs.filter((j: any) => {
+            const cNo = String(j.jo_id || j.job_order_no || "");
+            const cParentId = Number(j.parent_job_order_id || 0);
+            if (cNo === joNo) return false;
+            return (pId > 0 && (cParentId === pId || Number(j.job_order_id || j.id) === pId)) ||
+                (cNo.startsWith(`${parentNo}-SUB`)) ||
+                (cNo === parentNo);
+        });
+
+        let parentMaterials: any[] = [];
+        let parentError: unknown = null;
         try {
-            const res = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${jo.order_id}`);
-            if (res.ok) {
-                const data = await res.json();
-                setJoMaterials(data);
+            parentMaterials = await fetchJobMaterials(jo.order_id);
+        } catch (error) {
+            parentError = error;
+            console.error("Failed to load materials for unreleased JO details modal:", error);
+        }
+
+        const childMatMap: Record<string, any[]> = {};
+        const childLoadStates: Record<string, MaterialLoadState> = {};
+        await Promise.all(relatedJobs.map(async (rj: any) => {
+            const childKey = String(rj.jo_id);
+            try {
+                childMatMap[childKey] = await fetchJobMaterials(rj.order_id);
+                childLoadStates[childKey] = { status: "success" };
+            } catch (error) {
+                childMatMap[childKey] = [];
+                childLoadStates[childKey] = {
+                    status: "error",
+                    message: error instanceof Error ? error.message : "The BOM could not be loaded."
+                };
+                console.error(`Failed to load materials for child Job Order ${childKey}:`, error);
             }
+        }));
 
-            const joNo = String(jo.jo_id || jo.job_order_no || "");
-            const parentNo = joNo.includes("-SUB") ? joNo.split("-SUB")[0] : joNo;
-            const pId = Number(jo.parent_job_order_id || 0);
+        if (requestId !== materialRequestIdRef.current) return;
 
-            const relatedJobs = unreleasedJobs.filter((j: any) => {
-                const cNo = String(j.jo_id || j.job_order_no || "");
-                const cParentId = Number(j.parent_job_order_id || 0);
-                if (cNo === joNo) return false;
-                return (pId > 0 && (cParentId === pId || Number(j.job_order_id || j.id) === pId)) ||
-                    (cNo.startsWith(`${parentNo}-SUB`)) ||
-                    (cNo === parentNo);
-            });
+        setJoMaterials(parentMaterials);
+        setMaterialLoadState(parentError ? {
+            status: "error",
+            message: parentError instanceof Error ? parentError.message : "The BOM could not be loaded."
+        } : { status: "success" });
+        setChildJoMaterials(childMatMap);
+        setChildMaterialLoadStates(childLoadStates);
+        setLoadingMaterials(false);
+    };
 
-            if (relatedJobs.length > 0) {
-                const childMatMap: Record<string, any[]> = {};
-                await Promise.all(
-                    relatedJobs.map(async (rj: any) => {
-                        try {
-                            const rRes = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${rj.order_id}`);
-                            if (rRes.ok) {
-                                childMatMap[rj.jo_id] = await rRes.json();
-                            }
-                        } catch (e) {
-                            console.error("Error loading child materials:", e);
-                        }
-                    })
-                );
-                setChildJoMaterials(childMatMap);
-            } else {
-                setChildJoMaterials({});
-            }
-        } catch (err) {
-            console.error("Failed to load materials for unreleased JO details modal:", err);
-        } finally {
-            if (!silent) setLoadingMaterials(false);
+    const clearDetails = () => {
+        materialRequestIdRef.current += 1;
+        setSelectedUnreleasedJo(null);
+        setJoMaterials([]);
+        setChildJoMaterials({});
+        setMaterialLoadState({ status: "idle" });
+        setChildMaterialLoadStates({});
+        setLoadingMaterials(false);
+    };
+
+    const retryCurrentMaterials = () => {
+        if (selectedUnreleasedJo) {
+            void handleOpenDetails(selectedUnreleasedJo, familyActiveTab);
         }
     };
 
     const handleConfirmReserveAction = async () => {
+        if (!materialActionsReady) {
+            toast.error("Required materials are unavailable. Retry the materials lookup before reserving stock.");
+            return;
+        }
         if (!confirmReserveData) return;
         const { joId, materialId, productId, receivingId, qty, lotNo, isSubAssembly } = confirmReserveData;
         setReservingLot(true);
@@ -305,7 +387,7 @@ export default function PlanningEngineeringModule() {
             }
             toast.success(`Successfully reserved ${qty.toLocaleString()} units from ${lotNo}!`);
             if (selectedUnreleasedJo) {
-                await handleOpenDetails(selectedUnreleasedJo, true, familyActiveTab);
+                await handleOpenDetails(selectedUnreleasedJo, familyActiveTab);
             }
             setConfirmReserveData(null);
         } catch (err: any) {
@@ -316,6 +398,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handleConfirmUnreserveAction = async () => {
+        if (!materialActionsReady) {
+            toast.error("Required materials are unavailable. Retry the materials lookup before removing a reservation.");
+            return;
+        }
         if (!confirmUnreserveData) return;
         const { joId, materialId, reservationId, qty, lotNo, isSubAssembly } = confirmUnreserveData;
         setReservingLot(true);
@@ -337,7 +423,7 @@ export default function PlanningEngineeringModule() {
             }
             toast.success(`Successfully removed reservation of ${qty.toLocaleString()} units from ${lotNo}!`);
             if (selectedUnreleasedJo) {
-                await handleOpenDetails(selectedUnreleasedJo, true, familyActiveTab);
+                await handleOpenDetails(selectedUnreleasedJo, familyActiveTab);
             }
             setConfirmUnreserveData(null);
         } catch (err: any) {
@@ -348,6 +434,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handlePrintShortfall = () => {
+        if (!materialActionsReady) {
+            toast.error("Required materials are unavailable. Retry the materials lookup before printing.");
+            return;
+        }
         if (!activeFamilyJo) return;
 
         const isFamily = isFamilyOverview;
@@ -484,6 +574,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handlePrintJobOrder = () => {
+        if (!materialActionsReady) {
+            toast.error("Required materials are unavailable. Retry the materials lookup before printing.");
+            return;
+        }
         if (!activeFamilyJo) return;
 
         const isFamily = isFamilyOverview;
@@ -601,14 +695,17 @@ export default function PlanningEngineeringModule() {
     };
 
     const handleReleaseCurrentView = async () => {
+        if (!materialActionsReady) {
+            toast.error("Required materials are unavailable. Retry the materials lookup before releasing the Job Order.");
+            return;
+        }
         if (!activeFamilyJo) return;
 
         const targetJo = activeFamilyJo;
         const familyChildrenToRelease = familyChildJobs;
         const shouldReleaseFamily = isFamilyOverview;
 
-        setSelectedUnreleasedJo(null);
-        setJoMaterials([]);
+        clearDetails();
 
         await handleReleaseDraftFromPlanning(targetJo.order_id);
 
@@ -630,7 +727,7 @@ export default function PlanningEngineeringModule() {
                 demandLinesCount={salesOrderLines.length}
                 shortfallItemsCount={shortfallCount}
                 unreleasedJobsCount={unreleasedJobs.length}
-                familyGroupsCount={familyGroups.length}
+                familyGroupsCount={familyGroups.filter((group) => group.isFamily).length}
                 onSelectTab={setActiveMainTab}
             />
 
@@ -883,8 +980,7 @@ export default function PlanningEngineeringModule() {
                 open={selectedUnreleasedJo !== null}
                 onOpenChange={(open) => {
                     if (!open) {
-                        setSelectedUnreleasedJo(null);
-                        setJoMaterials([]);
+                        clearDetails();
                     }
                 }}
             >
@@ -990,11 +1086,15 @@ export default function PlanningEngineeringModule() {
 
                                     <div className="space-y-3">
                                         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Parent Packaging & Assembly Materials</h4>
-                                        {loadingMaterials ? (
+                                        {materialLoadState.status === "loading" ? (
                                             <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
                                                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                                 Loading materials...
                                             </div>
+                                        ) : materialLoadState.status === "error" ? (
+                                            <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
+                                        ) : materialLoadState.status === "success" && joMaterials.length === 0 ? (
+                                            <NoMaterialsState />
                                         ) : (
                                             <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                                 <table className="w-full text-xs text-left text-muted-foreground border-collapse">
@@ -1052,9 +1152,9 @@ export default function PlanningEngineeringModule() {
                                                                                 {!mat.is_sub_assembly && (
                                                                                     <Button
                                                                                         size="xs"
+                                                                                        disabled={!materialActionsReady}
                                                                                         onClick={() => {
-                                                                                            setSelectedUnreleasedJo(null);
-                                                                                            setJoMaterials([]);
+                                                                                            clearDetails();
                                                                                             window.location.href = "/mm/incoming-shipments";
                                                                                         }}
                                                                                         className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
@@ -1096,6 +1196,7 @@ export default function PlanningEngineeringModule() {
                                                                                                         <Button
                                                                                                             size="xs"
                                                                                                             variant="ghost"
+                                                                                                            disabled={!materialActionsReady}
                                                                                                             onClick={() => setConfirmUnreserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                             className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
                                                                                                         >
@@ -1105,6 +1206,7 @@ export default function PlanningEngineeringModule() {
                                                                                                         shortfall > 0 && lot.available > 0 && (
                                                                                                             <Button
                                                                                                                 size="xs"
+                                                                                                                disabled={!materialActionsReady}
                                                                                                                 onClick={() => setConfirmReserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
                                                                                                             >
@@ -1133,6 +1235,7 @@ export default function PlanningEngineeringModule() {
                                 {/* CARD 2+: CHILD SUB-ASSEMBLY JOB ORDERS */}
                                 {familyChildJobs.map((childJo: any) => {
                                     const cMaterials = childJoMaterials[childJo.jo_id] || [];
+                                    const cMaterialLoadState = childMaterialLoadStates[childJo.jo_id] || { status: "loading" as const };
                                     const cSetup = childJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_setup_hours || 0), 0) || 0;
                                     const cRun = childJo?.routing_tasks?.reduce((sum: number, t: any) => sum + Number(t.planned_run_hours || 0), 0) || 0;
 
@@ -1186,13 +1289,25 @@ export default function PlanningEngineeringModule() {
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y text-foreground/90">
-                                                            {cMaterials.length === 0 ? (
+                                                            {cMaterialLoadState.status === "loading" ? (
                                                                 <tr>
                                                                     <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground font-medium">
                                                                         <div className="flex flex-col items-center justify-center space-y-1">
                                                                             <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
                                                                             <span>Loading ingredient materials...</span>
                                                                         </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ) : cMaterialLoadState.status === "error" ? (
+                                                                <tr>
+                                                                    <td colSpan={5} className="px-4 py-4">
+                                                                        <MaterialLoadErrorState message={cMaterialLoadState.message} onRetry={retryCurrentMaterials} />
+                                                                    </td>
+                                                                </tr>
+                                                            ) : cMaterials.length === 0 ? (
+                                                                <tr>
+                                                                    <td colSpan={5} className="px-4 py-4">
+                                                                        <NoMaterialsState />
                                                                     </td>
                                                                 </tr>
                                                             ) : (
@@ -1232,9 +1347,9 @@ export default function PlanningEngineeringModule() {
                                                                                         <span>No Passed lots found in this branch.</span>
                                                                                         <Button
                                                                                             size="xs"
+                                                                                            disabled={!materialActionsReady}
                                                                                             onClick={() => {
-                                                                                                setSelectedUnreleasedJo(null);
-                                                                                                setJoMaterials([]);
+                                                                                                clearDetails();
                                                                                                 window.location.href = "/mm/incoming-shipments";
                                                                                             }}
                                                                                             className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
@@ -1274,6 +1389,7 @@ export default function PlanningEngineeringModule() {
                                                                                                             <Button
                                                                                                                 size="xs"
                                                                                                                 variant="ghost"
+                                                                                                                disabled={!materialActionsReady}
                                                                                                                 onClick={() => setConfirmUnreserveData({ joId: childJo.order_id, materialId: cMat.jo_material_id || cMat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: cMat.product_name })}
                                                                                                                 className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
                                                                                                             >
@@ -1283,6 +1399,7 @@ export default function PlanningEngineeringModule() {
                                                                                                             shortfall > 0 && lot.available > 0 && (
                                                                                                                 <Button
                                                                                                                     size="xs"
+                                                                                                                    disabled={!materialActionsReady}
                                                                                                                     onClick={() => setConfirmReserveData({ joId: childJo.order_id, materialId: cMat.jo_material_id || cMat.id, productId: cMat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: cMat.product_name })}
                                                                                                                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
                                                                                                                 >
@@ -1335,11 +1452,15 @@ export default function PlanningEngineeringModule() {
                                 <div className="space-y-4">
                                     <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">BOM Materials Allocation Worksheet</h4>
 
-                                    {loadingMaterials ? (
+                                    {materialLoadState.status === "loading" ? (
                                         <div className="flex flex-col items-center justify-center py-12 space-y-2">
                                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
                                             <span className="text-sm text-muted-foreground font-medium">Resolving raw material reservations...</span>
                                         </div>
+                                    ) : materialLoadState.status === "error" ? (
+                                        <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
+                                    ) : materialLoadState.status === "success" && activeFamilyMaterials.length === 0 ? (
+                                        <NoMaterialsState />
                                     ) : (
                                         <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                             <table className="w-full text-sm text-left text-muted-foreground border-collapse">
@@ -1395,11 +1516,11 @@ export default function PlanningEngineeringModule() {
                                                                         <div className="text-xs text-amber-600 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 font-medium flex items-center justify-between gap-3">
                                                                             <span>{mat.is_sub_assembly ? "No completed manufacturing lots found." : "No Passed lots found in this branch."}</span>
                                                                             {!mat.is_sub_assembly && (
-                                                                                <Button
-                                                                                    size="xs"
-                                                                                    onClick={() => {
-                                                                                        setSelectedUnreleasedJo(null);
-                                                                                        setJoMaterials([]);
+                                                                                    <Button
+                                                                                        size="xs"
+                                                                                        disabled={!materialActionsReady}
+                                                                                        onClick={() => {
+                                                                                        clearDetails();
                                                                                         window.location.href = "/mm/incoming-shipments";
                                                                                     }}
                                                                                     className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
@@ -1441,6 +1562,7 @@ export default function PlanningEngineeringModule() {
                                                                                                     <Button
                                                                                                         size="xs"
                                                                                                         variant="ghost"
+                                                                                                        disabled={!materialActionsReady}
                                                                                                         onClick={() => setConfirmUnreserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                         className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
                                                                                                     >
@@ -1449,6 +1571,7 @@ export default function PlanningEngineeringModule() {
                                                                                                 ) : shortfall > 0 && lot.available > 0 ? (
                                                                                                     <Button
                                                                                                         size="xs"
+                                                                                                        disabled={!materialActionsReady}
                                                                                                         onClick={() => setConfirmReserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
                                                                                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
                                                                                                     >
@@ -1482,6 +1605,7 @@ export default function PlanningEngineeringModule() {
                                 variant="outline"
                                 className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-sky-500/30 text-sky-600 hover:text-sky-500 hover:bg-sky-500/10 dark:text-sky-400"
                                 onClick={() => setIsTravelerOpen(true)}
+                                disabled={!materialActionsReady}
                             >
                                 <Printer className="h-4 w-4" />
                                 Traveler Sheet
@@ -1490,6 +1614,7 @@ export default function PlanningEngineeringModule() {
                                 variant="outline"
                                 className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-amber-500/30 text-amber-600 hover:text-amber-500 hover:bg-amber-500/10 dark:text-amber-400"
                                 onClick={handlePrintShortfall}
+                                disabled={!materialActionsReady}
                             >
                                 <Printer className="h-4 w-4" />
                                 Print Shortfall
@@ -1498,6 +1623,7 @@ export default function PlanningEngineeringModule() {
                                 variant="outline"
                                 className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
                                 onClick={handlePrintJobOrder}
+                                disabled={!materialActionsReady}
                             >
                                 <Printer className="h-4 w-4" />
                                 Print Job Order
@@ -1508,16 +1634,13 @@ export default function PlanningEngineeringModule() {
                             <Button
                                 variant="outline"
                                 className="font-bold h-10 px-5 text-xs"
-                                onClick={() => {
-                                    setSelectedUnreleasedJo(null);
-                                    setJoMaterials([]);
-                                }}
+                                onClick={clearDetails}
                             >
                                 Close Details
                             </Button>
                             <Button
                                 onClick={handleReleaseCurrentView}
-                                disabled={releasingDraftId === activeFamilyJo?.order_id || loadingMaterials}
+                                disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
                             >
                                 {releasingDraftId === activeFamilyJo?.order_id

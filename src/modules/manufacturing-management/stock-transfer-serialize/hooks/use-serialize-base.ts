@@ -94,14 +94,18 @@ export function useSerializeBase({ statuses, autoFetch = true }: UseSerializeBas
   // Load plans when search or page changes
   useEffect(() => {
     if (autoFetch) {
-      fetchTransfers(page, debouncedSearch, page > 1);
+      queueMicrotask(() => {
+        fetchTransfers(page, debouncedSearch, page > 1);
+      });
     }
   }, [page, debouncedSearch, autoFetch, fetchTransfers]);
 
   // Reset pagination when search changes
   useEffect(() => {
-    setPage(1);
-    setHasMore(true);
+    queueMicrotask(() => {
+      setPage(1);
+      setHasMore(true);
+    });
   }, [debouncedSearch]);
 
   const getBranchName = useCallback(

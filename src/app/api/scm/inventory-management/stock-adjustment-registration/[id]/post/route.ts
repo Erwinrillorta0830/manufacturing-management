@@ -11,7 +11,11 @@ export async function POST(
         const { id } = await params;
         
         // Extract userId from cookie
-        const token = request.cookies.get("vos_access_token")?.value;
+        const token =
+            request.cookies.get("vos_access_token")?.value ||
+            request.cookies.get("springboot_token")?.value ||
+            request.cookies.get("directus_session_token")?.value ||
+            request.cookies.get("auth_token")?.value;
         const userId = getUserIdFromToken(token);
         
         console.log(`[API] Posting adjustment ${id} with userId: ${userId}`);

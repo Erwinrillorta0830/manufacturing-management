@@ -13,8 +13,10 @@ export const StockTransferStatusSchema = z.enum([
   "Picking",
   "Picked",
   "For Loading",
+  "Dispatched",
   "Received",
   "Rejected",
+  "Cancelled",
 ]);
 export type StockTransferStatusValue = z.infer<
   typeof StockTransferStatusSchema
@@ -30,9 +32,20 @@ export type RfidScanTypeValue = z.infer<typeof RfidScanTypeSchema>;
 export const ScannedItemSchema = z.object({
   rfid: z.string().min(1, "RFID tag is required"),
   productId: z.number().min(1, "Product ID is required"),
+  unitId: z.number().optional(),
   unitQty: z.number().min(0, "Quantity cannot be negative"),
   unitPrice: z.number().min(0, "Unit price cannot be negative"),
-  totalAmount: z.number().min(0, "Total amount cannot be negative"),
+  totalAmount: z.number().min(0, "Total amount cannot be negative").optional(),
+  source_lot_id: z.number().nullable().optional(),
+  source_inventory_lot_id: z.number().nullable().optional(),
+  batch_no: z.string().nullable().optional(),
+  allocations: z.array(z.object({
+    inventory_lot_id: z.number(),
+    lot_id: z.number(),
+    batch_no: z.string(),
+    allocated_quantity: z.number(),
+    expiry_date: z.string().nullable().optional(),
+  })).optional(),
 });
 export type ScannedItemValue = z.infer<typeof ScannedItemSchema>;
 
@@ -71,8 +84,13 @@ export const UpdateItemSchema = z.object({
   status: z.string().min(1, "Status is required"),
   allocated_quantity: z.number().min(0).optional(),
   picked_quantity: z.number().min(0).optional(),
+  dispatched_quantity: z.number().min(0).optional(),
   scanned_quantity: z.number().min(0).optional(),
   received_quantity: z.number().min(0).optional(),
+  destination_lot_id: z.number().nullable().optional(),
+  destination_batch_no: z.string().nullable().optional(),
+  manufacturing_date: z.string().nullable().optional(),
+  expiration_date: z.string().nullable().optional(),
 });
 export type UpdateItemValue = z.infer<typeof UpdateItemSchema>;
 
@@ -99,6 +117,7 @@ export const UpdateStockTransferSchema = z.object({
   userId: z.number().optional(),
   /** Directus file IDs attached to the receiving transaction. */
   attachments: z.array(z.string()).optional(),
+  destination_lot_id: z.number().nullable().optional(),
 }).superRefine((data, ctx) => {
   const hasItems = data.items && data.items.length > 0;
   const hasIds = data.ids && data.ids.length > 0;

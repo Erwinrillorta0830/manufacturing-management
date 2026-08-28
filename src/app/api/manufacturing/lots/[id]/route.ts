@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -13,9 +12,8 @@ export async function PATCH(
     try {
         const { id } = await params;
         const body = await request.json();
-        const { lot_name, max_batch_capacity } = body;
+        const { lot_name, max_batch_capacity, branch_id, description, status } = body;
 
-        // Get logged in user ID from secure access token cookie
         let userId: number | null = null;
         try {
             const cookieStore = await cookies();
@@ -35,12 +33,10 @@ export async function PATCH(
             console.error("Error parsing user token in PATCH lot route:", err);
         }
 
-        const utcIsoString = new Date().toISOString();
-
         const updatePayload: Record<string, unknown> = {
-            updated_at: utcIsoString,
-            updated_by: userId ? Number(userId) : 24
+            updated_by: userId ? Number(userId) : 1
         };
+
         if (lot_name !== undefined) {
             if (typeof lot_name !== "string" || !lot_name.trim()) {
                 return NextResponse.json(
@@ -48,28 +44,6 @@ export async function PATCH(
                     { status: 400 }
                 );
             }
-
-            // Check for duplicate lot name (case-insensitive, excluding current lot)
-            const duplicateCheckRes = await fetch(
-                `${DIRECTUS_URL}/items/lots?limit=-1&fields=lot_id,lot_name`,
-                { headers, cache: "no-store" }
-            );
-            if (duplicateCheckRes.ok) {
-                const duplicateJson = await duplicateCheckRes.json();
-                const existingLots = duplicateJson.data || [];
-                const isDuplicate = existingLots.some(
-                    (l: { lot_id: number; lot_name?: string }) =>
-                        Number(l.lot_id) !== Number(id) &&
-                        l.lot_name?.trim().toLowerCase() === lot_name.trim().toLowerCase()
-                );
-                if (isDuplicate) {
-                    return NextResponse.json(
-                        { error: `A lot with the name "${lot_name.trim()}" already exists` },
-                        { status: 409 }
-                    );
-                }
-            }
-
             updatePayload.lot_name = lot_name.trim();
         }
 
@@ -83,39 +57,35 @@ export async function PATCH(
             updatePayload.max_batch_capacity = max_batch_capacity;
         }
 
+        if (branch_id !== undefined) updatePayload.branch_id = Number(branch_id);
+        if (description !== undefined) updatePayload.description = description ? String(description).trim() : null;
+        if (status !== undefined) updatePayload.status = String(status).toUpperCase();
+
         const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
         if (rawUnitId !== undefined) {
             updatePayload.unit_id = rawUnitId === null || rawUnitId === "" ? null : Number(rawUnitId);
         }
 
-        let res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
+        const res = await fetch(`${DIRECTUS_URL}/items/mm_lots/${id}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify(updatePayload)
         });
 
-        // If Directus fails because unit_id is named uom_id in schema, retry with uom_id
-        if (!res.ok && updatePayload.unit_id !== undefined) {
+        if (!res.ok) {
             const errTxt = await res.text();
-            if (errTxt.includes("unit_id")) {
-                updatePayload.uom_id = updatePayload.unit_id;
-                delete updatePayload.unit_id;
-                res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify(updatePayload)
-                });
-            }
-            if (!res.ok) {
-                throw new Error(`Directus failed to update lot ${id}: ${res.status} - ${errTxt}`);
-            }
-        } else if (!res.ok) {
-            const errTxt = await res.text();
-            throw new Error(`Directus failed to update lot ${id}: ${res.status} - ${errTxt}`);
+            let errMsg = `Directus mm_lots update failed: ${res.status}`;
+            try {
+                const errJson = JSON.parse(errTxt);
+                if (errJson.errors && errJson.errors.length > 0) {
+                    errMsg = errJson.errors[0].message || errMsg;
+                }
+            } catch {}
+            return NextResponse.json({ error: errMsg }, { status: res.status });
         }
 
         const resJson = await res.json();
-        return NextResponse.json(resJson.data);
+        return NextResponse.json({ success: true, data: resJson.data });
     } catch (e) {
         console.error("API Error updating lot:", e);
         return NextResponse.json(
@@ -126,20 +96,27 @@ export async function PATCH(
 }
 
 export async function DELETE(
-    request: Request,
+    _request: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
         const { id } = await params;
 
-        const res = await fetch(`${DIRECTUS_URL}/items/lots/${id}`, {
+        const res = await fetch(`${DIRECTUS_URL}/items/mm_lots/${id}`, {
             method: "DELETE",
             headers
         });
 
         if (!res.ok) {
             const errTxt = await res.text();
-            throw new Error(`Directus failed to delete lot ${id}: ${res.status} - ${errTxt}`);
+            let errMsg = `Directus mm_lots delete failed: ${res.status}`;
+            try {
+                const errJson = JSON.parse(errTxt);
+                if (errJson.errors && errJson.errors.length > 0) {
+                    errMsg = errJson.errors[0].message || errMsg;
+                }
+            } catch {}
+            return NextResponse.json({ error: errMsg }, { status: res.status });
         }
 
         return NextResponse.json({ success: true });

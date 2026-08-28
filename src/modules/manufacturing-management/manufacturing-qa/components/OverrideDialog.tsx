@@ -67,13 +67,21 @@ export function OverrideDialog({
                                     <span className="font-bold text-destructive">{selectedDisp.jo_id}</span>
                                 </div>
                                 <div>
-                                    <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Step Station</span>
-                                    <span className="font-bold text-foreground">{selectedDisp.task_name}</span>
+                                    <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Station</span>
+                                    <span className="font-bold text-foreground">{selectedDisp.station_name || (selectedDisp.station_id ? `Station #${selectedDisp.station_id}` : "Station unavailable")}</span>
                                 </div>
+                            </div>
+                            <div className="border-t border-destructive/10 pt-1.5">
+                                <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Routing Task</span>
+                                <span className="font-bold text-foreground">{selectedDisp.task_name}</span>
                             </div>
                             <div className="border-t border-destructive/10 pt-1.5">
                                 <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Product Name</span>
                                 <span className="font-medium text-foreground truncate block">{selectedDisp.product_name}</span>
+                            </div>
+                            <div className="border-t border-destructive/10 pt-1.5">
+                                <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Inspection Remarks</span>
+                                <span className="font-medium text-foreground whitespace-pre-wrap">{selectedDisp.inspection_remarks || "No remarks recorded."}</span>
                             </div>
                             <div className="border-t border-destructive/10 pt-1.5">
                                 <span className="text-muted-foreground block text-[9px] font-bold uppercase tracking-wider">Failed Parameter Ranges</span>

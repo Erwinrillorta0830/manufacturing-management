@@ -181,12 +181,26 @@ export const VersionApprovalModule: React.FC = () => {
                         </CardContent>
                     </div>
                 </Card>
+
+                <Card className="va-kpi-card p-4 flex flex-row items-center gap-4">
+                    <div className="va-kpi-icon-wrapper va-kpi-icon-revision">
+                        <RotateCw size={22} />
+                    </div>
+                    <div className="va-kpi-content flex-1">
+                        <CardHeader className="p-0">
+                            <CardTitle className="va-kpi-value">{kpi.revisionCount}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <span className="va-kpi-label">Revision Required</span>
+                        </CardContent>
+                    </div>
+                </Card>
             </div>
 
             {/* Filter Tabs & Search Control Bar */}
             <div className="va-controls">
                 <div className="flex border-b border-border/60 gap-1 bg-muted/20 px-2 pt-1 rounded-t-xl shrink-0 overflow-x-auto">
-                    {(["All", "Pending Approval", "Approved", "Rejected"] as ApprovalStatus[]).map((status) => (
+                    {(["All", "Pending Approval", "Approved", "Revision", "Rejected"] as ApprovalStatus[]).map((status) => (
                         <button
                             key={status}
                             type="button"

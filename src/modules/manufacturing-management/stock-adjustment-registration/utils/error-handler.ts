@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 /**
  * handleApiError
- * Centralised error handler for the stock-adjustment API route handlers.
+ * Centralised error handler for the stock-adjustment-manual API route handlers.
  * Returns a standardised JSON error response.
  */
 export function handleApiError(error: unknown): NextResponse {

@@ -24,7 +24,9 @@ export function useInventoryData() {
 
     // WebSocket realtime connection & Polling fallback
     useEffect(() => {
-        loadInventoryData();
+        queueMicrotask(() => {
+            loadInventoryData();
+        });
 
         let ws: WebSocket | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { deriveDailyQAOutcome, getDailyQAAuditStatus } from "../daily-qa-outcome";
 
 interface DailyQAQueueProps {
     yieldLedger: any[];
@@ -187,7 +188,10 @@ export function DailyQAQueue({
                                 const rowRoutes = rowJo 
                                     ? [...(rowJo.routing_tasks || rowJo.routingTasks || [])].sort((a, b) => Number(a.sequence_order || 0) - Number(b.sequence_order || 0))
                                     : [];
-                                const isAudited = audits.length > 0 && (rowRoutes.length === 0 || rowRoutes.every((r: any) => audits.some((a: any) => Number(a.jo_route_id) === Number(r.id))));
+                                const outcome = deriveDailyQAOutcome(
+                                    audits,
+                                    rowRoutes.map((route: any) => route.id)
+                                );
 
                                 return (
                                     <TableRow key={entry.id || entry.ledger_id || idx}>
@@ -214,11 +218,14 @@ export function DailyQAQueue({
                                                                 if (hasPh) parts.push(`pH ${audit.acidity_ph}`);
                                                                 if (hasMoisture) parts.push(`M: ${audit.moisture_percentage}%`);
                                                                 specText = `: ${parts.join(" | ")}`;
-                                                            }
-                                                            labelText = `${r.sequence_order}. ${stepName}${specText}`;
-                                                            badgeColor = audit.sensory_status === "Passed" 
-                                                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                                                                : "bg-red-500/10 text-red-400 border border-red-500/20";
+                                                                }
+                                                                labelText = `${r.sequence_order}. ${stepName}${specText}`;
+                                                            const auditStatus = getDailyQAAuditStatus(audit);
+                                                            badgeColor = auditStatus === "Passed"
+                                                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                : auditStatus === "QA Hold"
+                                                                    ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                                                                    : "bg-amber-500/10 text-amber-400 border border-amber-500/20";
                                                         }
                                                         
                                                         return (
@@ -248,9 +255,12 @@ export function DailyQAQueue({
                                                             specText = `: ${parts.join(" | ")}`;
                                                         }
                                                         const labelText = `${stepName}${specText}`;
-                                                        const badgeColor = audit.sensory_status === "Passed" 
-                                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
-                                                            : "bg-red-500/10 text-red-400 border-red-500/20";
+                                                        const auditStatus = getDailyQAAuditStatus(audit);
+                                                        const badgeColor = auditStatus === "Passed"
+                                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                                            : auditStatus === "QA Hold"
+                                                                ? "bg-red-500/10 text-red-400 border-red-500/20"
+                                                                : "bg-amber-500/10 text-amber-400 border-amber-500/20";
                                                             
                                                         return (
                                                             <span 
@@ -269,9 +279,10 @@ export function DailyQAQueue({
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            {isAudited ? (
-                                                <div className="flex items-center justify-end gap-1.5 text-xs text-emerald-400 font-semibold pr-2">
-                                                    <CheckCircle2 className="h-4 w-4" /> Passed
+                                            {outcome.status !== "Pending" ? (
+                                                <div className={`flex items-center justify-end gap-1.5 text-xs font-semibold pr-2 ${outcome.status === "Passed" ? "text-emerald-400" : "text-destructive"}`}>
+                                                    {outcome.status === "Passed" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                                                    {outcome.status}
                                                 </div>
                                             ) : (
                                                 <Button 

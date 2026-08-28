@@ -49,95 +49,209 @@ export function formatDateTimeForDB(dateInput: Date | string | null | undefined)
 }
 
 /**
- * Safely parse date or datetime string (with space or T separator) into Date object
+ * Safely parse date or datetime string (with space, T separator, or formatted date) into Date object
  */
 export function parseDateTimeSafe(val: Date | string | null | undefined): Date | null {
   if (!val) return null;
   if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
   const str = String(val).trim();
+  if (!str || str === "null" || str === "undefined") return null;
+
+  // Handle standard ISO or "YYYY-MM-DD HH:mm:ss"
   const normalized = str.includes(" ") && !str.includes("T") ? str.replace(" ", "T") : str;
   const d = new Date(normalized);
-  return isNaN(d.getTime()) ? null : d;
+  if (!isNaN(d.getTime())) return d;
+
+  // Handle "Aug 13, 2025" or "Aug 13, 2025 11:19 AM"
+  const timestamp = Date.parse(str);
+  if (!isNaN(timestamp)) return new Date(timestamp);
+
+  // Regex fallback for YYYY-MM-DD or YYYY/MM/DD
+  const match = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (match) {
+    const [, y, m, day, h = "0", min = "0", s = "0"] = match;
+    const parsed = new Date(Number(y), Number(m) - 1, Number(day), Number(h), Number(min), Number(s));
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
 }
 
 /**
  * Calculates unified asset financial metrics (Acquisition Cost, Depreciable Amount, Accumulated Depreciation, Book Value)
  */
 export function calculateAssetFinancials(
-  asset: {
-    cost_per_item?: number | string | null;
-    quantity?: number | string | null;
-    acquisition_cost?: number | string | null;
-    residual_value?: number | string | null;
-    depreciation_method?: string | null;
-    life_span?: number | string | null;
-    useful_life_months?: number | string | null;
-    maximum_unit_produced_capacity?: number | string | null;
-    actual_units_produced?: number | string | null;
-    date_acquired?: string | Date | null;
-    depreciation_start_date?: string | Date | null;
-  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assetInput: any,
   projectionDate: Date = new Date()
 ) {
+  if (!assetInput) {
+    return {
+      acquisitionCost: 0,
+      openingBookValue: 0,
+      openingAccumulatedDepreciation: 0,
+      openingProductionUnits: 0,
+      residualValue: 0,
+      depreciableAmount: 0,
+      totalDepreciableAmount: 0,
+      systemProductionDepreciation: 0,
+      accumulatedDepreciation: 0,
+      bookValue: 0,
+      depreciationRate: 0,
+      rateUnit: "month",
+      usefulMonths: 12,
+      usefulYears: 1,
+      monthsElapsed: 0,
+      isUOP: false,
+      isLegacyMigrated: false,
+    };
+  }
+
+  const asset = assetInput;
   const acqCost =
     asset.acquisition_cost != null && Number(asset.acquisition_cost) > 0
       ? Number(asset.acquisition_cost)
-      : Number(asset.cost_per_item || 0) * Number(asset.quantity || 1);
-  const resVal = Number(asset.residual_value || 0);
-  const depreciableAmount = Math.max(0, acqCost - resVal);
+      : asset.acquisitionCost != null && Number(asset.acquisitionCost) > 0
+      ? Number(asset.acquisitionCost)
+      : Number(asset.cost_per_item || asset.costPerItem || 0) * Number(asset.quantity || 1);
 
-  const isUOP = asset.depreciation_method === "Units of Production";
+  const resVal = Number(asset.residual_value ?? asset.residualValue ?? 0);
+  const totalDepreciableAmount = Math.max(0, acqCost - resVal);
+
+  const rawOpeningBook = asset.opening_book_value ?? asset.openingBookValue;
+  const openingBookValue =
+    rawOpeningBook != null && !isNaN(Number(rawOpeningBook)) && Number(rawOpeningBook) >= 0
+      ? Number(rawOpeningBook)
+      : acqCost;
+
+  const rawOpeningAccum = asset.opening_accumulated_depreciation ?? asset.openingAccumulatedDepreciation;
+  const openingAccumulatedDep =
+    rawOpeningAccum != null && !isNaN(Number(rawOpeningAccum)) && Number(rawOpeningAccum) >= 0
+      ? Number(rawOpeningAccum)
+      : Math.max(0, acqCost - openingBookValue);
+
+  const openingUnits = Number(asset.opening_production_units ?? asset.openingProductionUnits ?? 0);
+  const remainingDepreciableBasis = Math.max(0, openingBookValue - resVal);
+
+  const method = String(asset.depreciation_method ?? asset.depreciationMethod ?? "Straight Line").trim();
+  const isUOP = method.toLowerCase() === "units of production" || method.toLowerCase() === "uop";
 
   if (isUOP) {
-    const maxCapacity = Number(asset.maximum_unit_produced_capacity || 0);
-    const produced = Number(asset.actual_units_produced || 0);
-    const depPerUnit = maxCapacity > 0 ? depreciableAmount / maxCapacity : 0;
-    const accumulatedDep = Math.min(depreciableAmount, depPerUnit * produced);
-    const bookValue = Math.max(resVal, acqCost - accumulatedDep);
-    const remainingCapacity = Math.max(0, maxCapacity - produced);
+    const maxCapacity = Number(asset.maximum_unit_produced_capacity ?? asset.maximumUnitProducedCapacity ?? 0);
+    const remainingCapacityAtOpening = Math.max(0, maxCapacity - openingUnits);
+    const systemProduced = Number(asset.actual_units_produced ?? asset.actualUnitsProduced ?? asset.productionUnits ?? 0);
+
+    const depPerUnit =
+      remainingCapacityAtOpening > 0
+        ? remainingDepreciableBasis / remainingCapacityAtOpening
+        : maxCapacity > 0
+        ? totalDepreciableAmount / maxCapacity
+        : 0;
+
+    const systemDepreciation = Math.min(remainingDepreciableBasis, depPerUnit * systemProduced);
+    const accumulatedDep = Math.min(totalDepreciableAmount, openingAccumulatedDep + systemDepreciation);
+    const bookValue = Math.max(resVal, openingBookValue - systemDepreciation);
+    const totalProduced = openingUnits + systemProduced;
+    const remainingCapacity = Math.max(0, remainingCapacityAtOpening - systemProduced);
 
     return {
       acquisitionCost: acqCost,
+      openingBookValue,
+      openingAccumulatedDepreciation: openingAccumulatedDep,
+      openingProductionUnits: openingUnits,
       residualValue: resVal,
-      depreciableAmount,
+      depreciableAmount: remainingDepreciableBasis,
+      totalDepreciableAmount,
+      systemProductionDepreciation: systemDepreciation,
       accumulatedDepreciation: accumulatedDep,
       bookValue,
       depreciationRate: depPerUnit,
       rateUnit: "unit",
       maxCapacity,
-      producedToDate: produced,
+      producedToDate: totalProduced,
+      systemProduced,
       remainingCapacity,
+      remainingCapacityAtOpening,
       isUOP: true,
+      isLegacyMigrated: (asset.asset_origin || asset.assetOrigin) === "Existing" || openingBookValue < acqCost || openingAccumulatedDep > 0 || openingUnits > 0,
     };
   } else {
+    const rawMonths = asset.useful_life_months ?? asset.usefulLifeMonths;
+    const rawYears = asset.life_span ?? asset.lifeSpan ?? asset.usefulLife ?? asset.useful_life;
     const usefulMonths =
-      asset.useful_life_months != null && Number(asset.useful_life_months) > 0
-        ? Number(asset.useful_life_months)
-        : Number(asset.life_span || 1) * 12;
-    const startDate = asset.depreciation_start_date
-      ? new Date(asset.depreciation_start_date)
-      : asset.date_acquired
-      ? new Date(asset.date_acquired)
-      : new Date();
+      rawMonths != null && Number(rawMonths) > 0
+        ? Number(rawMonths)
+        : rawYears != null && Number(rawYears) > 0
+        ? Number(rawYears) * 12
+        : 12;
 
-    const daysElapsed = Math.max(0, differenceInDays(projectionDate, startDate));
-    const monthsElapsed = daysElapsed / (365.25 / 12);
+    // const isLegacy =
+    //   (asset.asset_origin || asset.assetOrigin) === "Existing" ||
+    //   (asset.opening_book_value != null && Number(asset.opening_book_value) < acqCost) ||
+    //   Number(asset.opening_accumulated_depreciation || asset.openingAccumulatedDepreciation || 0) > 0;
 
-    const monthlyDep = usefulMonths > 0 ? depreciableAmount / usefulMonths : 0;
-    const accumulatedDep = Math.min(depreciableAmount, monthlyDep * monthsElapsed);
-    const bookValue = Math.max(resVal, acqCost - accumulatedDep);
+    const explicitDepDate = parseDateTimeSafe(asset.depreciation_start_date || asset.depreciationStartDate);
+    const acqDate = parseDateTimeSafe(asset.date_acquired || asset.dateAcquired);
+
+    // Authoritative start date for depreciation is depreciation_start_date (falling back to date_acquired if not set)
+    const startDate = explicitDepDate || acqDate || new Date();
+    const projDate = projectionDate instanceof Date && !isNaN(projectionDate.getTime()) ? projectionDate : new Date();
+
+    const yearDiff = projDate.getFullYear() - startDate.getFullYear();
+    const monthDiff = projDate.getMonth() - startDate.getMonth();
+    const dayDiff = projDate.getDate() - startDate.getDate();
+    const totalMonthsElapsed = yearDiff * 12 + monthDiff + (dayDiff / 30.4375);
+    const monthsElapsed = Math.max(0, totalMonthsElapsed);
+
+    const monthlyDep = usefulMonths > 0 ? remainingDepreciableBasis / usefulMonths : 0;
+    const systemDepreciation = Math.min(remainingDepreciableBasis, monthlyDep * monthsElapsed);
+    const accumulatedDep = Math.min(totalDepreciableAmount, openingAccumulatedDep + systemDepreciation);
+    const bookValue = Math.max(resVal, openingBookValue - systemDepreciation);
+
+    if (typeof window !== "undefined" || process.env.NODE_ENV !== "production") {
+      console.group(`[Asset Depreciation Calculation] ${asset.item_name || asset.itemName || "Asset"}`);
+      console.log("Raw Input Fields Used:", {
+        "item_name / itemName": asset.item_name || asset.itemName,
+        "depreciation_start_date / depreciationStartDate": asset.depreciation_start_date || asset.depreciationStartDate,
+        "date_acquired / dateAcquired": asset.date_acquired || asset.dateAcquired,
+        "acquisition_cost / cost_per_item": acqCost,
+        "opening_book_value / openingBookValue": openingBookValue,
+        "residual_value / residualValue": resVal,
+        "depreciable_basis": remainingDepreciableBasis,
+        "useful_life_months / life_span": usefulMonths,
+        "depreciation_method": method,
+        "as_of_projection_date": projDate.toISOString()
+      });
+      console.log("Calculation Breakdown (Straight Line):", {
+        "1. Depreciable Basis": `${formatPHP(acqCost)} (Cost) - ${formatPHP(resVal)} (Residual) = ${formatPHP(remainingDepreciableBasis)}`,
+        "2. Useful Life": `${usefulMonths} months (${(usefulMonths / 12).toFixed(1)} yrs)`,
+        "3. Monthly Depreciation Rate": `${formatPHP(remainingDepreciableBasis)} / ${usefulMonths} mos = ${formatPHP(monthlyDep)} / month`,
+        "4. Depreciation Start Date": startDate.toLocaleString(),
+        "5. As-Of Projection Date": projDate.toLocaleString(),
+        "6. Months Elapsed": `${monthsElapsed.toFixed(2)} months (${(monthsElapsed / 12).toFixed(2)} yrs)`,
+        "7. Total Accumulated Dep.": `${formatPHP(monthlyDep)} * ${monthsElapsed.toFixed(2)} mos = ${formatPHP(accumulatedDep)}`,
+        "8. Current Book Value": `${formatPHP(openingBookValue)} - ${formatPHP(systemDepreciation)} = ${formatPHP(bookValue)}`
+      });
+      console.groupEnd();
+    }
 
     return {
       acquisitionCost: acqCost,
+      openingBookValue,
+      openingAccumulatedDepreciation: openingAccumulatedDep,
       residualValue: resVal,
-      depreciableAmount,
+      depreciableAmount: remainingDepreciableBasis,
+      totalDepreciableAmount,
+      systemProductionDepreciation: systemDepreciation,
       accumulatedDepreciation: accumulatedDep,
       bookValue,
       depreciationRate: monthlyDep,
       rateUnit: "month",
       usefulMonths,
       usefulYears: usefulMonths / 12,
+      monthsElapsed,
       isUOP: false,
+      isLegacyMigrated: (asset.asset_origin || asset.assetOrigin) === "Existing" || openingBookValue < acqCost || openingAccumulatedDep > 0,
     };
   }
 }

@@ -55,6 +55,22 @@ export const StockAdjustmentManualItemSchema = z.object({
   category_name: z.string().nullable().optional(),
   unit_order: z.number().nullable().optional(),
   db_id: z.number().optional(),
+  rfid_tags: z.array(z.string()).optional(),
+  rfid_count: z.number().optional(),
+  has_rfid: z.boolean().optional(),
+  updated_by: z.any().optional(),
+  // Lot & Batch Tracking
+  lot_id: z.number().nullable().optional(),
+  lot_name: z.string().nullable().optional(),
+  inventory_lot_id: z.number().nullable().optional(),
+  batch_no: z.string().nullable().optional(),
+  manufacturing_date: z.string().nullable().optional(),
+  expiry_date: z.string().nullable().optional(),
+  qa_status: z.enum(["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"]).optional(),
+  inventory_condition: z.string().nullable().optional(),
+  allocations: z.array(z.any()).optional(),
+  allocation_plan: z.any().optional(),
+  lot_allocations: z.array(z.any()).optional(),
 });
 export type StockAdjustmentManualItem = z.infer<typeof StockAdjustmentManualItemSchema>;
 
@@ -104,18 +120,32 @@ export type StockAdjustmentManualDetail = z.infer<typeof StockAdjustmentManualDe
 /**
  * Form values for Stock Adjustment Creation/Edit
  */
-export const StockAdjustmentManualFormSchema = z.object({
-  doc_no: z.string().min(1, "Document number is required"),
-  branch_id: z.number().min(1, "Branch is required"),
-  supplier_id: z.number().min(1, "Supplier is required"),
-  type: StockAdjustmentManualTypeSchema,
-  remarks: z.string().optional(),
-  items: z.array(StockAdjustmentManualItemSchema).min(1, "At least one item is required"),
-  isPosted: z.boolean(),
-  postedAt: z.string().optional(),
-  posted_by: z.any().optional(),
-  stock_adjustment_attachment: z.array(StockAdjustmentAttachmentSchema).min(1, "At least one attachment is required"),
-});
+export const StockAdjustmentManualFormSchema = z
+  .object({
+    doc_no: z.string().min(1, "Document number is required"),
+    branch_id: z.number().min(1, "Branch is required"),
+    supplier_id: z.number().min(1, "Supplier is required"),
+    type: StockAdjustmentManualTypeSchema,
+    remarks: z.string().optional(),
+    items: z.array(StockAdjustmentManualItemSchema).min(1, "At least one item is required"),
+    isPosted: z.boolean(),
+    postedAt: z.string().optional(),
+    posted_by: z.any().optional(),
+    stock_adjustment_attachment: z.array(StockAdjustmentAttachmentSchema).min(1, "At least one attachment is required"),
+  })
+  .superRefine((data, ctx) => {
+    if (data.items && Array.isArray(data.items)) {
+      data.items.forEach((item, index) => {
+        if (!item.lot_id || !item.batch_no || String(item.batch_no).trim() === "") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Please assign Lot & Batch details for item #${index + 1} (${item.product_name || "Product"}).`,
+            path: ["items", index, "batch_no"],
+          });
+        }
+      });
+    }
+  });
 export type StockAdjustmentManualFormValues = z.infer<typeof StockAdjustmentManualFormSchema>;
 
 /**
@@ -128,6 +158,9 @@ export const StockAdjustmentManualListResponseSchema = z.object({
     filter_count: z.number().optional(),
   }).optional(),
 });
+
+export type ProductClassification = "RM" | "PKG" | "FG";
+export type ProductTypeFilter = "ALL" | "RM" | "PKG" | "FG";
 
 /**
  * Product Data Schema for UI dropdowns and selections
@@ -150,6 +183,10 @@ export const StockAdjustmentManualProductSchema = z.object({
   unit_id: z.number().optional(),
   current_stock: z.number().optional(),
   index: z.number().optional(),
+  product_type: z.any().optional(),
+  product_category: z.any().optional(),
+  category_name: z.string().optional(),
+  parent_id: z.any().optional(),
 });
 export type StockAdjustmentManualProduct = z.infer<typeof StockAdjustmentManualProductSchema>;
 
@@ -167,3 +204,4 @@ export interface SelectionSupplier {
   supplier_name: string;
   supplier_shortcut?: string;
 }
+

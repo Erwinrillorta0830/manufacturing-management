@@ -97,16 +97,12 @@ export function StockAdjustmentSummaryProvider({ children }: { children: React.R
     loadData();
   }, []);
 
-  // Refresh adjustments list based on API-level filters
+  // Refresh adjustments list based on full dataset
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await stockAdjustmentSummaryApi.fetchAdjustments({
-        search,
-        branchId,
-        type
-      });
+      const data = await stockAdjustmentSummaryApi.fetchAdjustments({});
       setRawData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load summary details");
@@ -114,11 +110,30 @@ export function StockAdjustmentSummaryProvider({ children }: { children: React.R
     } finally {
       setIsLoading(false);
     }
-  }, [search, branchId, type]);
+  }, []);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    let isMounted = true;
+    const loadAdjustments = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await stockAdjustmentSummaryApi.fetchAdjustments({});
+        if (isMounted) setRawData(data);
+      } catch (err) {
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : "Failed to load summary details");
+          toast.error("Failed to load summary details");
+        }
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+    loadAdjustments();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Client-side filtered data calculation (for Status, Supplier and Date Range)
   const filteredData = useMemo(() => {

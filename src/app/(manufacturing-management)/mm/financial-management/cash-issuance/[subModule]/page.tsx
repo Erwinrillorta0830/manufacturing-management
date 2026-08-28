@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
 
-const SUBMODULES = ["preparation", "approval", "releasing", "posting", "ledger", "analytics"] as const;
+const SUBMODULES = ["preparation", "approval", "releasing", "posting", "ledger", "analytics", "analytics-reports"] as const;
 type SubModuleSlug = (typeof SUBMODULES)[number];
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -82,7 +82,8 @@ const SUBMODULE_NAMES: Record<SubModuleSlug, string> = {
     releasing: "Check Releasing",
     posting: "Treasury Posting",
     ledger: "Cash Issuance Ledger",
-    analytics: "Analytics & Reports"
+    analytics: "Analytics & Reports",
+    "analytics-reports": "Analytics & Reports"
 };
 
 // Map URL slugs to internal subModule state names
@@ -92,7 +93,8 @@ const SUBMODULE_MAP: Record<SubModuleSlug, "preparation" | "approval" | "releasi
     releasing: "releasing",
     posting: "posting",
     ledger: "all",
-    analytics: "dashboard"
+    analytics: "dashboard",
+    "analytics-reports": "dashboard"
 };
 
 interface PageProps {

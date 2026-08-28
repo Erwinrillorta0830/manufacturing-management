@@ -29,7 +29,9 @@ export default function ItemsTable({ items, onEdit }: ItemsTableProps) {
 
     // Reset page to 1 when search results change or page size changes
     React.useEffect(() => {
-        setCurrentPage(1);
+        queueMicrotask(() => {
+            setCurrentPage(1);
+        });
     }, [items.length, pageSize]);
 
     const totalPages = Math.ceil(items.length / pageSize);

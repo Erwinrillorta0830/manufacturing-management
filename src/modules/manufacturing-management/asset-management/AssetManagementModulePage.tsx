@@ -144,6 +144,7 @@ export default function AssetManagementModulePage() {
         isOpen={isViewOpen}
         onOpenChange={(open) => setIsViewOpen(open)}
         asset={selectedAsset}
+        projectionDate={projectionDate}
       />
 
       <AssetEditModal

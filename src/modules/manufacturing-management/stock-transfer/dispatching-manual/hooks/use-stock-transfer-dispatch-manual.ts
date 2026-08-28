@@ -67,7 +67,6 @@ export function useStockTransferDispatchManual() {
       try {
         const newAvailable: Record<number, number> = { ...scannedInventory };
         const sourceBranch = selectedGroup.sourceBranch!;
-        const sourceBranchName = base.getBranchName(sourceBranch);
 
         // Fetch all uncached product inventories in a single request
         const itemsToFetch = selectedGroup.items.filter((item: OrderGroupItem) => {
@@ -77,38 +76,42 @@ export function useStockTransferDispatchManual() {
         });
 
         if (itemsToFetch.length > 0) {
-          const params = new URLSearchParams({
-            branchName: sourceBranchName,
-            branchId: String(sourceBranch),
-            current: '0'
-          });
-
-          const proxyUrl = `/api/scm/warehouse-management/stock-transfer/inventory-proxy?${params.toString()}`;
-          const res = await fetch(proxyUrl);
-          
-          if (res.ok) {
-            const data = await res.json();
-            const list = Array.isArray(data) ? data : (data.data || []);
-            
-            itemsToFetch.forEach((item: OrderGroupItem) => {
+          await Promise.all(
+            itemsToFetch.map(async (item: OrderGroupItem) => {
               const product = item.product_id as ProductRow;
-              const pid = product?.product_id || item.product_id;
-              
-              const inventoryList = list.filter((inv: Record<string, string | number>) => 
-                 String(inv.productId ?? inv.product_id) === String(pid) && 
-                 String(inv.branchId ?? inv.branch_id) === String(sourceBranch)
-              );
-              
-              const availableCount = inventoryList.reduce((acc: number, inv: Record<string, string | number>) => acc + Number(inv.runningInventory ?? inv.running_inventory ?? 0), 0);
-              const unitCount = Number(product?.unit_of_measurement_count || 1) || 1;
-              newAvailable[pid as number] = Math.max(0, Math.floor(availableCount / unitCount));
-            });
-            
-            setScannedInventory(newAvailable);
-          }
+              const pId = Number(product?.product_id || item.product_id || 0);
+              if (!pId) return;
+
+              const sp = new URLSearchParams();
+              if (sourceBranch) sp.set('branch', String(sourceBranch));
+              sp.set('product', String(pId));
+
+              const res = await fetch(`/api/manufacturing/product-onhand?${sp.toString()}`, { cache: 'no-store' });
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(`Failed to fetch inventory for product ${pId} (HTTP ${res.status}): ${JSON.stringify(errData)}`);
+              }
+
+              const data = await res.json();
+              const list = Array.isArray(data) ? data : (data.data || []);
+              let totalOnhand = 0;
+              list.forEach((oh: { productId: number; onhandQuantity?: number; runningInventory?: number }) => {
+                if (Number(oh.productId) === pId) {
+                  totalOnhand += Math.max(0, Number(oh.onhandQuantity ?? oh.runningInventory ?? 0));
+                }
+              });
+
+              newAvailable[pId] = totalOnhand;
+            })
+          );
+          
+          setScannedInventory(newAvailable);
         }
       } catch (err) {
         console.error('Failed to fetch initial available quantities:', err);
+        toast.error("Inventory Error", {
+          description: (err as Error).message || "Failed to fetch available stock"
+        });
       } finally {
         setFetchingAvailable(false);
       }

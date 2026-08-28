@@ -25,6 +25,42 @@ export const stockAdjustmentSummaryService = {
   // Perform client-side filter evaluations to match the main list behavior
   filterData(rawData: StockAdjustmentHeader[], filters: SummaryFilters): StockAdjustmentHeader[] {
     return rawData.filter((item) => {
+      // 0. Search Filter (Document No, Branch Name, Supplier Name, Remarks, Product Name/Code/Batch)
+      if (filters.search && filters.search.trim() !== "") {
+        const query = filters.search.toLowerCase().trim();
+        const docNo = (item.doc_no || "").toLowerCase();
+        const branchName = typeof item.branch_id === "object" ? (item.branch_id?.branch_name || "").toLowerCase() : "";
+        const supplierName = typeof item.supplier_id === "object" ? (item.supplier_id?.supplier_name || "").toLowerCase() : "";
+        const remarks = (item.remarks || "").toLowerCase();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const productMatch = Array.isArray(item.items) && item.items.some((sub: any) => {
+          const pName = (sub.product_name || sub.product_id?.product_name || sub.product_id?.description || "").toLowerCase();
+          const pCode = (sub.product_code || sub.product_id?.product_code || "").toLowerCase();
+          const bNo = (sub.batch_no || "").toLowerCase();
+          return pName.includes(query) || pCode.includes(query) || bNo.includes(query);
+        });
+
+        const matches =
+          docNo.includes(query) ||
+          branchName.includes(query) ||
+          supplierName.includes(query) ||
+          remarks.includes(query) ||
+          productMatch;
+
+        if (!matches) return false;
+      }
+
+      // 0.5 Branch Filter
+      if (filters.branchId) {
+        const itemBranchId = typeof item.branch_id === "object" ? item.branch_id?.id : item.branch_id;
+        if (Number(itemBranchId) !== Number(filters.branchId)) return false;
+      }
+
+      // 0.8 Type Filter
+      if (filters.type) {
+        if (item.type !== filters.type) return false;
+      }
+
       // 1. Status Filter
       if (filters.status) {
         const posted = this.getIsPosted(item);
@@ -66,18 +102,18 @@ export const stockAdjustmentSummaryService = {
 
     const totalStockInValue = data
       .filter((item) => item.type === "IN")
-      .reduce((sum, item) => sum + (item.amount || 0), 0);
+      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
     const totalStockOutValue = data
       .filter((item) => item.type === "OUT")
-      .reduce((sum, item) => sum + (item.amount || 0), 0);
+      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
     const netImpact = totalStockInValue - totalStockOutValue;
     const grossValue = totalStockInValue + totalStockOutValue;
 
     const totalItemsCount = data.reduce((sum, item) => {
       if (Array.isArray(item.items)) {
-        return sum + item.items.reduce((itemSum: number, sub: StockAdjustmentItem) => itemSum + (sub.quantity || 0), 0);
+        return sum + item.items.reduce((itemSum: number, sub: StockAdjustmentItem) => itemSum + (Number(sub.quantity) || 0), 0);
       }
       return sum;
     }, 0);
@@ -104,10 +140,11 @@ export const stockAdjustmentSummaryService = {
       const label = format(new Date(item.created_at), "MMM dd");
       const existing = trendMap.get(dateKey) || { dateStr: label, inValue: 0, outValue: 0, count: 0 };
 
+      const amt = Number(item.amount) || 0;
       if (item.type === "IN") {
-        existing.inValue += item.amount || 0;
+        existing.inValue += amt;
       } else {
-        existing.outValue += item.amount || 0;
+        existing.outValue += amt;
       }
       existing.count += 1;
       trendMap.set(dateKey, existing);
@@ -124,13 +161,14 @@ export const stockAdjustmentSummaryService = {
     data.forEach((item) => {
       const branchName = typeof item.branch_id === "object" ? item.branch_id?.branch_name : item.branch_id || "Main Warehouse";
       const existing = branchMap.get(branchName) || { name: branchName, inValue: 0, outValue: 0, total: 0, count: 0 };
+      const amt = Number(item.amount) || 0;
 
       if (item.type === "IN") {
-        existing.inValue += item.amount || 0;
+        existing.inValue += amt;
       } else {
-        existing.outValue += item.amount || 0;
+        existing.outValue += amt;
       }
-      existing.total += item.amount || 0;
+      existing.total += amt;
       existing.count += 1;
       branchMap.set(branchName, existing);
     });
@@ -144,14 +182,15 @@ export const stockAdjustmentSummaryService = {
     data.forEach((item) => {
       if (Array.isArray(item.items)) {
         item.items.forEach((sub: StockAdjustmentItem) => {
-          const name = sub.product_name || "Unknown Product";
+          const name = (typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as { description?: string; product_name?: string }).description : undefined) || sub.product_name || "Unknown Product";
           const code = sub.product_code || "";
-          const cost = sub.cost_per_unit || (typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as { cost_per_unit?: number }).cost_per_unit : 0) || 0;
+          const cost = Number(sub.cost_per_unit || (typeof sub.product_id === "object" && sub.product_id !== null ? (sub.product_id as unknown as { cost_per_unit?: number }).cost_per_unit : 0)) || 0;
+          const qty = Number(sub.quantity) || 0;
           const key = `${code}-${name}`;
           const existing = productMap.get(key) || { name, code, quantity: 0, value: 0 };
 
-          existing.quantity += sub.quantity || 0;
-          existing.value += (sub.quantity || 0) * cost;
+          existing.quantity += qty;
+          existing.value += qty * cost;
           productMap.set(key, existing);
         });
       }
@@ -168,8 +207,9 @@ export const stockAdjustmentSummaryService = {
     data.forEach((item) => {
       const supplierName = typeof item.supplier_id === "object" ? item.supplier_id?.supplier_name : item.supplier_id || "N/A";
       const existing = supplierMap.get(supplierName) || { name: supplierName, value: 0, count: 0 };
+      const amt = Number(item.amount) || 0;
 
-      existing.value += item.amount || 0;
+      existing.value += amt;
       existing.count += 1;
       supplierMap.set(supplierName, existing);
     });

@@ -22,6 +22,27 @@ const STATION_WORK_CENTER_FIELDS = [
     "department_id.department_name"
 ].join(",");
 
+const STATUS_HISTORY_FIELDS = [
+    "history_id",
+    "job_order_id",
+    "old_status",
+    "new_status",
+    "changed_by",
+    "changed_at",
+    "remarks",
+    "work_center_id"
+].join(",");
+
+const LEGACY_STATUS_HISTORY_FIELDS = [
+    "history_id",
+    "job_order_id",
+    "old_status",
+    "new_status",
+    "changed_by",
+    "changed_at",
+    "remarks"
+].join(",");
+
 class DirectusRequestError extends Error {
     constructor(
         public readonly operation: string,
@@ -66,6 +87,122 @@ async function directusData<T>(url: string, operation: string, init: RequestInit
     return payload.data as T;
 }
 
+function asPositiveInteger(value: unknown): number | null {
+    const rawValue = value && typeof value === "object"
+        ? (value as any).work_center_id ?? (value as any).id
+        : value;
+    const numericValue = Number(rawValue);
+    return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : null;
+}
+
+function parseStationScanRemark(remarks: unknown): { workCenterId: number; workCenterName: string | null } | null {
+    if (typeof remarks !== "string") return null;
+
+    const match = remarks.match(/^\s*Station Start Scanner:\s*.*?Work Center\s+"([^"]+)"\s+\(ID:\s*(\d+)\)\s*$/i);
+    const workCenterId = asPositiveInteger(match?.[2]);
+    if (!match || !workCenterId) return null;
+
+    return {
+        workCenterId,
+        workCenterName: match[1].trim() || null
+    };
+}
+
+function resolveHistoryWorkCenter(historyRecord: any, workCenterMap: Map<number, string>) {
+    const persistedWorkCenterId = asPositiveInteger(historyRecord?.work_center_id);
+    if (persistedWorkCenterId) {
+        return {
+            workCenterId: persistedWorkCenterId,
+            workCenterName: workCenterMap.get(persistedWorkCenterId) || `Station #${persistedWorkCenterId}`
+        };
+    }
+
+    const legacyStation = parseStationScanRemark(historyRecord?.remarks);
+    if (legacyStation) {
+        return {
+            workCenterId: legacyStation.workCenterId,
+            workCenterName: workCenterMap.get(legacyStation.workCenterId)
+                || legacyStation.workCenterName
+                || `Station #${legacyStation.workCenterId}`
+        };
+    }
+
+    return { workCenterId: null, workCenterName: "Unassigned" };
+}
+
+function historyUrl(fields: string, jobOrderId?: string | number) {
+    const params = new URLSearchParams({
+        limit: jobOrderId === undefined ? "100" : "-1",
+        sort: "-changed_at",
+        fields
+    });
+    if (jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "") {
+        params.set("filter[job_order_id][_eq]", String(jobOrderId));
+    }
+    return `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?${params.toString()}`;
+}
+
+async function fetchStatusHistoryRows(jobOrderId?: string | number, allowLegacyProjection = false): Promise<any[]> {
+    try {
+        const rows = await directusData<any[]>(
+            historyUrl(STATUS_HISTORY_FIELDS, jobOrderId),
+            "Station status-history lookup"
+        );
+        return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+        const canUseLegacyProjection = allowLegacyProjection
+            && error instanceof DirectusRequestError
+            && [400, 403].includes(error.upstreamStatus || 0)
+            && /work_center_id|field|permission|does not exist/i.test(error.responseBody);
+
+        if (!canUseLegacyProjection) throw error;
+
+        const rows = await directusData<any[]>(
+            historyUrl(LEGACY_STATUS_HISTORY_FIELDS, jobOrderId),
+            "Legacy station status-history lookup"
+        );
+        return Array.isArray(rows) ? rows : [];
+    }
+}
+
+function enrichHistoryRecord(historyRecord: any, userMap: Map<number, string>, workCenterMap: Map<number, string>) {
+    const station = resolveHistoryWorkCenter(historyRecord, workCenterMap);
+    return {
+        ...historyRecord,
+        work_center_id: station.workCenterId,
+        previous_status: historyRecord.previous_status ?? historyRecord.old_status ?? null,
+        status: historyRecord.status ?? historyRecord.new_status ?? "",
+        changed_by_name: userMap.get(Number(historyRecord.changed_by))
+            || (historyRecord.changed_by ? `User #${historyRecord.changed_by}` : "System"),
+        work_center_name: station.workCenterName
+    };
+}
+
+function validateStationHistoryRecord(record: any, expected: {
+    jobOrderId: number;
+    workCenterId: number;
+    oldStatus: string;
+    newStatus: string;
+    changedBy: number;
+    changedAt: string;
+    remarks: string;
+}) {
+    const persistedWorkCenterId = asPositiveInteger(record?.work_center_id);
+    const persistedJobOrderId = asPositiveInteger(record?.job_order_id);
+    const changedAt = typeof record?.changed_at === "string" ? record.changed_at.trim() : "";
+
+    if (persistedJobOrderId !== expected.jobOrderId
+        || persistedWorkCenterId !== expected.workCenterId
+        || String(record?.old_status ?? "") !== expected.oldStatus
+        || String(record?.new_status ?? "") !== expected.newStatus
+        || Number(record?.changed_by) !== expected.changedBy
+        || !changedAt
+        || Number.isNaN(Date.parse(changedAt))
+        || String(record?.remarks ?? "") !== expected.remarks) {
+        throw new Error("Station status-history insert did not persist the complete station audit record.");
+    }
+}
+
 function directusErrorResponse(error: unknown, fallbackMessage: string) {
     if (error instanceof DirectusRequestError) {
         console.error(`${error.message}:`, error.responseBody.slice(0, 2000));
@@ -108,18 +245,15 @@ export async function GET(request: Request) {
 
         // 1. Fetch status history for a specific Job Order
         if (action === "history" || joId) {
-            let historyUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=100&sort=-changed_at`;
-            if (joId) {
-                historyUrl += `&filter[job_order_id][_eq]=${joId}`;
-            }
-
-            const [historyRes, usersRes, wcRes] = await Promise.all([
-                fetch(historyUrl, { headers, cache: "no-store" }).catch(() => null),
+            const [historyList, usersRes, wcRes] = await Promise.all([
+                fetchStatusHistoryRows(joId || undefined, true).catch((error) => {
+                    console.error("Error fetching station status history:", error);
+                    return [];
+                }),
                 fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null),
                 fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name`, { headers, cache: "no-store" }).catch(() => null)
             ]);
 
-            const historyList = historyRes && historyRes.ok ? (await historyRes.json()).data || [] : [];
             const users = usersRes && usersRes.ok ? (await usersRes.json()).data || [] : [];
             const workCenters = wcRes && wcRes.ok ? (await wcRes.json()).data || [] : [];
 
@@ -134,13 +268,7 @@ export async function GET(request: Request) {
                 wcMap.set(Number(wc.work_center_id), wc.work_center_name);
             });
 
-            const enrichedHistory = historyList.map((h: any) => ({
-                ...h,
-                previous_status: h.previous_status ?? h.old_status ?? null,
-                status: h.status ?? h.new_status ?? "",
-                changed_by_name: userMap.get(Number(h.changed_by)) || (h.changed_by ? `User #${h.changed_by}` : "System"),
-                work_center_name: wcMap.get(Number(h.work_center_id)) || (h.work_center_id ? `Station #${h.work_center_id}` : "Unassigned")
-            }));
+            const enrichedHistory = historyList.map((h: any) => enrichHistoryRecord(h, userMap, wcMap));
 
             return NextResponse.json({ success: true, data: enrichedHistory });
         }
@@ -323,6 +451,16 @@ export async function POST(request: Request) {
             throw new Error("The active routing operation has no valid identifier.");
         }
 
+        // Resolve an existing station event before changing the Job Order or route.
+        // Legacy rows are matched from their scanner remark so a schema rollout does
+        // not create a duplicate for a scan that was already recorded.
+        const statusHistoryRows = await fetchStatusHistoryRows(jobOrderIdNumber, true);
+        const existingStationHistory = statusHistoryRows.find((historyRecord: any) => {
+            const station = resolveHistoryWorkCenter(historyRecord, new Map<number, string>());
+            return Boolean(parseStationScanRemark(historyRecord?.remarks))
+                && station.workCenterId === workCenterIdNumber;
+        }) || null;
+
         // 4. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION.
         const oldStatus = String(matchedJobOrder.status || "Draft");
         if (oldStatus === "Completed" || oldStatus === "Finished") {
@@ -371,10 +509,21 @@ export async function POST(request: Request) {
             activeOperation = { ...activeOperation, ...updatedOperation, status: "Ongoing", work_center_id: workCenterIdNumber };
         }
 
-        // 5. Record only a real status transition; repeated scans remain idempotent.
-        let statusHistoryRecord: any = null;
-        if (statusTransitioned) {
-            statusHistoryRecord = await directusData<any>(
+        // 5. Record the station audit for a transition or a first check-in at an
+        // already-active station. Repeated scans reuse the matching event.
+        const stationRemark = `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${workCenterIdNumber})`;
+        let statusHistoryRecord: any = existingStationHistory
+            ? {
+                ...existingStationHistory,
+                work_center_id: workCenterIdNumber,
+                work_center_name: matchedWorkCenter.work_center_name,
+                previous_status: existingStationHistory.previous_status ?? existingStationHistory.old_status ?? null,
+                status: existingStationHistory.status ?? existingStationHistory.new_status ?? ""
+            }
+            : null;
+
+        if (!existingStationHistory && (statusTransitioned || isAlreadyActive)) {
+            const createdStationHistory = await directusData<any>(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_status_history`,
                 "Station status-history insert",
                 {
@@ -386,10 +535,28 @@ export async function POST(request: Request) {
                         new_status: targetStatus,
                         changed_by: currentUserId,
                         changed_at: manilaTimestamp,
-                        remarks: `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${workCenterIdNumber})`
+                        remarks: stationRemark
                     })
                 }
             );
+
+            validateStationHistoryRecord(createdStationHistory, {
+                jobOrderId: jobOrderIdNumber,
+                workCenterId: workCenterIdNumber,
+                oldStatus,
+                newStatus: targetStatus,
+                changedBy: currentUserId,
+                changedAt: manilaTimestamp,
+                remarks: stationRemark
+            });
+
+            statusHistoryRecord = {
+                ...createdStationHistory,
+                work_center_id: workCenterIdNumber,
+                work_center_name: matchedWorkCenter.work_center_name,
+                previous_status: createdStationHistory.previous_status ?? createdStationHistory.old_status ?? oldStatus,
+                status: createdStationHistory.status ?? createdStationHistory.new_status ?? targetStatus
+            };
         }
 
         const returnedJobOrder = {
@@ -406,6 +573,7 @@ export async function POST(request: Request) {
             jobOrder: returnedJobOrder,
             activeOperation,
             statusTransitioned,
+            stationHistoryRecorded: Boolean(statusHistoryRecord),
             statusHistoryRecord
         });
     } catch (e: any) {

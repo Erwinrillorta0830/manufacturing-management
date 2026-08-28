@@ -57,6 +57,13 @@ export const assetFormSchema = z
     department: z.number().min(1, "Department is required"),
     employee: z.number().nullable().optional(),
     item_image: z.any().optional(),
+
+    // Migration & Opening Value Fields
+    asset_origin: z.enum(["New", "Existing"]).default("New").optional(),
+    opening_book_value: z.number().min(0).optional().nullable(),
+    opening_accumulated_depreciation: z.number().min(0).optional().nullable(),
+    opening_production_units: z.number().min(0).optional().nullable(),
+    opening_production_date: z.union([z.date(), z.string()]).optional().nullable(),
   })
   .superRefine((data, ctx) => {
     if (data.depreciation_method === "Units of Production") {
@@ -75,11 +82,13 @@ export const assetFormSchema = z
         });
       }
     } else if (data.depreciation_method === "Straight Line") {
-      if (!data.useful_life_months || data.useful_life_months <= 0) {
+      const hasMonths = data.useful_life_months != null && data.useful_life_months > 0;
+      const hasYears = data.life_span != null && data.life_span > 0;
+      if (!hasMonths && !hasYears) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Useful life (months) is required",
-          path: ["useful_life_months"],
+          message: "Useful life (years) is required",
+          path: ["life_span"],
         });
       }
     }
@@ -111,6 +120,13 @@ export const assetSubmissionSchema = z.object({
   department: z.number(),
   employee: z.number().optional().nullable(),
   encoder: z.number(),
+
+  // Migration & Opening Value Fields
+  asset_origin: z.enum(["New", "Existing"]).optional(),
+  opening_book_value: z.number().optional().nullable(),
+  opening_accumulated_depreciation: z.number().optional().nullable(),
+  opening_production_units: z.number().optional().nullable(),
+  opening_production_date: z.union([z.date(), z.string()]).optional().nullable(),
 });
 
 // --- 4. Table Schema (For API GET responses) ---
@@ -142,6 +158,13 @@ export const assetTableDataSchema = z.object({
   actual_units_produced: z.number().optional().nullable(),
   remaining_production_capacity: z.number().optional().nullable(),
   production_depreciation: z.number().optional().nullable(),
+
+  // Migration & Opening Value Fields
+  asset_origin: z.enum(["New", "Existing"]).optional().nullable(),
+  opening_book_value: z.number().optional().nullable(),
+  opening_accumulated_depreciation: z.number().optional().nullable(),
+  opening_production_units: z.number().optional().nullable(),
+  opening_production_date: z.string().optional().nullable(),
 
   // Virtual fields from the JOINs
   item_name: z.string(),
@@ -210,6 +233,11 @@ export interface SpringBootAssetDepreciation {
   productionCapacityUsedPercent?: number | null;
   firstProductionDate?: string | null;
   lastProductionDate?: string | null;
+  assetOrigin?: string | null;
+  openingBookValue?: number | null;
+  openingAccumulatedDepreciation?: number | null;
+  openingProductionUnits?: number | null;
+  openingProductionDate?: string | null;
 }
 
 export interface AssetDepreciationSummary {
@@ -217,6 +245,7 @@ export interface AssetDepreciationSummary {
   item_id: number;
   asset_type: string;
   depreciation_method: string;
+  asset_origin?: string | null;
   serial: string | null;
   barcode: string | null;
   rfid_code: string | null;

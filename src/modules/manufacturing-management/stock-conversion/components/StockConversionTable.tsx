@@ -62,7 +62,9 @@ export function StockConversionTable({
 
   // Sync local branch when prop changes externally
   useEffect(() => {
-    setLocalBranchId(selectedBranchId);
+    queueMicrotask(() => {
+      setLocalBranchId(selectedBranchId);
+    });
   }, [selectedBranchId]);
 
   const uniqueBrands = useMemo(() => {
@@ -119,14 +121,13 @@ export function StockConversionTable({
     });
   }, [options, data]);
 
-  const handleApplyFilters = (searchOverride?: string, branchOverride?: number, hasStockOverride?: boolean) => {
+  const handleApplyFilters = (searchOverride?: string, branchOverride?: number) => {
     const filterPayload: Record<string, string> = {};
     
     // Safety check: ensure activeSearch is a string. 
     // onClick={handleApplyFilters} passes the event object, which we must ignore.
     const activeSearch = (typeof searchOverride === 'string') ? searchOverride : searchQuery;
     const activeBranchId = branchOverride !== undefined ? branchOverride : localBranchId;
-    const activeHasStock = hasStockOverride !== undefined ? hasStockOverride : hasStockFilter;
 
     if (supplierFilter) {
       // Find by name OR shortcut to be safe
@@ -139,7 +140,6 @@ export function StockConversionTable({
     if (activeSearch && typeof activeSearch === 'string' && activeSearch.trim()) {
       filterPayload.search = activeSearch.trim();
     }
-    if (activeHasStock) filterPayload.hasStock = "true";
 
     setPage(1);
     const finalPayload = { 
@@ -176,6 +176,16 @@ export function StockConversionTable({
     setPage(1);
     onFilterChange({});
   };
+
+  const filteredData = useMemo(() => {
+    if (!hasStockFilter) return data;
+    return data.filter(item => item.quantity > 0 && (item.availableUnits?.length ?? 0) > 0);
+  }, [data, hasStockFilter]);
+
+  const effectiveTotalCount = useMemo(() => {
+    if (hasStockFilter) return filteredData.length;
+    return totalCount;
+  }, [hasStockFilter, filteredData.length, totalCount]);
 
   const canConvert = selectedBranchId !== undefined && selectedBranchId > 0;
   const columns = useMemo(
@@ -221,16 +231,27 @@ export function StockConversionTable({
 
       {/* Secondary Filters Group */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center space-x-2 bg-blue-500/5 px-3 py-1.5 rounded-md border border-blue-500/10 h-9">
+        <div 
+          className={`flex items-center space-x-2 bg-blue-500/5 px-3 py-1.5 rounded-md border border-blue-500/10 h-9 transition-colors ${(!localBranchId || !supplierFilter || isLoading) ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-blue-500/10"}`}
+          onClick={(e) => {
+            if (isLoading || !localBranchId || !supplierFilter) return;
+            if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).getAttribute("role") === "checkbox") return;
+            setHasStockFilter(prev => !prev);
+            setPage(1);
+          }}
+        >
           <Checkbox 
             id="convertible-only" 
             checked={hasStockFilter} 
-            onCheckedChange={(checked) => setHasStockFilter(!!checked)} 
+            onCheckedChange={(checked) => {
+              setHasStockFilter(!!checked);
+              setPage(1);
+            }} 
             disabled={isLoading || !localBranchId || !supplierFilter}
           />
           <Label 
             htmlFor="convertible-only" 
-            className={`text-[10px] font-bold cursor-pointer uppercase tracking-tight ${(!localBranchId || !supplierFilter) ? "text-muted-foreground opacity-50" : "text-blue-600 dark:text-blue-400"}`}
+            className={`text-[10px] font-bold cursor-pointer uppercase tracking-tight select-none ${(!localBranchId || !supplierFilter) ? "text-muted-foreground opacity-50" : "text-blue-600 dark:text-blue-400"}`}
           >
             Convertible Only
           </Label>
@@ -315,8 +336,8 @@ export function StockConversionTable({
     <div className="flex-1 flex flex-col min-h-0 bg-background rounded-xl p-4">
       <DataTable
         columns={columns}
-        data={data}
-        pageCount={Math.ceil(totalCount / pageSize)}
+        data={filteredData}
+        pageCount={Math.ceil(effectiveTotalCount / pageSize)}
         pagination={{
           pageIndex: page - 1,
           pageSize: pageSize,
@@ -325,7 +346,7 @@ export function StockConversionTable({
           setPage(p.pageIndex + 1);
           setPageSize(p.pageSize);
         }}
-        manualPagination={true}
+        manualPagination={!hasStockFilter}
         onSearch={(val) => {
           setSearchQuery(val);
         }}
@@ -333,7 +354,7 @@ export function StockConversionTable({
         isLoading={isLoading}
         actionComponent={filterActions}
         emptyTitle={(!selectedBranchId || !supplierFilter) ? "Select a Branch and Supplier to start" : "No products found"}
-        emptyDescription={(!selectedBranchId || !supplierFilter) ? "Please choose both a branch and a supplier from the filters above and click Apply to view stock levels." : "Try adjusting your filters."}
+        emptyDescription={(!selectedBranchId || !supplierFilter) ? "Please choose both a branch and a supplier from the filters above and click Apply to view stock levels." : (hasStockFilter ? "No products with convertible stock found for this supplier." : "Try adjusting your filters.")}
       />
     </div>
   );

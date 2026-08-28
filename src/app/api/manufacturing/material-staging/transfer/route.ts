@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import {
+    branchProductBatchKey,
+    branchProductLotBatchKey,
+    normalizeBatchNo
+} from "../_stock";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -44,6 +49,7 @@ const transferPayloadSchema = z.object({
     jo_material_id: z.number().int().positive(),
     product_id: z.number().int().positive(),
     lot_id: z.number().int().nonnegative().default(1),
+    allocation_id: z.number().int().positive().optional(),
     batch_no: z.string().min(1),
     transfer_quantity: z.number().positive("Transfer quantity must be greater than 0"),
     source_bin: z.string().default("MAIN-STORE"),
@@ -72,6 +78,16 @@ function relationId(value: unknown, preferredKeys: string[] = []): number {
 
 function recordId(record: DirectusRecord): number {
     return relationId(record.allocation_id ?? record.jo_materials_reservation_id ?? record.movement_id ?? record.id);
+}
+
+function compareAllocationRows(left: DirectusRecord, right: DirectusRecord): number {
+    const leftCreatedAt = Date.parse(String(left.created_at ?? ""));
+    const rightCreatedAt = Date.parse(String(right.created_at ?? ""));
+    const safeLeftCreatedAt = Number.isFinite(leftCreatedAt) ? leftCreatedAt : Number.MAX_SAFE_INTEGER;
+    const safeRightCreatedAt = Number.isFinite(rightCreatedAt) ? rightCreatedAt : Number.MAX_SAFE_INTEGER;
+
+    if (safeLeftCreatedAt !== safeRightCreatedAt) return safeLeftCreatedAt - safeRightCreatedAt;
+    return recordId(left) - recordId(right);
 }
 
 function directusErrorMessage(payload: unknown, fallback: string): string {
@@ -342,35 +358,63 @@ export async function POST(request: Request) {
             product_id: { _eq: data.product_id }
         }));
         const movements = await directusRequest<DirectusRecord[]>(
-            `/items/inventory_movements?filter=${movFilter}&fields=product_id,lot_id,branch_id,batch_no,quantity&limit=-1`,
+            `/items/inventory_movements?filter=${movFilter}&fields=product_id,lot_id,branch_id,batch_no,quantity,source_document_id,transaction_type_id,remarks&limit=-1`,
             { headers, cache: "no-store" },
             "Load inventory movements",
             true
         );
 
-        let branchOnHandStock = 0;
-        let branchBatchStock = 0;
+        const requestedBatch = normalizeBatchNo(data.batch_no);
+        const stockByBatch = new Map<string, number>();
+        const stockByLotBatch = new Map<string, number>();
+        const lotIdsByBatch = new Map<string, Set<number>>();
         movements.forEach((movement) => {
+            if (Number(movement.branch_id) !== branchId) return;
+
             const quantity = Number(movement.quantity || 0);
-            if (Number(movement.branch_id) === branchId) {
-                branchOnHandStock += quantity;
-                if (String(movement.batch_no || "").trim().toLowerCase() === data.batch_no.trim().toLowerCase()) {
-                    branchBatchStock += quantity;
-                }
+            const lotId = Number(movement.lot_id || 0);
+            if (lotId > 0) {
+                const batchKey = branchProductBatchKey(branchId, data.product_id, movement.batch_no);
+                stockByBatch.set(batchKey, (stockByBatch.get(batchKey) || 0) + quantity);
+                const lotKey = branchProductLotBatchKey(branchId, data.product_id, lotId, movement.batch_no);
+                stockByLotBatch.set(lotKey, (stockByLotBatch.get(lotKey) || 0) + quantity);
+                const lotIds = lotIdsByBatch.get(batchKey) || new Set<number>();
+                lotIds.add(lotId);
+                lotIdsByBatch.set(batchKey, lotIds);
             }
         });
 
-        const availableStock = Math.max(0, branchBatchStock > 0 ? branchBatchStock : branchOnHandStock);
-        if (availableStock < data.transfer_quantity && !data.override_negative) {
-            const shortageQty = Math.max(0, data.transfer_quantity - availableStock);
+        const requestedBatchKey = branchProductBatchKey(branchId, data.product_id, requestedBatch);
+        const requestedLotId = Number(data.lot_id || 0);
+        const requestedLotIds = lotIdsByBatch.get(requestedBatchKey) || new Set<number>();
+        const hasAmbiguousBatchLot = requestedLotId === 0 && requestedLotIds.size > 1;
+        const availableStock = requestedLotId > 0
+            ? stockByLotBatch.get(
+                branchProductLotBatchKey(branchId, data.product_id, requestedLotId, requestedBatch)
+            ) || 0
+            : requestedLotIds.size === 1
+                ? stockByBatch.get(requestedBatchKey) || 0
+                : 0;
+        const nonNegativeAvailableStock = Math.max(0, availableStock);
+
+        if ((hasAmbiguousBatchLot || nonNegativeAvailableStock < data.transfer_quantity) && !data.override_negative) {
+            const shortageQty = Math.max(0, data.transfer_quantity - nonNegativeAvailableStock);
+            const failureCode = hasAmbiguousBatchLot
+                ? "AMBIGUOUS_LOT"
+                : "INSUFFICIENT_LOT_STOCK";
             return NextResponse.json(
                 {
                     success: false,
                     shortage: true,
-                    message: `Insufficient stock in ${data.source_bin}. Available: ${availableStock.toFixed(2)}, Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQty.toFixed(2)}`,
+                    failure_code: failureCode,
+                    allocation_id: data.allocation_id,
+                    message: hasAmbiguousBatchLot
+                        ? "The selected batch maps to multiple inventory lots; select a specific lot before staging."
+                        : `Insufficient stock in the selected lot. Available: ${nonNegativeAvailableStock.toFixed(2)}, Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQty.toFixed(2)}`,
                     product_id: data.product_id,
+                    lot_id: data.lot_id,
                     batch_no: data.batch_no,
-                    available_quantity: availableStock,
+                    available_quantity: nonNegativeAvailableStock,
                     required_quantity: data.transfer_quantity,
                     shortage_quantity: shortageQty,
                     source_bin: data.source_bin,
@@ -389,25 +433,28 @@ export async function POST(request: Request) {
         const lotMovements = data.override_negative
             ? movements.filter((movement) => Number(movement.lot_id) > 0)
             : branchMovements;
-        const requestedBatch = data.batch_no.trim().toLowerCase();
-        const exactBatchMovement = lotMovements
-            .filter((movement) => String(movement.batch_no || "").trim().toLowerCase() === requestedBatch)
-            .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0))[0];
+        const exactBatchMovements = lotMovements
+            .filter((movement) => normalizeBatchNo(movement.batch_no) === requestedBatch)
+            .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0));
+        const exactBatchMovement = exactBatchMovements[0];
         const requestedLotMovement = lotMovements.find((movement) => Number(movement.lot_id) === data.lot_id);
         const fallbackLotMovement = [...lotMovements]
             .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0))[0];
-        const resolvedLotId = Number(
-            exactBatchMovement?.lot_id ||
-            requestedLotMovement?.lot_id ||
-            fallbackLotMovement?.lot_id ||
-            0
-        );
+        const resolvedLotId = data.override_negative
+            ? Number(exactBatchMovement?.lot_id || requestedLotMovement?.lot_id || fallbackLotMovement?.lot_id || 0)
+            : Number(
+                (data.lot_id > 0
+                    ? exactBatchMovements.find((movement) => Number(movement.lot_id) === data.lot_id)
+                    : exactBatchMovement
+                )?.lot_id || 0
+            );
         if (!resolvedLotId) {
             throw new TransferError(
                 data.override_negative
                     ? "No valid inventory lot exists for this product to record the negative override."
                     : "No valid inventory lot exists for this product and Job Order branch.",
-                400
+                data.override_negative ? 400 : 409,
+                data.override_negative ? undefined : { failure_code: "INVALID_LOT" }
             );
         }
 
@@ -415,18 +462,35 @@ export async function POST(request: Request) {
             _and: [
                 { jo_material_id: { _eq: data.jo_material_id } },
                 { product_id: { _eq: data.product_id } },
-                { branch_id: { _eq: branchId } },
-                { batch_no: { _eq: data.batch_no } }
+                { branch_id: { _eq: branchId } }
             ]
         }));
-        const existingAllocations = await directusRequest<DirectusRecord[]>(
-            `/items/manufacturing_job_order_materials_reservations?filter=${allocFilter}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity,actual_used_quantity&limit=-1`,
+        const allocationRows = await directusRequest<DirectusRecord[]>(
+            `/items/manufacturing_job_order_materials_reservations?filter=${allocFilter}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity,actual_used_quantity,created_at&limit=-1`,
             { headers, cache: "no-store" },
             "Load staging reservation",
             true
         );
-        if (existingAllocations.length > 1) {
-            throw new TransferError("Multiple staging reservations exist for the same Job Order material and batch; reconcile them before staging more stock.", 409);
+        const allocationGroup = allocationRows.filter((allocation) =>
+            normalizeBatchNo(allocation.batch_no) === requestedBatch
+        );
+        const orderedAllocationGroup = [...allocationGroup].sort(compareAllocationRows);
+        const existingAllocations = data.allocation_id
+            ? orderedAllocationGroup.filter((allocation) => recordId(allocation) === data.allocation_id)
+            : orderedAllocationGroup;
+        if (data.allocation_id && existingAllocations.length !== 1) {
+            throw new TransferError(
+                "The selected staging allocation does not belong to this Job Order material and batch.",
+                409,
+                { failure_code: "INVALID_ALLOCATION", allocation_id: data.allocation_id }
+            );
+        }
+        if (!data.allocation_id && existingAllocations.length > 1) {
+            throw new TransferError(
+                "Multiple staging reservations exist for the same Job Order material and batch; select a specific allocation before staging more stock.",
+                409,
+                { failure_code: "AMBIGUOUS_ALLOCATION", batch_no: data.batch_no }
+            );
         }
 
         const existingAllocation = existingAllocations[0] || null;
@@ -436,7 +500,54 @@ export async function POST(request: Request) {
             throw new TransferError("The existing staging quantities are invalid.", 503);
         }
 
-        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${targetBin};work_center_id=${data.work_center_id};jo_material_id=${data.jo_material_id}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
+        const stagedQuantityForBatch = movements.reduce((total, movement) => {
+            const isStagingMovement = Number(movement.source_document_id) === data.job_order_id &&
+                Number(movement.transaction_type_id) === 4 &&
+                normalizeBatchNo(movement.batch_no) === requestedBatch &&
+                String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]");
+            return isStagingMovement ? total + Math.max(0, Number(movement.quantity || 0)) : total;
+        }, 0);
+        let stagedQuantityRemaining = stagedQuantityForBatch;
+        const stagedQuantityByAllocation = new Map<number, number>();
+        orderedAllocationGroup.forEach((allocation) => {
+            const allocationId = recordId(allocation);
+            const reservedQuantity = Math.max(0, Number(allocation.reserved_quantity || 0));
+            const assignedQuantity = Math.min(stagedQuantityRemaining, reservedQuantity);
+            if (allocationId) stagedQuantityByAllocation.set(allocationId, assignedQuantity);
+            stagedQuantityRemaining = Math.max(0, stagedQuantityRemaining - assignedQuantity);
+        });
+        const selectedAllocationId = existingAllocation ? recordId(existingAllocation) : 0;
+        const selectedStagedQuantity = selectedAllocationId
+            ? stagedQuantityByAllocation.get(selectedAllocationId) || 0
+            : 0;
+        const allocationCapacity = data.allocation_id
+            ? Math.max(0, existingAllocationQuantity - selectedStagedQuantity)
+            : orderedAllocationGroup.reduce(
+                (total, allocation) => total + Math.max(0, Number(allocation.reserved_quantity || 0)),
+                0
+            ) - stagedQuantityForBatch;
+        if (orderedAllocationGroup.length > 0 && !data.override_negative && data.transfer_quantity > Math.max(0, allocationCapacity) + 0.000001) {
+            const availableQuantity = Math.max(0, Math.min(nonNegativeAvailableStock, allocationCapacity));
+            const shortageQuantity = Math.max(0, data.transfer_quantity - availableQuantity);
+            return NextResponse.json(
+                {
+                    success: false,
+                    shortage: true,
+                    failure_code: "INSUFFICIENT_ALLOCATION_CAPACITY",
+                    message: `${data.allocation_id ? "The selected allocation" : "The selected allocation group"} has ${Math.max(0, allocationCapacity).toFixed(2)} available to stage. Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQuantity.toFixed(2)}`,
+                    product_id: data.product_id,
+                    lot_id: data.lot_id,
+                    allocation_id: data.allocation_id,
+                    batch_no: data.batch_no,
+                    available_quantity: availableQuantity,
+                    required_quantity: data.transfer_quantity,
+                    shortage_quantity: shortageQuantity,
+                    source_bin: data.source_bin,
+                    target_bin: targetBin
+                },
+                { status: 409 }
+            );
+        }
 
         if (existingAllocation) {
             transactionState.allocationId = recordId(existingAllocation);
@@ -483,6 +594,8 @@ export async function POST(request: Request) {
                 throw new TransferError("The created staging allocation did not return an ID.", 503);
             }
         }
+
+        const transferRemarks = `${data.override_negative ? "[NEGATIVE OVERRIDE] " : ""}[MM-MATERIAL-STAGING] source_bin=${data.source_bin};target_bin=${targetBin};work_center_id=${data.work_center_id};jo_material_id=${data.jo_material_id};allocation_id=${transactionState.allocationId}; JO #${canonicalJobOrderNo}. Note: ${data.remarks || (data.override_negative ? "Authorized floor hold override" : "Standard staging")}`;
 
         const movementPayloads = [
             {
@@ -609,7 +722,7 @@ export async function POST(request: Request) {
             const hardReservedQuantity = allJobOrderReservations
                 .filter((reservation) => relationId(reservation.jo_material_id, ["jo_material_id"]) === materialId)
                 .reduce((total, reservation) => {
-                    const batchNo = String(reservation.batch_no || "").trim().toLowerCase();
+                    const batchNo = normalizeBatchNo(reservation.batch_no);
                     const key = `${productId}:${batchNo}`;
                     return stagedQuantityByProductBatch.has(key)
                         ? total + Number(reservation.reserved_quantity || 0)
@@ -633,12 +746,26 @@ export async function POST(request: Request) {
             transactionState.jobOrderPatched = true;
         }
 
-        const verifiedAllocations = await directusRequest<DirectusRecord[]>(
-            `/items/manufacturing_job_order_materials_reservations?filter=${allocFilter}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity&limit=-1`,
-            { headers, cache: "no-store" },
-            "Verify staging reservation",
-            true
-        );
+        const verifiedAllocations = data.allocation_id
+            ? [await directusRequest<DirectusRecord>(
+                `/items/manufacturing_job_order_materials_reservations/${data.allocation_id}?fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity`,
+                { headers, cache: "no-store" },
+                "Verify staging reservation",
+                true
+            )]
+            : await directusRequest<DirectusRecord[]>(
+                `/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { jo_material_id: { _eq: data.jo_material_id } },
+                        { product_id: { _eq: data.product_id } },
+                        { branch_id: { _eq: branchId } },
+                        { batch_no: { _eq: data.batch_no } }
+                    ]
+                }))}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity&limit=-1`,
+                { headers, cache: "no-store" },
+                "Verify staging reservation",
+                true
+            );
         const verifiedAllocation = verifiedAllocations[0];
         if (
             verifiedAllocations.length !== 1 ||

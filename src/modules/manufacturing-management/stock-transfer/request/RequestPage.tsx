@@ -41,6 +41,7 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
     scannedItems,
     handleAddProduct,
     updateQty,
+    updateAllocation,
     removeItem,
     reset,
     confirmTransfer,
@@ -161,7 +162,13 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <StockTransferTable items={scannedItems} onQtyChange={updateQty} onDelete={removeItem} />
+          <StockTransferTable 
+            items={scannedItems} 
+            onQtyChange={updateQty} 
+            onDelete={removeItem}
+            branchId={Number(sourceBranch) || 0}
+            onAllocationChange={updateAllocation}
+          />
         )}
 
         <div className="flex flex-col items-end gap-1">

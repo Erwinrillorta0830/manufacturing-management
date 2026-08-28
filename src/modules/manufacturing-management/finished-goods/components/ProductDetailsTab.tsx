@@ -76,8 +76,10 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     );
 
     React.useEffect(() => {
-        setImagePreview(null);
-        setImageUploadError(null);
+        queueMicrotask(() => {
+            setImagePreview(null);
+            setImageUploadError(null);
+        });
     }, [selectedProduct.id]);
 
     React.useEffect(() => {

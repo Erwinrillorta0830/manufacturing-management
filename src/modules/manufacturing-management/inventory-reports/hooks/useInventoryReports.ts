@@ -32,10 +32,12 @@ export function useInventoryReports() {
 
     // Reset product SKU filter if active product type changes
     useEffect(() => {
-        setFilters((prev) => ({
-            ...prev,
-            productId: null
-        }));
+        queueMicrotask(() => {
+            setFilters((prev) => ({
+                ...prev,
+                productId: null
+            }));
+        });
     }, [activeProductType]);
 
     const [searchQuery, setSearchQuery] = useState("");
@@ -128,7 +130,9 @@ export function useInventoryReports() {
 
     // Initial load
     useEffect(() => {
-        loadData();
+        queueMicrotask(() => {
+            loadData();
+        });
     }, [loadData]);
 
     const setSingleFilter = (key: keyof MovementFilters, value: unknown) => {

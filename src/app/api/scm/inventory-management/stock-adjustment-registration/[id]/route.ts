@@ -25,7 +25,11 @@ export async function PATCH(
         const body = await request.json();
 
         // Extract userId from cookie
-        const token = request.cookies.get("vos_access_token")?.value;
+        const token =
+            request.cookies.get("vos_access_token")?.value ||
+            request.cookies.get("springboot_token")?.value ||
+            request.cookies.get("directus_session_token")?.value ||
+            request.cookies.get("auth_token")?.value;
         const userId = getUserIdFromToken(token);
 
         console.log(`[API] Updating stock adjustment ID: ${id} with userId: ${userId}`);
@@ -37,12 +41,19 @@ export async function PATCH(
 }
 
 export async function DELETE(
-    request: Request,
+    request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
         const { id } = await params;
-        await stockAdjustmentService.deleteStockAdjustment(Number(id));
+        const token =
+            request.cookies.get("vos_access_token")?.value ||
+            request.cookies.get("springboot_token")?.value ||
+            request.cookies.get("directus_session_token")?.value ||
+            request.cookies.get("auth_token")?.value;
+        const userId = getUserIdFromToken(token);
+
+        await stockAdjustmentService.deleteStockAdjustment(Number(id), userId || undefined);
         return NextResponse.json({ success: true });
     } catch (error) {
         return handleApiError(error);

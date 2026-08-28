@@ -32,6 +32,40 @@ export function resolveBranchName(
   return branch ? getBranchLabel(branch) : `Branch ${branchId}`;
 }
 
+export function formatStatusForUi(status?: string | null): string {
+  if (!status) return "Requested";
+  switch (status.toUpperCase()) {
+    case "REQUESTED":
+      return "Requested";
+    case "FOR_PICKING":
+      return "For Picking";
+    case "PICKING":
+      return "Picking";
+    case "PICKED":
+      return "Picked";
+    case "FOR_LOADING":
+      return "For Loading";
+    case "DISPATCHED":
+      return "Dispatched";
+    case "RECEIVED":
+      return "Received";
+    case "REJECTED":
+      return "Rejected";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+export function formatStatusForDb(status?: string | null): string {
+  if (!status) return "REQUESTED";
+  const s = status.trim().toUpperCase().replace(/\s+/g, "_");
+  const valid = ["REQUESTED", "FOR_PICKING", "PICKING", "PICKED", "FOR_LOADING", "DISPATCHED", "RECEIVED", "REJECTED", "CANCELLED"];
+  if (valid.includes(s)) return s;
+  return status;
+}
+
 /**
  * Groups flat stock transfer rows by `order_no` into OrderGroup objects.
  * Used by all downstream modules (approval, dispatching, receive).
@@ -40,17 +74,25 @@ export function groupByOrderNo(transfers: StockTransferRow[]): OrderGroup[] {
   const groups: Record<string, OrderGroup> = {};
 
   transfers.forEach((st) => {
+    const rawSource = st.source_branch_id ?? st.source_branch ?? null;
+    const sourceBranch = typeof rawSource === "object" && rawSource !== null ? (rawSource as BranchRow).id : (typeof rawSource === "number" ? rawSource : null);
+
+    const rawTarget = st.target_branch_id ?? st.target_branch ?? null;
+    const targetBranch = typeof rawTarget === "object" && rawTarget !== null ? (rawTarget as BranchRow).id : (typeof rawTarget === "number" ? rawTarget : null);
+
+    const uiStatus = formatStatusForUi(st.status);
+
     if (!groups[st.order_no]) {
       groups[st.order_no] = {
         orderNo: st.order_no,
-        sourceBranch: st.source_branch,
-        targetBranch: st.target_branch,
+        sourceBranch,
+        targetBranch,
         leadDate: st.lead_date,
         dateRequested: st.date_requested,
         dateEncoded: st.date_encoded || "",
         items: [],
         totalAmount: 0,
-        status: st.status,
+        status: uiStatus,
       };
     }
 
@@ -79,7 +121,7 @@ export function groupByOrderNo(transfers: StockTransferRow[]): OrderGroup[] {
     groups[st.order_no].items.push(item);
 
     // Calculate total using received, allocated, or ordered quantity
-    const qty = st.received_quantity ?? st.allocated_quantity ?? st.ordered_quantity ?? 0;
+    const qty = Number(st.received_quantity) || Number(st.allocated_quantity) || Number(st.ordered_quantity) || 0;
     groups[st.order_no].totalAmount += Number((qty * unitPrice).toFixed(2));
   });
 
@@ -120,3 +162,15 @@ export function calculateGrandTotal(
     0,
   );
 }
+
+/**
+ * Formats a quantity value by parsing decimals and stripping unnecessary trailing zeros.
+ * e.g. "7.000000" -> "7", "7.500000" -> "7.5", null/undefined/"" -> "—"
+ */
+export function formatQuantity(val: unknown): string {
+  if (val === null || val === undefined || val === '') return '—';
+  const num = Number(val);
+  if (isNaN(num)) return String(val);
+  return num.toLocaleString('en-PH', { maximumFractionDigits: 4 });
+}
+

@@ -17,7 +17,10 @@ export const getColumns = (
     header: "SUPPLIER",
     cell: ({ row, table }) => {
       const prevRow = table.getRowModel().rows[row.index - 1];
-      const isDuplicate = prevRow && prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand;
+      const isDuplicate = prevRow && (
+        (prevRow.original.family && row.original.family && prevRow.original.family === row.original.family) ||
+        (prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand)
+      );
       return <span className={isDuplicate ? "opacity-0 select-none" : ""}>{row.getValue("supplierName")}</span>;
     }
   },
@@ -26,7 +29,10 @@ export const getColumns = (
     header: "BRAND",
     cell: ({ row, table }) => {
       const prevRow = table.getRowModel().rows[row.index - 1];
-      const isDuplicate = prevRow && prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand;
+      const isDuplicate = prevRow && (
+        (prevRow.original.family && row.original.family && prevRow.original.family === row.original.family) ||
+        (prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand)
+      );
       return <span className={isDuplicate ? "opacity-0 select-none" : ""}>{row.getValue("brand")}</span>;
     }
   },
@@ -35,7 +41,10 @@ export const getColumns = (
     header: "CATEGORY",
     cell: ({ row, table }) => {
       const prevRow = table.getRowModel().rows[row.index - 1];
-      const isDuplicate = prevRow && prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand;
+      const isDuplicate = prevRow && (
+        (prevRow.original.family && row.original.family && prevRow.original.family === row.original.family) ||
+        (prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand)
+      );
       return <span className={isDuplicate ? "opacity-0 select-none" : ""}>{row.getValue("category")}</span>;
     }
   },
@@ -44,10 +53,17 @@ export const getColumns = (
     header: "PRODUCT NAME",
     cell: ({ row, table }) => {
       const prevRow = table.getRowModel().rows[row.index - 1];
-      const isDuplicate = prevRow && prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand;
       const nextRow = table.getRowModel().rows[row.index + 1];
-      const isNextDuplicate = nextRow && nextRow.original.productName === row.original.productName && nextRow.original.brand === row.original.brand;
+      const isDuplicate = prevRow && (
+        (prevRow.original.family && row.original.family && prevRow.original.family === row.original.family) ||
+        (prevRow.original.productName === row.original.productName && prevRow.original.brand === row.original.brand)
+      );
+      const isNextDuplicate = nextRow && (
+        (nextRow.original.family && row.original.family && nextRow.original.family === row.original.family) ||
+        (nextRow.original.productName === row.original.productName && nextRow.original.brand === row.original.brand)
+      );
       const isLastChild = isDuplicate && !isNextDuplicate;
+      const displayName = row.original.productDescription || row.original.productName;
       
       if (isDuplicate) {
         return (
@@ -64,8 +80,8 @@ export const getColumns = (
 
              {/* Faded text so the user knows what row this is */}
              <div className="pl-[3rem] select-none">
-                <span className="font-medium line-clamp-1  text-xs block">
-                  {row.getValue("productName")}
+                <span className="font-medium line-clamp-1 text-xs block">
+                  {displayName}
                 </span>
                 {row.original.productCode && (
                   <span className="text-[9px] text-muted-foreground/70 font-mono uppercase tracking-tighter block mt-0.5">
@@ -86,7 +102,7 @@ export const getColumns = (
           )}
           <div className="pl-[3rem]">
             <span className="font-semibold line-clamp-1 text-foreground block">
-              {row.getValue("productName")}
+              {displayName}
             </span>
             {row.original.productCode && (
               <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tighter block mt-0.5">

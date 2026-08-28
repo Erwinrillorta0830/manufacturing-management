@@ -37,7 +37,13 @@ export function getUserIdFromToken(token: string | null | undefined): number | n
   if (!payload) return null;
 
   // Try common ID fields
-  const idValue = payload.user_id ?? payload.userId ?? payload.id ?? payload.sub;
+  const idValue =
+    payload.user_id ??
+    payload.userId ??
+    payload.id ??
+    payload.sub ??
+    (payload.user as Record<string, unknown> | undefined)?.user_id ??
+    (payload.user as Record<string, unknown> | undefined)?.id;
 
   if (idValue !== undefined && idValue !== null) {
     const num = Number(idValue);

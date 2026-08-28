@@ -51,7 +51,39 @@ export function useUOMConversions() {
     };
 
     useEffect(() => {
-        fetchDensities();
+        let isMounted = true;
+        const load = async () => {
+            setLoading(true);
+            try {
+                const res = await fetch("/api/manufacturing/uom-conversions");
+                if (!res.ok) throw new Error("Failed to fetch densities from API");
+                const data = await res.json();
+                if (isMounted && Array.isArray(data) && data.length > 0) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const mapped: DensityFactor[] = data.map((d: any) => ({
+                        id: String(d.id),
+                        name: d.name,
+                        density: Number(d.density),
+                        description: d.description || "",
+                        isSystem: !!d.is_system
+                    }));
+                    setDensities(mapped);
+                }
+            } catch (e) {
+                if (isMounted) {
+                    console.error("Error loading density factors:", e);
+                    toast.error("Offline: using local density database defaults");
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
+                }
+            }
+        };
+        load();
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     // Modal state for adding a custom density
@@ -71,7 +103,9 @@ export function useUOMConversions() {
     // Sync selectedOilId once densities load
     useEffect(() => {
         if (densities.length > 0 && !densities.some(d => d.id === selectedOilId)) {
-            setSelectedOilId(densities[0].id);
+            queueMicrotask(() => {
+                setSelectedOilId(densities[0].id);
+            });
         }
     }, [densities, selectedOilId]);
 
