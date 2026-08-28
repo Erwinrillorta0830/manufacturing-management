@@ -59,11 +59,13 @@ export function usePickingReceiving(activeTab: string, onDataRefresh: () => void
     };
 
     useEffect(() => {
-        if (activeTab === "picking") {
-            loadPicking();
-        } else if (activeTab === "receiving") {
-            loadReceiving();
-        }
+        queueMicrotask(() => {
+            if (activeTab === "picking") {
+                loadPicking();
+            } else if (activeTab === "receiving") {
+                loadReceiving();
+            }
+        });
     }, [activeTab]);
 
     const handleConfirmPick = async (jo: PickingJO) => {
