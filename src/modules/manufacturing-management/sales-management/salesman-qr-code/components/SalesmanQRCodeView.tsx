@@ -62,7 +62,9 @@ export function SalesmanQRCodeView() {
   }, []);
 
   React.useEffect(() => {
-    void load();
+    queueMicrotask(() => {
+      void load();
+    });
   }, [load]);
 
   const openQr = (row: SalesmanRow) => {
@@ -114,7 +116,7 @@ export function SalesmanQRCodeView() {
       if (!lookups?.divisions || !divisionId) return "—";
       return lookups.divisions.find((d) => d.division_id === divisionId)?.division_name ?? "—";
     },
-    [lookups?.divisions],
+    [lookups],
   );
 
   const operationName = React.useCallback(
@@ -122,7 +124,7 @@ export function SalesmanQRCodeView() {
       if (!lookups?.operations || !opId) return "—";
       return lookups.operations.find((o) => o.id === opId)?.operation_name ?? "—";
     },
-    [lookups?.operations],
+    [lookups],
   );
 
   return (
@@ -171,11 +173,11 @@ export function SalesmanQRCodeView() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((row) => {
+                filtered.map((row, index) => {
                   const id = safeId(row.id);
 
                   return (
-                    <TableRow key={id ?? `${row.salesman_code ?? "row"}-${Math.random()}`}>
+                    <TableRow key={id ?? `${row.salesman_code ?? "row"}-${index}`}>
                       <TableCell className="font-mono text-xs">{id ?? "—"}</TableCell>
 
                       <TableCell>

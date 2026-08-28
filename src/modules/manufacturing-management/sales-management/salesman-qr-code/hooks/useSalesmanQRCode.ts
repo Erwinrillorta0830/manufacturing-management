@@ -40,7 +40,9 @@ export function useSalesmanQRCode() {
   }, []);
 
   React.useEffect(() => {
-    void load();
+    queueMicrotask(() => {
+      void load();
+    });
   }, [load]);
 
   return {

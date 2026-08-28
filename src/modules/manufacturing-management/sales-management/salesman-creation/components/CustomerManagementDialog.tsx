@@ -73,15 +73,19 @@ export function CustomerManagementDialog({
 
     useEffect(() => {
         if (open && salesman) {
-            fetchData(salesman.id);
+            queueMicrotask(() => {
+                fetchData(salesman.id);
+            });
         }
     }, [open, salesman, fetchData]);
 
     useEffect(() => {
         if (open) {
-            setAssignedSearchQuery("");
-            setAvailableSearchQuery("");
-            setLastAssignedCustomerId(null);
+            queueMicrotask(() => {
+                setAssignedSearchQuery("");
+                setAvailableSearchQuery("");
+                setLastAssignedCustomerId(null);
+            });
         }
     }, [open]);
 

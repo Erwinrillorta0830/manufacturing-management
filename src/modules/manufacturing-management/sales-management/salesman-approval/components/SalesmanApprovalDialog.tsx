@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import {
     Dialog,
     DialogContent,
@@ -117,16 +117,16 @@ export function SalesmanApprovalDialog({
         },
     });
 
-    const selectedEmployeeId = form.watch("employee_id");
-    const watchProvince = form.watch("user_province");
-    const watchCity = form.watch("user_city");
+    const selectedEmployeeId = useWatch({ control: form.control, name: "employee_id" });
+    const watchProvince = useWatch({ control: form.control, name: "user_province" });
+    const watchCity = useWatch({ control: form.control, name: "user_city" });
 
     const provinceCode = useMemo(() => findProvinceCode(watchProvince), [watchProvince, findProvinceCode]);
     const cityCode = useMemo(() => findCityCode(provinceCode, watchCity), [provinceCode, watchCity, findCityCode]);
 
     const selectableCities = useMemo(() => getCities(provinceCode), [provinceCode, getCities]);
     const selectableBarangays = useMemo(() => getBarangays(cityCode), [cityCode, getBarangays]);
-    const hasInventory = form.watch("isInventory");
+    const hasInventory = useWatch({ control: form.control, name: "isInventory" });
     const selectedEmployee = users.find((u) => u.user_id.toString() === selectedEmployeeId);
 
     const selectableUsers = useMemo(() => {

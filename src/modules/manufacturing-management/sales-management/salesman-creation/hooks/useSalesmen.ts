@@ -82,7 +82,9 @@ export function useSalesmen(): UseSalesmenReturn {
     }, []);
 
     useEffect(() => {
-        fetchData(true);
+        queueMicrotask(() => {
+            fetchData(true);
+        });
     }, [fetchData]);
 
     useEffect(() => {

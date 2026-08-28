@@ -52,7 +52,9 @@ export function useSalesmanApproval() {
     }, []);
 
     useEffect(() => {
-        fetchData(true);
+        queueMicrotask(() => {
+            fetchData(true);
+        });
     }, [fetchData]);
 
     useEffect(() => {

@@ -92,59 +92,63 @@ export function SalesmanFormDialog(props: Props) {
   React.useEffect(() => {
     if (!open) return;
 
-    if (mode === "edit" && initial) {
-      setEmployeeId(initial.employee_id ?? null);
-      setSalesmanName((initial.salesman_name ?? "").trim());
-      setSalesmanCode((initial.salesman_code ?? "").trim());
-      setTruckPlate((initial.truck_plate ?? "").trim());
+    queueMicrotask(() => {
+      if (mode === "edit" && initial) {
+        setEmployeeId(initial.employee_id ?? null);
+        setSalesmanName((initial.salesman_name ?? "").trim());
+        setSalesmanCode((initial.salesman_code ?? "").trim());
+        setTruckPlate((initial.truck_plate ?? "").trim());
 
-      setCompanyCode(initial.company_code ?? null);
-      setSupplierCode(initial.supplier_code ?? null);
-      setDivisionId(initial.division_id ?? null);
-      setOperationId(initial.operation ?? null);
+        setCompanyCode(initial.company_code ?? null);
+        setSupplierCode(initial.supplier_code ?? null);
+        setDivisionId(initial.division_id ?? null);
+        setOperationId(initial.operation ?? null);
 
-      setBranchId(initial.branch_code ?? null);
-      setBadBranchId(initial.bad_branch_code ?? null);
+        setBranchId(initial.branch_code ?? null);
+        setBadBranchId(initial.bad_branch_code ?? null);
 
-      setPriceType((initial.price_type as PriceType) ?? "A");
+        setPriceType((initial.price_type as PriceType) ?? "A");
 
-      setIsActive(toBool(initial.isActive));
-      setIsInventory(toBool(initial.isInventory));
-      setCanCollect(toBool(initial.canCollect));
-    } else {
-      setEmployeeId(null);
-      setSalesmanName("");
-      setSalesmanCode("");
-      setTruckPlate("");
+        setIsActive(toBool(initial.isActive));
+        setIsInventory(toBool(initial.isInventory));
+        setCanCollect(toBool(initial.canCollect));
+      } else {
+        setEmployeeId(null);
+        setSalesmanName("");
+        setSalesmanCode("");
+        setTruckPlate("");
 
-      setCompanyCode(null);
-      setSupplierCode(null);
-      setDivisionId(null);
-      setOperationId(null);
+        setCompanyCode(null);
+        setSupplierCode(null);
+        setDivisionId(null);
+        setOperationId(null);
 
-      setBranchId(null);
-      setBadBranchId(null);
+        setBranchId(null);
+        setBadBranchId(null);
 
-      setPriceType("A");
+        setPriceType("A");
 
-      setIsActive(true);
-      setIsInventory(false);
-      setCanCollect(false);
-    }
+        setIsActive(true);
+        setIsInventory(false);
+        setCanCollect(false);
+      }
+    });
   }, [open, mode, initial]);
 
   const employee = React.useMemo(() => getEmployee(employeeId), [employeeId, getEmployee]);
 
   React.useEffect(() => {
-    if (employee) {
-      setUserProvince(employee.user_province ?? "");
-      setUserCity(employee.user_city ?? "");
-      setUserBrgy(employee.user_brgy ?? "");
-    } else {
-      setUserProvince("");
-      setUserCity("");
-      setUserBrgy("");
-    }
+    queueMicrotask(() => {
+      if (employee) {
+        setUserProvince(employee.user_province ?? "");
+        setUserCity(employee.user_city ?? "");
+        setUserBrgy(employee.user_brgy ?? "");
+      } else {
+        setUserProvince("");
+        setUserCity("");
+        setUserBrgy("");
+      }
+    });
   }, [employee]);
 
   React.useEffect(() => {

@@ -65,7 +65,7 @@ export function SalesmanCreationView() {
 
   React.useEffect(() => {
     async function load() {
-      setLoading(true);
+      queueMicrotask(() => setLoading(true));
       try {
         const res = await getLookups();
         setLookups(res.data);
@@ -87,15 +87,17 @@ export function SalesmanCreationView() {
   }, [employees, employeeId]);
 
   React.useEffect(() => {
-    if (employee) {
-      setUserProvince(employee.user_province ?? "");
-      setUserCity(employee.user_city ?? "");
-      setUserBrgy(employee.user_brgy ?? "");
-    } else {
-      setUserProvince("");
-      setUserCity("");
-      setUserBrgy("");
-    }
+    queueMicrotask(() => {
+      if (employee) {
+        setUserProvince(employee.user_province ?? "");
+        setUserCity(employee.user_city ?? "");
+        setUserBrgy(employee.user_brgy ?? "");
+      } else {
+        setUserProvince("");
+        setUserCity("");
+        setUserBrgy("");
+      }
+    });
   }, [employee]);
 
   const provinceCode = React.useMemo(() => findProvinceCode(userProvince), [userProvince, findProvinceCode]);

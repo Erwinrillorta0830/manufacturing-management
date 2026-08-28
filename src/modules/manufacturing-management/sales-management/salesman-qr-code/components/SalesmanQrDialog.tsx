@@ -75,17 +75,19 @@ export function SalesmanQrDialog(props: Props) {
   React.useEffect(() => {
     if (!open) return;
 
-    setQrTypeId(qrTypes?.[0]?.id ?? null);
-    setFile(null);
-    setPreviewUrl(null);
-    setRows([]);
+    queueMicrotask(() => {
+      setQrTypeId(qrTypes?.[0]?.id ?? null);
+      setFile(null);
+      setPreviewUrl(null);
+      setRows([]);
 
-    if (!salesmanId) {
-      toast.error("Salesman ID is missing. Please refresh the list and try again.");
-      return;
-    }
+      if (!salesmanId) {
+        toast.error("Salesman ID is missing. Please refresh the list and try again.");
+        return;
+      }
 
-    void load();
+      void load();
+    });
   }, [open, qrTypes, salesmanId, load]);
 
   const current = React.useMemo(() => {
@@ -101,11 +103,15 @@ export function SalesmanQrDialog(props: Props) {
 
   React.useEffect(() => {
     if (!file) {
-      setPreviewUrl(null);
+      queueMicrotask(() => {
+        setPreviewUrl(null);
+      });
       return;
     }
     const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
+    queueMicrotask(() => {
+      setPreviewUrl(url);
+    });
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
