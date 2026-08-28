@@ -6,29 +6,69 @@ import { Batch, BatchStatus, BatchQaStatus } from "@/modules/manufacturing-manag
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const filterLotId = searchParams.get("lotId");
         const timestamp = Date.now();
 
+        let token: string | undefined;
+        try {
+            const cookieStore = await cookies();
+            token = cookieStore.get("vos_access_token")?.value;
+        } catch {
+            // ignore
+        }
+
+        const reqHeaders: Record<string, string> = {
+            Accept: "application/json",
+        };
+        if (token) {
+            reqHeaders["Authorization"] = `Bearer ${token}`;
+            reqHeaders["Cookie"] = `vos_access_token=${token}`;
+        }
+
         let mmUrl = `${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&sort=-updated_at,-created_at,-inventory_lot_id&_t=${timestamp}`;
         if (filterLotId) {
             mmUrl += `&filter[lot_id][_eq]=${filterLotId}`;
         }
 
-        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes] = await Promise.all([
+        const [batchesRes, lotsRes, usersRes, unitsRes, productsRes, movementsRes, onhandRes] = await Promise.all([
             fetch(mmUrl, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null)
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${timestamp}`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null),
+            fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null)
         ]);
 
         let rawBatches: Record<string, unknown>[] = [];
         if (batchesRes && batchesRes.ok) {
             const json = await batchesRes.json();
             rawBatches = json.data || [];
+        }
+
+        let rawMovements: Record<string, unknown>[] = [];
+        if (movementsRes && movementsRes.ok) {
+            try {
+                const movJson = await movementsRes.json();
+                rawMovements = Array.isArray(movJson) ? movJson : movJson?.data || [];
+            } catch (err) {
+                console.error("Error parsing movements in GET batches:", err);
+            }
+        }
+
+        let rawOnhand: Record<string, unknown>[] = [];
+        if (onhandRes && onhandRes.ok) {
+            try {
+                const onhandJson = await onhandRes.json();
+                rawOnhand = Array.isArray(onhandJson) ? onhandJson : onhandJson?.data || [];
+            } catch (err) {
+                console.error("Error parsing mm-batch-onhand in GET batches:", err);
+            }
         }
 
         let lotsList: { lot_id: number; lot_name: string; unit_id?: number }[] = [];
@@ -61,20 +101,141 @@ export async function GET(request: Request) {
             }
         }
 
-        let productsList: { product_id: number; product_name?: string; sku_code?: string; product_code?: string }[] = [];
-        if (productsRes && productsRes.ok) {
+        let productsList: { product_id: number; product_name?: string; sku_code?: string; product_code?: string; unit_cost?: number }[] = [];
+        let pRes = productsRes;
+        if (!pRes || !pRes.ok) {
+            pRes = await fetch(`${DIRECTUS_URL}/items/products?limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        }
+        if (pRes && pRes.ok) {
             try {
-                const prodJson = await productsRes.json();
+                const prodJson = await pRes.json();
                 const rawProds = prodJson.data || [];
-                productsList = rawProds.map((p: Record<string, unknown>) => ({
-                    product_id: Number(p.product_id ?? p.id ?? 0),
-                    product_name: String(p.product_name || p.name || p.title || ""),
-                    sku_code: String(p.sku_code || p.product_code || p.code || p.sku || "")
-                }));
+                productsList = rawProds.map((p: Record<string, unknown>) => {
+                    const rawCost = p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost;
+                    const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
+                        ? Number(rawCost)
+                        : 0;
+                    const desc = String(p.description || "").trim();
+                    const name = String(p.product_name || p.name || p.title || "").trim();
+                    return {
+                        product_id: Number(p.product_id ?? p.id ?? 0),
+                        product_name: desc || name,
+                        sku_code: String(p.product_code || p.barcode || "").trim(),
+                        unit_cost: unitCost
+                    };
+                });
             } catch (err) {
                 console.error("Error parsing products in GET batches:", err);
             }
         }
+
+        // Aggregate movements by inventoryLotId and (lotId, productId, batchNo)
+        const movementNetByInvLotId = new Map<number, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; mfgDate?: string; expDate?: string }>();
+        const movementNetByLotProductBatch = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
+
+        rawMovements.forEach((m) => {
+            const lId = Number(m.lotId || m.lot_id || 0);
+            const pId = Number(m.productId || m.product_id || 0);
+            const bNo = String(m.batchNo || m.batch_no || "").trim();
+            const qIn = Number(m.quantityIn || m.quantity_in || 0);
+            const qOut = Number(m.quantityOut || m.quantity_out || 0);
+            const net = qIn - qOut;
+            const cost = Number(m.unitCost || m.unit_cost || 0);
+            const invId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
+
+            if (invId > 0) {
+                const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: cost, count: 0 };
+                cur.onhand += net;
+                cur.totalIn += qIn;
+                cur.totalOut += qOut;
+                if (cost > 0) cur.unitCost = cost;
+                if (m.manufacturingDate || m.manufacturing_date) cur.mfgDate = (m.manufacturingDate || m.manufacturing_date) as string;
+                if (m.expirationDate || m.expiration_date || m.expiry_date) cur.expDate = (m.expirationDate || m.expiration_date || m.expiry_date) as string;
+                cur.count += 1;
+                movementNetByInvLotId.set(invId, cur);
+            }
+
+            if (bNo) {
+                const key = `${lId}_${pId}_${bNo.toLowerCase()}`;
+                const cur = movementNetByLotProductBatch.get(key) || {
+                    onhand: 0,
+                    totalIn: 0,
+                    totalOut: 0,
+                    unitCost: cost,
+                    count: 0,
+                    lotId: lId,
+                    productId: pId,
+                    batchNo: bNo,
+                    mfgDate: (m.manufacturingDate || m.manufacturing_date) as string | undefined,
+                    expDate: (m.expirationDate || m.expiration_date || m.expiry_date) as string | undefined,
+                    condition: String(m.inventoryCondition || m.inventory_condition || "GOOD"),
+                    remarks: (m.remarks as string) || undefined,
+                    referenceNo: (m.referenceNo || m.reference_no) as string | undefined,
+                    postedAt: (m.postedAt || m.posted_at || m.transactionDate || m.transaction_date) as string | undefined,
+                    branchId: Number(m.branchId || m.branch_id || 1),
+                    unitId: Number(m.unitId || m.unit_id || 1),
+                    productName: (m.productName || m.product_name) as string | undefined,
+                    productCode: (m.productCode || m.product_code) as string | undefined
+                };
+                cur.onhand += net;
+                cur.totalIn += qIn;
+                cur.totalOut += qOut;
+                if (cost > 0) cur.unitCost = cost;
+                if (m.manufacturingDate || m.manufacturing_date) cur.mfgDate = (m.manufacturingDate || m.manufacturing_date) as string;
+                if (m.expirationDate || m.expiration_date || m.expiry_date) cur.expDate = (m.expirationDate || m.expiration_date || m.expiry_date) as string;
+                if (m.inventoryCondition || m.inventory_condition) cur.condition = String(m.inventoryCondition || m.inventory_condition);
+                cur.count += 1;
+                movementNetByLotProductBatch.set(key, cur);
+            }
+        });
+
+        rawOnhand.forEach((oh) => {
+            const lId = Number(oh.lotId || oh.lot_id || 0);
+            const pId = Number(oh.productId || oh.product_id || 0);
+            const bNo = String(oh.batchNo || oh.batch_no || "").trim();
+            const invId = Number(oh.inventoryLotId || oh.inventory_lot_id || 0);
+            const onhand = Number(oh.onhandQuantity ?? oh.onhand_quantity ?? 0);
+            const qIn = Number(oh.totalQuantityIn ?? oh.total_quantity_in ?? onhand);
+            const qOut = Number(oh.totalQuantityOut ?? oh.total_quantity_out ?? 0);
+            const mfgDate = (oh.manufacturingDate || oh.manufacturing_date) as string | undefined;
+            const expDate = (oh.expirationDate || oh.expiration_date || oh.expiry_date) as string | undefined;
+            const cond = String(oh.inventoryCondition || oh.inventory_condition || "GOOD");
+
+            if (invId > 0) {
+                const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: 0, count: 0 };
+                cur.onhand = onhand;
+                cur.totalIn = qIn;
+                cur.totalOut = qOut;
+                if (mfgDate) cur.mfgDate = mfgDate;
+                if (expDate) cur.expDate = expDate;
+                movementNetByInvLotId.set(invId, cur);
+            }
+
+            if (bNo) {
+                const key = `${lId}_${pId}_${bNo.toLowerCase()}`;
+                const cur = movementNetByLotProductBatch.get(key) || {
+                    onhand: 0,
+                    totalIn: 0,
+                    totalOut: 0,
+                    unitCost: 0,
+                    count: 0,
+                    lotId: lId,
+                    productId: pId,
+                    batchNo: bNo,
+                    mfgDate,
+                    expDate,
+                    condition: cond,
+                    branchId: Number(oh.branchId || oh.branch_id || 1),
+                    unitId: Number(oh.unitId || oh.unit_id || 1)
+                };
+                cur.onhand = onhand;
+                cur.totalIn = qIn;
+                cur.totalOut = qOut;
+                if (mfgDate) cur.mfgDate = mfgDate;
+                if (expDate) cur.expDate = expDate;
+                movementNetByLotProductBatch.set(key, cur);
+            }
+        });
 
         const mappedBatches: Batch[] = rawBatches.map((row) => {
             const batchId = Number(row.inventory_lot_id ?? 0);
@@ -101,14 +262,14 @@ export async function GET(request: Request) {
                 if (typeof row.product_id === "object" && row.product_id !== null) {
                     const pObj = row.product_id as Record<string, unknown>;
                     productId = Number(pObj.product_id ?? pObj.id ?? 0);
-                    productName = String(pObj.product_name || pObj.name || pObj.title || "");
-                    itemCode = itemCode || String(pObj.sku_code || pObj.product_code || pObj.code || pObj.sku || "");
+                    productName = String(pObj.description || pObj.product_name || pObj.name || pObj.title || "").trim();
+                    itemCode = itemCode || String(pObj.sku_code || pObj.product_code || pObj.barcode || pObj.code || pObj.sku || "").trim();
                 } else {
                     productId = Number(row.product_id);
                     const matchedP = productsList.find((p) => Number(p.product_id) === productId);
                     if (matchedP) {
                         productName = matchedP.product_name || "";
-                        itemCode = itemCode || matchedP.sku_code || matchedP.product_code || "";
+                        itemCode = itemCode || matchedP.sku_code || "";
                     }
                 }
             }
@@ -177,10 +338,25 @@ export async function GET(request: Request) {
                 status = rawStatus as BatchStatus;
             }
 
-            const quantity = Number(row.quantity ?? 1);
-            const unitCost = Number(row.unit_cost ?? 0);
-            const manufacturingDate = String(row.manufacturing_date || "");
-            const expirationDate = String(row.expiry_date || "");
+            const matchedP = productsList.find((p) => Number(p.product_id) === productId);
+
+            // Compute live onhand quantity and unit cost from movements if present
+            const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
+            const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
+            const movementInfo = movementByInvId || movementByLotProdBatch;
+
+            const quantity = movementInfo !== undefined
+                ? Number(movementInfo.onhand || 0)
+                : 0;
+
+            const unitCost = movementInfo && movementInfo.unitCost > 0
+                ? movementInfo.unitCost
+                : (row.unit_cost != null && Number(row.unit_cost) > 0
+                    ? Number(row.unit_cost)
+                    : (matchedP?.unit_cost || Number(row.unit_cost ?? 0)));
+
+            const manufacturingDate = String(row.manufacturing_date || movementInfo?.mfgDate || "");
+            const expirationDate = String(row.expiry_date || movementInfo?.expDate || "");
 
             return {
                 batchId,
@@ -210,7 +386,81 @@ export async function GET(request: Request) {
             };
         });
 
-        return NextResponse.json(mappedBatches);
+        // Synthesize any batches that exist in movements but not in Directus mm_inventory_lots
+        const existingKeys = new Set<string>();
+        mappedBatches.forEach((b) => {
+            existingKeys.add(`${b.lotId}_${b.productId}_${b.batchNumber.toLowerCase()}`);
+            if (b.batchId > 0) existingKeys.add(`id_${b.batchId}`);
+        });
+
+        let synthIdCounter = -1;
+        movementNetByLotProductBatch.forEach((mv, key) => {
+            if (!existingKeys.has(key)) {
+                // Find lot and product info
+                let lotName = "Unassigned Storage Lot";
+                const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
+                if (matchedLot) lotName = matchedLot.lot_name;
+                else if (mv.lotId > 0) lotName = `Lot #${mv.lotId}`;
+
+                let prodName = mv.productName || "";
+                let itemCode = mv.productCode || "";
+                const matchedP = productsList.find((p) => Number(p.product_id) === mv.productId);
+                if (matchedP) {
+                    prodName = prodName || matchedP.product_name || `Product #${mv.productId}`;
+                    itemCode = itemCode || matchedP.sku_code || `PROD-${mv.productId}`;
+                } else if (mv.productId > 0) {
+                    prodName = prodName || `Product #${mv.productId}`;
+                    itemCode = itemCode || `PROD-${mv.productId}`;
+                }
+
+                let uomName = "";
+                let uomShortcut = "";
+                const matchedUnit = unitsList.find((u) => Number(u.unit_id) === mv.unitId);
+                if (matchedUnit) {
+                    uomName = matchedUnit.unit_name || "";
+                    uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || "";
+                }
+
+                const rawQa = String(mv.condition || "GOOD").toUpperCase();
+                let qaStatus: BatchQaStatus = "GOOD";
+                if (["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"].includes(rawQa)) {
+                    qaStatus = rawQa as BatchQaStatus;
+                }
+
+                mappedBatches.push({
+                    batchId: synthIdCounter--,
+                    batchNumber: mv.batchNo,
+                    lotId: mv.lotId,
+                    lotName,
+                    branchId: mv.branchId || 1,
+                    productId: mv.productId,
+                    productName: prodName,
+                    itemCode,
+                    quantity: mv.onhand,
+                    unitCost: mv.unitCost || (matchedP?.unit_cost || 0),
+                    uomId: mv.unitId || null,
+                    uomName,
+                    uomShortcut,
+                    manufacturingDate: mv.mfgDate || "",
+                    expirationDate: mv.expDate || "",
+                    qaStatus,
+                    status: "ACTIVE",
+                    sourceType: "INVENTORY_MOVEMENT",
+                    sourceReference: mv.referenceNo,
+                    remarks: mv.remarks || "",
+                    createdAt: mv.postedAt || new Date().toISOString(),
+                    updatedAt: mv.postedAt || new Date().toISOString(),
+                    createdBy: "System",
+                    updatedBy: "System"
+                });
+            }
+        });
+
+        const finalBatches = filterLotId
+            ? mappedBatches.filter((b) => Number(b.lotId) === Number(filterLotId))
+            : mappedBatches;
+
+        return NextResponse.json(finalBatches);
     } catch (e) {
         console.error("API Error fetching batches:", e);
         return NextResponse.json(
@@ -288,6 +538,22 @@ export async function POST(request: Request) {
             }
         }
 
+        let resolvedUnitCost = unit_cost !== undefined && unit_cost !== null && !isNaN(Number(unit_cost)) ? Number(unit_cost) : 0.0;
+        if (resolvedUnitCost === 0 && product_id) {
+            try {
+                const pRes = await fetch(`${DIRECTUS_URL}/items/products/${product_id}?fields=cost_per_unit,price_per_unit,estimated_unit_cost`, { headers, cache: "no-store" }).catch(() => null);
+                if (pRes && pRes.ok) {
+                    const pJson = await pRes.json();
+                    const rawCost = pJson.data?.cost_per_unit ?? pJson.data?.price_per_unit ?? pJson.data?.estimated_unit_cost;
+                    if (rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))) {
+                        resolvedUnitCost = Number(rawCost);
+                    }
+                }
+            } catch (err) {
+                console.error("Error fetching product unit cost in batch POST:", err);
+            }
+        }
+
         const postBody: Record<string, unknown> = {
             lot_id: Number(lot_id),
             branch_id: Number(branch_id || 1),
@@ -295,7 +561,7 @@ export async function POST(request: Request) {
             batch_no: finalBatchNo,
             manufacturing_date: manufacturing_date || null,
             expiry_date: expiry_date || expiration_date || null,
-            unit_cost: unit_cost ? Number(unit_cost) : 0.0,
+            unit_cost: resolvedUnitCost,
             qa_status: qa_status ? String(qa_status).toUpperCase() : "GOOD",
             status: status ? String(status).toUpperCase() : "ACTIVE",
             source_type: source_type ? String(source_type).trim() : null,

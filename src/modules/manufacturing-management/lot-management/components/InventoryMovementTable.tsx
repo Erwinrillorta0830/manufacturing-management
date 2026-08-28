@@ -11,8 +11,9 @@ import {
     Warehouse,
     FilterX
 } from "lucide-react";
-import { InventoryMovement, Lot } from "../types";
+import { InventoryMovement, Lot, ProductItem } from "../types";
 import { SearchableLotSelect } from "./SearchableLotSelect";
+import { SearchableProductSelect } from "./SearchableProductSelect";
 import {
     Table,
     TableHeader,
@@ -34,6 +35,7 @@ import { Button } from "@/components/ui/button";
 interface InventoryMovementTableProps {
     movements: InventoryMovement[];
     lots: Lot[];
+    products?: ProductItem[];
     loading: boolean;
     searchQuery: string;
     onSearchChange: (val: string) => void;
@@ -43,6 +45,8 @@ interface InventoryMovementTableProps {
     onTransactionTypeFilterChange: (val: string) => void;
     lotFilter: number | "ALL";
     onLotFilterChange: (val: number | "ALL") => void;
+    productFilter?: number | "ALL";
+    onProductFilterChange?: (val: number | "ALL") => void;
     availableTransactionTypes: string[];
     onRefresh: () => void;
     onResetFilters?: () => void;
@@ -58,6 +62,7 @@ interface InventoryMovementTableProps {
 export default function InventoryMovementTable({
     movements,
     lots,
+    products = [],
     loading,
     searchQuery,
     onSearchChange,
@@ -67,6 +72,8 @@ export default function InventoryMovementTable({
     onTransactionTypeFilterChange,
     lotFilter,
     onLotFilterChange,
+    productFilter,
+    onProductFilterChange,
     availableTransactionTypes,
     onRefresh,
     onResetFilters,
@@ -135,7 +142,7 @@ export default function InventoryMovementTable({
             <div className="flex flex-col md:flex-row gap-2.5 justify-between items-start md:items-center">
                 <div className="flex flex-wrap items-center gap-2 w-full md:w-auto flex-1">
                     {/* Search Input */}
-                    <div className="relative flex-1 min-w-[200px] max-w-sm">
+                    <div className="relative flex-1 min-w-[240px] max-w-sm">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Search ref #, batch, SKU, lot..."
@@ -147,7 +154,7 @@ export default function InventoryMovementTable({
 
                     {/* Direction Filter */}
                     <Select value={directionFilter} onValueChange={(val) => onDirectionFilterChange(val as "ALL" | "IN" | "OUT")}>
-                        <SelectTrigger className="w-[125px] h-9 bg-card">
+                        <SelectTrigger className="w-[140px] h-9 bg-card">
                             <SelectValue placeholder="Direction" />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border border-border">
@@ -159,7 +166,7 @@ export default function InventoryMovementTable({
 
                     {/* Transaction Type Filter */}
                     <Select value={transactionTypeFilter} onValueChange={onTransactionTypeFilterChange}>
-                        <SelectTrigger className="w-[170px] h-9 bg-card">
+                        <SelectTrigger className="w-[180px] h-9 bg-card">
                             <SelectValue placeholder="Transaction Type" />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border border-border max-h-[260px]">
@@ -173,7 +180,7 @@ export default function InventoryMovementTable({
                     </Select>
 
                     {/* Storage Lot Filter */}
-                    <div className="w-[180px]">
+                    <div className="w-[200px]">
                         <SearchableLotSelect
                             lots={lots}
                             value={lotFilter}
@@ -183,6 +190,21 @@ export default function InventoryMovementTable({
                             className="h-9 bg-card"
                         />
                     </div>
+
+                    {/* Product Material Filter (Searchable)
+                    {products.length > 0 && onProductFilterChange && (
+                        <div className="w-[220px]">
+                            <SearchableProductSelect
+                                products={products}
+                                value={productFilter ?? "ALL"}
+                                onValueChange={onProductFilterChange}
+                                allowAll={true}
+                                allLabel="All Products"
+                                placeholder="All Products"
+                                className="h-9 bg-card"
+                            />
+                        </div>
+                    )} */}
 
                     {onResetFilters && (
                         <Button
@@ -198,15 +220,15 @@ export default function InventoryMovementTable({
                     )}
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+                {/* <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
                     <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9" title="Refresh Movements">
                         <RefreshCw className="h-4 w-4" />
                     </Button>
-                </div>
+                </div> */}
             </div>
 
             {/* Movements Table */}
-            <div className="rounded-md border border-border bg-card">
+            <div className="rounded-md border border-border bg-card overflow-x-auto">
                 {loading ? (
                     <div className="flex flex-col items-center justify-center p-20 gap-3 text-muted-foreground">
                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -221,22 +243,22 @@ export default function InventoryMovementTable({
                         </p>
                     </div>
                 ) : (
-                    <Table>
+                    <Table className="min-w-[1350px]">
                         <TableHeader>
                             <TableRow>
-                                <TableHead className="w-[45px]">No.</TableHead>
-                                <TableHead>Movement Ref & Key</TableHead>
-                                <TableHead>Direction</TableHead>
-                                <TableHead>Transaction Type</TableHead>
-                                <TableHead>Storage Rack (Lot)</TableHead>
-                                <TableHead>Product / SKU</TableHead>
-                                <TableHead>Batch No</TableHead>
-                                <TableHead className="text-right">Quantity</TableHead>
-                                <TableHead className="text-right">Unit Cost</TableHead>
-                                <TableHead className="text-right">Diff Cost</TableHead>
-                                <TableHead>Condition</TableHead>
-                                <TableHead>Date & Time</TableHead>
-                                <TableHead>Remarks</TableHead>
+                                <TableHead className="w-[50px]">No.</TableHead>
+                                <TableHead className="min-w-[160px]">Movement Ref & Key</TableHead>
+                                <TableHead className="w-[110px]">Direction</TableHead>
+                                <TableHead className="min-w-[160px]">Transaction Type</TableHead>
+                                <TableHead className="min-w-[150px]">Storage Rack (Lot)</TableHead>
+                                <TableHead className="min-w-[200px]">Product / SKU</TableHead>
+                                <TableHead className="min-w-[140px]">Batch No</TableHead>
+                                <TableHead className="text-right w-[110px]">Quantity</TableHead>
+                                <TableHead className="text-right w-[100px]">Unit Cost</TableHead>
+                                <TableHead className="text-right w-[110px]">Diff Cost</TableHead>
+                                <TableHead className="w-[110px]">Condition</TableHead>
+                                <TableHead className="w-[160px]">Date & Time</TableHead>
+                                <TableHead className="min-w-[160px]">Remarks</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>

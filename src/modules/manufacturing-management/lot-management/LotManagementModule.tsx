@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import  { useState } from "react";
 import { LayoutGrid, Warehouse, Layers, Plus, RefreshCw, ArrowLeftRight } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
@@ -13,16 +13,10 @@ import InventoryMovementTable from "./components/InventoryMovementTable";
 import LotFormDialog from "./components/LotFormDialog";
 import BatchFormDialog from "./components/BatchFormDialog";
 import BatchMovementsDialog from "./components/BatchMovementsDialog";
+import { SearchableProductSelect } from "./components/SearchableProductSelect";
 import { Batch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select";
 
 export default function LotManagementModule() {
     const {
@@ -66,7 +60,6 @@ export default function LotManagementModule() {
         batchFormData,
         batchFormErrors,
         openCreateBatchDialog,
-        openEditBatchDialog,
         closeBatchDialog,
         handleBatchFormChange,
         handleCreateBatch,
@@ -90,6 +83,8 @@ export default function LotManagementModule() {
         setTransactionTypeFilter,
         lotFilter: movementLotFilter,
         setLotFilter: setMovementLotFilter,
+        productFilter: movementProductFilter,
+        setProductFilter: setMovementProductFilter,
         availableTransactionTypes,
         movementStats,
         loadMovements,
@@ -167,28 +162,17 @@ export default function LotManagementModule() {
                     </TabsList>
 
                     <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-                        {/* Product FEFO Context Selector */}
-                        <div className="flex items-center gap-2 bg-background px-2.5 py-1 rounded-lg border border-border h-9 shadow-2xs">
-                            <Select
-                                value={selectedProductId === "ALL" ? "ALL" : String(selectedProductId)}
-                                onValueChange={(val) => setSelectedProductId(val === "ALL" ? "ALL" : Number(val))}
-                            >
-                                <SelectTrigger className="h-7 border-none bg-transparent shadow-none text-xs font-bold w-[220px] max-w-[280px] p-0 focus:ring-0 focus:ring-offset-0 truncate">
-                                    <SelectValue placeholder="All Products (FEFO)" />
-                                </SelectTrigger>
-                                <SelectContent className="bg-popover border border-border max-h-[260px] min-w-[280px]">
-                                    <SelectItem value="ALL">
-                                        <span className="font-bold text-xs truncate">All Products (Global FEFO)</span>
-                                    </SelectItem>
-                                    {products.map((p) => (
-                                        <SelectItem key={p.productId} value={String(p.productId)}>
-                                            <span className="font-semibold text-xs truncate">
-                                                {p.productName} {p.skuCode ? `(${p.skuCode})` : ""}
-                                            </span>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                        {/* Global Product FEFO Searchable Dropdown */}
+                        <div className="w-[300px] sm:w-[300px]">
+                            <SearchableProductSelect
+                                products={products}
+                                value={selectedProductId}
+                                onValueChange={setSelectedProductId}
+                                allowAll={true}
+                                allLabel="All Products (Global FEFO)"
+                                placeholder="All Products (Global FEFO)"
+                                className="h-8.5 bg-background shadow-2xs"
+                            />
                         </div>
 
                         <Button
@@ -208,13 +192,6 @@ export default function LotManagementModule() {
                             <Plus className="h-3.5 w-3.5" />
                             Add Rack / Lot
                         </Button>
-                        <Button
-                            onClick={() => openCreateBatchDialog()}
-                            className="h-8.5 gap-1.5 text-xs shadow-md shadow-primary/15 shrink-0"
-                        >
-                            <Plus className="h-3.5 w-3.5" />
-                            Register Batch
-                        </Button>
                     </div>
                 </div>
 
@@ -226,8 +203,6 @@ export default function LotManagementModule() {
                         loading={loadingLots || loadingBatches}
                         selectedProductId={selectedProductId}
                         onEditLot={openEditLotDialog}
-                        onAddBatchToLot={(lotId) => openCreateBatchDialog(lotId)}
-                        onEditBatch={openEditBatchDialog}
                         onViewBatchMovements={handleOpenBatchAudit}
                         onViewLotMovements={handleViewLotMovements}
                     />
@@ -259,7 +234,6 @@ export default function LotManagementModule() {
                         statusFilter={statusFilter}
                         onStatusFilterChange={setStatusFilter}
                         selectedProductId={selectedProductId}
-                        onEdit={openEditBatchDialog}
                         onDelete={handleDeleteBatch}
                         onRefresh={loadBatches}
                         onAddClick={() => openCreateBatchDialog()}
@@ -272,6 +246,7 @@ export default function LotManagementModule() {
                     <InventoryMovementTable
                         movements={filteredMovements}
                         lots={lots}
+                        products={products}
                         loading={loadingMovements}
                         searchQuery={movementSearchQuery}
                         onSearchChange={setMovementSearchQuery}
@@ -281,6 +256,8 @@ export default function LotManagementModule() {
                         onTransactionTypeFilterChange={setTransactionTypeFilter}
                         lotFilter={movementLotFilter}
                         onLotFilterChange={setMovementLotFilter}
+                        productFilter={movementProductFilter}
+                        onProductFilterChange={setMovementProductFilter}
                         availableTransactionTypes={availableTransactionTypes}
                         onRefresh={loadMovements}
                         onResetFilters={resetMovementFilters}

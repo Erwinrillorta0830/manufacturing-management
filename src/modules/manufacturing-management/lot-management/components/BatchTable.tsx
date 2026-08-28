@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, RefreshCw, Pencil, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
+import { Search, RefreshCw, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
 import { Batch, Lot, BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -32,7 +32,6 @@ interface BatchTableProps {
     statusFilter: string;
     onStatusFilterChange: (value: string) => void;
     selectedProductId?: number | "ALL";
-    onEdit: (batch: Batch) => void;
     onDelete: (batchId: number) => void;
     onRefresh: () => void;
     onAddClick: () => void;
@@ -50,7 +49,6 @@ export default function BatchTable({
     statusFilter,
     onStatusFilterChange,
     selectedProductId = "ALL",
-    onEdit,
     onDelete,
     onRefresh,
     onAddClick,
@@ -116,9 +114,9 @@ export default function BatchTable({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
-                    <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
+                    {/* <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
                         <RefreshCw className="h-4 w-4" />
-                    </Button>
+                    </Button> */}
                     <Button onClick={onAddClick} className="h-9 gap-1.5 shadow-md shadow-primary/15 shrink-0">
                         <Plus className="h-4 w-4" />
                         Register New Batch
@@ -248,15 +246,6 @@ export default function BatchTable({
                                                         <History className="h-4 w-4" />
                                                     </Button>
                                                 )}
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={() => onEdit(batch)}
-                                                    className="h-8 w-8 text-muted-foreground hover:text-primary"
-                                                    title="Edit Batch"
-                                                >
-                                                    <Pencil className="h-4 w-4" />
-                                                </Button>
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"

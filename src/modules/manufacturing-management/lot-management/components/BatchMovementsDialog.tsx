@@ -65,7 +65,10 @@ export default function BatchMovementsDialog({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0 overflow-hidden bg-card border-border">
+            <DialogContent
+                className="!max-w-[1400px] !w-[95vw] sm:!max-w-[1400px] md:!max-w-[1400px] lg:!max-w-[1400px] xl:!max-w-[1400px] max-h-[88vh] flex flex-col p-0 overflow-hidden bg-card border-border shadow-2xl"
+                style={{ maxWidth: "1400px", width: "95vw" }}
+            >
                 {/* Header */}
                 <DialogHeader className="p-5 border-b border-border/80 bg-muted/20">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -169,7 +172,7 @@ export default function BatchMovementsDialog({
                 </div>
 
                 {/* Movements Table */}
-                <div className="flex-1 overflow-y-auto p-4 max-h-[380px]">
+                <div className="flex-1 overflow-y-auto p-4 max-h-[440px]">
                     {loading ? (
                         <div className="flex flex-col items-center justify-center p-12 gap-2 text-muted-foreground">
                             <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -184,20 +187,20 @@ export default function BatchMovementsDialog({
                             </p>
                         </div>
                     ) : (
-                        <div className="rounded-lg border border-border bg-card overflow-hidden">
-                            <Table>
+                        <div className="rounded-lg border border-border bg-card overflow-x-auto">
+                            <Table className="min-w-[1000px]">
                                 <TableHeader>
                                     <TableRow className="bg-muted/40">
-                                        <TableHead className="w-[45px]">No.</TableHead>
-                                        <TableHead>Ref / Key</TableHead>
-                                        <TableHead>Type / Module</TableHead>
-                                        <TableHead>Direction</TableHead>
-                                        <TableHead className="text-right">Qty In</TableHead>
-                                        <TableHead className="text-right">Qty Out</TableHead>
-                                        <TableHead className="text-right">Unit Cost</TableHead>
-                                        <TableHead>Condition</TableHead>
-                                        <TableHead>Date & Time</TableHead>
-                                        <TableHead>Remarks</TableHead>
+                                        <TableHead className="w-[50px]">No.</TableHead>
+                                        <TableHead className="min-w-[160px]">Ref / Key</TableHead>
+                                        <TableHead className="min-w-[150px]">Type / Module</TableHead>
+                                        <TableHead className="w-[110px]">Direction</TableHead>
+                                        <TableHead className="text-right w-[110px]">Qty In</TableHead>
+                                        <TableHead className="text-right w-[110px]">Qty Out</TableHead>
+                                        <TableHead className="text-right w-[100px]">Unit Cost</TableHead>
+                                        <TableHead className="w-[110px]">Condition</TableHead>
+                                        <TableHead className="w-[160px]">Date & Time</TableHead>
+                                        <TableHead className="min-w-[180px]">Remarks</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>

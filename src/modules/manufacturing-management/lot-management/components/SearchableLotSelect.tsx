@@ -73,25 +73,22 @@ export function SearchableLotSelect({
                         className
                     )}
                 >
-                    <span className="truncate flex items-center gap-2">
+                    <span className="truncate flex items-center gap-1.5 min-w-0">
                         {value === "ALL" ? (
-                            <span className="font-bold text-foreground truncate">All Storage Lots</span>
+                            <span className="font-bold text-foreground text-xs truncate">All Storage Lots</span>
                         ) : selectedLot ? (
-                            <span className="flex items-center gap-2 truncate">
-                                <span className="font-bold text-foreground truncate">{selectedLot.lotName}</span>
-                                <span className="text-[11px] text-muted-foreground font-medium shrink-0">
-                                    (Cap: {selectedLot.maxBatchCapacity.toLocaleString()} {selectedLot.uomShortcut || selectedLot.uomName})
-                                </span>
+                            <span className="flex items-center gap-1.5 truncate">
+                                <span className="font-semibold text-foreground text-xs truncate">{selectedLot.lotName}</span>
                             </span>
                         ) : (
-                            placeholder
+                            <span className="text-xs">{placeholder}</span>
                         )}
                     </span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <ChevronsUpDown className="ml-1.5 h-3.5 w-3.5 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent
-                className="w-[240px] p-0 shadow-xl border border-border bg-popover z-[9999] rounded-xl overflow-hidden"
+                className="w-[280px] p-0 shadow-xl border border-border bg-popover z-[9999] rounded-xl overflow-hidden"
                 align="start"
                 sideOffset={6}
                 onWheel={(e) => e.stopPropagation()}

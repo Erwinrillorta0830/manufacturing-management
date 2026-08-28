@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp } from "lucide-react";
+import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,8 @@ interface WarehouseRackViewProps {
     loading: boolean;
     selectedProductId?: number | "ALL";
     onEditLot: (lot: Lot) => void;
-    onAddBatchToLot: (lotId: number) => void;
-    onEditBatch: (batch: Batch) => void;
+    onAddBatchToLot?: (lotId: number) => void;
+    onEditBatch?: (batch: Batch) => void;
     onViewBatchMovements?: (batch: Batch) => void;
     onViewLotMovements?: (lotId: number) => void;
 }
@@ -23,8 +23,6 @@ export default function WarehouseRackView({
     loading,
     selectedProductId = "ALL",
     onEditLot,
-    onAddBatchToLot,
-    onEditBatch,
     onViewBatchMovements,
     onViewLotMovements
 }: WarehouseRackViewProps) {
@@ -60,7 +58,7 @@ export default function WarehouseRackView({
                 <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
                 <span className="text-base font-bold text-foreground">No Warehouse Storage Racks Configured</span>
                 <p className="text-xs max-w-sm mt-1">
-                    Click &quot;Add New Lot&quot; above to create your first warehouse rack bay.
+                    Click &quot;Add Rack / Lot&quot; above to create your first warehouse rack bay.
                 </p>
             </div>
         );
@@ -142,14 +140,6 @@ export default function WarehouseRackView({
                                         >
                                             <Pencil className="h-3.5 w-3.5" />
                                         </Button>
-                                        <Button
-                                            size="sm"
-                                            onClick={() => onAddBatchToLot(lot.lotId)}
-                                            className="h-7 px-2.5 gap-1 text-xs shadow-xs"
-                                        >
-                                            <Plus className="h-3.5 w-3.5" />
-                                            Batch
-                                        </Button>
                                     </div>
                                 </div>
 
@@ -189,14 +179,6 @@ export default function WarehouseRackView({
                                     <div className="flex-1 flex flex-col items-center justify-center p-6 border-2 border-dashed border-border/60 rounded-lg text-center bg-card/40">
                                         <Package className="h-8 w-8 text-muted-foreground/30 mb-1.5" />
                                         <p className="text-xs text-muted-foreground font-medium">Shelf Bay Empty</p>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => onAddBatchToLot(lot.lotId)}
-                                            className="mt-2.5 h-7 text-xs border-dashed"
-                                        >
-                                            <Plus className="h-3.5 w-3.5 mr-1" /> Register Batch
-                                        </Button>
                                     </div>
                                 ) : (
                                     <div className="flex flex-col gap-2">
@@ -208,7 +190,8 @@ export default function WarehouseRackView({
                                                 return (
                                                     <div
                                                         key={batch.batchId}
-                                                        onClick={() => onEditBatch(batch)}
+                                                        onClick={() => onViewBatchMovements?.(batch)}
+                                                        title="Click to view batch movement history & audit trail"
                                                         className={`group/box relative flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${
                                                             fefoInfo?.isFefoNext
                                                                 ? "bg-amber-500/10 border-amber-500/40 shadow-xs hover:border-amber-500"

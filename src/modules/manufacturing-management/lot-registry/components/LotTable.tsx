@@ -41,9 +41,15 @@ export default function LotTable({
     const [currentPage, setCurrentPage] = React.useState(1);
     const [pageSize, setPageSize] = React.useState(10);
 
+    // Reset page to 1 when search query or page size changes
+    React.useEffect(() => {
+        queueMicrotask(() => {
+            setCurrentPage(1);
+        });
+    }, [filteredLots.length, pageSize]);
+
     const totalPages = Math.ceil(filteredLots.length / pageSize);
-    const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages || 1));
-    const startIndex = (safeCurrentPage - 1) * pageSize;
+    const startIndex = (currentPage - 1) * pageSize;
     const paginatedLots = React.useMemo(() => {
         return filteredLots.slice(startIndex, startIndex + pageSize);
     }, [filteredLots, startIndex, pageSize]);
@@ -64,9 +70,9 @@ export default function LotTable({
                     </div>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
-                    {/* <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
+                    <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
                         <RefreshCw className="h-4 w-4" />
-                    </Button> */}
+                    </Button>
                     {onAddClick && (
                         <Button
                             onClick={onAddClick}
@@ -99,6 +105,7 @@ export default function LotTable({
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="w-[80px]">No.</TableHead>
+                                <TableHead>Branch</TableHead>
                                 <TableHead>Storage Location</TableHead>
                                 <TableHead>UOM</TableHead>
                                 <TableHead>Max Capacity</TableHead>
@@ -112,6 +119,22 @@ export default function LotTable({
                                 return (
                                     <TableRow key={lot.lotId}>
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
+                                        <TableCell>
+                                            {lot.branchName ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-foreground border border-border">
+                                                    <span>{lot.branchName}</span>
+                                                    {lot.branchCode && (
+                                                        <span className="font-mono text-[10px] text-muted-foreground">
+                                                            ({lot.branchCode})
+                                                        </span>
+                                                    )}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">
+                                                    -
+                                                </span>
+                                            )}
+                                        </TableCell>
                                         <TableCell className="font-semibold text-foreground">
                                             {lot.lotName}
                                         </TableCell>

@@ -11,13 +11,13 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import LotManagementModule from "@/modules/manufacturing-management/lot-management/LotManagementModule";
+import LotRegistryModule from "@/modules/manufacturing-management/lot-registry/LotRegistryModule";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-    title: "Lot Management | VOS ERP",
-    description: "Manage warehouse storage locations, bins, and racks for inventory placement."
+    title: "Lot Registry | VOS ERP",
+    description: "Register and manage warehouse storage locations, bins, and racks for inventory placement."
 };
 
 const COOKIE_NAME = "vos_access_token";
@@ -74,7 +74,7 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     };
 }
 
-export default async function LotManagementPage() {
+export default async function LotRegistryPage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
     const headerUser = buildHeaderUserFromToken(token);
@@ -102,7 +102,7 @@ export default async function LotManagementPage() {
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Lot Management
+                                        Lot Registry
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -115,14 +115,14 @@ export default async function LotManagementPage() {
             </header>
 
             {/* Scrollable Content Container */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-auto p-4 sm:p-6 bg-background space-y-4">
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 bg-background space-y-4">
                 <div>
-                    <h2 className="text-xl font-extrabold tracking-tight text-foreground">Lot Management</h2>
+                    <h2 className="text-xl font-extrabold tracking-tight text-foreground">Lot Registry</h2>
                     <p className="text-muted-foreground text-[11px] mt-0.5">
-                        Manage warehouse storage locations, bins, and racks for inventory placement.
+                        Register and manage warehouse storage locations, bins, and racks for inventory placement.
                     </p>
                 </div>
-                <LotManagementModule />
+                <LotRegistryModule />
             </main>
         </div>
     );

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
     try {
         let res = await fetch(
-            `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,sku_code,product_code`,
+            `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${Date.now()}`,
             { headers, cache: "no-store" }
         ).catch(() => null);
 
@@ -27,12 +27,24 @@ export async function GET() {
 
         const data = rawList.map((p: Record<string, unknown>) => {
             const productId = Number(p.product_id ?? p.id ?? 0);
-            const productName = String(p.product_name || p.name || `Product #${productId}`);
-            const skuCode = String(p.sku_code || p.product_code || p.code || "");
+            const desc = String(p.description || "").trim();
+            const pName = String(p.product_name || p.name || p.title || "").trim();
+            const productName = desc || pName || `Product #${productId}`;
+            const skuCode = String(p.product_code || p.barcode || "").trim();
+            
+            const rawCost = p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost;
+            const unitCost = rawCost !== null && rawCost !== undefined && !isNaN(Number(rawCost))
+                ? Number(rawCost)
+                : 0;
+
             return {
                 productId,
                 productName,
-                skuCode
+                skuCode,
+                unitCost,
+                cost_per_unit: unitCost,
+                price_per_unit: p.price_per_unit != null ? Number(p.price_per_unit) : unitCost,
+                estimated_unit_cost: p.estimated_unit_cost != null ? Number(p.estimated_unit_cost) : undefined
             };
         }).filter((p: { productId: number }) => p.productId > 0);
 

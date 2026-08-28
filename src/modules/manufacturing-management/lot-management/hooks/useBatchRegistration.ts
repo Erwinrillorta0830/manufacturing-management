@@ -71,7 +71,24 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
                 fetchBatches(),
                 fetchProducts().catch(() => [])
             ]);
-            setBatches(batchList);
+            
+            const reconciledBatches = batchList.map((b) => {
+                const matchedP = productList.find((p) => Number(p.productId) === Number(b.productId));
+                const prodName = (matchedP?.productName && !matchedP.productName.startsWith("Product #"))
+                    ? matchedP.productName
+                    : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || `Product #${b.productId}`));
+                const itemCode = (matchedP?.skuCode && !matchedP.skuCode.startsWith("PROD-"))
+                    ? matchedP.skuCode
+                    : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
+
+                return {
+                    ...b,
+                    productName: prodName,
+                    itemCode: itemCode
+                };
+            });
+
+            setBatches(reconciledBatches);
             setProducts(productList);
         } catch (e) {
             console.error("Failed to load batches:", e);
@@ -89,7 +106,23 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
         ])
             .then(([batchList, productList]) => {
                 if (isMounted) {
-                    setBatches(batchList);
+                    const reconciledBatches = batchList.map((b) => {
+                        const matchedP = productList.find((p) => Number(p.productId) === Number(b.productId));
+                        const prodName = (matchedP?.productName && !matchedP.productName.startsWith("Product #"))
+                            ? matchedP.productName
+                            : (b.productName && !b.productName.startsWith("Product #") ? b.productName : (matchedP?.productName || b.productName || `Product #${b.productId}`));
+                        const itemCode = (matchedP?.skuCode && !matchedP.skuCode.startsWith("PROD-"))
+                            ? matchedP.skuCode
+                            : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
+
+                        return {
+                            ...b,
+                            productName: prodName,
+                            itemCode: itemCode
+                        };
+                    });
+
+                    setBatches(reconciledBatches);
                     setProducts(productList);
                     setLoadingBatches(false);
                 }

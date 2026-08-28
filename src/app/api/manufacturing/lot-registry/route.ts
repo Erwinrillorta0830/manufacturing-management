@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { Lot } from "@/modules/manufacturing-management/lot-management/types";
+import { Lot } from "@/modules/manufacturing-management/lot-registry/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-    const { searchParams } = new URL(request.url);
-    const filterBranchId = searchParams.get("branch_id") ? Number(searchParams.get("branch_id")) : null;
-
-    // Check and auto-register "Lot Management" in system_module table if missing
+export async function GET() {
+    // Check and auto-register "Lot Registry" in system_module table if missing
     try {
-        const checkUrl = `${DIRECTUS_URL}/items/system_module?filter[module_name][_eq]=Lot%20Management&limit=1`;
+        const checkUrl = `${DIRECTUS_URL}/items/system_module?filter[module_name][_eq]=Lot%20Registry&limit=1`;
         const checkRes = await fetch(checkUrl, { headers, cache: "no-store" });
         if (checkRes.ok) {
             const checkData = await checkRes.json();
@@ -30,8 +27,8 @@ export async function GET(request: Request) {
                     method: "POST",
                     headers,
                     body: JSON.stringify({
-                        module_name: "Lot Management",
-                        url: "/manufacturing-management/lot-management",
+                        module_name: "Lot Registry",
+                        url: "/mm/inventory-warehousing/lot-registry",
                         order: nextOrder,
                         is_active: true
                     })
@@ -39,14 +36,18 @@ export async function GET(request: Request) {
             }
         }
     } catch (err) {
-        console.error("[Auto-Registration] Failed to check/register Lot Management module:", err);
+        console.error("[Auto-Registration] Failed to check/register Lot Registry module:", err);
     }
 
     // Main fetch
     try {
         const fields = "*";
         const timestamp = Date.now();
-        const [usersRes, unitsRes] = await Promise.all([
+        const [res, usersRes, unitsRes, branchesRes] = await Promise.all([
+            fetch(
+                `${DIRECTUS_URL}/items/mm_lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}&_t=${timestamp}`,
+                { headers, cache: "no-store" }
+            ),
             fetch(
                 `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`,
                 { headers, cache: "no-store" }
@@ -54,14 +55,12 @@ export async function GET(request: Request) {
             fetch(
                 `${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut,sku_code&_t=${timestamp}`,
                 { headers, cache: "no-store" }
+            ).catch(() => null),
+            fetch(
+                `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code&_t=${timestamp}`,
+                { headers, cache: "no-store" }
             ).catch(() => null)
         ]);
-
-        const branchFilter = filterBranchId ? `&filter[branch_id][_eq]=${filterBranchId}` : "";
-        const res = await fetch(
-            `${DIRECTUS_URL}/items/mm_lots?limit=-1&sort=-updated_at,-created_at,-lot_id&fields=${fields}${branchFilter}&_t=${timestamp}`,
-            { headers, cache: "no-store" }
-        );
 
         if (!res.ok) {
             throw new Error(`Directus failed to fetch mm_lots: ${res.status}`);
@@ -90,6 +89,16 @@ export async function GET(request: Request) {
             }
         }
 
+        let branchesList: { id: number; branch_name?: string; branch_code?: string }[] = [];
+        if (branchesRes && branchesRes.ok) {
+            try {
+                const bJson = await branchesRes.json();
+                branchesList = bJson.data || [];
+            } catch (err) {
+                console.error("Error parsing branches in GET lots:", err);
+            }
+        }
+
         const mappedLots: Lot[] = rawLots.map((row) => {
             let uomId: number | null = null;
             let uomName = "";
@@ -111,6 +120,29 @@ export async function GET(request: Request) {
                 if (matchedUnit) {
                     uomName = matchedUnit.unit_name || uomName;
                     uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || uomShortcut;
+                }
+            }
+
+            let branchId: number | null = null;
+            let branchName = "";
+            let branchCode = "";
+            if (row.branch_id !== undefined && row.branch_id !== null) {
+                if (typeof row.branch_id === "object") {
+                    const bObj = row.branch_id as { id?: number; branch_name?: string; branch_code?: string };
+                    branchId = bObj.id ?? null;
+                    branchName = bObj.branch_name || "";
+                    branchCode = bObj.branch_code || "";
+                } else {
+                    const bNum = Number(row.branch_id);
+                    if (!isNaN(bNum)) branchId = bNum;
+                }
+            }
+
+            if (branchId !== null) {
+                const matchedBranch = branchesList.find((b) => Number(b.id) === Number(branchId));
+                if (matchedBranch) {
+                    branchName = matchedBranch.branch_name || branchName;
+                    branchCode = matchedBranch.branch_code || branchCode;
                 }
             }
 
@@ -142,21 +174,16 @@ export async function GET(request: Request) {
                 }
             }
 
-            const rawBranch = row.branch_id;
-            const branchIdNum = typeof rawBranch === "object" && rawBranch !== null
-                ? Number((rawBranch as { id?: number; branch_id?: number }).id || (rawBranch as { id?: number; branch_id?: number }).branch_id || 0)
-                : Number(rawBranch || 0);
-
             return {
                 lotId: Number(row.lot_id),
                 lotName: String(row.lot_name || ""),
-                branchId: branchIdNum,
+                branchId,
+                branchName,
+                branchCode,
                 uomId,
                 uomName,
                 uomShortcut,
                 maxBatchCapacity: Number(row.max_batch_capacity || 0),
-                description: row.description ? String(row.description) : undefined,
-                status: (row.status as "ACTIVE" | "CLOSED" | "INACTIVE") || "ACTIVE",
                 createdAt: String(row.created_at || ""),
                 updatedAt: String(row.updated_at || ""),
                 createdBy,
@@ -164,11 +191,7 @@ export async function GET(request: Request) {
             };
         });
 
-        const filteredLots = filterBranchId
-            ? mappedLots.filter(l => Number(l.branchId) === Number(filterBranchId))
-            : mappedLots;
-
-        return NextResponse.json(filteredLots);
+        return NextResponse.json(mappedLots);
     } catch (e) {
         console.error("API Error fetching lots:", e);
         return NextResponse.json(
@@ -183,6 +206,7 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { lot_name, max_batch_capacity } = body;
         const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
+        const rawBranchId = body.branch_id;
 
         if (!lot_name || typeof lot_name !== "string" || !lot_name.trim()) {
             return NextResponse.json(
@@ -198,7 +222,7 @@ export async function POST(request: Request) {
             );
         }
 
-        // Resolve logged in user ID from token or fallback to active user in Directus
+        // Get logged in user ID from secure access token cookie
         let userId: number | null = null;
         try {
             const cookieStore = await cookies();
@@ -218,52 +242,45 @@ export async function POST(request: Request) {
             console.error("Error parsing user token in POST lot route:", err);
         }
 
-        // Fetch a valid user_id if token parsing didn't find one
-        if (!userId) {
-            try {
-                const uRes = await fetch(`${DIRECTUS_URL}/items/user?limit=1&fields=user_id`, { headers, cache: "no-store" });
-                if (uRes.ok) {
-                    const uData = await uRes.json();
-                    if (uData.data && uData.data.length > 0) {
-                        userId = Number(uData.data[0].user_id);
-                    }
-                }
-            } catch (err) {
-                console.error("Error resolving fallback user_id:", err);
-            }
-        }
-
         // Check for duplicate lot name in mm_lots
         const duplicateCheckRes = await fetch(
-            `${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_name`,
+            `${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_name,branch_id`,
             { headers, cache: "no-store" }
-        ).catch(() => null);
-
-        if (duplicateCheckRes && duplicateCheckRes.ok) {
+        );
+        if (duplicateCheckRes.ok) {
             const duplicateJson = await duplicateCheckRes.json();
             const existingLots = duplicateJson.data || [];
             const isDuplicate = existingLots.some(
-                (l: { lot_name?: string }) =>
-                    l.lot_name?.trim().toLowerCase() === lot_name.trim().toLowerCase()
+                (l: { lot_name?: string; branch_id?: number | { id: number } }) => {
+                    const existingBranchId = typeof l.branch_id === "object" && l.branch_id !== null
+                        ? l.branch_id.id
+                        : l.branch_id;
+                    const targetBranchId = rawBranchId ? Number(rawBranchId) : null;
+                    const isSameBranch = !targetBranchId || !existingBranchId || Number(existingBranchId) === Number(targetBranchId);
+                    return isSameBranch && l.lot_name?.trim().toLowerCase() === lot_name.trim().toLowerCase();
+                }
             );
             if (isDuplicate) {
                 return NextResponse.json(
-                    { error: `A lot with the name "${lot_name.trim()}" already exists` },
+                    { error: `A lot with the name "${lot_name.trim()}" already exists in this branch` },
                     { status: 409 }
                 );
             }
         }
 
+        const utcIsoString = new Date().toISOString();
+
         const postBody: Record<string, unknown> = {
             lot_name: lot_name.trim(),
-            branch_id: body.branch_id ? Number(body.branch_id) : 1,
+            branch_id: rawBranchId ? Number(rawBranchId) : 1,
             unit_id: rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "" ? Number(rawUnitId) : 1,
             max_batch_capacity: Number(max_batch_capacity),
             status: body.status || "ACTIVE",
-            created_by: userId ? Number(userId) : 1
+            created_by: userId ? Number(userId) : 24,
+            updated_by: userId ? Number(userId) : 24,
+            created_at: utcIsoString,
+            updated_at: utcIsoString
         };
-
-        if (body.description) postBody.description = String(body.description).trim();
 
         const res = await fetch(`${DIRECTUS_URL}/items/mm_lots`, {
             method: "POST",
@@ -284,7 +301,9 @@ export async function POST(request: Request) {
         }
 
         const resJson = await res.json();
-        return NextResponse.json({ success: true, data: resJson.data });
+        const saved = resJson.data;
+
+        return NextResponse.json({ success: true, data: saved });
     } catch (e) {
         console.error("API Error creating lot:", e);
         return NextResponse.json(
