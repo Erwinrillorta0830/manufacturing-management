@@ -83,6 +83,23 @@ export interface JobOrder {
     sales_orders?: any[];
 }
 
+export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
+    { value: "Active", label: "Active" },
+    { value: "All", label: "All" },
+    { value: "Proceed", label: "Released" },
+    { value: "Ongoing", label: "In Progress" },
+    { value: "On Hold", label: "On Hold" },
+    { value: "Finished", label: "Finished" }
+] as const;
+
+export function matchesProductionWorkflowStatus(status: string, filter: string): boolean {
+    if (filter === "All") return true;
+    if (filter === "Active") return status === "Proceed" || status === "Ongoing";
+    if (filter === "Proceed" || filter === "Released") return status === "Proceed";
+    if (filter === "Ongoing" || filter === "In Progress") return status === "Ongoing";
+    return status === filter;
+}
+
 export interface User {
     user_id: number;
     id: number;
