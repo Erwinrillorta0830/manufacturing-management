@@ -1,8 +1,12 @@
-import fs from "fs";
-import path from "path";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
-export const DISPOSITIONS_FILE = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
+export const DISPOSITIONS_COLLECTION = "manufacturing_qa_dispositions";
+
+export class DispositionPersistenceError extends Error {
+    constructor(message: string, readonly statusCode = 502) {
+        super(message);
+    }
+}
 
 function positiveId(value: unknown): number | null {
     const id = typeof value === "object" && value !== null
@@ -43,7 +47,7 @@ export interface DispositionMetadata {
     station_name: string;
 }
 
-type StoredDisposition = Record<string, unknown>;
+export type StoredDisposition = Record<string, unknown>;
 
 interface JobOrderReference {
     job_order_id?: unknown;
@@ -131,31 +135,146 @@ export async function resolveDispositionMetadata(
     };
 }
 
-function isStoredDisposition(value: unknown): value is StoredDisposition {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+function directusErrorMessage(payload: unknown, fallback: string): string {
+    if (payload && typeof payload === "object") {
+        const record = payload as Record<string, unknown>;
+        const errors = Array.isArray(record.errors) ? record.errors : [];
+        const firstError = errors[0];
+        if (firstError && typeof firstError === "object" && typeof (firstError as Record<string, unknown>).message === "string") {
+            return String((firstError as Record<string, unknown>).message);
+        }
+        if (typeof record.message === "string" && record.message.trim()) return record.message;
+    }
+    return fallback;
 }
 
-export function readDispositions(): StoredDisposition[] {
+async function directusRequest(pathname: string, init: RequestInit = {}, operation: string): Promise<unknown> {
+    let response: Response;
     try {
-        const directory = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true });
-        if (!fs.existsSync(DISPOSITIONS_FILE)) {
-            fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify([]));
-            return [];
-        }
-        const fileContent = fs.readFileSync(DISPOSITIONS_FILE, "utf-8");
-        const parsed = JSON.parse(fileContent || "[]");
-        return Array.isArray(parsed) ? parsed.filter(isStoredDisposition) : [];
+        response = await fetch(`${DIRECTUS_URL}${pathname}`, {
+            ...init,
+            headers: { ...headers, ...(init.headers || {}) },
+            cache: "no-store"
+        });
     } catch (error) {
-        console.error("Error reading QA dispositions JSON:", error);
-        return [];
+        throw new DispositionPersistenceError(
+            `${operation} could not reach Directus: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+
+    const text = await response.text();
+    let payload: unknown = null;
+    try {
+        payload = text ? JSON.parse(text) : null;
+    } catch {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        throw new DispositionPersistenceError(
+            `${operation} failed: ${directusErrorMessage(payload, `Directus returned ${response.status}`)}`,
+            response.status
+        );
+    }
+
+    return payload;
+}
+
+function asRecord(value: unknown): StoredDisposition | null {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? value as StoredDisposition
+        : null;
+}
+
+function normalizeStoredDisposition(record: StoredDisposition): StoredDisposition {
+    const failedParameters = record.failed_parameters;
+    let normalizedFailedParameters = failedParameters;
+    if (typeof failedParameters === "string") {
+        try {
+            normalizedFailedParameters = JSON.parse(failedParameters);
+        } catch {
+            normalizedFailedParameters = [];
+        }
+    }
+    return { ...record, failed_parameters: normalizedFailedParameters };
+}
+
+export async function readDispositions(): Promise<StoredDisposition[]> {
+    const payload = await directusRequest(
+        `/items/${DISPOSITIONS_COLLECTION}?limit=-1&sort=-recorded_at`,
+        {},
+        "Load QA dispositions"
+    );
+    const records = payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).data)
+        ? (payload as Record<string, unknown>).data as unknown[]
+        : [];
+    return records.map(asRecord).filter((record): record is StoredDisposition => record !== null)
+        .map(normalizeStoredDisposition);
+}
+
+export async function getDisposition(dispositionId: string): Promise<StoredDisposition | null> {
+    try {
+        const payload = await directusRequest(
+            `/items/${DISPOSITIONS_COLLECTION}/${encodeURIComponent(dispositionId)}`,
+            {},
+            "Load QA disposition"
+        );
+        const record = payload && typeof payload === "object"
+            ? asRecord((payload as Record<string, unknown>).data)
+            : null;
+        return record ? normalizeStoredDisposition(record) : null;
+    } catch (error) {
+        if (error instanceof DispositionPersistenceError && error.statusCode === 404) {
+            return null;
+        }
+        throw error;
     }
 }
 
-export function writeDispositions(data: StoredDisposition[]): void {
-    const directory = path.dirname(DISPOSITIONS_FILE);
-    if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify(data, null, 2));
+export async function findPendingDisposition(jobOrderId: number, taskId: number | null): Promise<StoredDisposition | null> {
+    if (!taskId) return null;
+    const params = new URLSearchParams({
+        "filter[job_order_id][_eq]": String(jobOrderId),
+        "filter[task_id][_eq]": String(taskId),
+        "filter[disposition_status][_eq]": "Pending",
+        limit: "1"
+    });
+    const payload = await directusRequest(
+        `/items/${DISPOSITIONS_COLLECTION}?${params.toString()}`,
+        {},
+        "Find pending QA disposition"
+    );
+    const records = payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).data)
+        ? (payload as Record<string, unknown>).data as unknown[]
+        : [];
+    const record = records.map(asRecord).find((candidate): candidate is StoredDisposition => candidate !== null);
+    return record ? normalizeStoredDisposition(record) : null;
+}
+
+export async function createDisposition(data: StoredDisposition): Promise<StoredDisposition> {
+    const payload = await directusRequest(
+        `/items/${DISPOSITIONS_COLLECTION}`,
+        { method: "POST", body: JSON.stringify(data) },
+        "Create QA disposition"
+    );
+    const record = payload && typeof payload === "object"
+        ? asRecord((payload as Record<string, unknown>).data)
+        : null;
+    if (!record) throw new DispositionPersistenceError("Create QA disposition returned no persisted record from Directus.");
+    return normalizeStoredDisposition(record);
+}
+
+export async function updateDisposition(dispositionId: string, data: StoredDisposition): Promise<StoredDisposition> {
+    const payload = await directusRequest(
+        `/items/${DISPOSITIONS_COLLECTION}/${encodeURIComponent(dispositionId)}`,
+        { method: "PATCH", body: JSON.stringify(data) },
+        "Update QA disposition"
+    );
+    const record = payload && typeof payload === "object"
+        ? asRecord((payload as Record<string, unknown>).data)
+        : null;
+    if (!record) throw new DispositionPersistenceError("Update QA disposition returned no persisted record from Directus.");
+    return normalizeStoredDisposition(record);
 }
 
 export async function enrichDispositions(records: StoredDisposition[]): Promise<StoredDisposition[]> {
