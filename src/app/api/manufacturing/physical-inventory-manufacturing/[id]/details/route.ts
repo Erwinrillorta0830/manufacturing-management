@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, context: RouteParams) {
         }
 
         // 1. Fetch PI Header
-        const headerRes = await fetch(`${DIRECTUS_URL}/items/mm_physical_inventory/${sheetId}`, { headers, cache: "no-store" });
+        const headerRes = await fetch(`${DIRECTUS_URL}/items/mm_physical_inventory/${sheetId}?fields=*,price_type_id.*,product_type_id.*`, { headers, cache: "no-store" });
         if (!headerRes.ok) {
             return NextResponse.json({ success: false, error: "Physical Inventory sheet not found" }, { status: 404 });
         }

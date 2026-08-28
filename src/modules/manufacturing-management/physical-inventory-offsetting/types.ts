@@ -1,5 +1,9 @@
-export type PiStatus = "DRAFT" | "PENDING_REVIEW" | "COMMITTED" | "CANCELLED";
-export type StockType = "OPENING" | "REGULAR";
+export type OffsettingStatus =
+    | "PENDING_OFFSETTING"
+    | "PARTIALLY_OFFSET"
+    | "FULLY_RECONCILED"
+    | "COMMITTED"
+    | "CANCELLED";
 
 export interface Branch {
     id: number;
@@ -16,30 +20,21 @@ export interface Unit {
     unit_shortcut: string;
 }
 
-export interface PriceType {
-    price_type_id: number;
-    price_type_name: string;
-    sort?: number | null;
-}
-
 export interface ProductType {
     id: number;
     name?: string;
     type_name?: string;
-    default_purchase_price_type_id?: number | null;
 }
 
 export interface Product {
     product_id: number;
     product_code: string;
     product_name: string;
-    product_type?: number | string | ProductType | { id?: number; name?: string; type_name?: string } | null;
-    product_type_id?: number | null;
-    product_shelf_life?: number;
     cost_per_unit?: number;
+    product_type?: string | number | { id?: number; name?: string; type_name?: string } | null;
+    product_category?: string | { category_name?: string } | null;
     unit_of_measurement?: number | Unit | { unit_id?: number; unit_shortcut?: string; unit_name?: string };
     unit_of_measurement_count?: number;
-    isActive?: boolean | number;
 }
 
 export interface MmLot {
@@ -47,10 +42,6 @@ export interface MmLot {
     lot_name: string;
     branch_id: number | Branch;
     unit_id: number | Unit;
-    max_batch_capacity: number;
-    description?: string | null;
-    created_by?: number | string | null;
-    isActive?: boolean | number;
 }
 
 export interface MmInventoryLot {
@@ -64,13 +55,9 @@ export interface MmInventoryLot {
     expiration_date?: string | null;
     unit_cost: number;
     qa_status?: string | null;
-    status?: string | null;
-    source_type?: string | null;
-    source_reference?: string | null;
-    created_by?: number | string | null;
 }
 
-export interface MmPhysicalInventoryDetail {
+export interface OffsettingLineDetail {
     physical_inventory_detail_id?: number;
     id?: number;
     physical_inventory_id: number;
@@ -92,8 +79,9 @@ export interface MmPhysicalInventoryDetail {
     net_adjusted_variance?: number;
 }
 
-export interface MmOffsetPairing {
+export interface OffsettingPairing {
     id: string;
+    group_link_id?: string;
     physical_inventory_id?: number;
     shortage_detail_id: number;
     shortage_product_id: number;
@@ -110,49 +98,58 @@ export interface MmOffsetPairing {
     surplus_lot_name?: string;
     surplus_batch_no?: string;
     offset_qty: number;
+    offset_pieces?: number;
+    shortage_uom_count?: number;
+    surplus_uom_count?: number;
+    shortage_containers_deducted?: number;
+    surplus_containers_deducted?: number;
     shortage_unit_cost: number;
     surplus_unit_cost: number;
     unit_cost_variance: number;
     net_financial_impact: number;
-    reason_code: "Lot Number Mix-up / Mislabeling" | "Production Batch Pick Swap" | "Wrong SKU Tagging" | "Barcoding Error" | "UOM Miscount" | "Packaging Variation" | string;
+    reason_code:
+        | "Lot Number Mix-up / Mislabeling"
+        | "Production Batch Pick Swap"
+        | "Wrong SKU Tagging"
+        | "Barcoding Error"
+        | "UOM Miscount"
+        | "Packaging Variation"
+        | string;
     notes?: string;
     created_at?: string;
 }
 
-export interface MmPhysicalInventorySheet {
+export interface OffsettingSheetQueueItem {
     physical_inventory_id: number;
     pi_no: string;
     starting_date: string;
     cutoff_date: string;
-    stock_type: StockType;
-    product_type_id?: number | ProductType | null;
-    price_type_id?: number | PriceType | null;
+    stock_type: string;
     branch_id: number | Branch;
-    remarks?: string | null;
-    status: PiStatus;
-    encoder_id?: number | string | { user_id?: number; user_fname?: string; user_lname?: string } | null;
+    branch_name?: string;
+    status: string;
+    offsetting_status: OffsettingStatus;
+    encoder_id?: string | number | null;
     total_system_quantity: number;
     total_physical_quantity: number;
     total_variance: number;
     total_difference_cost: number;
+    total_shortage_qty: number;
+    total_shortage_cost: number;
+    total_surplus_qty: number;
+    total_surplus_cost: number;
+    total_offset_qty: number;
+    net_financial_offset_impact: number;
     isCommitted: number | boolean;
     committed_at?: string | null;
-    committed_by?: number | string | { user_id?: number; user_fname?: string; user_lname?: string } | null;
-    isCancelled: number | boolean;
-    cancelled_at?: string | null;
-    cancelled_by?: number | string | { user_id?: number; user_fname?: string; user_lname?: string } | null;
-    cancellation_reason?: string | null;
-    created_at?: string | null;
-    details?: MmPhysicalInventoryDetail[];
-    offset_pairings?: MmOffsetPairing[];
-    total_offset_qty?: number;
-    net_financial_offset_impact?: number;
+    committed_by?: string | number | null;
+    details?: OffsettingLineDetail[];
+    offset_pairings?: OffsettingPairing[];
 }
 
-export interface PhysicalInventoryFilters {
-    pi_no?: string;
-    branch_id?: string;
-    stock_type?: string;
-    status?: string;
+export interface OffsettingFilters {
     search?: string;
+    branch_id?: string;
+    offsetting_status?: string;
+    stock_type?: string;
 }

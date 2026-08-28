@@ -12,7 +12,7 @@ export async function GET() {
     try {
         const [branchesRes, productsRes, unitsRes, productTypesRes, priceTypesRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1&sort=branch_name`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&sort=product_name&fields=product_id,product_code,product_name,product_type,product_type.*,product_shelf_life,cost_per_unit,unit_of_measurement.*,isActive`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&sort=product_name&fields=product_id,product_code,product_name,product_type,product_type.*,product_shelf_life,cost_per_unit,unit_of_measurement.*,unit_of_measurement_count,isActive`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/product_type?limit=-1&sort=id`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/price_types?limit=-1&sort=price_type_name`, { headers, cache: "no-store" }).catch(() => null),

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import {
     MmPhysicalInventorySheet,
     MmPhysicalInventoryDetail,
+    MmOffsetPairing,
     Branch,
     Product,
     ProductType,
@@ -33,10 +34,12 @@ import {
     fetchMasterUnits,
     fetchMasterPriceTypes,
     fetchLotsByBranch,
+    savePhysicalInventoryOffsetPairings,
 } from "./services/physical-inventory-manufacturing-api";
 import PhysicalInventoryList from "./components/PhysicalInventoryList";
 import PhysicalInventoryForm from "./components/PhysicalInventoryForm";
 import PhysicalInventoryDetailModal from "./components/PhysicalInventoryDetailModal";
+import ManufacturingOffsettingModal from "./components/ManufacturingOffsettingModal";
 import CreateLotModal from "./components/CreateLotModal";
 import CreateBatchModal from "./components/CreateBatchModal";
 import CommitConfirmationModal from "./components/CommitConfirmationModal";
@@ -75,6 +78,28 @@ export default function PhysicalInventoryManufacturingModule() {
 
     const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
     const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+    const [isOffsettingModalOpen, setIsOffsettingModalOpen] = useState(false);
+    const [offsetPairings, setOffsetPairings] = useState<MmOffsetPairing[]>([]);
+
+    useEffect(() => {
+        if (activeSheet && activeSheet.offset_pairings) {
+            setOffsetPairings(activeSheet.offset_pairings);
+        } else {
+            setOffsetPairings([]);
+        }
+    }, [activeSheet]);
+
+    const handleApplyOffsetting = async (newPairings: MmOffsetPairing[]) => {
+        setOffsetPairings(newPairings);
+        if (activeSheet && activeSheet.physical_inventory_id) {
+            try {
+                await savePhysicalInventoryOffsetPairings(activeSheet.physical_inventory_id, newPairings);
+                showToast(`Applied ${newPairings.length} offset pairing(s) to physical inventory count sheet.`);
+            } catch (err) {
+                console.warn("Failed to persist offset pairings to server:", err);
+            }
+        }
+    };
 
     // Loading & Toast notification states
     const [loading, setLoading] = useState(false);
@@ -459,10 +484,6 @@ export default function PhysicalInventoryManufacturingModule() {
                     onEdit={handleViewSheet}
                     onSubmit={handleSubmitSheet}
                     onReturnToDraft={handleReturnToDraft}
-                    onCommit={(s) => {
-                        setActiveSheet(s);
-                        setIsCommitModalOpen(true);
-                    }}
                     onCancel={(s) => {
                         setActiveSheet(s);
                         setIsCancelModalOpen(true);
@@ -475,6 +496,7 @@ export default function PhysicalInventoryManufacturingModule() {
                     productTypes={productTypes}
                     priceTypes={priceTypes}
                     existingSheets={sheets}
+                    offsetPairings={offsetPairings}
                     loading={loading}
                     onBack={() => {
                         setView("LIST");
@@ -489,9 +511,9 @@ export default function PhysicalInventoryManufacturingModule() {
                     }}
                     onRemoveDetail={handleRemoveDetail}
                     onSaveInlineCount={handleSaveInlineCount}
+                    onOpenOffsettingModal={() => setIsOffsettingModalOpen(true)}
                     onSubmit={() => handleSubmitSheet()}
                     onReturnToDraft={() => handleReturnToDraft()}
-                    onCommit={() => setIsCommitModalOpen(true)}
                 />
             )}
 
@@ -516,6 +538,16 @@ export default function PhysicalInventoryManufacturingModule() {
                     setBatchTargetProductId(pId);
                     setIsBatchModalOpen(true);
                 }}
+            />
+
+            {/* Manufacturing Offsetting Modal */}
+            <ManufacturingOffsettingModal
+                isOpen={isOffsettingModalOpen}
+                onClose={() => setIsOffsettingModalOpen(false)}
+                lineItems={activeSheet?.details || []}
+                initialPairings={offsetPairings}
+                onApplyOffsetting={handleApplyOffsetting}
+                isReadOnly={activeSheet?.status === "COMMITTED" || activeSheet?.status === "CANCELLED"}
             />
 
             {/* Create Lot Modal */}
