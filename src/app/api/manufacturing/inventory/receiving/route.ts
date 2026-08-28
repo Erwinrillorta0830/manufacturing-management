@@ -497,6 +497,7 @@ export async function POST(request: Request) {
                 lot_id: finishedLotId,
                 branch_id: bId,
                 transaction_type_id: 2, // Job Order Finished Goods / Yield Receive
+                source_document_id: jo.job_order_id,
                 source_document_no: joId,
                 batch_no: finalLotNo,
                 expiry_date: finalExpDate,

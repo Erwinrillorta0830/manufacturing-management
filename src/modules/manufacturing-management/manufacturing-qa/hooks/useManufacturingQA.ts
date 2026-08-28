@@ -1105,14 +1105,35 @@ export function useManufacturingQA() {
     const handleSubmitFinalRelease = async () => {
         if (!selectedLot) return;
 
+        const relationshipStatus = selectedLot.job_order_relationship_status || "unlinked";
+        if (relationshipStatus === "unlinked") {
+            toast.error("This lot has no authoritative Job Order relationship. Ask Inventory or Production to repair it before release.");
+            return;
+        }
+        if (relationshipStatus === "ambiguous") {
+            toast.error("This lot is linked to multiple Job Orders. Resolve the inventory relationship before release.");
+            return;
+        }
+
+        const resolvedJoId = Number(selectedLot.job_order_id);
+        const lotIdValue = selectedLot.lot_id && typeof selectedLot.lot_id === "object"
+            ? selectedLot.lot_id.lot_id
+            : selectedLot.lot_id;
+        const resolvedLotId = Number(lotIdValue);
+        const productId = Number(selectedLot.product_id);
+        const branchId = Number(selectedLot.branch_id);
+        if (![resolvedJoId, resolvedLotId, productId, branchId].every((value) => Number.isSafeInteger(value) && value > 0)) {
+            toast.error("This lot is missing a valid Job Order, product, branch, or master lot reference. Refresh the list and try again.");
+            return;
+        }
+
         setActionLoading(true);
         try {
-            const matchingJO = jobOrders.find(jo => selectedLot.lot_number?.includes(jo.job_order_no || jo.jo_id));
-            const resolvedJoId = matchingJO ? Number(matchingJO.job_order_id || matchingJO.order_id || matchingJO.id || 0) : 0;
-
             await postFinalQARelease({
                 jobOrderId: resolvedJoId,
-                lotId: selectedLot.line_id || selectedLot.id || selectedLot.lot_id,
+                lotId: resolvedLotId,
+                productId,
+                branchId,
                 inspectedQuantity: Number(inspectedQty),
                 defectQuantity: Number(defectQty),
                 microbiologicalStatus,

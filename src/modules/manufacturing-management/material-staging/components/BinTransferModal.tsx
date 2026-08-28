@@ -43,6 +43,10 @@ interface BinTransferModalProps {
     isLoading?: boolean;
 }
 
+function getLotOptionValue(allocation: AllocatedLot, index: number): string {
+    return `${allocation.allocation_id ?? allocation.lot_id ?? "lot"}:${allocation.batch_no}:${index}`;
+}
+
 export function BinTransferModal({
     isOpen,
     onClose,
@@ -94,14 +98,23 @@ function BinTransferFormContent({
         : "";
 
     const defaultLot = lot || material.allocations[0];
+    const defaultLotIndex = defaultLot
+        ? material.allocations.findIndex((allocation) =>
+            allocation === defaultLot ||
+            (defaultLot.allocation_id != null && allocation.allocation_id === defaultLot.allocation_id)
+        )
+        : -1;
     const defaultBatch = defaultLot ? defaultLot.batch_no : `LOT-${material.product_id}-MAIN`;
+    const defaultLotValue = defaultLot
+        ? getLotOptionValue(defaultLot, defaultLotIndex >= 0 ? defaultLotIndex : 0)
+        : `default:${material.product_id}`;
     const remainingNeeded = Math.max(0, material.required_quantity - material.staged_quantity);
     const defaultLotAlloc = defaultLot ? (defaultLot.allocated_quantity - defaultLot.staged_quantity) : remainingNeeded;
     const initQty = defaultLotAlloc > 0 ? defaultLotAlloc : (remainingNeeded > 0 ? remainingNeeded : material.required_quantity);
 
     const [sourceBin, setSourceBin] = useState("MAIN-STORE");
     const [selectedWorkCenterId, setSelectedWorkCenterId] = useState<string>(defaultWcId);
-    const [selectedBatchNo, setSelectedBatchNo] = useState(defaultBatch);
+    const [selectedLotValue, setSelectedLotValue] = useState(defaultLotValue);
     const [transferQty, setTransferQty] = useState<number>(initQty > 0 ? initQty : 1);
     const [remarks, setRemarks] = useState(`Staging materials for JO #${jobOrder.job_order_no}`);
     const [formError, setFormError] = useState<string | null>(null);
@@ -114,7 +127,9 @@ function BinTransferFormContent({
     };
 
     // Calculate active lot details
-    const currentLot = material.allocations.find((l) => l.batch_no === selectedBatchNo) || lot || material.allocations[0];
+    const currentLot = material.allocations.find((allocation, index) =>
+        getLotOptionValue(allocation, index) === selectedLotValue
+    ) || lot || material.allocations[0];
     const availableOnHand = currentLot?.on_hand_lot_quantity ?? material.on_hand_quantity;
     const remainingToStage = Math.max(0, material.required_quantity - material.staged_quantity);
     const isPartiallyStaged = material.reservation_status === "PARTIAL";
@@ -160,7 +175,7 @@ function BinTransferFormContent({
             product_id: material.product_id,
             product_name: material.product_name,
             lot_id: currentLot?.lot_id || 1,
-            batch_no: selectedBatchNo || `LOT-${material.product_id}-MAIN`,
+            batch_no: currentLot?.batch_no || defaultBatch,
             transfer_quantity: Number(transferQty),
             source_bin: sourceBin.trim() || "MAIN-STORE",
             target_bin: targetBin.trim(),
@@ -311,15 +326,19 @@ function BinTransferFormContent({
                                     Allocated Lot / Batch No
                                 </Label>
                                 <Select
-                                    value={selectedBatchNo}
-                                    onValueChange={setSelectedBatchNo}
+                                    value={selectedLotValue}
+                                    onValueChange={setSelectedLotValue}
                                 >
                                     <SelectTrigger id="lot-batch" className="h-9 font-mono text-xs bg-background">
                                         <SelectValue placeholder="Select Lot / Batch" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         {material.allocations.map((al, idx) => (
-                                            <SelectItem key={idx} value={al.batch_no} className="text-xs font-mono">
+                                            <SelectItem
+                                                key={getLotOptionValue(al, idx)}
+                                                value={getLotOptionValue(al, idx)}
+                                                className="text-xs font-mono"
+                                            >
                                                 {al.batch_no} ({al.allocated_quantity} {material.uom})
                                             </SelectItem>
                                         ))}
