@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
-import { 
+import {
     FileText, Plus, ShieldAlert,
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-    Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    Folder, Loader2, ArrowRight, TrendingUp, TrendingDown, Layers, Clock, Search, ChevronLeft, ChevronRight, X, Printer
 } from "lucide-react";
 import { toast } from "sonner";
-import { QuotationHeader, Customer, QuotationSnapshotNode, Project } from "../types";
+import { QuotationHeader, QuotationSnapshotNode, Customer, Project } from "../types";
+import { generateComparativePDF, SkuHistoryItem } from "../utils/exportComparativePDF";
 
 interface ProjectPortfolioItem {
     projectId: number;
@@ -100,7 +101,7 @@ export function QuotationList({
     // Grouping helper: finds the latest quote sheet per project name
     const projectGroups = React.useMemo(() => {
         const groups: Record<string, { latest: QuotationHeader; history: QuotationHeader[] }> = {};
-        
+
         quotes.forEach(q => {
             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
             const key = projObj?.project_name || `No Project Name (Quote: ${q.quote_number})`;
@@ -137,7 +138,7 @@ export function QuotationList({
     // Active project proposals pipeline: projects where latest version is NOT Rejected and NOT converted to SO
     const activeProjects = React.useMemo(() => {
         return Object.entries(projectGroups)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             .filter(([_, group]) => group.latest.status !== "Rejected" && group.latest.status !== "Converted to SO")
             .map(([name, group]) => ({ projectName: name, ...group }));
     }, [projectGroups]);
@@ -145,7 +146,7 @@ export function QuotationList({
     // Rejected projects list
     const rejectedProjects = React.useMemo(() => {
         return Object.entries(projectGroups)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             .filter(([_, group]) => group.latest.status === "Rejected")
             .map(([name, group]) => ({ projectName: name, ...group }));
     }, [projectGroups]);
@@ -182,8 +183,8 @@ export function QuotationList({
     const filteredSelectorProjects = React.useMemo(() => {
         if (!projectSearch.trim()) return allProjects;
         const query = projectSearch.toLowerCase().trim();
-        return allProjects.filter(p => 
-            p.projectName.toLowerCase().includes(query) || 
+        return allProjects.filter(p =>
+            p.projectName.toLowerCase().includes(query) ||
             p.customerName.toLowerCase().includes(query)
         );
     }, [allProjects, projectSearch]);
@@ -223,11 +224,11 @@ export function QuotationList({
     const allQuotesTotalPages = Math.ceil(filteredAllQuotes.length / listItemsPerPage) || 1;
     const rejectedTotalPages = Math.ceil(filteredRejectedProjects.length / listItemsPerPage) || 1;
 
-    const currentTotalPagesCount = subTab === "pipeline" 
-        ? activeTotalPages 
-        : subTab === "sheets" 
-        ? allQuotesTotalPages 
-        : rejectedTotalPages;
+    const currentTotalPagesCount = subTab === "pipeline"
+        ? activeTotalPages
+        : subTab === "sheets"
+            ? allQuotesTotalPages
+            : rejectedTotalPages;
 
     const handleViewSkuHistory = async (projName: string, historyList: QuotationHeader[]) => {
         setHistoryProjectName(projName);
@@ -244,7 +245,7 @@ export function QuotationList({
                 }
             }));
             setProjectSnapshots(fetched);
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
         } catch (e) {
             toast.error("Failed to load historical snapshots.");
         } finally {
@@ -257,8 +258,8 @@ export function QuotationList({
         return [...historyQuotes].sort((a, b) => {
             const tA = a.quote_date ? new Date(a.quote_date).getTime() : 0;
             const tB = b.quote_date ? new Date(b.quote_date).getTime() : 0;
-            return tA - tB;
-        });
+            return tB - tA; // Sort descending
+        }).slice(0, 5).reverse(); // Keep only latest 5, reverse back to ascending for left-to-right rendering
     }, [historyQuotes]);
 
     // Calculate SKU history structures inside the modal
@@ -327,31 +328,28 @@ export function QuotationList({
                 <div className="flex border-b bg-muted/10 shrink-0 rounded-xl overflow-hidden border w-full max-w-lg">
                     <button
                         onClick={() => setSubTab("pipeline")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                            subTab === "pipeline"
+                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "pipeline"
                                 ? "border-primary text-primary bg-background"
                                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                        }`}
+                            }`}
                     >
                         <Folder className="h-4 w-4" /> Active Projects ({activeProjects.length})
                     </button>
                     <button
                         onClick={() => setSubTab("sheets")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                            subTab === "sheets"
+                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "sheets"
                                 ? "border-primary text-primary bg-background"
                                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                        }`}
+                            }`}
                     >
                         <FileText className="h-4 w-4" /> All Quotation Sheets ({quotes.length})
                     </button>
                     <button
                         onClick={() => setSubTab("rejected")}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${
-                            subTab === "rejected"
+                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] ${subTab === "rejected"
                                 ? "border-primary text-primary bg-background"
                                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
-                        }`}
+                            }`}
                     >
                         <ShieldAlert className="h-4 w-4" /> Rejected Projects ({rejectedProjects.length})
                     </button>
@@ -398,14 +396,14 @@ export function QuotationList({
                                     <tbody className="divide-y">
                                         {paginatedActiveProjects.map(proj => {
                                             const q = proj.latest;
-                                            const custName = (q.customer_id && typeof q.customer_id === "object") 
+                                            const custName = (q.customer_id && typeof q.customer_id === "object")
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
                                                 : "Customer Deleted";
                                             const sellingPrice = Number(q.total_selling_price || 0);
 
                                             return (
-                                                <tr 
-                                                    key={proj.projectName} 
+                                                <tr
+                                                    key={proj.projectName}
                                                     onClick={() => viewQuoteDetails(q)}
                                                     className="hover:bg-muted/50 transition-colors cursor-pointer group"
                                                 >
@@ -414,7 +412,7 @@ export function QuotationList({
                                                     <td className="p-3 font-mono text-muted-foreground font-bold">{q.quote_number}</td>
                                                     <td className="p-3 text-right font-extrabold text-foreground">₱{sellingPrice.toFixed(2)}</td>
                                                     <td className="p-3 text-center text-muted-foreground font-semibold">
-                                                        <button 
+                                                        <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 handleViewSkuHistory(proj.projectName, proj.history);
@@ -462,14 +460,14 @@ export function QuotationList({
                                     <tbody className="divide-y">
                                         {paginatedRejectedProjects.map(proj => {
                                             const q = proj.latest;
-                                            const custName = (q.customer_id && typeof q.customer_id === "object") 
+                                            const custName = (q.customer_id && typeof q.customer_id === "object")
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
                                                 : "Customer Deleted";
                                             const sellingPrice = Number(q.total_selling_price || 0);
 
                                             return (
-                                                <tr 
-                                                    key={proj.projectName} 
+                                                <tr
+                                                    key={proj.projectName}
                                                     onClick={() => viewQuoteDetails(proj.latest)}
                                                     className="hover:bg-muted/50 transition-colors cursor-pointer group"
                                                 >
@@ -478,7 +476,7 @@ export function QuotationList({
                                                     <td className="p-3 font-mono text-muted-foreground font-semibold">{q.quote_number}</td>
                                                     <td className="p-3 text-right text-muted-foreground font-semibold">₱{sellingPrice.toFixed(2)}</td>
                                                     <td className="p-3 text-center">
-                                                        <button 
+                                                        <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 handleViewSkuHistory(proj.projectName, proj.history);
@@ -522,20 +520,20 @@ export function QuotationList({
                                     </thead>
                                     <tbody className="divide-y">
                                         {paginatedAllQuotes.map(q => {
-                                            const custName = (q.customer_id && typeof q.customer_id === "object") 
+                                            const custName = (q.customer_id && typeof q.customer_id === "object")
                                                 ? `${(q.customer_id as Customer).customer_name} (${(q.customer_id as Customer).customer_code})`
                                                 : "Customer Deleted";
                                             const simulatedCost = Number(q.total_simulated_cost || 0);
                                             const sellingPrice = Number(q.total_selling_price || 0);
                                             const gp = sellingPrice - simulatedCost;
                                             const margin = sellingPrice > 0 ? (gp / sellingPrice) * 100 : 0;
-                                            
+
                                             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
                                             const dispProjName = projObj?.project_name || "—";
 
                                             return (
-                                                <tr 
-                                                    key={q.id} 
+                                                <tr
+                                                    key={q.id}
                                                     onClick={() => viewQuoteDetails(q)}
                                                     className="hover:bg-muted/50 transition-colors cursor-pointer group"
                                                 >
@@ -548,13 +546,12 @@ export function QuotationList({
                                                         ₱{gp.toFixed(2)} ({margin.toFixed(1)}%)
                                                     </td>
                                                     <td className="p-3 text-center">
-                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                                            q.status === "Converted to SO"
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${q.status === "Converted to SO"
                                                                 ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
                                                                 : q.status === "Rejected"
-                                                                ? "bg-destructive/10 text-destructive border border-destructive/20"
-                                                                : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                        }`}>
+                                                                    ? "bg-destructive/10 text-destructive border border-destructive/20"
+                                                                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                            }`}>
                                                             {q.status || "Draft"}
                                                         </span>
                                                     </td>
@@ -572,7 +569,7 @@ export function QuotationList({
                         <div className="flex items-center gap-4">
                             <div className="text-[10px] text-muted-foreground font-semibold flex items-center gap-2">
                                 <span>Rows per page:</span>
-                                <select 
+                                <select
                                     value={listItemsPerPage}
                                     onChange={(e) => {
                                         setListItemsPerPage(Number(e.target.value));
@@ -615,19 +612,33 @@ export function QuotationList({
             {/* Modal: Project SKU Pricing Revision History (Excel Grid Format) */}
             {historyModalOpen && (
                 <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                         {/* Header */}
                         <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                             <div>
                                 <h3 className="text-base font-bold text-foreground">Project SKU Comparative Pricing Sheet (Excel View)</h3>
                                 <p className="text-xs text-muted-foreground">Project Name: <strong className="text-foreground">{historyProjectName}</strong> | Tracked over historical revision periods</p>
                             </div>
-                            <button
-                                onClick={() => setHistoryModalOpen(false)}
-                                className="text-muted-foreground hover:text-foreground text-xs font-semibold rounded-lg border px-3 py-1.5 hover:bg-muted"
-                            >
-                                Close Grid
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => {
+                                        generateComparativePDF({
+                                            projectName: historyProjectName,
+                                            historyQuotes,
+                                            skuHistoryList
+                                        });
+                                    }}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1.5"
+                                >
+                                    Export to PDF
+                                </button>
+                                <button
+                                    onClick={() => setHistoryModalOpen(false)}
+                                    className="text-muted-foreground hover:text-foreground text-xs font-semibold rounded-lg border px-3 py-1.5 hover:bg-muted"
+                                >
+                                    Close Grid
+                                </button>
+                            </div>
                         </div>
 
                         {/* Excel Spreadsheet Content */}
@@ -651,7 +662,7 @@ export function QuotationList({
                                                     Finished Good SKU
                                                 </th>
                                                 {sortedHistoryQuotes.map((q) => (
-                                                    <th key={q.id} colSpan={2} className="p-2 font-bold text-center border-r border-b font-mono tracking-wider text-[10px]">
+                                                    <th key={q.id} colSpan={2} className="p-2 font-bold text-left border-r border-b font-mono tracking-wider text-[10px]">
                                                         {q.quote_number}
                                                     </th>
                                                 ))}
@@ -676,10 +687,10 @@ export function QuotationList({
                                                 // Calculate deltas from first revision to the latest version
                                                 const firstVer = sku.rawVersionsList[0];
                                                 const latestVer = sku.rawVersionsList[sku.rawVersionsList.length - 1];
-                                                
+
                                                 const priceDiff = latestVer.price - firstVer.price;
                                                 const costDiff = latestVer.cost - firstVer.cost;
-                                                
+
                                                 return (
                                                     <tr key={sku.productId} className="hover:bg-muted/20 transition-colors">
                                                         <td className="p-3 font-bold text-foreground border-r bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
@@ -704,15 +715,13 @@ export function QuotationList({
                                                             );
                                                         })}
                                                         {/* Price delta */}
-                                                        <td className={`p-2 text-right font-extrabold border-r font-mono bg-primary/5 ${
-                                                            priceDiff > 0 ? "text-emerald-600" : priceDiff < 0 ? "text-destructive" : "text-muted-foreground"
-                                                        }`}>
+                                                        <td className={`p-2 text-right font-extrabold border-r font-mono bg-primary/5 ${priceDiff > 0 ? "text-emerald-600" : priceDiff < 0 ? "text-destructive" : "text-muted-foreground"
+                                                            }`}>
                                                             {priceDiff > 0 ? "+" : ""}{priceDiff.toFixed(2)}
                                                         </td>
                                                         {/* Cost delta */}
-                                                        <td className={`p-2 text-right font-extrabold font-mono bg-primary/5 ${
-                                                            costDiff > 0 ? "text-amber-600" : costDiff < 0 ? "text-emerald-600" : "text-muted-foreground"
-                                                        }`}>
+                                                        <td className={`p-2 text-right font-extrabold font-mono bg-primary/5 ${costDiff > 0 ? "text-amber-600" : costDiff < 0 ? "text-emerald-600" : "text-muted-foreground"
+                                                            }`}>
                                                             {costDiff > 0 ? "+" : ""}{costDiff.toFixed(2)}
                                                         </td>
                                                     </tr>
@@ -749,21 +758,19 @@ export function QuotationList({
                         <div className="flex border-b text-xs font-bold bg-muted/5">
                             <button
                                 onClick={() => setSelectorTab("select")}
-                                className={`flex-1 py-3 text-center border-b-2 transition-all ${
-                                    selectorTab === "select"
+                                className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "select"
                                         ? "border-primary text-primary bg-background"
                                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
-                                }`}
+                                    }`}
                             >
                                 Choose Existing Project ({filteredSelectorProjects.length})
                             </button>
                             <button
                                 onClick={() => setSelectorTab("register")}
-                                className={`flex-1 py-3 text-center border-b-2 transition-all ${
-                                    selectorTab === "register"
+                                className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "register"
                                         ? "border-primary text-primary bg-background"
                                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
-                                }`}
+                                    }`}
                             >
                                 ＋ Register New Project
                             </button>
@@ -892,7 +899,7 @@ export function QuotationList({
                                             )}
 
                                             {custSearchFocused && !selectedCustId && (
-                                                <div 
+                                                <div
                                                     className="fixed border bg-card rounded-md shadow-lg divide-y overflow-hidden flex flex-col z-[60]"
                                                     style={dropdownStyle}
                                                 >
@@ -931,7 +938,7 @@ export function QuotationList({
                                             let valid = true;
                                             const errors: { name?: string; cust?: string } = {};
                                             const normalizedName = newProjName.trim();
-                                            
+
                                             if (!normalizedName) {
                                                 errors.name = "Project name is required";
                                                 valid = false;
@@ -945,7 +952,7 @@ export function QuotationList({
                                                     valid = false;
                                                 }
                                             }
-                                            
+
                                             if (!selectedCustId) {
                                                 errors.cust = "Customer selection is required";
                                                 valid = false;
@@ -965,7 +972,7 @@ export function QuotationList({
                                                     setSelectedCustName("");
                                                     setNewProjCustSearch("");
                                                 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                             } catch (e: any) {
                                                 toast.error(e.message || "Failed to register project");
                                             }

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight, Printer } from "lucide-react";
 import { QuotationHeader, QuotationSnapshotNode } from "../types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ interface QuotationDetailModalProps {
     loadingSnapshots: boolean;
     setIsDetailModalOpen: (open: boolean) => void;
     reviseQuotation: (quote: QuotationHeader) => void;
+    handlePrintQuotation: () => void;
     loadQuotes?: () => void;
 }
 
@@ -22,34 +23,46 @@ export function QuotationDetailModal({
     loadingSnapshots,
     setIsDetailModalOpen,
     reviseQuotation,
+    handlePrintQuotation,
     loadQuotes
 }: QuotationDetailModalProps) {
     const router = useRouter();
     const [rejecting, setRejecting] = useState(false);
     const [routing, setRouting] = useState(false);
+    const [isRejectConfirmOpen, setIsRejectConfirmOpen] = useState(false);
 
     const handleRejectProject = async () => {
         if (!selectedQuote) return;
-        if (!window.confirm("Are you sure you want to reject this quote?")) return;
-        
+        setIsRejectConfirmOpen(true);
+    };
+
+    const confirmRejectProject = async () => {
+        if (!selectedQuote) return;
+
         setRejecting(true);
         try {
+            const projectId = selectedQuote.project_id && typeof selectedQuote.project_id === "object"
+                ? (selectedQuote.project_id as { id: number }).id
+                : selectedQuote.project_id;
+
             const res = await fetch("/api/manufacturing/finished-goods/quotes", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     quoteId: selectedQuote.id,
+                    projectId: projectId,
                     status: "Rejected"
                 })
             });
-            
+
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to reject quote");
-            
+
             toast.success("Quote rejected successfully");
+            setIsRejectConfirmOpen(false);
             setIsDetailModalOpen(false);
             if (loadQuotes) loadQuotes();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
             console.error(e);
             toast.error(e.message || "Failed to reject quote");
@@ -63,8 +76,8 @@ export function QuotationDetailModal({
         setRouting(true);
         try {
             const payload = {
-                customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null 
-                    ? (selectedQuote.customer_id as {id: number}).id 
+                customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null
+                    ? (selectedQuote.customer_id as { id: number }).id
                     : selectedQuote.customer_id,
                 quoteId: selectedQuote.id,
                 quoteNumber: selectedQuote.quote_number,
@@ -96,7 +109,7 @@ export function QuotationDetailModal({
 
     return (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-card border rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-[90vh] max-h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                     <div>
@@ -133,6 +146,13 @@ export function QuotationDetailModal({
                                 </button>
                             </>
                         )}
+                        <button
+                            onClick={handlePrintQuotation}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1.5"
+                        >
+                            <Printer className="w-3.5 h-3.5" />
+                            Print Report
+                        </button>
                         <button
                             onClick={() => {
                                 reviseQuotation(selectedQuote);
@@ -220,6 +240,39 @@ export function QuotationDetailModal({
                     )}
                 </div>
             </div>
+
+            {/* Custom Reject Confirmation Modal */}
+            {isRejectConfirmOpen && (
+                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b bg-destructive/10 text-destructive">
+                            <h3 className="text-base font-bold">Confirm Rejection</h3>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-sm text-foreground/80 mb-6">
+                                Are you sure you want to reject this quote? This action cannot be undone and will mark the quotation as voided.
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    onClick={() => setIsRejectConfirmOpen(false)}
+                                    disabled={rejecting}
+                                    className="px-4 py-2 rounded-lg text-xs font-semibold border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmRejectProject}
+                                    disabled={rejecting}
+                                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-destructive hover:bg-destructive/90 text-white transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {rejecting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                                    Confirm Rejection
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

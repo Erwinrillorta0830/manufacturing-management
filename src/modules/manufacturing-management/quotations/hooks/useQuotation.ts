@@ -1,7 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { useDebounce } from "use-debounce";
 import { QuotationHeader, QuotationSnapshotNode, CatalogProduct, SelectedQuoteProduct, Customer, Project } from "../types";
+
+import { generateQuotationPDF } from "../utils/exportQuotationPDF";
 
 export function useQuotation() {
     // List view vs Create view
@@ -20,11 +22,16 @@ export function useQuotation() {
     const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
     const [customerSearchText, setCustomerSearchText] = useState<string>("");
     const [quoteNumber, setQuoteNumber] = useState<string>("");
-    const [projectName, setProjectName] = useState<string>("");
+    const [projectName, setProjectName] = useState("");
     const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
     const [remarks, setRemarks] = useState<string>("");
+    const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+    
+    // Master data lookups
     const [priceTypes, setPriceTypes] = useState<{ price_type_id: number; price_type_name: string }[]>([]);
     const [selectedPriceTypeId, setSelectedPriceTypeId] = useState<string>("");
+    const [pendingPriceTypeId, setPendingPriceTypeId] = useState<string>("");
+    const [isPriceTypeWarningOpen, setIsPriceTypeWarningOpen] = useState(false);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
     
     // Project portfolio database registry
@@ -82,21 +89,23 @@ export function useQuotation() {
             })
             .catch(e => console.error("Error fetching price types:", e));
 
-        // Fetch master catalog products
+        // Fetch product types and master catalog products
         setLoadingProducts(true);
-        fetch("/api/manufacturing/finished-goods/products?limit=250")
-            .then(res => res.ok ? res.json() : [])
-            .then(data => {
-                // QA Fix: Only pull finished goods (items with versions)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const fgOnly = data.filter((p: any) => p.has_versions === true);
-                setCatalogProducts(fgOnly);
-                setLoadingProducts(false);
-            })
-            .catch(e => {
-                console.error("Error fetching catalog:", e);
-                setLoadingProducts(false);
-            });
+        Promise.all([
+            fetch("/api/manufacturing/finished-goods/products?limit=-1").then(r => r.ok ? r.json() : []),
+            fetch("/api/manufacturing/sales-order?action=create-lookups").then(r => r.ok ? r.json() : {})
+        ]).then(([productsData, lookupsData]: [any, any]) => {
+            const fgOnly = productsData.filter((p: any) => p.has_versions === true);
+            setCatalogProducts(fgOnly);
+            
+            if (lookupsData.products) setAllProducts(lookupsData.products);
+            if (lookupsData.productTypes) setProductTypes(lookupsData.productTypes);
+            
+            setLoadingProducts(false);
+        }).catch(e => {
+            console.error("Error fetching catalog:", e);
+            setLoadingProducts(false);
+        });
     }, []);
 
     // Load specific price sheets when Price Type selection changes
@@ -119,7 +128,7 @@ export function useQuotation() {
 
                 // Dynamically update preloaded rates on already selected items list
                 setSelectedProductsList(prev => prev.map(item => {
-                    const preloadedRate = map[item.product.product_id] || item.product.price_per_unit || 0;
+                    const preloadedRate = map[item.product?.product_id || 0] || item.product?.price_per_unit || 0;
                     return {
                         ...item,
                         priceTypePrice: preloadedRate,
@@ -272,7 +281,7 @@ export function useQuotation() {
             
             // Map snapshots to SelectedQuoteProduct format
             const mappedProducts: SelectedQuoteProduct[] = snapshotItems.map(item => {
-                const prodMatch = catalogProducts.find(p => p.product_id === item.product_id);
+                const prodMatch = allProducts.find(p => String(p.product_id) === String(item.product_id)) || catalogProducts.find(p => String(p.product_id) === String(item.product_id));
                 const catalogProd: CatalogProduct = prodMatch || {
                     product_id: item.product_id,
                     product_name: item.node_name,
@@ -281,10 +290,32 @@ export function useQuotation() {
                     cost_per_unit: item.frozen_unit_cost_php,
                     unit_of_measurement: { unit_shortcut: item.uom }
                 };
+
+                let parentId = catalogProd.parent_product_id ? Number(catalogProd.parent_product_id) : undefined;
+                let productTypeId = catalogProd.product_type ? Number(catalogProd.product_type) : undefined;
+
+                // Fallback for parent ID if nested
+                if (!parentId && catalogProd.parent_id && (catalogProd.parent_id as any).id) {
+                    parentId = Number((catalogProd.parent_id as any).id);
+                }
+
+                // Inherit product_type from parent if missing on child
+                if (parentId && !productTypeId) {
+                    const parentProd = allProducts.find(p => String(p.product_id) === String(parentId)) || catalogProducts.find(p => String(p.product_id) === String(parentId));
+                    if (parentProd && parentProd.product_type) {
+                        productTypeId = Number(parentProd.product_type);
+                    }
+                }
+
                 return {
+                    line_id: Math.random(),
+                    product_type_id: productTypeId,
+                    parent_product_id: parentId,
                     product: catalogProd,
                     priceTypePrice: item.frozen_unit_cost_php,
-                    agreedPrice: item.frozen_total_cost_php
+                    agreedPrice: item.frozen_total_cost_php,
+                    versionId: item.version_id,
+                    versionName: item.version_name
                 };
             });
 
@@ -329,18 +360,31 @@ export function useQuotation() {
     };
     
     // Catalog and selected products
-    const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+    const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
+    const [allProducts, setAllProducts] = useState<any[]>([]);
+    const [productTypes, setProductTypes] = useState<any[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
     const [selectedProductsList, setSelectedProductsList] = useState<SelectedQuoteProduct[]>([]);
-    const [searchQuery, setSearchQuery] = useState("");
-    const [debouncedSearchQuery] = useDebounce(searchQuery, 400);
-    const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 8;
-    const [priceTypeRatesMap, setPriceTypeRatesMap] = useState<Record<number, number>>({}); // Map: productId -> price
+    const nextLineIdRef = useRef(1);
+    const [priceTypeRatesMap, setPriceTypeRatesMap] = useState<Record<number, number>>({});
     const [savingQuote, setSavingQuote] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
+    const itemsPerPage = 10;
+    
+    // Helper to add an empty row to the grid
+    const addEmptyRow = () => {
+        setSelectedProductsList(prev => [...prev, {
+            line_id: nextLineIdRef.current++,
+            priceTypePrice: 0,
+            agreedPrice: 0
+        }]);
+    };
 
+    // Replace old addProductToQuote with one that supports the line_id if needed
     const addProductToQuote = (prod: CatalogProduct) => {
-        const alreadyExists = selectedProductsList.some(item => item.product.product_id === prod.product_id);
+        const alreadyExists = selectedProductsList.some(item => item.product?.product_id === prod.product_id);
         toast.dismiss();
         if (alreadyExists) {
             toast.info("Product already added to list");
@@ -348,6 +392,7 @@ export function useQuotation() {
         }
         const preloadedPrice = priceTypeRatesMap[prod.product_id] || prod.price_per_unit || 0;
         setSelectedProductsList(prev => [...prev, {
+            line_id: nextLineIdRef.current++,
             product: prod,
             priceTypePrice: preloadedPrice,
             agreedPrice: preloadedPrice
@@ -355,22 +400,54 @@ export function useQuotation() {
         toast.success(`Added ${prod.product_name} to quotation draft`);
     };
 
-    const removeProductFromQuote = (productId: number) => {
-        setSelectedProductsList(prev => prev.filter(item => item.product.product_id !== productId));
+    const updateRow = (lineId: number, field: string, value: any) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if (item.line_id === lineId) {
+                return { ...item, [field]: value };
+            }
+            return item;
+        }));
     };
 
-    const handleAgreedPriceChange = (productId: number, val: number) => {
-        setSelectedProductsList(prev => prev.map(item => 
-            item.product.product_id === productId ? { ...item, agreedPrice: val } : item
+    const handleRowProductSelect = (lineId: number, prod: CatalogProduct | null) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if (item.line_id === lineId) {
+                if (!prod) return { ...item, product: null };
+                const preloadedPrice = priceTypeRatesMap[prod.product_id] || prod.price_per_unit || 0;
+                return {
+                    ...item,
+                    product: prod,
+                    priceTypePrice: preloadedPrice,
+                    agreedPrice: preloadedPrice
+                };
+            }
+            return item;
+        }));
+    };
+
+    const removeProductFromQuote = (lineIdOrProductId: number) => {
+        setSelectedProductsList(prev => prev.filter(item => 
+            (item.line_id && item.line_id !== lineIdOrProductId) || 
+            (item.product?.product_id !== lineIdOrProductId)
         ));
     };
 
-    const changeProductVersion = (productId: number, versionId: number | null, versionName: string | null) => {
-        setSelectedProductsList(prev => prev.map(item => 
-            item.product.product_id === productId 
-                ? { ...item, versionId, versionName } 
-                : item
-        ));
+    const changeProductVersion = (lineIdOrProductId: number, versionId: number | null, versionName: string | null) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if ((item.line_id && item.line_id === lineIdOrProductId) || (item.product?.product_id === lineIdOrProductId)) {
+                return { ...item, versionId, versionName };
+            }
+            return item;
+        }));
+    };
+
+    const handleAgreedPriceChange = (lineIdOrProductId: number, val: number) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if ((item.line_id && item.line_id === lineIdOrProductId) || (item.product?.product_id === lineIdOrProductId)) {
+                return { ...item, agreedPrice: val };
+            }
+            return item;
+        }));
     };
 
     const handleSearchCustomers = async (searchVal: string) => {
@@ -387,9 +464,34 @@ export function useQuotation() {
         }
     };
 
+    const handlePriceTypeChange = (priceTypeId: string) => {
+        if (selectedProductsList.length > 0) {
+            setPendingPriceTypeId(priceTypeId);
+            setIsPriceTypeWarningOpen(true);
+        } else {
+            setSelectedPriceTypeId(priceTypeId);
+        }
+    };
+
+    const confirmPriceTypeChange = () => {
+        setSelectedPriceTypeId(pendingPriceTypeId);
+        setIsPriceTypeWarningOpen(false);
+    };
+
+    const cancelPriceTypeChange = () => {
+        setPendingPriceTypeId("");
+        setIsPriceTypeWarningOpen(false);
+    };
+
     const selectCustomer = (id: string, nameCode: string) => {
         setSelectedCustomerId(id);
         setCustomerSearchText(nameCode);
+
+        // Customer-Driven Price Type Auto-Fill
+        const customer = customers.find(c => c.id.toString() === id);
+        if (customer && customer.default_price_type_id) {
+            handlePriceTypeChange(String(customer.default_price_type_id));
+        }
     };
 
     const submitQuotation = async () => {
@@ -404,14 +506,23 @@ export function useQuotation() {
             return;
         }
 
-        // Save confirmation prompt
-        const confirmSave = window.confirm("Are you sure you want to lock and save this quotation snapshot? This will freeze the costs and simulated margins.");
-        if (!confirmSave) return;
+        const missingProducts = selectedProductsList.some(item => !item.product);
+        if (missingProducts) {
+            toast.error("Please ensure all rows have a selected product, or remove empty rows.");
+            return;
+        }
 
+        // Open custom save confirmation modal
+        setIsConfirmModalOpen(true);
+    };
+
+    const confirmSubmitQuotation = async () => {
+        setIsConfirmModalOpen(false);
         setSavingQuote(true);
         try {
             // Dynamically fetch and verify the COGS/BOM Cost for each selected product
             const productsWithLatestCost = await Promise.all(selectedProductsList.map(async (item) => {
+                if (!item.product) return null;
                 let latestCost = Number(item.product.cost_per_unit || 0);
                 try {
                     const url = item.versionId 
@@ -429,12 +540,15 @@ export function useQuotation() {
                 }
                 return {
                     ...item,
+                    product: item.product,
                     resolvedCost: latestCost
                 };
             }));
 
-            const totalSelling = productsWithLatestCost.reduce((sum, item) => sum + Number(item.agreedPrice || 0), 0);
-            const totalCost = productsWithLatestCost.reduce((sum, item) => sum + Number(item.resolvedCost || 0), 0);
+            const validProducts = productsWithLatestCost.filter(item => item !== null);
+
+            const totalSelling = validProducts.reduce((sum, item) => sum + Number(item.agreedPrice || 0), 0);
+            const totalCost = validProducts.reduce((sum, item) => sum + Number(item.resolvedCost || 0), 0);
 
             // Construct Philippine Time (PHT, UTC+8) date representation
             const dateUTC = new Date();
@@ -452,13 +566,13 @@ export function useQuotation() {
                 quote_date: quoteDateStr
             };
 
-            const snapshots = productsWithLatestCost.map(item => ({
+            const snapshots = validProducts.map(item => ({
                 product_id: item.product.product_id,
                 version_id: item.versionId || 1, // Store the selected version ID
                 node_name: item.product.product_name,
                 node_type: "product_quota",
                 quantity: 1,
-                uom: item.product.unit_of_measurement?.unit_shortcut || "PCS",
+                uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as any).unit_shortcut || "PCS",
                 frozen_unit_cost_php: item.resolvedCost,
                 frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
             }));
@@ -483,6 +597,82 @@ export function useQuotation() {
         } finally {
             setSavingQuote(false);
         }
+    };
+
+    const handlePrintQuotation = () => {
+        if (!selectedQuote) return;
+        
+        let customerName = "Unknown Customer";
+        if (selectedQuote.customer_id) {
+            customerName = typeof selectedQuote.customer_id === "object" && 'customer_name' in selectedQuote.customer_id
+                ? selectedQuote.customer_id.customer_name
+                : customers.find(c => String(c.id) === String(selectedQuote.customer_id))?.customer_name || "Unknown Customer";
+        }
+
+        let projNameStr = "Unknown Project";
+        if (selectedQuote.project_id) {
+            projNameStr = typeof selectedQuote.project_id === "object" && 'project_name' in selectedQuote.project_id
+                ? selectedQuote.project_id.project_name
+                : allProjects.find(p => p.projectId === Number((selectedQuote.project_id as any)?.id || selectedQuote.project_id))?.projectName || "Unknown Project";
+        }
+
+        const priceTypeName = priceTypes.find(pt => pt.price_type_id.toString() === selectedPriceTypeId)?.price_type_name || "Custom Price Tier";
+
+        // Extract dynamically fetched creator name, fallback to local session if missing
+        let createdByStr = selectedQuote.created_by_name;
+        if (!createdByStr || createdByStr === "System Admin") {
+            try {
+                const sessionUser = localStorage.getItem("user_name") || localStorage.getItem("user_fname");
+                if (sessionUser) createdByStr = sessionUser;
+            } catch (e) {
+                // ignore
+            }
+        }
+        if (!createdByStr) createdByStr = "System Admin";
+
+        // Map snapshots to include accurate type and version strings from catalog
+        const resolvedSnapshots = snapshots.map(snap => {
+            const prodMatch = allProducts.find(p => String(p.product_id) === String(snap.product_id)) || catalogProducts.find(p => String(p.product_id) === String(snap.product_id));
+            
+            let typeName = "Finished Goods";
+            if (prodMatch) {
+                let pTypeId = prodMatch.product_type ? Number(prodMatch.product_type) : undefined;
+                if (!pTypeId && prodMatch.parent_product_id) {
+                    const parentProd = allProducts.find(p => String(p.product_id) === String(prodMatch.parent_product_id));
+                    if (parentProd && parentProd.product_type) {
+                        pTypeId = Number(parentProd.product_type);
+                    }
+                }
+                const ptMatch = productTypes.find(pt => pt.id === pTypeId);
+                if (ptMatch) typeName = ptMatch.name;
+            }
+
+            let versionName = snap.version_name || "v1.0";
+            if (prodMatch && prodMatch.has_versions) {
+                // If the product has versions, and the snapshot has a version_id but no version_name, try to find it
+                // (Though usually the snapshot will have version_name saved, we fallback just in case)
+            }
+
+            return {
+                node_name: snap.node_name,
+                type_name: typeName,
+                version_name: versionName,
+                uom: snap.uom,
+                frozen_unit_cost_php: snap.frozen_unit_cost_php,
+                frozen_total_cost_php: snap.frozen_total_cost_php
+            };
+        });
+
+        generateQuotationPDF({
+            quote: selectedQuote,
+            snapshots: resolvedSnapshots,
+            customerName,
+            projectName: projNameStr,
+            priceTypeName,
+            createdByName: createdByStr
+        });
+        
+        toast.success("Simulation Report PDF generated!");
     };
 
     // Reset current page when query changes
@@ -622,12 +812,25 @@ export function useQuotation() {
         viewQuoteDetails,
         initCreateFlow,
         reviseQuotation,
+        handlePrintQuotation,
+        isConfirmModalOpen,
+        setIsConfirmModalOpen,
+        isPriceTypeWarningOpen,
+        handlePriceTypeChange,
+        confirmPriceTypeChange,
+        cancelPriceTypeChange,
         addProductToQuote,
         removeProductFromQuote,
         handleAgreedPriceChange,
         handleSearchCustomers,
         selectCustomer,
         submitQuotation,
+        confirmSubmitQuotation,
+        productTypes,
+        allProducts,
+        addEmptyRow,
+        updateRow,
+        handleRowProductSelect,
         filteredCatalog,
         totalPages,
         paginatedCatalog,

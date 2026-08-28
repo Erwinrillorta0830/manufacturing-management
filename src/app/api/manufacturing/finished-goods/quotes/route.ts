@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { 
     fetchQuotations, 
     saveQuotation 
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
     try {
         const body = await request.json();
-        const { quoteId, status } = body;
+        const { quoteId, projectId, status } = body;
 
         if (!quoteId || !status) {
             return NextResponse.json({ error: "Missing quoteId or status" }, { status: 400 });
@@ -68,15 +69,33 @@ export async function PATCH(request: Request) {
         if (DIRECTUS_STATIC_TOKEN) {
             reqHeaders["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
         }
+        
+        const userId = await getUserIdFromToken().catch(() => null);
+
+        // Update the quotation header status
         const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
             method: "PATCH",
             headers: reqHeaders,
-            body: JSON.stringify({ status })
+            body: JSON.stringify({ status, modified_by: userId })
         });
 
         if (!res.ok) {
             const errText = await res.text();
             throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+        }
+
+        // Also update the parent project status if projectId is provided and status is "Rejected"
+        if (projectId && status === "Rejected") {
+            const projectRes = await fetch(`${DIRECTUS_URL}/items/projects/${projectId}`, {
+                method: "PATCH",
+                headers: reqHeaders,
+                body: JSON.stringify({ status, modified_by: userId })
+            });
+
+            if (!projectRes.ok) {
+                const errText = await projectRes.text();
+                throw new Error(`Failed to update parent project status: ${projectRes.status} - ${errText}`);
+            }
         }
 
         return NextResponse.json({ success: true });
