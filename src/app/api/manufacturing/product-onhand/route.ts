@@ -67,8 +67,6 @@ export async function GET(req: Request) {
       ? `${SPRING_API_BASE}/api/mm-product-onhand/filter?${query.toString()}`
       : `${SPRING_API_BASE}/api/mm-product-onhand/all`;
 
-    console.log(`[ProductOnhand API] Calling Spring Boot: ${springUrl} (hasToken: ${!!token})`);
-
     try {
       const res = await fetch(springUrl, {
         headers: reqHeaders,
@@ -78,7 +76,6 @@ export async function GET(req: Request) {
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : data?.data || [];
-        console.log(`[ProductOnhand API] Spring Boot returned ${list.length} items:`, JSON.stringify(list));
         return NextResponse.json(list);
       } else {
         const errText = await res.text();
