@@ -169,6 +169,14 @@ export default function ManufacturingQAModule() {
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
         handleSubmitFinalRelease,
+        isFinalQAAuditOpen,
+        setIsFinalQAAuditOpen,
+        selectedFinalQAAudit,
+        loadingFinalQAAudit,
+        finalQAAuditError,
+        handleOpenFinalQAAudit,
+        handlePrintFinalQACoa,
+        coaPrintLoading,
 
         // General
         refreshAll,
@@ -367,6 +375,7 @@ export default function ManufacturingQAModule() {
                     <FinalQAReleases
                         lots={lots}
                         lotsProducts={lotsProducts}
+                        finalReleases={finalReleases}
                         loadingFinalQA={loadingFinalQA}
                         isFinalReleaseOpen={isFinalReleaseOpen}
                         setIsFinalReleaseOpen={setIsFinalReleaseOpen}
@@ -390,6 +399,14 @@ export default function ManufacturingQAModule() {
                         handleOpenFinalReleaseDialog={handleOpenFinalReleaseDialog}
                         handleSubmitFinalRelease={handleSubmitFinalRelease}
                         actionLoading={actionLoading}
+                        isFinalQAAuditOpen={isFinalQAAuditOpen}
+                        setIsFinalQAAuditOpen={setIsFinalQAAuditOpen}
+                        selectedFinalQAAudit={selectedFinalQAAudit}
+                        loadingFinalQAAudit={loadingFinalQAAudit}
+                        finalQAAuditError={finalQAAuditError}
+                        handleOpenFinalQAAudit={handleOpenFinalQAAudit}
+                        handlePrintFinalQACoa={handlePrintFinalQACoa}
+                        coaPrintLoading={coaPrintLoading}
                     />
                 </TabsContent>
 

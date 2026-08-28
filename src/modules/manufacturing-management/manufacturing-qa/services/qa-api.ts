@@ -252,8 +252,53 @@ export async function fetchDailyQAInspections(joId?: string): Promise<any[]> {
 export async function fetchFinalQAReleases(joId?: string): Promise<any[]> {
     const url = joId ? `/api/manufacturing/production/final-qa?joId=${joId}` : "/api/manufacturing/production/final-qa";
     const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to load final QA releases");
-    return res.json();
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || "Failed to load final QA releases");
+    return Array.isArray(data) ? data : [];
+}
+
+export interface FinalQACoa {
+    final_release_id: number;
+    stored_lot_id: number | null;
+    canonical_lot_id: number;
+    is_legacy_lot_reference: boolean;
+    job_order_id: number | null;
+    job_order_no: string;
+    product_id: number | null;
+    product_name: string;
+    product_code: string;
+    branch_id: number | null;
+    branch_name: string;
+    branch_code: string;
+    lot_id: number;
+    lot_number: string;
+    lot_name: string;
+    quantity: number;
+    inspected_quantity: number;
+    defect_quantity: number;
+    microbiological_status: string;
+    packaging_seal_passed: boolean;
+    label_compliance_passed: boolean;
+    overall_disposition: string;
+    coa_reference_no: string;
+    approved_by: number | null;
+    approved_at: string | null;
+    remarks: string;
+    manufacturing_date: string | null;
+    expiration_date: string | null;
+    source_movement_id: number | null;
+}
+
+export async function fetchFinalQACoa(finalReleaseId: number): Promise<FinalQACoa> {
+    const res = await fetch(
+        `/api/manufacturing/production/final-qa/coa?finalReleaseId=${encodeURIComponent(finalReleaseId)}`,
+        { cache: "no-store" }
+    );
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to load the final QA COA.");
+    }
+    return data as FinalQACoa;
 }
 
 export async function fetchYieldLedger(joId?: string): Promise<any[]> {

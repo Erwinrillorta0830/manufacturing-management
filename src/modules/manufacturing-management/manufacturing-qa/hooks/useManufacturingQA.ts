@@ -28,8 +28,46 @@ import {
     fetchFinishedGoodsReceipts,
     fetchInventoryLotsData,
     postDailyQAInspection,
-    postFinalQARelease
+    postFinalQARelease,
+    fetchFinalQACoa
 } from "../services/qa-api";
+import type { FinalQACoa } from "../services/qa-api";
+
+function relationNumber(value: any, keys: string[] = ["id"]): number {
+    if (value && typeof value === "object") {
+        for (const key of keys) {
+            const candidate = Number(value[key]);
+            if (Number.isSafeInteger(candidate) && candidate > 0) return candidate;
+        }
+        return 0;
+    }
+    const candidate = Number(value || 0);
+    return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : 0;
+}
+
+function canonicalLotId(lot: any): number {
+    return relationNumber(lot?.canonical_lot_id, ["canonical_lot_id"])
+        || relationNumber(lot?.lot_id, ["lot_id", "id"]);
+}
+
+function finalReleaseId(release: any): number {
+    return relationNumber(release?.final_release_id ?? release?.id, ["final_release_id", "id"]);
+}
+
+function escapePrintHtml(value: unknown): string {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function formatAuditDate(value: string | null | undefined): string {
+    if (!value) return "—";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
 
 export interface PrintReceiptComponent {
     product_name: string;
@@ -377,6 +415,11 @@ export function useManufacturingQA() {
     const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
     const [coaRefNo, setCoaRefNo] = useState("");
     const [finalRemarks, setFinalRemarks] = useState("");
+    const [isFinalQAAuditOpen, setIsFinalQAAuditOpen] = useState(false);
+    const [selectedFinalQAAudit, setSelectedFinalQAAudit] = useState<FinalQACoa | null>(null);
+    const [loadingFinalQAAudit, setLoadingFinalQAAudit] = useState(false);
+    const [finalQAAuditError, setFinalQAAuditError] = useState<string | null>(null);
+    const [coaPrintLoading, setCoaPrintLoading] = useState(false);
 
     // Load Job Orders
     const loadJobOrders = async (silent = false) => {
@@ -1087,8 +1130,24 @@ export function useManufacturingQA() {
         }
     };
 
-    // Handle Open Final QA Release Dialog
+    const getFinalReleaseForLot = useCallback((lot: any) => {
+        const lotId = canonicalLotId(lot);
+        if (lotId <= 0) return null;
+
+        return finalReleases.find((release: any) => {
+            const releaseLotId = relationNumber(release?.canonical_lot_id, ["canonical_lot_id"])
+                || relationNumber(release?.lot_id, ["lot_id", "id"]);
+            return releaseLotId === lotId;
+        }) || null;
+    }, [finalReleases]);
+
+    // Pending lots use the editable release workflow only when no persisted release exists.
     const handleOpenFinalReleaseDialog = (lot: any) => {
+        if (getFinalReleaseForLot(lot)) {
+            toast.error("This lot already has a final QA result. Use its read-only audit action instead.");
+            return;
+        }
+
         setSelectedLot(lot);
         setInspectedQty(String(lot.quantity_received || lot.quantity || 0));
         setDefectQty("0");
@@ -1101,9 +1160,40 @@ export function useManufacturingQA() {
         setIsFinalReleaseOpen(true);
     };
 
+    const handleOpenFinalQAAudit = async (lot: any) => {
+        const release = getFinalReleaseForLot(lot);
+        const persistedReleaseId = finalReleaseId(release);
+        if (persistedReleaseId <= 0) {
+            toast.error("The persisted final QA release could not be identified. Refresh the list and try again.");
+            return;
+        }
+
+        setSelectedFinalQAAudit(null);
+        setFinalQAAuditError(null);
+        setLoadingFinalQAAudit(true);
+        setIsFinalQAAuditOpen(true);
+        try {
+            const audit = await fetchFinalQACoa(persistedReleaseId);
+            setSelectedFinalQAAudit(audit);
+        } catch (e: any) {
+            const message = e?.message || "Failed to load the persisted final QA audit.";
+            console.error("Final QA audit lookup error:", e);
+            setFinalQAAuditError(message);
+            toast.error(message);
+        } finally {
+            setLoadingFinalQAAudit(false);
+        }
+    };
+
     // Submit Final QA Release
     const handleSubmitFinalRelease = async () => {
         if (!selectedLot) return;
+
+        if (getFinalReleaseForLot(selectedLot)) {
+            toast.error("This lot already has a final QA result and cannot be released again.");
+            setIsFinalReleaseOpen(false);
+            return;
+        }
 
         const relationshipStatus = selectedLot.job_order_relationship_status || "unlinked";
         if (relationshipStatus === "unlinked") {
@@ -1153,6 +1243,110 @@ export function useManufacturingQA() {
             toast.error(e.message || "Failed to record final QA lot release.");
         } finally {
             setActionLoading(false);
+        }
+    };
+
+    const handlePrintFinalQACoa = () => {
+        if (!selectedFinalQAAudit) {
+            toast.error("Load the persisted final QA audit before printing the COA.");
+            return;
+        }
+
+        const printWindow = window.open("", "_blank", "width=900,height=760");
+        if (!printWindow) {
+            toast.error("Popup blocker prevented the COA print view. Please enable popups and try again.");
+            return;
+        }
+
+        const audit = selectedFinalQAAudit;
+        setCoaPrintLoading(true);
+        try {
+            const disposition = escapePrintHtml(audit.overall_disposition);
+            const status = escapePrintHtml(audit.microbiological_status);
+            printWindow.document.write(`
+                <!doctype html>
+                <html>
+                    <head>
+                        <title>Certificate of Analysis - ${escapePrintHtml(audit.lot_number)}</title>
+                        <style>
+                            @page { size: A4; margin: 18mm; }
+                            * { box-sizing: border-box; }
+                            body { font-family: Arial, sans-serif; color: #172033; margin: 0; font-size: 12px; }
+                            h1 { margin: 0; font-size: 22px; letter-spacing: .04em; }
+                            h2 { margin: 26px 0 10px; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+                            .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #172033; padding-bottom: 12px; }
+                            .subtitle { color: #475569; margin-top: 5px; }
+                            .coa { text-align: right; }
+                            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
+                            .field { border-bottom: 1px solid #e2e8f0; padding: 5px 0; }
+                            .label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+                            .value { margin-top: 3px; font-weight: 600; min-height: 15px; }
+                            .remarks { border: 1px solid #cbd5e1; min-height: 56px; padding: 9px; white-space: pre-wrap; }
+                            .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 60px; }
+                            .signature { border-top: 1px solid #172033; padding-top: 6px; color: #475569; }
+                            .footer { margin-top: 28px; color: #64748b; font-size: 10px; text-align: center; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="header">
+                            <div>
+                                <h1>CERTIFICATE OF ANALYSIS</h1>
+                                <div class="subtitle">Final QA release record</div>
+                            </div>
+                            <div class="coa">
+                                <div class="label">COA Reference</div>
+                                <div class="value">${escapePrintHtml(audit.coa_reference_no || "Not assigned")}</div>
+                            </div>
+                        </div>
+
+                        <h2>Lot identification</h2>
+                        <div class="grid">
+                            <div class="field"><div class="label">Product</div><div class="value">${escapePrintHtml(audit.product_name)}</div></div>
+                            <div class="field"><div class="label">Product code</div><div class="value">${escapePrintHtml(audit.product_code || "—")}</div></div>
+                            <div class="field"><div class="label">Job Order</div><div class="value">${escapePrintHtml(audit.job_order_no || "—")}</div></div>
+                            <div class="field"><div class="label">Branch</div><div class="value">${escapePrintHtml(audit.branch_name || "—")}</div></div>
+                            <div class="field"><div class="label">Lot number</div><div class="value">${escapePrintHtml(audit.lot_number)}</div></div>
+                            <div class="field"><div class="label">Quantity inspected</div><div class="value">${escapePrintHtml(audit.inspected_quantity)}</div></div>
+                            <div class="field"><div class="label">Manufacturing date</div><div class="value">${escapePrintHtml(formatAuditDate(audit.manufacturing_date))}</div></div>
+                            <div class="field"><div class="label">Expiry date</div><div class="value">${escapePrintHtml(formatAuditDate(audit.expiration_date))}</div></div>
+                        </div>
+
+                        <h2>Inspection result</h2>
+                        <div class="grid">
+                            <div class="field"><div class="label">Overall disposition</div><div class="value">${disposition}</div></div>
+                            <div class="field"><div class="label">Defect quantity</div><div class="value">${escapePrintHtml(audit.defect_quantity)}</div></div>
+                            <div class="field"><div class="label">Microbiological analysis</div><div class="value">${status}</div></div>
+                            <div class="field"><div class="label">Packaging seal audit</div><div class="value">${audit.packaging_seal_passed ? "Passed" : "Failed"}</div></div>
+                            <div class="field"><div class="label">Label and expiry compliance</div><div class="value">${audit.label_compliance_passed ? "Passed" : "Failed"}</div></div>
+                            <div class="field"><div class="label">Approved at</div><div class="value">${escapePrintHtml(formatAuditDate(audit.approved_at))}</div></div>
+                        </div>
+
+                        <h2>Release notes</h2>
+                        <div class="remarks">${escapePrintHtml(audit.remarks || "No remarks recorded.")}</div>
+
+                        <div class="signatures">
+                            <div class="signature">QA Inspector</div>
+                            <div class="signature">QA Supervisor / Approver</div>
+                        </div>
+                        <div class="footer">Issued from the persisted Final QA release record.</div>
+                    </body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            window.setTimeout(() => {
+                printWindow.print();
+                setCoaPrintLoading(false);
+            }, 250);
+        } catch (e: any) {
+            console.error("Final QA COA print error:", e);
+            try {
+                printWindow.close();
+            } catch {
+                // Ignore cleanup errors from a blocked or closed print window.
+            }
+            setCoaPrintLoading(false);
+            toast.error(e?.message || "Failed to prepare the COA print view.");
         }
     };
 
@@ -1293,6 +1487,14 @@ export function useManufacturingQA() {
         setFinalRemarks,
         handleOpenFinalReleaseDialog,
         handleSubmitFinalRelease,
+        isFinalQAAuditOpen,
+        setIsFinalQAAuditOpen,
+        selectedFinalQAAudit,
+        loadingFinalQAAudit,
+        finalQAAuditError,
+        handleOpenFinalQAAudit,
+        handlePrintFinalQACoa,
+        coaPrintLoading,
 
         // General
         refreshAll,
