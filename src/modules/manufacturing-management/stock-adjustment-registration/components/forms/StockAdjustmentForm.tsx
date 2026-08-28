@@ -33,6 +33,7 @@ import {
 } from "../../types/stock-adjustment.schema";
 import { useStockAdjustmentForm } from "../../hooks/useStockAdjustmentForm";
 import { isPostedStatus } from "../../utils/status-utils";
+import { formatPhDateTime } from "../../utils/date-utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,7 +48,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Combobox,
@@ -465,6 +465,8 @@ export function StockAdjustmentForm({
   const watchedSupplierIdForSelect = watchedSupplierId;
 
   const isPosted = useWatch({ control: form.control, name: "isPosted" });
+  const watchedPostedAt = useWatch({ control: form.control, name: "postedAt" });
+  const watchedPostedBy = useWatch({ control: form.control, name: "posted_by" });
   const isReadOnly = !!isPosted || mode === "posting";
 
   const watchedItemsList = useWatch({ control: form.control, name: "items" });
@@ -560,13 +562,18 @@ export function StockAdjustmentForm({
         form.setValue(`items.${existingIndex}.quantity`, updatedTags.length, { shouldValidate: true });
         form.setValue(`items.${existingIndex}.rfid_count`, updatedTags.length);
       } else {
+        const resolvedUnitId = resolvedProduct.unit_id
+          ? (typeof resolvedProduct.unit_id === 'object' ? (resolvedProduct.unit_id as { unit_id?: number; id?: number }).unit_id || (resolvedProduct.unit_id as { unit_id?: number; id?: number }).id : Number(resolvedProduct.unit_id))
+          : (resolvedProduct.unit_of_measurement?.unit_id ? Number(resolvedProduct.unit_of_measurement.unit_id) : undefined);
+
         const newItem: StockAdjustmentItem = {
           product_id: productId,
-          product_name: resolvedProduct.product_name || "Unknown Product",
+          product_name: resolvedProduct.description || resolvedProduct.product_name || "Unknown Product",
           product_code: resolvedProduct.product_code || "",
           cost_per_unit: resolvedProduct.cost_per_unit || resolvedProduct.price_per_unit || 0,
           brand_name: resolvedProduct.brand_name || "N/A",
           barcode: resolvedProduct.barcode || "",
+          unit_id: resolvedUnitId ? Number(resolvedUnitId) : undefined,
           unit_name: resolvedProduct.unit_name || "pcs",
           unit_order: resolvedProduct.unit_of_measurement?.order || 3,
           has_rfid: true,
@@ -590,12 +597,12 @@ export function StockAdjustmentForm({
           .catch(console.error);
       }
 
-      toast.success(`Scanned: ${resolvedProduct.product_name}`);
+      toast.success(`Scanned: ${resolvedProduct.description || resolvedProduct.product_name}`);
       setScanLog((prev) => [
         {
           rfid: rawTag,
           status: "success",
-          message: `Scanned & added: ${resolvedProduct.product_name}`,
+          message: `Scanned & added: ${resolvedProduct.description || resolvedProduct.product_name}`,
           timestamp: new Date(),
         },
         ...prev.slice(0, 4),
@@ -737,8 +744,12 @@ export function StockAdjustmentForm({
                 (item.product_id as { id?: number; product_id?: number })?.product_id ||
                 item.product_id
               ),
+              unit_id: item.unit_id
+                ? (typeof item.unit_id === "object" ? (item.unit_id as { unit_id?: number; id?: number })?.unit_id || (item.unit_id as { unit_id?: number; id?: number })?.id : Number(item.unit_id))
+                : (item.product_id as { unit_id?: number; unit_of_measurement?: { unit_id?: number } })?.unit_of_measurement?.unit_id || (item.product_id as { unit_id?: number })?.unit_id || undefined,
               product_name:
-                (item.product_id as { product_name?: string })?.product_name ||
+                (item.product_id as { description?: string; product_name?: string })?.description ||
+                (item.product_id as { description?: string; product_name?: string })?.product_name ||
                 item.product_name ||
                 "Unknown Product",
               product_code:
@@ -778,14 +789,22 @@ export function StockAdjustmentForm({
   useEffect(() => {
     if (watchedBranchId && branches.length > 0) {
       const found = branches.find(b => b.id === Number(watchedBranchId));
-      if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+      if (found) {
+        queueMicrotask(() => {
+          setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+        });
+      }
     }
   }, [watchedBranchId, branches]);
 
   useEffect(() => {
     if (watchedSupplierId && suppliers.length > 0) {
       const found = suppliers.find(s => s.id === Number(watchedSupplierId));
-      if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+      if (found) {
+        queueMicrotask(() => {
+          setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+        });
+      }
     }
   }, [watchedSupplierId, suppliers]);
 
@@ -817,6 +836,8 @@ export function StockAdjustmentForm({
       updateDocNo();
     }
   }, [id, watchedTypeToUpdateDocNo, fetchNextDocNo, form]);
+
+  const watchedAttachments = useWatch({ control: form.control, name: "stock_adjustment_attachment" });
 
   useEffect(() => {
     if (watchedSupplierId) {
@@ -1066,7 +1087,9 @@ export function StockAdjustmentForm({
 
   useEffect(() => {
     if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
+      queueMicrotask(() => {
+        setCurrentPage(totalPages);
+      });
     }
   }, [totalPages, currentPage]);
 
@@ -1126,14 +1149,14 @@ export function StockAdjustmentForm({
             <div className="flex items-center gap-2 bg-blue-50/50 dark:bg-blue-900/10 px-3 py-1.5 rounded-lg border border-blue-100 dark:border-blue-800/30">
               <span className="text-[10px] uppercase font-black text-blue-400">Posted At:</span>
               <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
-                {form.getValues().postedAt ? format(new Date(form.getValues().postedAt as string), "MMMM d, yyyy, hh:mm a") : "-"}
+                {watchedPostedAt ? formatPhDateTime(watchedPostedAt) : "-"}
               </span>
             </div>
             <div className="flex items-center gap-2 bg-blue-50/50 dark:bg-blue-900/10 px-3 py-1.5 rounded-lg border border-blue-100 dark:border-blue-800/30">
               <span className="text-[10px] uppercase font-black text-blue-400">Posted By:</span>
               <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
                 {(() => {
-                  const postedBy = form.getValues("posted_by");
+                  const postedBy = watchedPostedBy || form.getValues("posted_by");
                   return typeof postedBy === 'object' ? `${postedBy?.user_fname} ${postedBy?.user_lname}` : postedBy || "System User";
                 })()}
               </span>
@@ -1694,7 +1717,7 @@ export function StockAdjustmentForm({
           </CardHeader>
           <CardContent className="p-6">
             <AttachmentUpload
-              value={form.watch("stock_adjustment_attachment") || []}
+              value={watchedAttachments || []}
               onChange={(atts) => form.setValue("stock_adjustment_attachment", atts, { shouldValidate: true })}
               disabled={isReadOnly}
             />

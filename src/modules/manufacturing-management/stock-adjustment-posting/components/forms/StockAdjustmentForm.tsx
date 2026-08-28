@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useForm, useFieldArray, useWatch, Control, UseFormSetValue, useFormState, FieldErrors } from "react-hook-form";
+import { useForm, useFieldArray, useWatch, Control, UseFormSetValue, FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Plus,
@@ -13,12 +13,15 @@ import {
   Package,
   Send,
   Search,
-  Minus,
+ 
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  ClipboardList
+  ClipboardList,
+ 
+  Warehouse,
+  Tag,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ProductSelectionModal } from "../modals/ProductSelectionModal";
@@ -91,91 +94,194 @@ interface ItemRowProps {
 const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
   index,
   control,
-  setValue,
-  isReadOnly = false,
+  // setValue,
+  // isReadOnly = false,
 }: ItemRowProps) {
   const product_name = useWatch({ control, name: `items.${index}.product_name` });
+  const product_code = useWatch({ control, name: `items.${index}.product_code` });
   const unitName = useWatch({ control, name: `items.${index}.unit_name` });
   const quantity = useWatch({ control, name: `items.${index}.quantity` });
   const costPerUnit = useWatch({ control, name: `items.${index}.cost_per_unit` });
   const brandName = useWatch({ control, name: `items.${index}.brand_name` });
-  const barcode = useWatch({ control, name: `items.${index}.barcode` });
+  // const lotId = useWatch({ control, name: `items.${index}.lot_id` });
+  // const lotName = useWatch({ control, name: `items.${index}.lot_name` });
+  // const batchNo = useWatch({ control, name: `items.${index}.batch_no` });
+  // const expiryDate = useWatch({ control, name: `items.${index}.expiry_date` });
+  // const qaStatus = useWatch({ control, name: `items.${index}.qa_status` });
+  // const inventoryCondition = useWatch({ control, name: `items.${index}.inventory_condition` });
+  // const displayStatus = qaStatus || inventoryCondition || "";
+  // const itemType = useWatch({ control, name: `items.${index}.type` });
+  // const formType = useWatch({ control, name: "type" });
+  // const effectiveType = itemType || formType;
 
-  const { errors } = useFormState({ control });
-  const rowError = Array.isArray(errors.items)
-    ? (errors.items[index] as FieldErrors<StockAdjustmentItem>)
-    : undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lotAllocations = useWatch({ control, name: `items.${index}.lot_allocations` as any });
+
+  // const { errors } = useFormState({ control });
+  // const rowError = Array.isArray(errors.items)
+  //   ? (errors.items[index] as FieldErrors<StockAdjustmentItem>)
+  //   : undefined;
 
   const totalCost = Number(quantity || 0) * Number(costPerUnit || 0);
 
-  return (
-    <tr className="border-b border-border/50 hover:bg-muted/10 transition-colors bg-card">
-      <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">{index + 1}</td>
-      <td className="p-3">
-        <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
-      </td>
-      <td className="p-3 min-w-[250px]">
-        <div className="flex flex-col">
-          <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
-          <span className="text-[10px] text-muted-foreground font-mono mt-0.5">{barcode || "N/A"}</span>
-        </div>
-      </td>
-      <td className="p-3">
-        <span className="text-xs font-bold text-foreground">
-          ₱{Number(costPerUnit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
-      </td>
-      <td className="p-3">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
-            {unitName || "-"}
-          </span>
-        </div>
-      </td>
-      <td className="p-3 w-40 text-center">
-        {isReadOnly ? (
-          <span className="text-xs font-bold px-3 py-1 bg-muted rounded-md border border-border/50 inline-block text-center min-w-10">{quantity}</span>
-        ) : (
-          <div className="flex items-center gap-0 w-min bg-background border border-border rounded-md overflow-hidden mx-auto">
-            <button
-              type="button"
-              className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
-              onClick={() => setValue(`items.${index}.quantity`, Math.max(1, Number(quantity || 0) - 1), { shouldValidate: true })}
-              disabled={Number(quantity || 0) <= 1}
-            >
-              <Minus className="h-3 w-3" />
-            </button>
-            <input
-              type="number"
-              value={quantity === 0 ? "" : quantity}
-              onChange={(e) => {
-                let val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 1) val = 1;
-                setValue(`items.${index}.quantity`, val, { shouldValidate: true });
-              }}
-              className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={1}
-            />
-            <button
-              type="button"
-              className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
-              onClick={() => setValue(`items.${index}.quantity`, Number(quantity || 0) + 1, { shouldValidate: true })}
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          </div>
-        )}
-        {rowError?.quantity && (
-          <p className="text-[10px] text-red-500 font-bold mt-1 text-center">{rowError.quantity.message}</p>
-        )}
-      </td>
-      <td className="p-3">
-        <span className="text-xs font-bold text-primary dark:text-primary/70">
-          ₱{Number(totalCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
-      </td>
-    </tr>
-  );
+  // If multi-lot or multi-batch allocations exist, render the full-width aligned table rows
+  if (Array.isArray(lotAllocations) && lotAllocations.length > 0) {
+    let subBatchCounter = 1;
+    return (
+      <>
+        {/* Main Product Summary Row */}
+        <tr className="border-b border-border/50 bg-muted/20 hover:bg-muted/30 transition-colors font-semibold">
+          <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">
+            {index + 1}
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
+          </td>
+          <td className="p-3 min-w-[280px]">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
+              {product_code && (
+                <span className="text-[10px] text-muted-foreground font-mono">({product_code})</span>
+              )}
+            </div>
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-foreground">
+              ₱{Number(costPerUnit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </td>
+          <td className="p-3">
+            <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+              {unitName || "-"}
+            </span>
+          </td>
+          <td className="p-3 w-40 text-center">
+            <span className="text-xs font-bold px-3 py-1 bg-muted/80 rounded-md border border-border/60 inline-block text-center min-w-10">
+              {quantity}
+            </span>
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-primary dark:text-primary/70">
+              ₱{Number(totalCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </td>
+        </tr>
+
+        {/* Structured Lots and Batches Rows Extending Across All Columns */}
+        {lotAllocations.map((lotGroup, lgIdx) => {
+          const lotGroupTotal =
+            lotGroup.batches?.reduce((sum: number, b: { quantity?: number }) => sum + (Number(b.quantity) || 0), 0) ??
+            lotGroup.allocated_quantity ??
+            0;
+          return (
+            <React.Fragment key={`lot-${lgIdx}`}>
+              {/* Storage Lot Sub-Header */}
+              <tr className="bg-muted/40 border-b border-border/40 text-xs">
+                <td className="p-2 text-center border-r border-border/50 bg-muted/30"></td>
+                <td colSpan={6} className="px-4 py-1.5 bg-muted/30">
+                  <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                    <span className="flex items-center gap-1.5 text-primary">
+                      <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>{lotGroup.lot_name || `Lot #${lotGroup.lot_id}`}</span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono bg-background/80 px-2 py-0.5 rounded border border-border/50">
+                      Lot Total: <span className="font-bold text-foreground">{Number(lotGroupTotal).toLocaleString()}</span> {unitName || "units"}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+
+              {/* Discrete Batches in this Storage Lot with Full Column Alignment */}
+              {(lotGroup.batches || []).map(
+                (
+                  batch: {
+                    batch_no?: string;
+                    quantity?: number;
+                    unit_cost?: number;
+                    manufacturing_date?: string | null;
+                    expiry_date?: string | null;
+                    qa_status?: string;
+                  },
+                  bIdx: number
+                ) => {
+                  const bCount = subBatchCounter++;
+                  const batchCost = batch.unit_cost !== undefined ? Number(batch.unit_cost) : Number(costPerUnit || 0);
+                  const batchQty = Number(batch.quantity || 0);
+                  const batchNetTotal = batchQty * batchCost;
+                  return (
+                    <tr
+                      key={`batch-${bIdx}`}
+                      className="bg-card hover:bg-muted/10 border-b border-border/30 text-xs transition-colors"
+                    >
+                      <td className="p-2 text-center text-muted-foreground/60 font-mono text-[10px] border-r border-border/50">
+                        {index + 1}.{bCount}
+                      </td>
+                      <td className="p-2"></td>
+                      <td className="p-2 min-w-[280px] pl-6">
+                        <div className="flex flex-wrap items-center gap-2 font-mono">
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                          >
+                            <Tag className="w-2.5 h-2.5 text-primary" />
+                            {batch.batch_no || "—"}
+                          </Badge>
+                          {batch.manufacturing_date && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Mfg: {String(batch.manufacturing_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {batch.expiry_date && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Exp: {String(batch.expiry_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {batch.qa_status && (
+                            <Badge
+                              variant={
+                                batch.qa_status === "GOOD"
+                                  ? "outline"
+                                  : batch.qa_status === "DAMAGED"
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              className="text-[8px] py-0 h-3.5 px-1 uppercase"
+                            >
+                              {batch.qa_status}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-xs text-muted-foreground font-mono">
+                          ₱{batchCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+                          {unitName || "-"}
+                        </span>
+                      </td>
+                      <td className="p-2 w-40 text-center">
+                        <span className="text-xs font-bold text-foreground px-2 py-0.5 bg-background rounded border border-border/50 font-mono inline-block min-w-10 text-center">
+                          {batchQty.toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-xs font-bold text-foreground font-mono">
+                          ₱{batchNetTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                }
+              )}
+            </React.Fragment>
+          );
+        })}
+      </>
+    );
+  }
 });
 
 // ——————————————————————————————————————————————————————————————————————————————
@@ -272,7 +378,6 @@ export function StockAdjustmentForm({
   const [branchSearch, setBranchSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [docSearch, setDocSearch] = useState("");
-  const [sourceType, setSourceType] = useState<string>("");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [tableSearch, setTableSearch] = useState("");
@@ -281,7 +386,7 @@ export function StockAdjustmentForm({
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
   const [pendingExitAction, setPendingExitAction] = useState<string | (() => void) | null>(null);
-  const initialValuesRef = useRef<string>("");
+  const [initialValues, setInitialValues] = useState<string>("");
 
   const [viewerOpen, setViewerOpen] = useState(false);
   const [activeAttachment, setActiveAttachment] = useState<{ fileUrl: string; filename?: string; isImage?: boolean } | null>(null);
@@ -342,10 +447,6 @@ export function StockAdjustmentForm({
 
           const resolvedIsPosted = isPostedStatus(data.isPosted);
 
-          // Determine the source type (RFID vs MANUAL vs SERIAL)
-          const srcType = (data as { source_type?: string }).source_type || (data.remarks?.includes("MANUAL") ? "MANUAL" : /-(SERIAL)-/i.test(data.doc_no) ? "SERIAL" : "RFID");
-          setSourceType(srcType);
-
           const resetObj = {
             doc_no: data.doc_no || "",
             branch_id:
@@ -362,13 +463,22 @@ export function StockAdjustmentForm({
             items: data.items.map((item) => ({
               ...item,
               quantity: Number(item.quantity || 0),
+              lot_id: item.lot_id ? (typeof item.lot_id === 'object' ? Number((item.lot_id as { lot_id?: number }).lot_id || 0) : Number(item.lot_id)) : undefined,
+              lot_name: (typeof item.lot_id === 'object' && item.lot_id !== null) ? (item.lot_id as { lot_name?: string }).lot_name : (item.lot_name || undefined),
+              inventory_lot_id: item.inventory_lot_id ? Number(item.inventory_lot_id) : undefined,
+              batch_no: item.batch_no || undefined,
+              expiry_date: item.expiry_date || undefined,
+              manufacturing_date: item.manufacturing_date || undefined,
+              inventory_condition: item.inventory_condition || undefined,
+              qa_status: ((item.qa_status || item.inventory_condition || "GOOD") as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED"),
               product_id: Number(
                 (item.product_id as { id?: number; product_id?: number })?.id ||
                 (item.product_id as { id?: number; product_id?: number })?.product_id ||
                 item.product_id
               ),
               product_name:
-                (item.product_id as { product_name?: string })?.product_name ||
+                (item.product_id as { description?: string; product_name?: string })?.description ||
+                (item.product_id as { description?: string; product_name?: string })?.product_name ||
                 item.product_name ||
                 "Unknown Product",
               product_code:
@@ -395,7 +505,7 @@ export function StockAdjustmentForm({
           };
 
           form.reset(resetObj);
-          initialValuesRef.current = JSON.stringify(resetObj);
+          setInitialValues(JSON.stringify(resetObj));
         } catch (error) {
           toast.error("Failed to load adjustment details");
           console.error("Load error:", error);
@@ -413,19 +523,16 @@ export function StockAdjustmentForm({
   const watchedDocNo = useWatch({ control: form.control, name: "doc_no" });
   const watchedAttachments = useWatch({ control: form.control, name: "stock_adjustment_attachment" }) || [];
 
-  useEffect(() => {
-    if (watchedBranchId && branches.length > 0) {
-      const found = branches.find(b => b.id === Number(watchedBranchId));
-      if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
-    }
+  const selectedBranch = useMemo(() => {
+    return branches.find(b => b.id === Number(watchedBranchId));
   }, [watchedBranchId, branches]);
 
-  useEffect(() => {
-    if (watchedSupplierId && suppliers.length > 0) {
-      const found = suppliers.find(s => s.id === Number(watchedSupplierId));
-      if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
-    }
+  const selectedSupplier = useMemo(() => {
+    return suppliers.find(s => s.id === Number(watchedSupplierId));
   }, [watchedSupplierId, suppliers]);
+
+  const branchDisplayValue = branchInputValue || (selectedBranch ? `${selectedBranch.branch_name} (${selectedBranch.branch_code ?? ""})` : "");
+  const supplierDisplayValue = supplierInputValue || (selectedSupplier ? `${selectedSupplier.supplier_name}${selectedSupplier.supplier_shortcut ? ` (${selectedSupplier.supplier_shortcut})` : ""}` : "");
 
   useEffect(() => {
     if (watchedBranchId) {
@@ -472,7 +579,7 @@ export function StockAdjustmentForm({
 
     try {
       const current = form.getValues();
-      const initialStr = initialValuesRef.current;
+      const initialStr = initialValues;
       if (!initialStr) return false;
 
       const initial = JSON.parse(initialStr);
@@ -502,7 +609,7 @@ export function StockAdjustmentForm({
     }
 
     return false;
-  }, [form, isReadOnly]);
+  }, [form, isReadOnly, initialValues]);
 
   const handleCancelOrExit = useCallback((action: string | (() => void)) => {
     if (isFormModified()) {
@@ -524,13 +631,27 @@ export function StockAdjustmentForm({
     } else if (typeof pendingExitAction === "string") {
       router.push(pendingExitAction);
     } else {
-      router.push("/scm/inventory-management/stock-adjustment-summary");
+      router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
     }
     setPendingExitAction(null);
   }, [pendingExitAction, router]);
 
   const handlePost = async () => {
     if (!id) return;
+
+    const currentValues = form.getValues();
+    const unassignedIdx = (currentValues.items || []).findIndex(
+      (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+    );
+    if (unassignedIdx !== -1) {
+      const item = currentValues.items[unassignedIdx];
+      toast.error(
+        `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}) before posting.`,
+        { duration: 5000 }
+      );
+      return;
+    }
+
     setShowPostConfirmation(true);
   };
 
@@ -540,6 +661,18 @@ export function StockAdjustmentForm({
 
     form.handleSubmit(
       async (values) => {
+        const unassignedIdx = (values.items || []).findIndex(
+          (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+        );
+        if (unassignedIdx !== -1) {
+          const item = values.items[unassignedIdx];
+          toast.error(
+            `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}) before posting.`,
+            { duration: 5000 }
+          );
+          return;
+        }
+
         setLoading(true);
         try {
           // 1. Save/update the adjustment with current form values (e.g. added products)
@@ -574,20 +707,54 @@ export function StockAdjustmentForm({
     }
   };
 
-  const onInvalid = () => {
-    toast.error("Please fill in all required fields correctly.");
+  const onInvalid = (errors: FieldErrors<StockAdjustmentFormValues>) => {
+    console.warn("Validation failed errors:", errors);
+    const messages: string[] = [];
+
+    if (errors.branch_id?.message) {
+      messages.push(String(errors.branch_id.message));
+    }
+    if (errors.supplier_id?.message) {
+      messages.push(String(errors.supplier_id.message));
+    }
+    if (errors.stock_adjustment_attachment?.message) {
+      messages.push(String(errors.stock_adjustment_attachment.message));
+    }
+    if (Array.isArray(errors.items)) {
+      errors.items.forEach((itemErr) => {
+        if (itemErr?.batch_no?.message) {
+          messages.push(String(itemErr.batch_no.message));
+        }
+      });
+    }
+
+    const description = messages.filter(Boolean).join(", ");
+    toast.error("Please fill in all required fields correctly.", {
+      description: description || undefined,
+      duration: 6000,
+    });
   };
 
   const onSubmit = useCallback(
     async (values: StockAdjustmentFormValues) => {
       if (mode === "posting") return;
+      const unassignedIdx = (values.items || []).findIndex(
+        (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+      );
+      if (unassignedIdx !== -1) {
+        const item = values.items[unassignedIdx];
+        toast.error(
+          `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
+          { duration: 5000 }
+        );
+        return;
+      }
+
       setLoading(true);
       try {
         if (id) {
           await updateAdjustment(id, values);
-          // Reset the "initial" snapshot so the form is no longer considered
-          // modified — prevents the unsaved-changes modal from appearing after saving.
-          initialValuesRef.current = JSON.stringify(values);
+          setInitialValues(JSON.stringify(values));
           form.reset(values, { keepValues: true });
           toast.success("Adjustment Updated Successfully");
         } else {
@@ -624,7 +791,7 @@ export function StockAdjustmentForm({
           } else if (typeof pendingExitAction === "string") {
             router.push(pendingExitAction);
           } else {
-            router.push("/scm/inventory-management/stock-adjustment-summary");
+            router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : "Failed to save adjustment";
@@ -690,16 +857,11 @@ export function StockAdjustmentForm({
   }, [fields, tableSearch, watchedItemsList]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFields.length / rowsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
   const paginatedFields = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
+    const startIndex = (safeCurrentPage - 1) * rowsPerPage;
     return filteredFields.slice(startIndex, startIndex + rowsPerPage);
-  }, [filteredFields, currentPage, rowsPerPage]);
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [totalPages, currentPage]);
+  }, [filteredFields, safeCurrentPage, rowsPerPage]);
 
   return (
     <div className="flex flex-col gap-6 p-8 max-w-7xl mx-auto w-full bg-background">
@@ -753,17 +915,7 @@ export function StockAdjustmentForm({
               {isPosted ? 'Posted' : 'Draft / Unposted'}
             </Badge>
           )}
-          {id && sourceType && (
-            <Badge
-              variant="outline"
-              className={`px-3 py-1 font-bold shadow-sm ${sourceType === "RFID"
-                  ? "bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800/50"
-                  : "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800/50"
-                } uppercase tracking-wider`}
-            >
-              {sourceType === "RFID" ? "RFID Base" : "Non-RFID"}
-            </Badge>
-          )}
+
         </div>
         <p className="text-sm text-muted-foreground">
           {mode === "posting"
@@ -874,7 +1026,7 @@ export function StockAdjustmentForm({
                         if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code})`);
                         form.setValue("branch_id", Number(v), { shouldValidate: true });
                       }}
-                      inputValue={branchInputValue}
+                      inputValue={branchDisplayValue}
                       onInputValueChange={(v: string) => {
                         const matched = branches.find(b => String(b.id) === v);
                         if (matched) {
@@ -941,7 +1093,7 @@ export function StockAdjustmentForm({
                         if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
                         form.setValue("supplier_id", Number(v), { shouldValidate: true });
                       }}
-                      inputValue={supplierInputValue}
+                      inputValue={supplierDisplayValue}
                       onInputValueChange={(v: string) => {
                         const matched = suppliers.find(s => String(s.id) === v);
                         if (matched) {
@@ -1066,7 +1218,7 @@ export function StockAdjustmentForm({
                           const fileId = typeof file === 'object' ? file.id : file;
                           const isImage = typeof file === 'object' && file.type?.startsWith('image');
                           const filename = typeof file === 'object' ? file.filename_download : `Attachment ${idx + 1}`;
-                          const sizeInMb = typeof file === 'object' && file.filesize 
+                          const sizeInMb = typeof file === 'object' && file.filesize
                             ? (Number(file.filesize) / (1024 * 1024)).toFixed(2)
                             : null;
 
@@ -1311,7 +1463,7 @@ export function StockAdjustmentForm({
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => handleCancelOrExit("/scm/inventory-management/stock-adjustment-summary")}
+                  onClick={() => handleCancelOrExit("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary")}
                   className="h-10 px-8 font-bold border-border text-muted-foreground hover:bg-card rounded-lg transition-colors text-xs"
                 >
                   Cancel

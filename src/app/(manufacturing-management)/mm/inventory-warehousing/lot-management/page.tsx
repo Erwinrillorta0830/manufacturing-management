@@ -115,7 +115,7 @@ export default async function LotManagementPage() {
             </header>
 
             {/* Scrollable Content Container */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 bg-background space-y-4">
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-auto p-4 sm:p-6 bg-background space-y-4">
                 <div>
                     <h2 className="text-xl font-extrabold tracking-tight text-foreground">Lot Management</h2>
                     <p className="text-muted-foreground text-[11px] mt-0.5">

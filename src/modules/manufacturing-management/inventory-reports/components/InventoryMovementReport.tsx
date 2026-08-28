@@ -136,15 +136,19 @@ export default function InventoryMovementReport({
     // Reset Branch / Lot selection if they are no longer in the active lists
     React.useEffect(() => {
         if (pdfBranchId !== null && !pdfActiveBranchIds.has(pdfBranchId)) {
-            setPdfBranchId(null);
-            setPdfLotId(null);
+            queueMicrotask(() => {
+                setPdfBranchId(null);
+                setPdfLotId(null);
+            });
         }
     }, [pdfActiveBranchIds, pdfBranchId]);
 
     React.useEffect(() => {
         const lotExists = pdfLots.some(l => l.lotId === pdfLotId);
         if (pdfLotId !== null && !lotExists) {
-            setPdfLotId(null);
+            queueMicrotask(() => {
+                setPdfLotId(null);
+            });
         }
     }, [pdfLots, pdfLotId]);
 

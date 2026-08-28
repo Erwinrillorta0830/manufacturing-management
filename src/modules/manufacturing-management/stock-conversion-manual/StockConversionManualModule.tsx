@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import { useStockConversionManual } from "./hooks/useStockConversionManual";
 import { StockConversionTable } from "../stock-conversion/components/StockConversionTable";
-import { StockConversionModal } from "../stock-conversion/components/StockConversionModal";
-import type { StockConversionProduct } from "./types/stock-conversion-manual.types";
+import { StockConversionModal, OutputBatchDetails } from "../stock-conversion/components/StockConversionModal";
+import type { StockConversionProduct, StockConversionPayload } from "./types/stock-conversion-manual.types";
 import { ModuleSkeleton } from "@/components/shared/ModuleSkeleton";
 import ErrorPage from "@/components/shared/ErrorPage";
 
@@ -22,10 +22,6 @@ export default function StockConversionManualModule({
   userId = 0,
   userBranchId = 0,
 }: StockConversionManualModuleProps) {
-  const userRef = useRef({ id: userId, branchId: userBranchId });
-  userRef.current.id = userId;
-  userRef.current.branchId = userBranchId;
-
   const [selectedBranchId, setSelectedBranchId] = useState<number>(userBranchId);
   const [branches, setBranches] = useState<{ id: number; branch_name: string }[]>([]);
 
@@ -65,13 +61,14 @@ export default function StockConversionManualModule({
 
   const handleConfirmUnitConversion = useCallback(async (
     qtyToConvert: number,
-    targetUnit: { unitId: number; targetProductId?: number; name?: string },
-    convertedQuantity: number
+    targetUnit: { unitId: number; targetProductId?: number; name?: string; conversionFactor?: number },
+    convertedQuantity: number,
+    outputBatch?: OutputBatchDetails
   ) => {
     if (!selectedProduct) return;
 
-    const branchId = selectedBranchId > 0 ? selectedBranchId : (userRef.current.branchId || 190);
-    const payload = {
+    const branchId = selectedBranchId > 0 ? selectedBranchId : (userBranchId || 190);
+    const payload: StockConversionPayload = {
       productId: selectedProduct.productId,
       sourceUnitId: selectedProduct.currentUnitId ?? 11,
       targetUnitId: targetUnit.unitId,
@@ -80,7 +77,20 @@ export default function StockConversionManualModule({
       convertedQuantity,
       pricePerUnit: selectedProduct.pricePerUnit,
       branchId,
-      userId: userRef.current.id || 24,
+      userId: userId || 24,
+      sourceLotId: outputBatch?.sourceLotId,
+      sourceInventoryLotId: outputBatch?.sourceInventoryLotId,
+      sourceBatchNo: outputBatch?.sourceBatchNo || outputBatch?.sourceBatchSummary,
+      sourceManufacturingDate: outputBatch?.sourceMfgDate,
+      sourceExpiryDate: outputBatch?.sourceExpDate,
+      sourceAllocations: outputBatch?.sourceAllocations,
+      targetLotId: outputBatch?.targetLotId,
+      targetBatchNo: outputBatch?.targetBatchNo,
+      targetManufacturingDate: outputBatch?.targetMfgDate,
+      targetExpiryDate: outputBatch?.targetExpDate,
+      targetAllocations: outputBatch?.targetAllocations,
+      sourceFactor: selectedProduct.conversionFactor || 1,
+      targetFactor: targetUnit.conversionFactor || 1,
     };
 
     try {
@@ -90,18 +100,22 @@ export default function StockConversionManualModule({
     } finally {
       // Cleaned up
     }
-  }, [selectedProduct, selectedBranchId, convertStock]);
+  }, [selectedProduct, selectedBranchId, userBranchId, userId, convertStock]);
 
-  const hasLoadedOnce = useRef(false);
-  if (!isLoading && data.length > 0) {
-    hasLoadedOnce.current = true;
-  }
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!isLoading && !hasLoadedOnce) {
+      queueMicrotask(() => {
+        setHasLoadedOnce(true);
+      });
+    }
+  }, [isLoading, hasLoadedOnce]);
 
   if (error) {
     return <ErrorPage code="500" title="Fetch Error" message={error} reset={refresh} />;
   }
 
-  if (isLoading && !hasLoadedOnce.current) {
+  if (isLoading && !hasLoadedOnce) {
     return <ModuleSkeleton rowCount={10} />;
   }
 
@@ -128,6 +142,7 @@ export default function StockConversionManualModule({
 
       <StockConversionModal
         product={selectedProduct}
+        branchId={selectedBranchId > 0 ? selectedBranchId : userBranchId}
         isOpen={isUnitModalOpen}
         onClose={() => setIsUnitModalOpen(false)}
         onConfirm={handleConfirmUnitConversion}

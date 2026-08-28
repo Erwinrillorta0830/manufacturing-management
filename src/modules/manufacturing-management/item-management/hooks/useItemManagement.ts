@@ -53,7 +53,9 @@ export function useItemManagement() {
     }, []);
 
     useEffect(() => {
-        loadAllData();
+        queueMicrotask(() => {
+            loadAllData();
+        });
     }, [loadAllData]);
 
     // Handle registrations

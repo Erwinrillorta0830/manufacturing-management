@@ -1,5 +1,5 @@
 // =============================================================================
-// DIRECTUS CLIENT — stock-adjustment module
+// DIRECTUS CLIENT — stock-adjustment-manual module
 // =============================================================================
 
 /** Returns the Directus base URL (no trailing slash). Throws if not set. */

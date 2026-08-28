@@ -55,6 +55,15 @@ export default function ViewAssetModal({
       }`
     : "N/A";
 
+  const depStartDateObj = parseDateTimeSafe(asset.depreciation_start_date) || acqDateObj;
+  const depStartDateFormatted = depStartDateObj
+    ? `${new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }).format(depStartDateObj)}`
+    : "N/A";
+
   const depreciationPercentage =
     financials.acquisitionCost > 0
       ? (financials.accumulatedDepreciation / financials.acquisitionCost) * 100
@@ -64,13 +73,17 @@ export default function ViewAssetModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] md:max-w-5xl p-0 overflow-hidden border-border bg-background shadow-2xl max-h-[95vh] flex flex-col">
+      <DialogContent
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="max-w-[96vw] md:max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[1400px] w-full p-0 overflow-hidden border-border bg-background shadow-2xl max-h-[95vh] flex flex-col rounded-2xl"
+      >
         <DialogTitle className="sr-only">Asset Profile: {asset.item_name}</DialogTitle>
         <DialogDescription className="sr-only">Asset information, specifications, and depreciation details</DialogDescription>
         {/* Responsive Container */}
         <div className="flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
           {/* LEFT PANEL: Asset Identity & Image */}
-          <div className="w-full md:w-[36%] bg-muted/30 p-6 md:p-8 flex flex-col border-b md:border-b-0 md:border-r relative overflow-hidden">
+          <div className="w-full md:w-[32%] lg:w-[30%] xl:w-[28%] bg-muted/30 p-6 md:p-8 flex flex-col border-b md:border-b-0 md:border-r relative overflow-hidden shrink-0">
             <div className="relative z-10 space-y-6">
               <div className="flex items-center gap-3">
                 <div className="h-0.5 w-10 bg-primary" />
@@ -79,8 +92,8 @@ export default function ViewAssetModal({
                 </span>
               </div>
 
-              <div className="relative mx-auto w-full max-w-64 md:max-w-full">
-                <div className="relative aspect-square rounded-xl bg-background border-2 border-muted flex items-center justify-center overflow-hidden">
+              <div className="relative mx-auto w-full max-w-72 md:max-w-full">
+                <div className="relative aspect-square rounded-2xl bg-background border-2 border-muted flex items-center justify-center overflow-hidden">
                   {imageUrl ? (
                     <Image
                       unoptimized
@@ -109,6 +122,16 @@ export default function ViewAssetModal({
                   >
                     {asset.asset_type || "Administrative"}
                   </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`text-xs tracking-wider px-2.5 font-medium ${
+                      asset.asset_origin === "Existing" || financials.isLegacyMigrated
+                        ? "border-amber-500/40 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/40"
+                        : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/40"
+                    }`}
+                  >
+                    {asset.asset_origin === "Existing" || financials.isLegacyMigrated ? "Existing Asset" : "New Acquisition"}
+                  </Badge>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-1 gap-3 pt-2">
                   <MetricItem
@@ -120,6 +143,11 @@ export default function ViewAssetModal({
                     icon={<CalendarDays size={16} />}
                     label="Acquired"
                     value={acqDateFormatted}
+                  />
+                  <MetricItem
+                    icon={<CalendarDays size={16} className="text-primary" />}
+                    label="Dep. Start"
+                    value={depStartDateFormatted}
                   />
                   <MetricItem
                     icon={
@@ -142,7 +170,7 @@ export default function ViewAssetModal({
           </div>
 
           {/* RIGHT PANEL: Analytics & Depreciation Details */}
-          <div className="w-full md:w-[64%] p-6 md:p-8 flex flex-col bg-background overflow-y-auto max-h-[88vh]">
+          <div className="w-full md:w-[68%] lg:w-[70%] xl:w-[72%] p-6 md:p-8 flex flex-col bg-background overflow-y-auto max-h-[90vh]">
             <div className="mb-6">
               <DialogTitle className="text-2xl md:text-3xl font-bold uppercase leading-none mb-3">
                 {asset.item_name}
@@ -197,24 +225,68 @@ export default function ViewAssetModal({
 
               {/* SECTION: Financial Baseline */}
               <div className="space-y-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  Financial Baseline
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Financial Baseline
+                  </span>
+                  {(asset.asset_origin === "Existing" || financials.isLegacyMigrated) ? (
+                    <Badge variant="outline" className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-50/30">
+                      Existing (Cutover Opening Applied)
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-50/30">
+                      New System Asset
+                    </Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <DataCard
-                    label="Acquisition Cost"
+                    label="Historical Cost"
                     value={formatPHP(financials.acquisitionCost)}
+                  />
+                  <DataCard
+                    label="Opening Book Value"
+                    value={formatPHP(financials.openingBookValue)}
                   />
                   <DataCard
                     label="Residual Value"
                     value={formatPHP(financials.residualValue)}
                   />
                   <DataCard
-                    label="Depreciable Amount"
+                    label="Depreciable Basis"
                     value={formatPHP(financials.depreciableAmount)}
                   />
                 </div>
               </div>
+
+              {/* SECTION: Legacy Migration Details (if present) */}
+              {financials.isLegacyMigrated && (
+                <div className="p-3.5 rounded-xl border border-dashed border-primary/40 bg-primary/5 space-y-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                    Opening Cutover Metrics
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div className="p-2 rounded-lg bg-background border">
+                      <span className="text-muted-foreground block text-[11px]">Prior Accum. Dep.:</span>
+                      <span className="font-bold text-foreground mt-0.5 block">{formatPHP(financials.openingAccumulatedDepreciation)}</span>
+                    </div>
+                    {isUop && (
+                      <div className="p-2 rounded-lg bg-background border">
+                        <span className="text-muted-foreground block text-[11px]">Prior Units Produced:</span>
+                        <span className="font-bold text-foreground mt-0.5 block">{financials.openingProductionUnits?.toLocaleString() || "0"} {uomLabel}</span>
+                      </div>
+                    )}
+                    <div className="p-2 rounded-lg bg-background border">
+                      <span className="text-muted-foreground block text-[11px]">Remaining at Cutover:</span>
+                      <span className="font-bold text-foreground mt-0.5 block">
+                        {isUop
+                          ? `${financials.remainingCapacityAtOpening?.toLocaleString() || "0"} ${uomLabel}`
+                          : `${financials.usefulMonths} months`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* SECTION: Depreciation Details & Method Metrics */}
               <div className="p-4 rounded-xl border border-border bg-card/60 space-y-4">
@@ -230,7 +302,7 @@ export default function ViewAssetModal({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                       <div className="p-2.5 rounded-lg bg-background border">
                         <span className="text-muted-foreground font-medium block">
-                          Maximum Production:
+                          Maximum Capacity:
                         </span>
                         <span className="text-sm font-bold text-foreground mt-0.5 block">
                           {financials.maxCapacity?.toLocaleString() || "0"} {uomLabel}
@@ -238,10 +310,10 @@ export default function ViewAssetModal({
                       </div>
                       <div className="p-2.5 rounded-lg bg-background border">
                         <span className="text-muted-foreground font-medium block">
-                          Produced to Date:
+                          System Job Orders Produced:
                         </span>
                         <span className="text-sm font-bold text-foreground mt-0.5 block">
-                          {financials.producedToDate?.toLocaleString() || "0"} {uomLabel}
+                          {financials.systemProduced?.toLocaleString() || "0"} {uomLabel}
                         </span>
                       </div>
                       <div className="p-2.5 rounded-lg bg-background border">
@@ -265,7 +337,7 @@ export default function ViewAssetModal({
                       </div>
                       <div className="p-2.5 rounded-lg bg-background border">
                         <span className="text-muted-foreground font-medium block">
-                          Accumulated Depreciation:
+                          Total Accumulated Dep.:
                         </span>
                         <span className="text-sm font-bold text-foreground mt-0.5 block">
                           {formatPHP(financials.accumulatedDepreciation)}
@@ -283,13 +355,21 @@ export default function ViewAssetModal({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                       <div className="p-2.5 rounded-lg bg-background border">
                         <span className="text-muted-foreground font-medium block">
                           Useful Life:
                         </span>
                         <span className="text-sm font-bold text-foreground mt-0.5 block">
                           {financials.usefulMonths} months ({financials.usefulYears ? Math.round(financials.usefulYears) : 1} yrs)
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-background border">
+                        <span className="text-muted-foreground font-medium block">
+                          Depreciation Start:
+                        </span>
+                        <span className="text-sm font-bold text-foreground mt-0.5 block">
+                          {depStartDateFormatted}
                         </span>
                       </div>
                       <div className="p-2.5 rounded-lg bg-background border">
@@ -305,7 +385,7 @@ export default function ViewAssetModal({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
                       <div className="p-2.5 rounded-lg bg-background border">
                         <span className="text-muted-foreground font-medium block">
-                          Accumulated Depreciation:
+                          Total Accumulated Dep.:
                         </span>
                         <span className="text-sm font-bold text-foreground mt-0.5 block">
                           {formatPHP(financials.accumulatedDepreciation)}

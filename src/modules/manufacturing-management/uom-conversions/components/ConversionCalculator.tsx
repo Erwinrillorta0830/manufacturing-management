@@ -2,6 +2,7 @@ import React from "react";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Scale, ArrowRightLeft, Calculator, Sparkles } from "lucide-react";
 import { DensityFactor } from "../types";
+import { AssetSearchableSelect as AssetUomSelect } from "@/modules/manufacturing-management/asset-management/components/ui-selects";
 
 interface ConversionCalculatorProps {
     densities: DensityFactor[];
@@ -19,11 +20,11 @@ interface ConversionCalculatorProps {
 }
 
 const UOM_OPTIONS = [
-    { value: "MT", label: "Metric Tons (MT) - Mass" },
-    { value: "KG", label: "Kilograms (KG) - Mass" },
-    { value: "L", label: "Liters (L) - Volumetric" },
-    { value: "ML", label: "Milliliters (ML) - Volumetric" },
-    { value: "Drums", label: "Standard Drums (200L) - Pack" }
+    { value: "MT", label: "Metric Tons (MT)", shortcut: "MT", description: "Mass" },
+    { value: "KG", label: "Kilograms (KG)", shortcut: "KG", description: "Mass" },
+    { value: "L", label: "Liters (L)", shortcut: "L", description: "Volumetric" },
+    { value: "ML", label: "Milliliters (ML)", shortcut: "ML", description: "Volumetric" },
+    { value: "Drums", label: "Standard Drums (200L)", shortcut: "Drums", description: "Pack" }
 ];
 
 export default function ConversionCalculator({
@@ -112,32 +113,22 @@ export default function ConversionCalculator({
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <label className="text-[11px] font-bold text-muted-foreground uppercase">Source UOM</label>
-                            <select
+                            <AssetUomSelect
+                                options={UOM_OPTIONS}
                                 value={calcFrom}
-                                onChange={(e) => setCalcFrom(e.target.value)}
-                                className="w-full bg-background border rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold"
-                            >
-                                {UOM_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                        {opt.value} - {opt.value === "MT" || opt.value === "KG" ? "Mass" : "Volume"}
-                                    </option>
-                                ))}
-                            </select>
+                                onValueChange={setCalcFrom}
+                                placeholder="Select source UOM..."
+                            />
                         </div>
 
                         <div className="space-y-1.5">
                             <label className="text-[11px] font-bold text-muted-foreground uppercase">Target UOM</label>
-                            <select
+                            <AssetUomSelect
+                                options={UOM_OPTIONS}
                                 value={calcTo}
-                                onChange={(e) => setCalcTo(e.target.value)}
-                                className="w-full bg-background border rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold"
-                            >
-                                {UOM_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                        {opt.value} - {opt.value === "MT" || opt.value === "KG" ? "Mass" : "Volume"}
-                                    </option>
-                                ))}
-                            </select>
+                                onValueChange={setCalcTo}
+                                placeholder="Select target UOM..."
+                            />
                         </div>
                     </div>
 

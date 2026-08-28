@@ -14,7 +14,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SummaryOrderGroup } from '../hooks/use-stock-transfer-summary';
 import { CompanyData, StockTransferRow } from '../../types/stock-transfer.types';
-import { calculateUnitPrice } from '../../services/stock-transfer.helpers';
+import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
+import { formatPhDateTime } from '../../utils/date-utils';
 import { PrintTemplate } from './PrintTemplate';
 
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -160,13 +161,6 @@ export function SummaryPrintPreview({
       doc.text('SOURCE BRANCH', margin + 3, y + 2);
       doc.text('TARGET BRANCH', margin + colW + 3, y + 2);
 
-      const formatDate = (dateStr: string | null | undefined) => {
-        if (!dateStr) return '—';
-        try {
-          return new Intl.DateTimeFormat('en-PH', { month: 'short', day: '2-digit', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(dateStr));
-        } catch { return dateStr; }
-      };
-
       // Row 1 Values
       doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
@@ -185,7 +179,7 @@ export function SummaryPrintPreview({
       doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(0, 0, 0);
-      doc.text(formatDate(group.dateRequested), margin + 3, y + 22);
+      doc.text(formatPhDateTime(group.dateRequested, { formatType: 'dateOnly' }), margin + 3, y + 22);
       doc.text((group.status || 'PENDING').toUpperCase(), margin + colW + 3, y + 22);
 
       y += 32;
@@ -204,9 +198,9 @@ export function SummaryPrintPreview({
            brand || 'N/A',
            product?.product_name || `ID: ${item.product_id}`,
            unit,
-           String(item.ordered_quantity),
-           String(item.allocated_quantity ?? '—'),
-           String(item.received_quantity ?? '—'),
+           formatQuantity(item.ordered_quantity),
+           formatQuantity(item.allocated_quantity),
+           formatQuantity(item.received_quantity),
            `PHP ${rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
          ];
       });
@@ -297,7 +291,7 @@ export function SummaryPrintPreview({
         doc.setFontSize(6);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(100, 100, 100);
-        const dateStr = sig.date ? formatDate(sig.date) : '—';
+        const dateStr = sig.date ? formatPhDateTime(sig.date, { formatType: 'dateOnly' }) : '—';
         doc.text(`Date: ${dateStr}`, midX, y + 11, { align: 'center' });
       });
 
@@ -312,7 +306,7 @@ export function SummaryPrintPreview({
         doc.setFontSize(6);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(150, 150, 150);
-        doc.text(`Printed: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} · VOS Web Supply Chain Management System`, margin, pageH - 8);
+        doc.text(`Printed: ${new Date().toLocaleString('en-PH')} · VOS Web Supply Chain Management System`, margin, pageH - 8);
         doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 8, { align: 'right' });
       }
 

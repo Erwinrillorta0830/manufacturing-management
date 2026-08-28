@@ -38,27 +38,17 @@ export async function GET(req: NextRequest) {
       try {
         const queries = [
            fetch(onHandUrl.toString(), { method: "GET", headers, cache: "no-store" }),
-           fetch(`${directusApi}/items/stock_adjustment_rfid?filter[rfid_tag][_eq]=${encodeURIComponent(rfid)}&fields=stock_adjustment_id.type&limit=5`, { headers: directusHeaders, cache: "no-store" }),
            fetch(`${directusApi}/items/rfid_tags?filter[rfid_tag][_eq]=${encodeURIComponent(rfid)}&fields=status&limit=1`, { headers: directusHeaders, cache: "no-store" })
         ];
 
-        const [onHandRes, historyRes, masterRes] = await Promise.all(queries);
+        const [onHandRes, masterRes] = await Promise.all(queries);
 
         let existsInOnHand = false;
-        let hasOutMovement = false;
         let isInactive = false;
-        let hasAnyHistory = false;
 
         if (onHandRes.ok) {
           const items = await onHandRes.json();
           existsInOnHand = (Array.isArray(items) ? items : [items]).some(i => i && String(i.rfid || i.rfid_tag) === rfid);
-        }
-
-        if (historyRes.ok) {
-          const payload = await historyRes.json();
-          const records = (payload.data || []) as Array<{ stock_adjustment_id?: { type?: string } }>;
-          hasAnyHistory = records.length > 0;
-          hasOutMovement = records.some((r) => r.stock_adjustment_id?.type === "OUT");
         }
 
         if (masterRes.ok) {
@@ -70,14 +60,14 @@ export async function GET(req: NextRequest) {
         let reason = null;
 
         if (mode === "target") {
-          if (hasAnyHistory || existsInOnHand) {
+          if (existsInOnHand) {
             isBlocked = true;
-            reason = hasAnyHistory ? "history" : "onhand";
+            reason = "onhand";
           }
         } else {
-          if (!existsInOnHand || hasOutMovement || isInactive) {
+          if (!existsInOnHand || isInactive) {
             isBlocked = true;
-            reason = (hasOutMovement || isInactive) ? "history" : "not_found";
+            reason = isInactive ? "history" : "not_found";
           }
         }
         

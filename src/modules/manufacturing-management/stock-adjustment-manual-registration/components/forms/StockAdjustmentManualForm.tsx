@@ -20,6 +20,9 @@ import {
   Paperclip,
   AlertCircle,
   Printer,
+  Warehouse,
+  Tag,
+  Layers,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -98,6 +101,14 @@ const ProductTableRow = React.memo(function ProductTableRow({
   const quantity = useWatch({ control, name: `items.${index}.quantity` });
   const costPerUnit = useWatch({ control, name: `items.${index}.cost_per_unit` });
   const brandName = useWatch({ control, name: `items.${index}.brand_name` });
+  const lotAllocations = useWatch({ control, name: `items.${index}.lot_allocations` });
+  const batchNo = useWatch({ control, name: `items.${index}.batch_no` });
+  const lotName = useWatch({ control, name: `items.${index}.lot_name` });
+  const lotId = useWatch({ control, name: `items.${index}.lot_id` });
+  const expiryDate = useWatch({ control, name: `items.${index}.expiry_date` });
+  const qaStatus = useWatch({ control, name: `items.${index}.qa_status` });
+  const inventoryCondition = useWatch({ control, name: `items.${index}.inventory_condition` });
+  const displayStatus = qaStatus || inventoryCondition || "";
 
   const { errors } = useFormState({ control });
   const rowError = Array.isArray(errors.items)
@@ -112,16 +123,218 @@ const ProductTableRow = React.memo(function ProductTableRow({
     setValue(`items.${index}.quantity`, newQty, { shouldValidate: true });
   };
 
+  // If multi-lot or multi-batch allocations exist, render the full-width aligned table rows
+  if (Array.isArray(lotAllocations) && lotAllocations.length > 0) {
+    let subBatchCounter = 1;
+    return (
+      <>
+        {/* Main Product Summary Row */}
+        <tr className="border-b border-border/50 bg-muted/20 hover:bg-muted/30 transition-colors font-semibold">
+          <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">
+            {index + 1}
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
+          </td>
+          <td className="p-3 min-w-[280px]">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
+              {product_code && (
+                <span className="text-[10px] text-muted-foreground font-mono">({product_code})</span>
+              )}
+            </div>
+          </td>
+          <td className="p-3">
+            <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+              {unitName || "-"}
+            </span>
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-foreground">
+              ₱{Number(costPerUnit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </td>
+          <td className="p-3">
+            <span className="text-xs font-bold text-primary dark:text-primary/70">
+              ₱{Number(totalCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </td>
+          <td className="p-3 w-32 text-center">
+            <span className="text-xs font-bold px-3 py-1 bg-muted/80 rounded-md border border-border/60 inline-block text-center min-w-10">
+              {quantity}
+            </span>
+          </td>
+          <td className="p-3 text-center w-16">
+            {!isReadOnly && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemove(index)}
+                className="h-7 w-7 rounded-full text-red-400/50 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all mx-auto"
+                title="Remove item"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </td>
+        </tr>
+
+        {/* Structured Lots and Batches Rows Extending Across All Columns */}
+        {lotAllocations.map((lotGroup, lgIdx) => {
+          const lotGroupTotal =
+            lotGroup.batches?.reduce((sum: number, b: { quantity?: number }) => sum + (Number(b.quantity) || 0), 0) ??
+            lotGroup.allocated_quantity ??
+            0;
+          return (
+            <React.Fragment key={`lot-${lgIdx}`}>
+              {/* Storage Lot Sub-Header */}
+              <tr className="bg-muted/40 border-b border-border/40 text-xs">
+                <td className="p-2 text-center border-r border-border/50 bg-muted/30"></td>
+                <td colSpan={7} className="px-4 py-1.5 bg-muted/30">
+                  <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                    <span className="flex items-center gap-1.5 text-primary">
+                      <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>{lotGroup.lot_name || `Lot #${lotGroup.lot_id}`}</span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono bg-background/80 px-2 py-0.5 rounded border border-border/50">
+                      Lot Total: <span className="font-bold text-foreground">{Number(lotGroupTotal).toLocaleString()}</span> {unitName || "units"}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+
+              {/* Discrete Batches in this Storage Lot with Full Column Alignment */}
+              {(lotGroup.batches || []).map(
+                (
+                  batch: {
+                    batch_no?: string;
+                    quantity?: number;
+                    unit_cost?: number;
+                    manufacturing_date?: string | null;
+                    expiry_date?: string | null;
+                    qa_status?: string;
+                  },
+                  bIdx: number
+                ) => {
+                  const bCount = subBatchCounter++;
+                  const batchCost = batch.unit_cost !== undefined ? Number(batch.unit_cost) : Number(costPerUnit || 0);
+                  const batchQty = Number(batch.quantity || 0);
+                  const batchNetTotal = batchQty * batchCost;
+                  return (
+                    <tr
+                      key={`batch-${bIdx}`}
+                      className="bg-card hover:bg-muted/10 border-b border-border/30 text-xs transition-colors"
+                    >
+                      <td className="p-2 text-center text-muted-foreground/60 font-mono text-[10px] border-r border-border/50">
+                        {index + 1}.{bCount}
+                      </td>
+                      <td className="p-2"></td>
+                      <td className="p-2 min-w-[280px] pl-6">
+                        <div className="flex flex-wrap items-center gap-2 font-mono">
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                          >
+                            <Tag className="w-2.5 h-2.5 text-primary" />
+                            {batch.batch_no || "—"}
+                          </Badge>
+                          {batch.manufacturing_date && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Mfg: {String(batch.manufacturing_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {batch.expiry_date && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Exp: {String(batch.expiry_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {batch.qa_status && (
+                            <Badge
+                              variant={
+                                batch.qa_status === "GOOD"
+                                  ? "outline"
+                                  : batch.qa_status === "DAMAGED"
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              className="text-[8px] py-0 h-3.5 px-1 uppercase"
+                            >
+                              {batch.qa_status}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+                          {unitName || "-"}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-xs text-muted-foreground font-mono">
+                          ₱{batchCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-xs font-bold text-foreground font-mono">
+                          ₱{batchNetTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                      <td className="p-2 w-32 text-center">
+                        <span className="text-xs font-bold text-foreground px-2 py-0.5 bg-background rounded border border-border/50 font-mono inline-block min-w-10 text-center">
+                          {batchQty.toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="p-2 text-center w-16"></td>
+                    </tr>
+                  );
+                }
+              )}
+            </React.Fragment>
+          );
+        })}
+      </>
+    );
+  }
+
   return (
     <tr className="border-b border-border/50 hover:bg-muted/10 transition-colors bg-card">
-      <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">{index + 1}</td>
-      <td className="p-3">
+      <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50 align-top pt-3.5">{index + 1}</td>
+      <td className="p-3 align-top pt-3.5">
         <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
       </td>
-      <td className="p-3 min-w-[250px]">
+      <td className="p-3 min-w-[280px] align-top pt-3.5">
         <div className="flex flex-col">
-          <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
-          <span className="text-[10px] text-muted-foreground font-mono mt-0.5">{product_code}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
+            {product_code && (
+              <span className="text-[10px] text-muted-foreground font-mono">({product_code})</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            {batchNo ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 border-border/60"
+              >
+                <Layers className="w-2.5 h-2.5 text-primary" />
+                {batchNo} {lotName ? `(${lotName})` : lotId ? `(Lot #${lotId})` : ""}
+              </Badge>
+            ) : null}
+            {expiryDate && (
+              <span className="text-[9px] text-muted-foreground/80 font-mono">
+                Exp: {String(expiryDate).substring(0, 10)}
+              </span>
+            )}
+            {displayStatus && (
+              <Badge
+                variant={displayStatus === "GOOD" ? "outline" : displayStatus === "DAMAGED" ? "destructive" : "secondary"}
+                className="text-[9px] py-0 h-3.5 px-1 font-mono"
+              >
+                {String(displayStatus)}
+              </Badge>
+            )}
+          </div>
         </div>
       </td>
       <td className="p-3">
@@ -154,11 +367,21 @@ const ProductTableRow = React.memo(function ProductTableRow({
             </button>
             <input
               type="number"
-              value={quantity === 0 ? "" : quantity}
+              value={quantity === 0 || quantity === undefined ? "" : quantity}
               onChange={(e) => {
-                let val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 1) val = 1;
-                setValue(`items.${index}.quantity`, val, { shouldValidate: true });
+                const raw = e.target.value;
+                if (raw === "") {
+                  setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
+                  return;
+                }
+                const val = parseInt(raw, 10);
+                setValue(`items.${index}.quantity`, isNaN(val) ? 0 : Math.max(0, val), { shouldValidate: true });
+              }}
+              onBlur={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (isNaN(val) || val < 1) {
+                  setValue(`items.${index}.quantity`, 1, { shouldValidate: true });
+                }
               }}
               className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               min={1}
@@ -400,8 +623,8 @@ export function StockAdjustmentManualForm({
     // --- Find Best Match Template ---
     const templates = await pdfTemplateService.fetchTemplates();
     const template = templates.find(t => t.name === "MEN2")
-                  || templates.find(t => t.name.toLowerCase().includes("men2"))
-                  || templates[0];
+      || templates.find(t => t.name.toLowerCase().includes("men2"))
+      || templates[0];
     const templateName = template?.name || "MEN2";
 
     const doc = await PdfEngine.generateWithFrame(templateName, companyData, (doc, startY, config) => {
@@ -646,8 +869,12 @@ export function StockAdjustmentManualForm({
                 (item.product_id as { id?: number; product_id?: number })?.product_id ||
                 item.product_id
               ),
+              unit_id: item.unit_id
+                ? (typeof item.unit_id === "object" ? (item.unit_id as { unit_id?: number; id?: number })?.unit_id || (item.unit_id as { unit_id?: number; id?: number })?.id : Number(item.unit_id))
+                : (item.product_id as { unit_id?: number; unit_of_measurement?: { unit_id?: number } })?.unit_of_measurement?.unit_id || (item.product_id as { unit_id?: number })?.unit_id || undefined,
               product_name:
-                (item.product_id as { product_name?: string })?.product_name ||
+                (item.product_id as { description?: string; product_name?: string })?.description ||
+                (item.product_id as { description?: string; product_name?: string })?.product_name ||
                 item.product_name ||
                 "Unknown Product",
               product_code:
@@ -694,14 +921,22 @@ export function StockAdjustmentManualForm({
   useEffect(() => {
     if (watchedBranchId && branches.length > 0) {
       const found = branches.find(b => b.id === Number(watchedBranchId));
-      if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+      if (found) {
+        queueMicrotask(() => {
+          setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
+        });
+      }
     }
   }, [watchedBranchId, branches]);
 
   useEffect(() => {
     if (watchedSupplierId && suppliers.length > 0) {
       const found = suppliers.find(s => s.id === Number(watchedSupplierId));
-      if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+      if (found) {
+        queueMicrotask(() => {
+          setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
+        });
+      }
     }
   }, [watchedSupplierId, suppliers]);
 
@@ -738,7 +973,7 @@ export function StockAdjustmentManualForm({
           const current = JSON.parse(initialValuesRef.current || "{}");
           current.doc_no = nextDocNo;
           initialValuesRef.current = JSON.stringify(current);
-        } catch {}
+        } catch { }
       };
       updateDocNo();
     }
@@ -755,7 +990,7 @@ export function StockAdjustmentManualForm({
           const current = JSON.parse(initialValuesRef.current || "{}");
           current.doc_no = nextDocNo;
           initialValuesRef.current = JSON.stringify(current);
-        } catch {}
+        } catch { }
       };
       updateDocNo();
     }
@@ -771,6 +1006,8 @@ export function StockAdjustmentManualForm({
   // ——————————————————————————————————————————————————————————————————————————————
   const isFormLoading = id ? loading : false;
   const isPosted = useWatch({ control: form.control, name: "isPosted" });
+  const watchedDocNo = useWatch({ control: form.control, name: "doc_no" });
+  const watchedAttachments = useWatch({ control: form.control, name: "stock_adjustment_attachment" });
   const isReadOnly = !!isPosted;
 
   // ——————————————————————————————————————————————————————————————————————————————
@@ -782,6 +1019,20 @@ export function StockAdjustmentManualForm({
       toast.error("Please fill in all required fields correctly before posting.");
       return;
     }
+
+    const currentValues = form.getValues();
+    const unassignedIdx = (currentValues.items || []).findIndex(
+      (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+    );
+    if (unassignedIdx !== -1) {
+      const item = currentValues.items[unassignedIdx];
+      toast.error(
+        `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}) before posting.`,
+        { duration: 5000 }
+      );
+      return;
+    }
+
     setShowPostConfirmation(true);
   };
 
@@ -820,14 +1071,28 @@ export function StockAdjustmentManualForm({
 
   const onInvalid = (errors: FieldErrors<StockAdjustmentManualFormValues>) => {
     console.warn("Validation failed errors:", errors);
-    const errorDetails = Object.entries(errors)
-      .map(([key, value]) => {
-        const msg = (value as { message?: string })?.message || "Invalid field value";
-        return `${key}: ${msg}`;
-      })
-      .join(", ");
+    const messages: string[] = [];
+
+    if (errors.branch_id?.message) {
+      messages.push(String(errors.branch_id.message));
+    }
+    if (errors.supplier_id?.message) {
+      messages.push(String(errors.supplier_id.message));
+    }
+    if (errors.stock_adjustment_attachment?.message) {
+      messages.push(String(errors.stock_adjustment_attachment.message));
+    }
+    if (Array.isArray(errors.items)) {
+      errors.items.forEach((itemErr) => {
+        if (itemErr?.batch_no?.message) {
+          messages.push(String(itemErr.batch_no.message));
+        }
+      });
+    }
+
+    const description = messages.filter(Boolean).join(", ");
     toast.error("Please fill in all required fields correctly.", {
-      description: errorDetails || undefined,
+      description: description || undefined,
       duration: 6000,
     });
   };
@@ -884,7 +1149,7 @@ export function StockAdjustmentManualForm({
       } else if (typeof action === "string") {
         router.push(action);
       } else {
-        router.push("/scm/inventory-management/stock-adjustment-summary");
+        router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
       }
     }
   }, [isFormModified, router]);
@@ -896,7 +1161,7 @@ export function StockAdjustmentManualForm({
     } else if (typeof pendingExitAction === "string") {
       router.push(pendingExitAction);
     } else {
-      router.push("/scm/inventory-management/stock-adjustment-summary");
+      router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
     }
     setPendingExitAction(null);
   }, [pendingExitAction, router]);
@@ -905,6 +1170,18 @@ export function StockAdjustmentManualForm({
     setShowUnsavedChangesModal(false);
     await form.handleSubmit(
       async (values: StockAdjustmentManualFormValues) => {
+        const unassignedIdx = (values.items || []).findIndex(
+          (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+        );
+        if (unassignedIdx !== -1) {
+          const item = values.items[unassignedIdx];
+          toast.error(
+            `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
+            { duration: 5000 }
+          );
+          return;
+        }
+
         setLoading(true);
         try {
           if (id) {
@@ -921,7 +1198,7 @@ export function StockAdjustmentManualForm({
           } else if (typeof pendingExitAction === "string") {
             router.push(pendingExitAction);
           } else {
-            router.push("/scm/inventory-management/stock-adjustment-summary");
+            router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : "Failed to save adjustment";
@@ -938,6 +1215,18 @@ export function StockAdjustmentManualForm({
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
     async (values: StockAdjustmentManualFormValues) => {
+      const unassignedIdx = (values.items || []).findIndex(
+        (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+      );
+      if (unassignedIdx !== -1) {
+        const item = values.items[unassignedIdx];
+        toast.error(
+          `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
+          { duration: 5000 }
+        );
+        return;
+      }
+
       setLoading(true);
       try {
         if (id) {
@@ -1014,17 +1303,27 @@ export function StockAdjustmentManualForm({
   }, [fields, tableSearch, watchedItemsList]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFields.length / rowsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
   const paginatedFields = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
+    const startIndex = (safeCurrentPage - 1) * rowsPerPage;
     return filteredFields.slice(startIndex, startIndex + rowsPerPage);
-  }, [filteredFields, currentPage, rowsPerPage]);
+  }, [filteredFields, safeCurrentPage, rowsPerPage]);
 
   // Ensure current page is valid when filtering changes total pages
   useEffect(() => {
     if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
+      queueMicrotask(() => {
+        setCurrentPage(totalPages);
+      });
     }
   }, [totalPages, currentPage]);
+
+  const handleFormSubmit = useCallback(
+    (e: React.FormEvent) => {
+      void form.handleSubmit(onSubmit, onInvalid)(e);
+    },
+    [form, onSubmit]
+  );
 
   return (
     <div className="flex flex-col gap-6 p-8 max-w-7xl mx-auto w-full bg-background">
@@ -1115,7 +1414,7 @@ export function StockAdjustmentManualForm({
         )}
       </div>
 
-      <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-6">
+      <form onSubmit={handleFormSubmit} className="space-y-6">
         <Card className="border-border shadow-sm bg-card">
           <CardHeader className="bg-card border-b border-border py-4 px-6">
             <CardTitle className="text-base font-bold text-foreground">
@@ -1134,7 +1433,7 @@ export function StockAdjustmentManualForm({
                     onValueChange={(v: string | null) => {
                       if (v) onSelectId(Number(v));
                     }}
-                    inputValue={form.watch("doc_no") || ""}
+                    inputValue={watchedDocNo || ""}
                     onInputValueChange={() => { }}
                   >
                     <ComboboxInput
@@ -1550,7 +1849,7 @@ export function StockAdjustmentManualForm({
           </CardHeader>
           <CardContent className="p-6">
             <AttachmentUpload
-              value={form.watch("stock_adjustment_attachment") || []}
+              value={watchedAttachments || []}
               onChange={(atts) => form.setValue("stock_adjustment_attachment", atts, { shouldValidate: true })}
               disabled={isReadOnly}
             />

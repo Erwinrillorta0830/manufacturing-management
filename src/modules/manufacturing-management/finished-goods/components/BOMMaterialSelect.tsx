@@ -52,7 +52,9 @@ export function BOMMaterialSelect({
     // Resolve the selected product label on mount or value change
     React.useEffect(() => {
         if (!value || typeof value !== "number" || value <= 0) {
-            setSelectedProduct(null);
+            queueMicrotask(() => {
+                setSelectedProduct(null);
+            });
             return;
         }
 

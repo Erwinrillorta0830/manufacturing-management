@@ -26,7 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ClipboardList, Package, Printer } from 'lucide-react';
 import type { OrderGroup, OrderGroupItem, ProductRow, BranchRow } from '../../types/stock-transfer.types';
-import { calculateUnitPrice } from '../../services/stock-transfer.helpers';
+import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
+import { formatPhDateTime } from '../../utils/date-utils';
 import { SummaryPrintPreview } from './SummaryPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
 
@@ -63,20 +64,6 @@ export function TransferDetailModal({
   const [showPrintPreview, setShowPrintPreview] = React.useState(false);
 
   if (!group) return null;
-
-  const formatDate = (dateString: string | null | undefined) => {
-    if (!dateString) return '—';
-    try {
-      return new Intl.DateTimeFormat('en-PH', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-        timeZone: 'Asia/Manila',
-      }).format(new Date(dateString));
-    } catch {
-      return dateString;
-    }
-  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -135,11 +122,11 @@ export function TransferDetailModal({
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Requested On</p>
-              <p className="font-semibold text-sm">{formatDate(group.dateRequested)}</p>
+              <p className="font-semibold text-sm">{formatPhDateTime(group.dateRequested, { formatType: 'short' })}</p>
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Lead Date</p>
-              <p className="font-semibold text-sm">{formatDate(group.leadDate)}</p>
+              <p className="font-semibold text-sm">{formatPhDateTime(group.leadDate, { formatType: 'dateOnly' })}</p>
             </div>
           </div>
         </DialogHeader>
@@ -196,13 +183,13 @@ export function TransferDetailModal({
                         {getUnitName(product?.unit_of_measurement)}
                       </TableCell>
                       <TableCell className="text-center">
-                        <span className="font-semibold text-sm">{item.ordered_quantity}</span>
+                        <span className="font-semibold text-sm">{formatQuantity(item.ordered_quantity)}</span>
                       </TableCell>
                       <TableCell className="text-center">
-                        <span className="font-semibold text-sm text-amber-600">{item.allocated_quantity ?? '—'}</span>
+                        <span className="font-semibold text-sm text-amber-600">{formatQuantity(item.allocated_quantity)}</span>
                       </TableCell>
                       <TableCell className="text-center">
-                        <span className="font-semibold text-sm text-emerald-600">{item.received_quantity ?? '—'}</span>
+                        <span className="font-semibold text-sm text-emerald-600">{formatQuantity(item.received_quantity)}</span>
                       </TableCell>
                       <TableCell className="text-right">
                         <span className="text-xs font-medium">₱{unitPrice.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
@@ -237,25 +224,25 @@ export function TransferDetailModal({
             <div className="space-y-1">
               <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">Requested By</p>
               <p className="text-xs font-semibold">{getUserName(group.encoderId)}</p>
-              <p className="text-[10px] text-muted-foreground">{formatDate(group.dateRequested)}</p>
+              <p className="text-[10px] text-muted-foreground">{formatPhDateTime(group.dateRequested, { formatType: 'short' })}</p>
             </div>
             
             <div className="space-y-1">
               <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">Approved By</p>
               <p className="text-xs font-semibold">{group.dateApproved ? getUserName(group.approverId) : '—'}</p>
-              <p className="text-[10px] text-muted-foreground">{formatDate(group.dateApproved)}</p>
+              <p className="text-[10px] text-muted-foreground">{group.dateApproved ? formatPhDateTime(group.dateApproved, { formatType: 'short' }) : '—'}</p>
             </div>
             
             <div className="space-y-1">
               <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">Dispatched By</p>
               <p className="text-xs font-semibold">{group.dateDispatched ? getUserName(group.dispatcherId) : '—'}</p>
-              <p className="text-[10px] text-muted-foreground">{formatDate(group.dateDispatched)}</p>
+              <p className="text-[10px] text-muted-foreground">{group.dateDispatched ? formatPhDateTime(group.dateDispatched, { formatType: 'short' }) : '—'}</p>
             </div>
             
             <div className="space-y-1">
               <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">Received By</p>
               <p className="text-xs font-semibold">{group.dateReceived ? getUserName(group.receiverId) : '—'}</p>
-              <p className="text-[10px] text-muted-foreground">{formatDate(group.dateReceived)}</p>
+              <p className="text-[10px] text-muted-foreground">{group.dateReceived ? formatPhDateTime(group.dateReceived, { formatType: 'short' }) : '—'}</p>
             </div>
           </div>
         </div>

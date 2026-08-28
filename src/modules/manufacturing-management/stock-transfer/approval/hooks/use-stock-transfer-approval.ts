@@ -49,62 +49,63 @@ export function useStockTransferApproval() {
     const fetchAvailable = async () => {
       setFetchingAvailable(true);
       try {
-        const sourceBranchName = base.getBranchName(base.selectedGroup!.sourceBranch);
+        const group = base.selectedGroup!;
+        const sourceBranchId = group.sourceBranch;
         
         const newAvailable: Record<number, number> = {};
         const newAllocated: Record<number, number> = {};
 
-        // Fetch branch aggregate inventory in a single call (eliminates client-side N+1 waterfalls)
-        const group = base.selectedGroup!;
-        const params = new URLSearchParams({
-          branchName: sourceBranchName,
-          branchId: String(group.sourceBranch),
-          current: '0'
-        });
+        // Query authoritative /api/manufacturing/product-onhand directly for each item
+        const invMap = new Map<number, number>();
 
-        const proxyUrl = `/api/scm/warehouse-management/stock-transfer/inventory-proxy?${params.toString()}`;
-        const res = await fetch(proxyUrl);
-        
-        if (res.ok) {
-          const data = await res.json();
-          const list = Array.isArray(data) ? data : (data.data || []);
-          
-          // Build a lookup map of product ID to running inventory
-          const invMap = new Map<string, number>();
-          list.forEach((inv: Record<string, string | number | unknown>) => {
-            const pId = String(inv.productId ?? inv.product_id ?? "");
-            const qty = Number(inv.runningInventory ?? inv.running_inventory ?? 0);
-            if (pId) {
-              invMap.set(pId, (invMap.get(pId) || 0) + qty);
+        await Promise.all(
+          group.items.map(async (item: OrderGroupItem) => {
+            const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
+            const pId = Number(product?.product_id || item.product_id || 0);
+            if (!pId) return;
+
+            const sp = new URLSearchParams();
+            if (sourceBranchId) sp.set('branch', String(sourceBranchId));
+            sp.set('product', String(pId));
+
+            const res = await fetch(`/api/manufacturing/product-onhand?${sp.toString()}`, { cache: 'no-store' });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              throw new Error(`Failed to fetch inventory for product ${pId} (HTTP ${res.status}): ${JSON.stringify(errData)}`);
             }
-          });
 
-          // Calculate available and allocated counts for each line item
-          group.items.forEach((item: OrderGroupItem) => {
-            const product = item.product_id as ProductRow;
-            const pid = String(product?.product_id || item.product_id);
-            
-            const availableCount = invMap.get(pid) || 0;
-            const unitCount = Number(product?.unit_of_measurement_count || 1) || 1;
-            const realAvailable = Math.max(0, Math.floor(availableCount / unitCount));
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : (data.data || []);
+            let totalOnhand = 0;
+            list.forEach((oh: { productId: number; onhandQuantity?: number; runningInventory?: number }) => {
+              if (Number(oh.productId) === pId) {
+                totalOnhand += Math.max(0, Number(oh.onhandQuantity ?? oh.runningInventory ?? 0));
+              }
+            });
+            invMap.set(pId, totalOnhand);
+          })
+        );
 
-            newAvailable[item.id] = realAvailable;
-            
-            // Strict Enforcement: Allocation cannot exceed available stock.
-            newAllocated[item.id] = Math.min(item.ordered_quantity || 0, realAvailable);
-          });
-        } else {
-          // API Error - block allocation for safety
-          group.items.forEach((item: OrderGroupItem) => {
-            newAvailable[item.id] = 0;
-            newAllocated[item.id] = 0;
-          });
-        }
+        // Directly use the live on-hand balance from Spring Boot
+        group.items.forEach((item: OrderGroupItem) => {
+          const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
+          const pId = Number(product?.product_id || item.product_id || 0);
+          
+          const realAvailable = invMap.get(pId) ?? 0;
+
+          newAvailable[item.id] = realAvailable;
+          
+          // Strict Enforcement: Allocation cannot exceed available stock.
+          newAllocated[item.id] = Math.min(Number(item.ordered_quantity || 0), realAvailable);
+        });
 
         setAvailableQtys(newAvailable);
         setAllocatedQtys(newAllocated);
       } catch (err) {
         console.error('Failed to fetch available quantities:', err);
+        toast.error("Inventory Error", {
+          description: (err as Error).message || "Failed to fetch available stock"
+        });
       } finally {
         setFetchingAvailable(false);
       }

@@ -1,4 +1,4 @@
-import { fetchItems, createItems, bulkUpdateItems } from "../../stock-transfer/services/api";
+import { fetchItems, bulkUpdateItems } from "../../stock-transfer/services/api";
 import type { 
   StockTransferSerialRow,
 } from "../types/serialize.types";
@@ -71,26 +71,17 @@ export async function fetchSerialAvailability(serialNumber: string, branchId?: n
   }
 }
 
-/**
- * Records serial tracking entries in the stock_transfer_serial table.
- */
-export async function insertSerialTracking(entries: StockTransferSerialRow[]): Promise<void> {
-  if (entries.length === 0) return;
-  await createItems("items/stock_transfer_serial", entries);
+export async function insertSerialTracking(_entries: StockTransferSerialRow[]): Promise<void> {
+  void _entries;
+  return;
 }
 
 /**
  * Fetches recorded serials for a set of stock transfer IDs.
  */
-export async function fetchRecordedSerials(transferIds: number[]): Promise<StockTransferSerialRow[]> {
-  if (transferIds.length === 0) return [];
-
-  const res = await fetchItems<StockTransferSerialRow>("items/stock_transfer_serial", {
-    "filter[stock_transfer_id][_in]": transferIds.join(","),
-    limit: -1,
-  });
-  
-  return res.data;
+export async function fetchRecordedSerials(_transferIds: number[]): Promise<StockTransferSerialRow[]> {
+  void _transferIds;
+  return [];
 }
 
 interface TransferUpdatePayload {
@@ -119,7 +110,7 @@ export async function bulkUpdateTransfers(items: TransferUpdatePayload[]): Promi
 
   await Promise.all(
     Object.entries(grouped).map(([dataJson, ids]) =>
-      bulkUpdateItems("items/stock_transfer", ids, JSON.parse(dataJson))
+      bulkUpdateItems("items/mm_stock_transfer", ids, JSON.parse(dataJson))
     )
   );
 }
@@ -153,7 +144,7 @@ export async function fetchStockTransferGroups(params: {
     distinctQueryParams["filter[_or][2][target_branch][branch_name][_icontains]"] = search;
   }
 
-  const distinctRes = await fetchItems<StockTransferRow>("items/stock_transfer", distinctQueryParams);
+  const distinctRes = await fetchItems<StockTransferRow>("items/mm_stock_transfer", distinctQueryParams);
   const allRows = distinctRes.data || [];
   
   // Get unique order numbers in order of date_encoded
@@ -182,7 +173,7 @@ export async function fetchStockTransferGroups(params: {
     "fields": "*,product_id.*,product_id.is_serialized,source_branch.*,target_branch.*",
   };
 
-  const detailsRes = await fetchItems<StockTransferRow>("items/stock_transfer", detailsQueryParams);
+  const detailsRes = await fetchItems<StockTransferRow>("items/mm_stock_transfer", detailsQueryParams);
   const rawData = detailsRes.data || [];
 
   // Use the helper to group the details

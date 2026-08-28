@@ -1,5 +1,6 @@
 import { AppError } from "../utils/error-handler";
 import { getCached, setCache } from "../utils/cache";
+import { getPhDbTimestamp } from "../utils/date-utils";
 
 export const DIRECTUS_API = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
 export const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN;
@@ -11,15 +12,6 @@ function getHeaders() {
   return {
     "Content-Type": "application/json",
     ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}),
-  };
-}
-
-function springHeaders(token?: string) {
-  return {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "Accept-Encoding": "gzip, deflate, br",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
@@ -45,20 +37,41 @@ interface StockAdjustmentPayload {
   branch_id: number;
   type: "IN" | "OUT";
   quantity: number;
-  created_by: number;
+  created_by?: number | null;
+  updated_by?: number | null;
+  created_at?: string;
+  updated_at?: string;
+  date_created?: string;
+  date_updated?: string;
+  unit_id?: number | null;
+  unit_cost?: number;
+  inventory_condition?: 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED';
+  source_type?: string;
+  inventory_lot_id?: number | null;
+  lot_id?: number | null;
+  batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
   remarks: string;
+  stock_adjustment_id?: number | null;
 }
 
 interface StockAdjustmentHeaderPayload {
   doc_no: string;
   type: "IN" | "OUT";
   branch_id: number;
-  created_by: number;
-  posted_by: number;
+  created_by?: number | null;
+  updated_by?: number | null;
+  posted_by?: number | null;
+  created_at?: string;
+  updated_at?: string;
+  date_created?: string;
+  date_updated?: string;
   amount: number;
   remarks: string;
   isPosted?: boolean;
   postedAt?: string;
+  posted_at?: string;
 }
 
 export const stockConversionRepo = {
@@ -156,46 +169,94 @@ export const stockConversionRepo = {
         return cached;
       }
     }
-    
-    let url = "";
-    if (queryParams || branchId !== undefined) {
-      const q = queryParams ? `${queryParams}&` : "";
-      const b = branchId !== undefined ? `branch_id=${branchId}` : "";
-      url = `${SPRING_API}/api/view-running-inventory/filter?${q}${b}`;
-    } else {
-      url = `${SPRING_API}/api/view-running-inventory/all`;
-    }
 
-    console.log(`[Repo] Fetching inventory: ${url}`);
-    const res = await fetchWithTimeout(url, { 
-      headers: springHeaders(token), 
-      cache: "no-store" 
-    }, 300000);
-
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        throw new AppError("AUTH_ERROR", "Session expired. Please log in again.", 401);
-      }
-      throw new Error(`Inventory API failed: ${res.status}`);
-    }
-
-    const json = await res.json();
-    const items = Array.isArray(json) ? json : (json.data || []);
     const invMap: Record<number, number> = {};
-    
-    items.forEach((i: Record<string, unknown>) => {
-      const pId = Number(i.productId || i.product_id);
-      const qty = Number(i.runningInventory ?? i.running_inventory ?? 0);
-      
-      // Attempt manual branch filtering since Spring ignores the query parameter
-      const itemBranchId = i.branchId ?? i.branch_id;
-      if (branchId !== undefined && itemBranchId !== undefined && itemBranchId !== branchId) {
-         // Skip if it doesn't match the requested branch
-         return;
+
+    // Use Spring Boot /api/mm-product-onhand — authoritative aggregated on-hand per product
+    try {
+      let effectiveToken = token;
+      if (!effectiveToken) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const fs = require('fs');
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const path = require('path');
+          const tokenFile = path.resolve(process.cwd(), 'node_modules/.cache/vos-tokens/latest_token.txt');
+          if (fs.existsSync(tokenFile)) {
+            effectiveToken = fs.readFileSync(tokenFile, 'utf8').trim();
+          }
+        } catch {
+          // Ignore fallback token read
+        }
       }
-      
-      if (!isNaN(pId)) invMap[pId] = (invMap[pId] || 0) + qty;
-    });
+
+      const params = new URLSearchParams();
+      if (branchId !== undefined && branchId > 0) {
+        params.append("branch", String(branchId));
+      }
+
+      // Parse productIds from queryParams if present
+      if (queryParams) {
+        const qp = new URLSearchParams(queryParams);
+        const productIds = qp.get("productIds");
+        if (productIds) {
+          // If querying specific products, call product-onhand for each
+          const ids = productIds.split(",").map(Number).filter(Boolean);
+          for (const pid of ids) {
+            params.set("product", String(pid));
+            const url = `${SPRING_API}/api/mm-product-onhand/filter?${params.toString()}`;
+            try {
+              const res = await fetchWithTimeout(url, {
+                headers: { "Content-Type": "application/json", "Accept": "application/json", ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}) },
+                cache: "no-store",
+              }, 15000);
+              if (res.ok) {
+                const data = await res.json();
+                const items = Array.isArray(data) ? data : (data?.data || []);
+                items.forEach((item: Record<string, unknown>) => {
+                  const pId = Number(item.productId || item.product_id || 0);
+                  const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
+                  if (pId > 0) invMap[pId] = Math.max(0, onhand);
+                });
+              }
+            } catch {
+              // ignore per-product failure
+            }
+            params.delete("product");
+          }
+          console.log(`[StockConversionRepo] Product-onhand map (specific products):`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
+          return invMap;
+        }
+      }
+
+      // Branch-level: fetch all products on-hand for this branch
+      const url = `${SPRING_API}/api/mm-product-onhand/filter?${params.toString()}`;
+      console.log(`[Repo] Fetching product on-hand from Spring: ${url}`);
+      const res = await fetchWithTimeout(url, {
+        headers: { "Content-Type": "application/json", "Accept": "application/json", ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}) },
+        cache: "no-store",
+      }, 30000);
+
+      if (res.ok) {
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data?.data || []);
+        console.log(`[StockConversionRepo] Product-onhand entries from Spring: ${items.length} (Branch: ${branchId || 'All'})`);
+        items.forEach((item: Record<string, unknown>) => {
+          const pId = Number(item.productId || item.product_id || 0);
+          const itemBranchId = item.branchId ?? item.branch_id;
+          if (branchId !== undefined && itemBranchId !== undefined && Number(itemBranchId) !== Number(branchId)) {
+            return;
+          }
+          const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
+          if (pId > 0) invMap[pId] = Math.max(0, onhand);
+        });
+        console.log(`[StockConversionRepo] Final inventory balance map:`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
+      } else {
+        console.warn(`[Repo] mm-product-onhand returned HTTP ${res.status}`);
+      }
+    } catch (err: unknown) {
+      console.warn("[StockConversionRepo] Spring product-onhand fetch failed:", err);
+    }
 
     // Cache branch-level results
     if (!queryParams) {
@@ -216,36 +277,45 @@ export const stockConversionRepo = {
   },
 
   async createStockAdjustment(payload: StockAdjustmentPayload) {
+    const nowPHT = getPhDbTimestamp();
     const headers = getHeaders();
-    const res = await fetch(`${DIRECTUS_API}/items/stock_adjustment`, {
+    const res = await fetch(`${DIRECTUS_API}/items/mm_stock_adjustment?fields=id`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        created_at: payload.created_at || nowPHT,
+        updated_at: payload.updated_at || nowPHT,
+        date_created: payload.date_created || nowPHT,
+        date_updated: payload.date_updated || nowPHT,
+      }),
     });
     if (!res.ok) throw new Error("Failed to create stock adjustment");
     return res.json() as Promise<{ data?: { id: number } }>;
   },
 
   async createStockAdjustmentHeader(payload: StockAdjustmentHeaderPayload) {
+    const nowPHT = getPhDbTimestamp();
     const headers = getHeaders();
-    const res = await fetch(`${DIRECTUS_API}/items/stock_adjustment_header`, {
+    const res = await fetch(`${DIRECTUS_API}/items/mm_stock_adjustment_header`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        created_at: payload.created_at || nowPHT,
+        updated_at: payload.updated_at || nowPHT,
+        date_created: payload.date_created || nowPHT,
+        date_updated: payload.date_updated || nowPHT,
+        postedAt: payload.postedAt || nowPHT,
+        posted_at: payload.posted_at || payload.postedAt || nowPHT,
+      }),
     });
     if (!res.ok) throw new Error("Failed to create adjustment header");
     return res.json() as Promise<{ data?: { id: number } }>;
   },
   async insertStockAdjustmentRfids(entries: { rfid_tag: string, stock_adjustment_id: number, created_by: number }[]) {
     if (entries.length === 0) return;
-    const headers = getHeaders();
-    const res = await fetch(`${DIRECTUS_API}/items/stock_adjustment_rfid`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(entries),
-    });
-    if (!res.ok) throw new Error("Failed to insert stock adjustment RFIDs");
-    return res.json();
+    return;
   },
 
   async updateRfidStatus(rfidTags: string[], status: 'active' | 'inactive') {

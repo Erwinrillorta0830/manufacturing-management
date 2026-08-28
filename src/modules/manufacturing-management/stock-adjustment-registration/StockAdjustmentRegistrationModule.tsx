@@ -16,7 +16,7 @@ export default function StockAdjustmentModule({ mode = "creation" }: StockAdjust
         id={null}
         onCancel={undefined} // Hides cancel/back-to-list buttons, shows "Clear Form" instead
         onSuccess={() => {
-          router.push("/scm/inventory-management/stock-adjustment-summary");
+          router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
         }}
         mode={mode}
       />

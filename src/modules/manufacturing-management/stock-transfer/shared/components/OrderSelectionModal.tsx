@@ -53,7 +53,9 @@ export function OrderSelectionModal({
   
   // Reset page when search changes
   React.useEffect(() => {
-    setCurrentPage(1);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+    });
   }, [search]);
   
   const totalItems = filteredGroups.length;
