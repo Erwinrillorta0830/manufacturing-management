@@ -61,58 +61,182 @@ if (DIRECTUS_STATIC_TOKEN) {
     headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
 }
 
+interface FinishedGoodsMovement {
+    id?: number | string;
+    movement_id?: number | string;
+    product_id?: number | string | Record<string, unknown>;
+    lot_id?: number | string | Record<string, unknown>;
+    branch_id?: number | string | Record<string, unknown>;
+    transaction_type_id?: number | string | Record<string, unknown>;
+    source_document_id?: number | string | Record<string, unknown> | null;
+    source_document_no?: string | null;
+    batch_no?: string | null;
+    expiry_date?: string | null;
+    manufacturing_date?: string | null;
+    quantity?: number | string;
+    created_at?: string | null;
+    created_on?: string | null;
+}
+
+function relationId(value: unknown): number {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return Number(record.id ?? record.movement_id ?? record.job_order_id ?? record.product_id ?? record.branch_id ?? 0);
+    }
+    return Number(value ?? 0);
+}
+
+function directusRecordId(value: unknown): number {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return Number(record.movement_id ?? record.id ?? record.ledger_id ?? 0);
+    }
+    return Number(value ?? 0);
+}
+
+function dateOnly(value: unknown): string | null {
+    const raw = String(value ?? "").trim();
+    return raw ? raw.slice(0, 10) : null;
+}
+
+async function readDirectusCollection<T = any>(url: string, label: string): Promise<T[]> {
+    const response = await fetch(url, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new Error(`${label} failed with HTTP ${response.status}.`);
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload?.data)) {
+        throw new Error(`${label} returned an invalid collection.`);
+    }
+    return payload.data as T[];
+}
+
+async function readOptionalDirectusCollection<T = any>(url: string, label: string): Promise<T[]> {
+    try {
+        return await readDirectusCollection<T>(url, label);
+    } catch {
+        return [];
+    }
+}
+
 export async function GET(request: Request) {
     try {
-        const todayStr = await getTodayDateString();
         const { searchParams } = new URL(request.url);
-        const joId = searchParams.get("joId");
-
-        // Fetch product ledger entries representing finished goods releases
-        let ledgerUrl = `${DIRECTUS_URL}/items/product_ledger?filter[documentType][_in]=QA Receive,Job Order Receipt&filter[quantity][_gt]=0&limit=-1&sort=-id`;
-        if (joId) {
-            ledgerUrl += `&filter[documentNo][_eq]=${encodeURIComponent(joId)}`;
-        }
-        const ledgerRes = await fetch(ledgerUrl, { headers, cache: "no-store" });
-        if (!ledgerRes.ok) {
-            const errTxt = await ledgerRes.text();
-            return NextResponse.json({ error: `Failed to fetch cloud product ledger: ${ledgerRes.status} - ${errTxt}` }, { status: ledgerRes.status });
-        }
-        const ledgerEntries = (await ledgerRes.json()).data || [];
-
-        // Fetch products and job order yield ledger to resolve names, lot number details, QA status and expiry date
-        const [productsRes, yieldRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,cost_per_unit`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers, cache: "no-store" })
+        const requestedJobOrder = searchParams.get("joId")?.trim() || "";
+        const movements = await readDirectusCollection<FinishedGoodsMovement>(
+            `${DIRECTUS_URL}/items/inventory_movements?filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&limit=-1&sort=-created_at`,
+            "Finished-goods movement lookup"
+        );
+        const [products, yields, jobOrders, ledgerEntries] = await Promise.all([
+            readOptionalDirectusCollection<Product>(
+                `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,cost_per_unit`,
+                "Product lookup"
+            ),
+            readOptionalDirectusCollection<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`,
+                "Yield ledger lookup"
+            ),
+            readOptionalDirectusCollection<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=job_order_id,job_order_no,product_id,branch_id,status,actual_quantity_produced`,
+                "Job-order lookup"
+            ),
+            readOptionalDirectusCollection<LedgerEntry>(
+                `${DIRECTUS_URL}/items/product_ledger?filter[documentType][_in]=QA Receive,Job Order Receipt&filter[quantity][_gt]=0&limit=-1&sort=-id`,
+                "Legacy product-ledger lookup"
+            )
         ]);
 
-        const products: Product[] = productsRes.ok ? (await productsRes.json()).data || [] : [];
-        const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+        const matchingMovements = movements.filter(movement => {
+            if (!requestedJobOrder) return true;
+            const sourceId = relationId(movement.source_document_id);
+            const sourceNo = String(movement.source_document_no || "").trim();
+            return (Number.isFinite(Number(requestedJobOrder)) && sourceId === Number(requestedJobOrder))
+                || sourceNo === requestedJobOrder;
+        });
 
-        const data = ledgerEntries.map((entry: LedgerEntry) => {
-            const lotNumber = entry.documentDescription?.startsWith("MFG Run: ")
-                ? entry.documentDescription.substring("MFG Run: ".length)
-                : (entry.documentDescription || `MFG-${entry.documentNo}`);
-
-            const matchedProduct = products.find((p: Product) => Number(p.product_id) === Number(entry.productId));
-            const matchedYield = yields.find((y: any) => String(y.lot_number) === String(lotNumber));
+        const movementReceiptRows = matchingMovements.map(movement => {
+            const sourceId = relationId(movement.source_document_id);
+            const sourceNo = String(movement.source_document_no || "").trim();
+            const jobOrder = jobOrders.find(job => relationId(job.job_order_id) === sourceId)
+                || jobOrders.find(job => sourceId <= 0 && String(job.job_order_no || "").trim() === sourceNo);
+            const jobOrderNo = String(jobOrder?.job_order_no || sourceNo || (sourceId > 0 ? sourceId : ""));
+            const productId = relationId(movement.product_id);
+            const branchId = relationId(movement.branch_id);
+            const lotNumber = String(movement.batch_no || "").trim();
+            const matchedProduct = products.find(product => Number(product.product_id) === productId);
+            const matchedYield = yields.find(yieldRow =>
+                relationId(yieldRow.job_order_id) === sourceId
+                && String(yieldRow.lot_number || "").trim() === lotNumber
+            );
 
             return {
-                id: matchedYield?.id || entry.id,
-                jo_id: entry.documentNo,
-                product_id: Number(entry.productId),
+                id: directusRecordId(movement),
+                movement_id: directusRecordId(movement),
+                yield_ledger_id: directusRecordId(matchedYield),
+                job_order_id: sourceId || relationId(jobOrder?.job_order_id),
+                job_order_status: jobOrder?.status || null,
+                jo_id: jobOrderNo,
+                product_id: productId,
                 product_name: matchedProduct?.product_name || "Manufactured Good",
-                quantity_produced: Number(entry.quantity),
-                quantity: Number(entry.quantity),
-                branch_id: Number(entry.branchId),
+                quantity_produced: Number(movement.quantity),
+                quantity: Number(movement.quantity),
+                branch_id: branchId,
                 lot_number: lotNumber,
                 qa_status: matchedYield?.qa_status || "Pending",
-                expiration_date: matchedYield?.expiry_date || entry.documentDate || todayStr,
+                manufacturing_date: dateOnly(movement.manufacturing_date) || dateOnly(matchedYield?.manufacturing_date),
+                expiration_date: dateOnly(movement.expiry_date) || dateOnly(matchedYield?.expiry_date),
                 unit_cost: Number(matchedProduct?.cost_per_unit || 0),
-                date_received: entry.documentDate ? `${entry.documentDate}T12:00:00.000Z` : new Date().toISOString()
+                date_received: movement.created_at || movement.created_on || null,
+                legacy_source: false
             };
         });
 
-        return NextResponse.json(data);
+        // Older receipts may have a product-ledger row without an inventory
+        // movement. Keep them visible, but label them so callers do not treat
+        // substituted legacy metadata as authoritative.
+        const legacyRows = ledgerEntries
+            .filter(entry => !matchingMovements.some(movement =>
+                relationId(movement.product_id) === Number(entry.productId)
+                && relationId(movement.branch_id) === Number(entry.branchId)
+                && Number(movement.quantity) === Number(entry.quantity)
+                && (
+                    relationId(movement.source_document_id) === Number(entry.documentNo)
+                    || String(movement.source_document_no || "").trim() === String(entry.documentNo || "").trim()
+                )
+            ))
+            .filter(entry => !requestedJobOrder || String(entry.documentNo || "").trim() === requestedJobOrder)
+            .map(entry => {
+                const lotNumber = entry.documentDescription?.startsWith("MFG Run: ")
+                    ? entry.documentDescription.substring("MFG Run: ".length).trim()
+                    : String(entry.documentDescription || "").trim();
+                const matchedProduct = products.find(product => Number(product.product_id) === Number(entry.productId));
+                const matchedYield = yields.find(yieldRow =>
+                    String(yieldRow.lot_number || "").trim() === lotNumber
+                    && String(yieldRow.job_order_id?.job_order_no || yieldRow.job_order_id || "").trim() === String(entry.documentNo || "").trim()
+                );
+                return {
+                    id: entry.id,
+                    movement_id: null,
+                    yield_ledger_id: directusRecordId(matchedYield),
+                    job_order_id: Number(entry.documentNo) || null,
+                    job_order_status: null,
+                    jo_id: entry.documentNo,
+                    product_id: Number(entry.productId),
+                    product_name: matchedProduct?.product_name || "Manufactured Good",
+                    quantity_produced: Number(entry.quantity),
+                    quantity: Number(entry.quantity),
+                    branch_id: Number(entry.branchId),
+                    lot_number: lotNumber,
+                    qa_status: matchedYield?.qa_status || "Pending",
+                    manufacturing_date: dateOnly(matchedYield?.manufacturing_date),
+                    expiration_date: dateOnly(matchedYield?.expiry_date),
+                    unit_cost: Number(matchedProduct?.cost_per_unit || 0),
+                    date_received: entry.documentDate || null,
+                    legacy_source: true
+                };
+            });
+
+        return NextResponse.json([...movementReceiptRows, ...legacyRows]);
     } catch (e) {
         console.error("API Error in production finished-goods GET:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch finished goods receipts" }, { status: 500 });
@@ -123,7 +247,20 @@ export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
         const body = await request.json();
-        const { joId, productId, productName, quantityProduced, branchId, lotNumber, expirationDate, manufacturingDate, unitCost, componentsConsumed, completeJobOrder = true } = body;
+        const {
+            joId,
+            productId,
+            productName,
+            quantityProduced,
+            branchId,
+            lotNumber,
+            expirationDate,
+            manufacturingDate,
+            unitCost,
+            componentsConsumed,
+            yieldLedgerId,
+            completeJobOrder = true
+        } = body;
 
         if (!joId || !productId || !quantityProduced || !branchId) {
             return NextResponse.json({ error: "Missing required fields (joId, productId, quantityProduced, branchId)" }, { status: 400 });
@@ -141,19 +278,28 @@ export async function POST(request: Request) {
                     expirationDate,
                     manufacturingDate,
                     unitCost,
-                    componentsConsumed
+                    componentsConsumed,
+                    yieldLedgerId
                 });
                 return NextResponse.json(result);
             } catch (error) {
                 if (error instanceof YieldCompletionError) {
                     return NextResponse.json({
+                        success: false,
                         error: error.message,
                         code: error.code,
+                        ...(error.operationKey ? { operationKey: error.operationKey } : {}),
+                        reconciliationRequired: error.reconciliationRequired,
                         ...(error.reconciliation ? { reconciliation: error.reconciliation } : {})
                     }, { status: error.status });
                 }
                 if (error instanceof YieldMaterialsError) {
-                    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+                    return NextResponse.json({
+                        success: false,
+                        error: error.message,
+                        code: error.code,
+                        reconciliationRequired: false
+                    }, { status: error.status });
                 }
                 throw error;
             }
@@ -161,35 +307,35 @@ export async function POST(request: Request) {
 
         // Helper function to resolve or create master lot in the lots table
         const resolveMasterLotId = async (name: string, typeId: number) => {
-            let lotId = 49; // Default fallback to a valid existing lot ID (e.g. 49) instead of 1
             const mappedTypeId = typeId === 1 ? 390 : 389;
-            try {
-                const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-                const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-                const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
-                if (lotLookup.length > 0) {
-                    lotId = lotLookup[0].lot_id;
-                } else {
-                    const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            lot_name: name,
-                            inventory_type_id: mappedTypeId,
-                            max_batch_capacity: 100000,
-                            created_by: 24
-                        })
-                    });
-                    if (createLotRes.ok) {
-                        lotId = (await createLotRes.json()).data.lot_id;
-                    } else {
-                        console.error(`Failed to create master lot ${name}:`, await createLotRes.text());
-                    }
-                }
-            } catch (err) {
-                console.error(`Error resolving master lot ID for ${name}:`, err);
+            const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
+            const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
+            if (!lotLookupRes.ok) {
+                throw new Error(`Master lot lookup failed with HTTP ${lotLookupRes.status}.`);
             }
-            return lotId;
+            const lotLookup = (await lotLookupRes.json()).data || [];
+            const existingLotId = Number(lotLookup[0]?.lot_id ?? lotLookup[0]?.id ?? 0);
+            if (Number.isFinite(existingLotId) && existingLotId > 0) return existingLotId;
+
+            const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    lot_name: name,
+                    inventory_type_id: mappedTypeId,
+                    max_batch_capacity: 100000,
+                    created_by: 24
+                })
+            });
+            if (!createLotRes.ok) {
+                throw new Error(`Master lot creation failed with HTTP ${createLotRes.status}.`);
+            }
+            const createdLot = (await createLotRes.json()).data;
+            const createdLotId = Number(createdLot?.lot_id ?? createdLot?.id ?? 0);
+            if (!Number.isFinite(createdLotId) || createdLotId <= 0) {
+                throw new Error("Master lot creation returned no valid identifier.");
+            }
+            return createdLotId;
         };
 
         const qty = Number(quantityProduced);

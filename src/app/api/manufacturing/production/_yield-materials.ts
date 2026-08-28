@@ -136,7 +136,6 @@ export async function resolveYieldJobOrder(reference: string | number): Promise<
         "product_id",
         "branch_id",
         "target_quantity",
-        "quantity",
         "version_id",
         "status",
         "actual_quantity_produced"
