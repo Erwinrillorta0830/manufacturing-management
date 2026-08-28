@@ -343,6 +343,8 @@ export async function POST(request: Request) {
         const pId = Number(productId);
         const finalLotNo = lotNumber || `MFG-${joId}`;
         const finalExpDate = expirationDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+        let sourceDocumentId = Number(joId);
+        if (!Number.isSafeInteger(sourceDocumentId) || sourceDocumentId <= 0) sourceDocumentId = 0;
 
         // Fetch planned quantity to scale raw material consumption dynamically based on actual yield vs planned yield
         let scaleFactor = 1;
@@ -351,6 +353,10 @@ export async function POST(request: Request) {
             if (joRes.ok) {
                 const joData = (await joRes.json()).data || [];
                 if (joData.length > 0) {
+                    const resolvedJobOrderId = Number(joData[0].job_order_id);
+                    if (sourceDocumentId <= 0 && Number.isSafeInteger(resolvedJobOrderId) && resolvedJobOrderId > 0) {
+                        sourceDocumentId = resolvedJobOrderId;
+                    }
                     const plannedQty = Number(joData[0].target_quantity) || 0;
                     if (plannedQty > 0) {
                         scaleFactor = qty / plannedQty;
@@ -472,6 +478,7 @@ export async function POST(request: Request) {
                     lot_id: finishedLotId,
                     branch_id: bId,
                     transaction_type_id: 2, // Job Order Finished Goods
+                    source_document_id: sourceDocumentId || null,
                     source_document_no: joId,
                     batch_no: finalLotNo,
                     expiry_date: finalExpDate,

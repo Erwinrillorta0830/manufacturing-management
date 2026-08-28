@@ -273,6 +273,22 @@ export async function fetchInventoryLotsData(): Promise<{ lots: any[]; products:
     };
 }
 
+export interface FinalQAReleasePayload {
+    jobOrderId: number;
+    lotId: number;
+    productId: number;
+    branchId: number;
+    inspectedQuantity: number;
+    defectQuantity: number;
+    microbiologicalStatus: "Pending" | "Passed" | "Failed";
+    packagingSealPassed: boolean;
+    labelCompliancePassed: boolean;
+    overallDisposition: "Approved" | "Quarantined" | "Rejected";
+    coaReferenceNo?: string;
+    approvedBy?: number | null;
+    remarks?: string;
+}
+
 export async function postDailyQAInspection(payload: any): Promise<any> {
     const res = await fetch("/api/manufacturing/production/daily-qa", {
         method: "POST",
@@ -284,7 +300,7 @@ export async function postDailyQAInspection(payload: any): Promise<any> {
     return data;
 }
 
-export async function postFinalQARelease(payload: any): Promise<any> {
+export async function postFinalQARelease(payload: FinalQAReleasePayload): Promise<any> {
     const res = await fetch("/api/manufacturing/production/final-qa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
