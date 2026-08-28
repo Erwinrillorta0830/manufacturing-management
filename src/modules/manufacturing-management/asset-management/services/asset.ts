@@ -308,6 +308,7 @@ export async function createAsset(body: Record<string, unknown>) {
     is_active_warning: Number(body.is_active_warning) || 0,
     encoder: body.encoder || 133,
     item_image: body.item_image || null,
+    asset_origin: body.asset_origin || "New",
   };
 
   const assetRes = await fetch(`${API_BASE_URL}/items/assets_and_equipment`, {
@@ -359,7 +360,7 @@ export async function updateAsset(body: Record<string, unknown>) {
   if (!itemUpdateRes.ok) throw new Error("Failed to update base item details");
 
   // 2. Update Asset Record
-  const assetPayload = {
+  const assetPayload: Record<string, unknown> = {
     condition: updateData.condition,
     cost_per_item: Number(updateData.cost_per_item),
     quantity: Number(updateData.quantity),
@@ -376,6 +377,10 @@ export async function updateAsset(body: Record<string, unknown>) {
     serial: updateData.serial,
     is_active_warning: Number(updateData.is_active_warning),
   };
+
+  if (updateData.asset_origin !== undefined) {
+    assetPayload.asset_origin = updateData.asset_origin;
+  }
 
   const assetUpdateRes = await fetch(
     `${API_BASE_URL}/items/assets_and_equipment/${id}`,

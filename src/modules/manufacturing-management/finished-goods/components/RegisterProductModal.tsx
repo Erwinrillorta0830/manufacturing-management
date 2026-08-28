@@ -178,8 +178,10 @@ export function RegisterProductModal({
 
     useEffect(() => {
         if (isOpen) return;
-        setRegisterImagePreview(null);
-        setRegisterImageError(null);
+        queueMicrotask(() => {
+            setRegisterImagePreview(null);
+            setRegisterImageError(null);
+        });
     }, [isOpen]);
 
     useEffect(() => {

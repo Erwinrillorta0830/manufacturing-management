@@ -51,6 +51,45 @@ export interface AllocatedLot {
     created_at?: string | null;
 }
 
+export type BatchStageMaterialStatus = "STAGED" | "PARTIAL" | "SKIPPED" | "FAILED";
+
+export type BatchStageLotStatus = "STAGED" | "SKIPPED" | "FAILED";
+
+export interface BatchStageLotResult {
+    allocation_id?: number;
+    lot_id: number;
+    batch_no: string;
+    requested_quantity: number;
+    staged_quantity: number;
+    available_quantity?: number;
+    shortage_quantity?: number;
+    status: BatchStageLotStatus;
+    message: string;
+}
+
+export interface BatchStageMaterialResult {
+    jo_material_id: number;
+    product_id: number;
+    product_name: string;
+    uom: string;
+    requested_quantity: number;
+    staged_quantity: number;
+    remaining_quantity: number;
+    status: BatchStageMaterialStatus;
+    message: string;
+    lot_results: BatchStageLotResult[];
+}
+
+export interface BatchStageResult {
+    job_order_id: number;
+    job_order_no: string;
+    attempted_material_count: number;
+    fully_staged_material_count: number;
+    exception_material_count: number;
+    full_success: boolean;
+    material_results: BatchStageMaterialResult[];
+}
+
 export interface MaterialStagingItem {
     jo_material_id: number;
     job_order_id: number;
@@ -109,6 +148,7 @@ export interface BinTransferPayload {
     product_id: number;
     product_name?: string;
     lot_id: number;
+    allocation_id?: number;
     batch_no: string;
     transfer_quantity: number;
     source_bin: string; // Default "MAIN-STORE"
@@ -124,6 +164,7 @@ export interface ShortageWarningInfo {
     product_id: number;
     batch_no: string;
     lot_id: number;
+    allocation_id?: number;
     job_order_id: number;
     job_order_no: string;
     work_center_id: number;

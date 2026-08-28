@@ -36,11 +36,13 @@ export function BranchCombobox({
   const [search, setSearch] = React.useState(initialLabel);
 
   React.useEffect(() => {
-    if (selectedBranch) {
-      setSearch(getBranchLabel(selectedBranch));
-    } else {
-      setSearch('');
-    }
+    queueMicrotask(() => {
+      if (selectedBranch) {
+        setSearch(getBranchLabel(selectedBranch));
+      } else {
+        setSearch('');
+      }
+    });
   }, [value, branches, selectedBranch]);
 
   return (

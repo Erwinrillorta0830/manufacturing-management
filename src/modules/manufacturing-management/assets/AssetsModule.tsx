@@ -111,7 +111,9 @@ export default function AssetsModule() {
     };
 
     useEffect(() => {
-        loadData();
+        queueMicrotask(() => {
+            loadData();
+        });
     }, []);
 
     // Filtered Assets list
@@ -156,7 +158,9 @@ export default function AssetsModule() {
     }, [assets, searchQuery, items, departments, conditionFilter, statusFilter]);
 
     useEffect(() => {
-        setCurrentPage(1);
+        queueMicrotask(() => {
+            setCurrentPage(1);
+        });
     }, [filteredAssets.length, pageSize]);
 
     const totalPages = Math.ceil(filteredAssets.length / pageSize);

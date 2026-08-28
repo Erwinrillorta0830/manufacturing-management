@@ -125,7 +125,35 @@ export default function WorkStationsModule() {
     };
 
     useEffect(() => {
-        loadData();
+        let isMounted = true;
+        const init = async () => {
+            setLoading(true);
+            try {
+                const [wcList, assetList, deptList] = await Promise.all([
+                    fetchWorkCenters(),
+                    fetchAssets().catch(() => []),
+                    fetchDepartments().catch(() => [])
+                ]);
+                if (isMounted) {
+                    setWorkCenters(wcList);
+                    setAssets(assetList);
+                    setDepartments(deptList);
+                }
+            } catch (e) {
+                if (isMounted) {
+                    console.error("Failed to load work stations data:", e);
+                    toast.error("Failed to load work stations data");
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
+                }
+            }
+        };
+        init();
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     // Filtered departments for top department filter search
@@ -185,7 +213,9 @@ export default function WorkStationsModule() {
 
     // Reset page to 1 when search query, filter result length, or page size changes
     useEffect(() => {
-        setCurrentPage(1);
+        queueMicrotask(() => {
+            setCurrentPage(1);
+        });
     }, [filteredWorkCenters.length, pageSize]);
 
     const totalPages = Math.ceil(filteredWorkCenters.length / pageSize);
@@ -339,7 +369,7 @@ export default function WorkStationsModule() {
         return assets.find(a => a.id === selectedAssetId) || null;
     }, [assets, selectedAssetId]);
 
-    const linkedDeptId = useMemo(() => {
+    const linkedDeptId = (() => {
         if (!selectedAsset) return null;
         const deptRaw = selectedAsset.department as unknown;
         if (deptRaw && typeof deptRaw === "object") {
@@ -351,7 +381,7 @@ export default function WorkStationsModule() {
             return deptRaw;
         }
         return null;
-    }, [selectedAsset]);
+    })();
 
     const linkedDept = useMemo(() => {
         if (!linkedDeptId && !selectedAsset?.department) return null;

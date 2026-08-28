@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useStockTransferBase } from '../../shared/hooks/use-stock-transfer-base';
 import { stockTransferLifecycleService } from '../../services/stock-transfer.lifecycle';
+import { fetchLotsByBranch } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import type { MMLot } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
 import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser } from '../../types/stock-transfer.types';
 
@@ -13,7 +15,7 @@ const LOCAL_STORAGE_KEY_RECEIVE = 'scm_receive_scans_v1';
  */
 export function useStockTransferReceive({ currentUser }: { currentUser?: CurrentUser } = {}) {
   const base = useStockTransferBase({ 
-    statuses: ['For Loading'] 
+    statuses: ['For Loading', 'In Transit', 'Dispatched', 'DISPATCHED'] 
   });
 
   const storageKey = currentUser?.email 
@@ -23,6 +25,11 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
   const manualStorageKey = currentUser?.email
     ? `scm_receive_manual_v1_user_${currentUser.email}`
     : 'scm_receive_manual_v1';
+
+  const [targetLots, setTargetLots] = useState<MMLot[]>([]);
+  const [loadingLots, setLoadingLots] = useState(false);
+  const [destinationLotIds, setDestinationLotIds] = useState<Record<number, number>>({});
+  const [destinationBatchNos, setDestinationBatchNos] = useState<Record<number, string>>({});
 
   const [receivedItemsState, setReceivedItemsState] = useState<Record<string, ScanLog[]>>(() => {
     if (typeof window === 'undefined') return {};
@@ -65,32 +72,36 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
 
     const validOrderNumbers = new Set(base.baseOrderGroups.map(g => g.orderNo));
 
-    setReceivedItemsState(prevState => {
-      let hasPurged = false;
-      const cleanState = { ...prevState };
+    queueMicrotask(() => {
+      setReceivedItemsState(prevState => {
+        let hasPurged = false;
+        const cleanState = { ...prevState };
 
-      Object.keys(cleanState).forEach(cachedOrderNo => {
-        if (!validOrderNumbers.has(cachedOrderNo)) {
-          delete cleanState[cachedOrderNo];
-          hasPurged = true;
-        }
+        Object.keys(cleanState).forEach(cachedOrderNo => {
+          if (!validOrderNumbers.has(cachedOrderNo)) {
+            delete cleanState[cachedOrderNo];
+            hasPurged = true;
+          }
+        });
+
+        return hasPurged ? cleanState : prevState;
       });
-
-      return hasPurged ? cleanState : prevState;
     });
 
-    setManualQtysState(prevState => {
-      let hasPurged = false;
-      const cleanState = { ...prevState };
+    queueMicrotask(() => {
+      setManualQtysState(prevState => {
+        let hasPurged = false;
+        const cleanState = { ...prevState };
 
-      Object.keys(cleanState).forEach(cachedOrderNo => {
-        if (!validOrderNumbers.has(cachedOrderNo)) {
-          delete cleanState[cachedOrderNo];
-          hasPurged = true;
-        }
+        Object.keys(cleanState).forEach(cachedOrderNo => {
+          if (!validOrderNumbers.has(cachedOrderNo)) {
+            delete cleanState[cachedOrderNo];
+            hasPurged = true;
+          }
+        });
+
+        return hasPurged ? cleanState : prevState;
       });
-
-      return hasPurged ? cleanState : prevState;
     });
   }, [base.baseOrderGroups]);
 
@@ -155,6 +166,59 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     return orderGroups.find((g: OrderGroup) => g.orderNo === base.selectedOrderNo) || null;
   }, [base.selectedOrderNo, orderGroups]);
 
+  const updateDestinationLot = useCallback((itemId: number, lotId: number) => {
+    setDestinationLotIds(prev => ({ ...prev, [itemId]: lotId }));
+  }, []);
+
+  const updateDestinationBatchNo = useCallback((itemId: number, batchNo: string) => {
+    setDestinationBatchNos(prev => ({ ...prev, [itemId]: batchNo }));
+  }, []);
+
+  // Load destination branch lots when selected order group changes
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!selectedGroup?.targetBranch) {
+      queueMicrotask(() => {
+        if (isMounted) setTargetLots([]);
+      });
+      return;
+    }
+
+    queueMicrotask(() => {
+      if (isMounted) setLoadingLots(true);
+    });
+
+    fetchLotsByBranch(Number(selectedGroup.targetBranch))
+      .then(lots => {
+        if (isMounted) {
+          const activeLots = (lots || []).filter(l => l.status === 'ACTIVE' || !l.status);
+          setTargetLots(activeLots);
+          if (activeLots.length > 0) {
+            setDestinationLotIds(prev => {
+              const updated = { ...prev };
+              selectedGroup.items.forEach(item => {
+                if (!updated[item.id]) {
+                  updated[item.id] = activeLots[0].lot_id;
+                }
+              });
+              return updated;
+            });
+          }
+        }
+      })
+      .catch(err => {
+        console.warn('[StockTransfer] Error loading destination lots in RFID receive:', err);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingLots(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedGroup]);
+
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);
     if (!group) return;
@@ -172,7 +236,9 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
       const itemsPayload = group.items.map((i: OrderGroupItem) => ({
         id: i.id,
         status: 'Received',
-        received_quantity: i.receivedQty || 0
+        received_quantity: i.receivedQty || 0,
+        destination_lot_id: destinationLotIds[i.id] || null,
+        destination_batch_no: destinationBatchNos[i.id] || i.batch_no || `TRF-${group.orderNo}-${i.id}`,
       }));
 
       await stockTransferLifecycleService.submitStatusUpdate({ 
@@ -394,6 +460,12 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     handleScanRFID,
     verifyAll,
     updateManualQty,
+    destinationLotIds,
+    updateDestinationLot,
+    destinationBatchNos,
+    updateDestinationBatchNo,
+    targetLots,
+    loadingLots,
     recentScans: (base.selectedOrderNo ? receivedItemsState[base.selectedOrderNo] : []) || [],
     isThrottled,
     clearHistory: () => {

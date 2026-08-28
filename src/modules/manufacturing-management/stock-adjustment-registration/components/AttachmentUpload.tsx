@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Upload, X, Loader2, FileText, Image as ImageIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { StockAdjustmentAttachment } from "../types/stock-adjustment.schema";
+import { StockAdjustmentAttachment } from "../types/stock-adjustment-manual.schema";
 import { getAssetUrl } from "@/lib/assets";
 
 interface AttachmentUploadProps {
@@ -66,7 +66,7 @@ export function AttachmentUpload({
         formData.append("file", file);
         formData.append("folder_name", "stock_adjustment_attachments");
 
-        const res = await fetch("/api/scm/inventory-management/stock-adjustment-registration/upload", {
+        const res = await fetch("/api/scm/inventory-management/stock-adjustment-manual-registration/upload", {
           method: "POST",
           body: formData,
         });

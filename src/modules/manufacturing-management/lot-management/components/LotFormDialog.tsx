@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
-import { Lot, UnitOfMeasure } from "../types";
+import { Lot, UnitOfMeasure, Branch } from "../types";
 import {
     Dialog,
     DialogContent,
@@ -12,6 +12,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchableUomSelect } from "./SearchableUomSelect";
+import { SearchableBranchSelect } from "./SearchableBranchSelect";
 import { Button } from "@/components/ui/button";
 
 interface LotFormDialogProps {
@@ -21,17 +22,20 @@ interface LotFormDialogProps {
     editingLot: Lot | null;
     formData: {
         lotName: string;
+        branchId: number | "";
         uomId: number | "";
         maxBatchCapacity: string;
     };
     formErrors?: {
         lotName?: boolean;
+        branchId?: boolean;
         uomId?: boolean;
         maxBatchCapacity?: boolean;
     };
     isDuplicateLotName?: boolean;
     onFormChange: (field: string, value: string | number) => void;
     uoms: UnitOfMeasure[];
+    branches?: Branch[];
     saving: boolean;
 }
 
@@ -45,6 +49,7 @@ export default function LotFormDialog({
     isDuplicateLotName = false,
     onFormChange,
     uoms,
+    branches = [],
     saving
 }: LotFormDialogProps) {
     const selectedUom = React.useMemo(() => {
@@ -59,14 +64,14 @@ export default function LotFormDialog({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-            <DialogContent className="sm:max-w-[425px]" showCloseButton={false}>
+            <DialogContent className="sm:max-w-[440px]" showCloseButton={false}>
                 <form onSubmit={handleFormSubmit} className="space-y-4">
                     <DialogHeader>
-                        <DialogTitle>{editingLot ? "Edit Lot" : "Add New Lot"}</DialogTitle>
+                        <DialogTitle>{editingLot ? "Edit Lot Location" : "Add New Lot Location"}</DialogTitle>
                         <DialogDescription>
                             {editingLot
                                 ? "Update the storage lot details."
-                                : "Register a new warehouse storage location."}
+                                : "Register a new warehouse storage location with branch assignment."}
                         </DialogDescription>
                     </DialogHeader>
 
@@ -92,7 +97,27 @@ export default function LotFormDialog({
                             )}
                         </div>
 
-                        {/* Unit of Measure (UOM) with Searchbar & Smooth Scroll */}
+                        {/* Branch Selection */}
+                        <div className="space-y-1">
+                            <Label htmlFor="branchId">
+                                Branch Location <span className="text-destructive">*</span>
+                            </Label>
+                            <SearchableBranchSelect
+                                branches={branches}
+                                value={formData.branchId}
+                                onValueChange={(val) => onFormChange("branchId", val)}
+                                disabled={saving}
+                                hasError={!!formErrors.branchId}
+                                placeholder="Select branch location..."
+                            />
+                            {formErrors.branchId && (
+                                <p className="text-[11px] text-destructive font-medium mt-1">
+                                    Branch selection is required.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Unit of Measure (UOM) */}
                         <div className="space-y-1">
                             <Label htmlFor="uomId">
                                 Unit of Measure (UOM) <span className="text-destructive">*</span>

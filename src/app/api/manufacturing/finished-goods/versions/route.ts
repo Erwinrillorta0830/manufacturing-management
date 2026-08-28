@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getBOMDetailsForVersion } from "./versions-helper";
 
 interface VersionRecord {
     version_id: number;
@@ -184,7 +185,39 @@ export async function POST(request: Request) {
             const formattedBaseQty = Math.max(0.0001, Number(bQty || 1));
             const formattedYield = Math.min(100, Math.max(0.01, Number(yieldPercent || 100)));
 
-            const requestedStatus = body.status === "Pending Approval" || body.status === "Active" || body.status === "Rejected" ? body.status : "Draft";
+            const requestedStatus = body.status === "Pending Approval" || body.status === "Active" || body.status === "Rejected" || body.status === "Revision" ? body.status : "Draft";
+
+            if (requestedStatus === "Pending Approval") {
+                const passedRoutes = Array.isArray(body.routes) ? body.routes : [];
+                if (passedRoutes.length === 0) {
+                    return NextResponse.json(
+                        { error: "Cannot submit version for approval: At least one workstation routing operation step is required." },
+                        { status: 400 }
+                    );
+                }
+                const totalBomItems = passedRoutes.reduce((sum: number, r: { bom_items?: unknown[] }) => sum + (r.bom_items || []).length, 0);
+                if (totalBomItems === 0) {
+                    return NextResponse.json(
+                        { error: "Cannot submit version for approval: At least one raw material / BOM ingredient component is required." },
+                        { status: 400 }
+                    );
+                }
+                const passedLabor = Array.isArray(body.labor_positions) ? body.labor_positions : [];
+                if (passedLabor.length === 0) {
+                    return NextResponse.json(
+                        { error: "Cannot submit version for approval: At least one direct labor position standard is required." },
+                        { status: 400 }
+                    );
+                }
+                const passedOverheads = Array.isArray(body.overhead_items) ? body.overhead_items : [];
+                const customOverhead = Number(body.custom_overhead || 0);
+                if (passedOverheads.length === 0 && customOverhead <= 0) {
+                    return NextResponse.json(
+                        { error: "Cannot submit version for approval: At least one version overhead allocation or rate is required." },
+                        { status: 400 }
+                    );
+                }
+            }
 
             // 1. Create product manufacturing version matching MySQL table schema
             const versionPayload: Record<string, unknown> = {
@@ -556,12 +589,48 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ success: true });
         } else if (action === "submit_for_approval") {
             const targetVer = versions.find((v: VersionRecord) => v.version_id === numericVersionId);
-            if (targetVer && targetVer.status !== "Draft") {
+            if (targetVer && targetVer.status !== "Draft" && targetVer.status !== "Revision" && targetVer.status !== "Revision Required") {
                 return NextResponse.json(
-                    { error: `Version is currently '${targetVer.status}'. Only Draft versions can be submitted for approval.` },
+                    { error: `Version is currently '${targetVer.status}'. Only Draft or Revision versions can be submitted for approval.` },
                     { status: 400 }
                 );
             }
+
+            // Backend validation: Verify routing steps, BOM ingredients, labor positions, and overhead items exist
+            const details = await getBOMDetailsForVersion(numericProductId, numericVersionId);
+            const routes = details.routes || [];
+            if (routes.length === 0) {
+                return NextResponse.json(
+                    { error: "Cannot submit version for approval: At least one workstation routing operation step is required." },
+                    { status: 400 }
+                );
+            }
+
+            const totalBomItems = routes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
+            if (totalBomItems === 0) {
+                return NextResponse.json(
+                    { error: "Cannot submit version for approval: At least one raw material / BOM ingredient component is required." },
+                    { status: 400 }
+                );
+            }
+
+            const laborPositions = details.version?.labor_positions || [];
+            if (laborPositions.length === 0) {
+                return NextResponse.json(
+                    { error: "Cannot submit version for approval: At least one direct labor position standard is required." },
+                    { status: 400 }
+                );
+            }
+
+            const overheadItems = details.version?.overhead_items || [];
+            const customOverhead = Number(details.version?.custom_overhead || 0);
+            if (overheadItems.length === 0 && customOverhead <= 0) {
+                return NextResponse.json(
+                    { error: "Cannot submit version for approval: At least one version overhead allocation or rate is required." },
+                    { status: 400 }
+                );
+            }
+
             const actRes = await patchVersionItem(numericVersionId, { status: "Pending Approval", is_primary: false });
             if (!actRes.ok) throw new Error("Failed to submit version for approval");
             return NextResponse.json({ success: true });

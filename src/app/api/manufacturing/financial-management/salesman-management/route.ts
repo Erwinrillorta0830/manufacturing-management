@@ -85,9 +85,9 @@ export async function GET(req: NextRequest) {
 
         if (action === "supporting-data") {
             const [branchesRes, divisionsRes, operationsRes, usersRes] = await Promise.all([
-                fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code`, { headers: fetchHeaders }),
+                fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code,isBadStock,isReturn,bad_stock_branch_id`, { headers: fetchHeaders }),
                 fetch(`${DIRECTUS_URL}/items/division?limit=-1&fields=division_id,division_name,division_code`, { headers: fetchHeaders }),
-                fetch(`${DIRECTUS_URL}/items/operation?limit=-1&fields=id,operation_name,operation_code`, { headers: fetchHeaders }),
+                fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1&fields=id,operation_name`, { headers: fetchHeaders }),
                 fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname,user_position`, { headers: fetchHeaders })
             ]);
 
@@ -98,8 +98,14 @@ export async function GET(req: NextRequest) {
                 usersRes.json()
             ]);
 
+            const rawBranches: Array<{ id: number; branch_name: string; branch_code: string; isBadStock?: number; isReturn?: number; bad_stock_branch_id?: number }> = branches.data || [];
+            const isBad = (b: { isBadStock?: number; isReturn?: number }) => Number(b.isBadStock) === 1 || Number(b.isReturn) === 1;
+            const regularBranches = rawBranches.filter((b) => !isBad(b));
+            const badBranches = rawBranches.filter((b) => isBad(b));
+
             return NextResponse.json({
-                branches: branches.data || [],
+                branches: regularBranches,
+                badBranches: badBranches.length > 0 ? badBranches : rawBranches,
                 divisions: divisions.data || [],
                 operations: operations.data || [],
                 users: users.data || []

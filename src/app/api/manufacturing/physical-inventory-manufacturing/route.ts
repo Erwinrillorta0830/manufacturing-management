@@ -36,15 +36,11 @@ export async function GET(request: NextRequest) {
         }
 
         if (status) {
-            const s = status.trim().toUpperCase();
-            if (s === "DRAFT") {
-                filterParts.push("filter[status][_eq]=DRAFT");
-            } else if (s === "PENDING_REVIEW") {
-                filterParts.push("filter[status][_eq]=PENDING_REVIEW");
-            } else if (s === "COMMITTED") {
-                filterParts.push("filter[status][_eq]=COMMITTED");
-            } else if (s === "CANCELLED") {
-                filterParts.push("filter[status][_eq]=CANCELLED");
+            const statusArr = status.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+            if (statusArr.length === 1) {
+                filterParts.push(`filter[status][_eq]=${statusArr[0]}`);
+            } else if (statusArr.length > 1) {
+                filterParts.push(`filter[status][_in]=${statusArr.join(",")}`);
             }
         }
 

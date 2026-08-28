@@ -117,8 +117,10 @@ export function useClients() {
     };
 
     useEffect(() => {
-        loadData();
-        loadProvincesAndCities();
+        queueMicrotask(() => {
+            loadData();
+            loadProvincesAndCities();
+        });
     }, []);
 
     // Load barangays dynamically when city changes
@@ -181,7 +183,9 @@ export function useClients() {
         ));
 
         if (matchedBarangay && formData.brgy !== matchedBarangay.code) {
-            setFormData((prev) => ({ ...prev, brgy: matchedBarangay.code }));
+            queueMicrotask(() => {
+                setFormData((prev) => ({ ...prev, brgy: matchedBarangay.code }));
+            });
         }
     }, [barangays, editingCustomer, formData.brgy]);
 

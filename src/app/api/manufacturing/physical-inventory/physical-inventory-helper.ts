@@ -75,7 +75,16 @@ export function extractId(value: unknown, defaultKey = "id"): number {
     }
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
-        const raw = record[defaultKey] ?? record.id ?? record.product_id ?? record.lot_id ?? record.version_id ?? record.category_id;
+        const raw =
+            record[defaultKey] ??
+            record.id ??
+            record.price_type_id ??
+            record.product_type_id ??
+            record.type_id ??
+            record.product_id ??
+            record.lot_id ??
+            record.version_id ??
+            record.category_id;
         const parsed = Number(raw);
         return Number.isFinite(parsed) ? parsed : 0;
     }

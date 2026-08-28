@@ -939,6 +939,7 @@ export default function FinishedGoodsModule() {
                                     const isPrimary = Boolean(v.is_primary);
                                     const isActive = v.status === "Active" || (v as any).is_active === true;
                                     const isPending = v.status === "Pending Approval" || v.status === "For Approval";
+                                    const isRevision = v.status === "Revision" || v.status === "Revision Required";
                                     const isRejected = v.status === "Rejected";
                                     const isDraft = v.status === "Draft" || v.version_id < 0;
 
@@ -1003,12 +1004,16 @@ export default function FinishedGoodsModule() {
                                                         <span className="bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-[9px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0">
                                                             <Clock className="h-2.5 w-2.5" /> Pending Approval
                                                         </span>
+                                                    ) : isRevision ? (
+                                                        <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                                                            <AlertCircle className="h-2.5 w-2.5" /> Revision
+                                                        </span>
                                                     ) : isRejected ? (
                                                         <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
                                                             <XCircle className="h-2.5 w-2.5" /> Rejected
                                                         </span>
                                                     ) : (
-                                                        <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
+                                                        <span className="bg-slate-500/10 text-slate-700 dark:text-slate-300 border border-slate-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
                                                             Draft
                                                         </span>
                                                     )}

@@ -6,6 +6,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function FilterToolbar() {
   const {
@@ -28,21 +35,43 @@ export function FilterToolbar() {
     suppliers
   } = useStockAdjustmentSummary();
 
-  // Transform branches for searchable dropdown
+  // Transform branches for searchable dropdown with unique IDs and distinct labels
   const branchOptions = React.useMemo(() => {
-    const opts = branches.map((b) => ({
-      value: String(b.id),
-      label: b.branch_name
-    }));
+    const seen = new Set<string>();
+    const opts: { value: string; label: string }[] = [];
+
+    branches.forEach((b) => {
+      const val = String(b.id);
+      if (!val || seen.has(val)) return;
+      seen.add(val);
+
+      const codeStr = b.branch_code ? ` • ${b.branch_code}` : "";
+      opts.push({
+        value: val,
+        label: `${b.branch_name}${codeStr} (ID: ${b.id})`
+      });
+    });
+
     return [{ value: "all", label: "All Branches" }, ...opts];
   }, [branches]);
 
-  // Transform suppliers for searchable dropdown
+  // Transform suppliers for searchable dropdown with unique IDs and distinct labels
   const supplierOptions = React.useMemo(() => {
-    const opts = suppliers.map((s) => ({
-      value: String(s.id),
-      label: s.supplier_name
-    }));
+    const seen = new Set<string>();
+    const opts: { value: string; label: string }[] = [];
+
+    suppliers.forEach((s) => {
+      const val = String(s.id);
+      if (!val || seen.has(val)) return;
+      seen.add(val);
+
+      const codeStr = s.supplier_shortcut ? ` • ${s.supplier_shortcut}` : "";
+      opts.push({
+        value: val,
+        label: `${s.supplier_name}${codeStr} (ID: ${s.id})`
+      });
+    });
+
     return [{ value: "all", label: "All Suppliers" }, ...opts];
   }, [suppliers]);
 
@@ -65,13 +94,13 @@ export function FilterToolbar() {
         </div>
 
         {/* Branch Dropdown (Searchable) */}
-        <div className="flex flex-col gap-1 w-52">
+        <div className="flex flex-col gap-1 w-56 min-w-0">
           <span className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider pl-1">Branch</span>
           <SearchableSelect
             options={branchOptions}
             value={currentBranchValue}
             placeholder="Select Branch"
-            className="h-9 text-xs font-semibold rounded-lg bg-background border-border text-foreground/80 text-left justify-between"
+            className="h-9 text-xs font-semibold rounded-lg bg-background border-border text-foreground/80 text-left justify-between overflow-hidden truncate [&>svg]:shrink-0"
             onValueChange={(val) => {
               setBranchId(val === "all" ? undefined : Number(val));
             }}
@@ -79,45 +108,53 @@ export function FilterToolbar() {
         </div>
 
         {/* Supplier Dropdown (Searchable) */}
-        <div className="flex flex-col gap-1 w-52">
+        <div className="flex flex-col gap-1 w-56 min-w-0">
           <span className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider pl-1">Supplier</span>
           <SearchableSelect
             options={supplierOptions}
             value={currentSupplierValue}
             placeholder="Select Supplier"
-            className="h-9 text-xs font-semibold rounded-lg bg-background border-border text-foreground/80 text-left justify-between"
+            className="h-9 text-xs font-semibold rounded-lg bg-background border-border text-foreground/80 text-left justify-between overflow-hidden truncate [&>svg]:shrink-0"
             onValueChange={(val) => {
               setSupplierId(val === "all" ? undefined : Number(val));
             }}
           />
         </div>
 
-        {/* Type Dropdown */}
+        {/* Type Dropdown (Shadcn Select) */}
         <div className="flex flex-col gap-1 w-44">
           <span className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider pl-1">Type</span>
-          <select
-            value={type || ""}
-            onChange={(e) => setType(e.target.value as "IN" | "OUT" | undefined)}
-            className="h-9 px-3 border border-border bg-background rounded-lg text-xs font-semibold text-foreground/80 focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+          <Select
+            value={type || "all"}
+            onValueChange={(val) => setType(val === "all" ? undefined : (val as "IN" | "OUT"))}
           >
-            <option value="">All Types</option>
-            <option value="IN">Stock In (+)</option>
-            <option value="OUT">Stock Out (-)</option>
-          </select>
+            <SelectTrigger className="h-9 w-full text-xs font-semibold rounded-lg bg-background border-border text-foreground/80">
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="IN">Stock In (+)</SelectItem>
+              <SelectItem value="OUT">Stock Out (-)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Status Dropdown */}
+        {/* Status Dropdown (Shadcn Select) */}
         <div className="flex flex-col gap-1 w-44">
           <span className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider pl-1">Status</span>
-          <select
-            value={status || ""}
-            onChange={(e) => setStatus(e.target.value as "Posted" | "Unposted" | undefined)}
-            className="h-9 px-3 border border-border bg-background rounded-lg text-xs font-semibold text-foreground/80 focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+          <Select
+            value={status || "all"}
+            onValueChange={(val) => setStatus(val === "all" ? undefined : (val as "Posted" | "Unposted"))}
           >
-            <option value="">All Statuses</option>
-            <option value="Posted">Posted</option>
-            <option value="Unposted">Unposted (Draft)</option>
-          </select>
+            <SelectTrigger className="h-9 w-full text-xs font-semibold rounded-lg bg-background border-border text-foreground/80">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="Posted">Posted</SelectItem>
+              <SelectItem value="Unposted">Unposted (Draft)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* From Date Filter */}

@@ -16,11 +16,17 @@ export interface StagingApiResponse {
 
 export interface TransferApiResponse {
     success: boolean;
+    status?: number;
+    failure_code?: string;
     message?: string;
     shortage?: boolean;
     available_quantity?: number;
     required_quantity?: number;
     shortage_quantity?: number;
+    product_id?: number;
+    lot_id?: number;
+    allocation_id?: number;
+    batch_no?: string;
     source_bin?: string;
     target_bin?: string;
     error?: string;
@@ -66,12 +72,12 @@ export async function executeBinTransfer(payload: BinTransferPayload): Promise<T
     const json = await res.json();
 
     if (res.status === 409 && json.shortage) {
-        return json;
+        return { ...json, status: res.status };
     }
 
     if (!res.ok) {
         throw new Error(json.error || json.message || `Transfer failed with status ${res.status}`);
     }
 
-    return json;
+    return { ...json, status: res.status };
 }

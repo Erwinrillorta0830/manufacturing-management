@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -32,21 +33,35 @@ import {
 import { ScannedItem } from '../../types/stock-transfer.types';
 import { QuantityStepper } from './QuantityStepper';
 import { getAssetUrl } from '@/lib/assets';
+import { StockAllocationModal } from '@/modules/manufacturing-management/shared/components/StockAllocationModal';
+import type { StockAllocationPlan, BatchAllocationResult } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 interface StockTransferTableProps {
   items: ScannedItem[];
   onQtyChange: (rfid: string, qty: number) => void;
   onDelete: (rfid: string) => void;
+  branchId?: number;
+  onAllocationChange?: (rfid: string, plan: StockAllocationPlan) => void;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 40, 50, 100];
 
-export default function StockTransferTable({ items, onQtyChange, onDelete }: StockTransferTableProps) {
+export default function StockTransferTable({ 
+  items, 
+  onQtyChange, 
+  onDelete,
+  branchId,
+  onAllocationChange,
+}: StockTransferTableProps) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [activeAllocationItem, setActiveAllocationItem] = useState<ScannedItem | null>(null);
+  const [allocationModalOpen, setAllocationModalOpen] = useState(false);
 
   React.useEffect(() => {
-    setPage(1);
+    queueMicrotask(() => {
+      setPage(1);
+    });
   }, [items.length]);
 
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
@@ -128,7 +143,39 @@ export default function StockTransferTable({ items, onQtyChange, onDelete }: Sto
                         {item.productName?.substring(0, 2).toUpperCase()}
                       </div>
                     )}
-                    <span className="line-clamp-1">{item.productName}</span>
+                    <div className="flex flex-col">
+                      <span className="line-clamp-1">{item.productName}</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {(() => {
+                          const allocations = item.allocations || [];
+                          const batches = allocations.length > 0 
+                            ? allocations.map((a) => a.batch_no).filter(Boolean)
+                            : item.batch_no 
+                            ? item.batch_no.split(',').map((s) => s.trim()).filter(Boolean) 
+                            : [];
+                          const label = batches.length > 1 ? `(${batches.length} Batches)` : batches.length === 1 ? `(${batches[0]})` : '';
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveAllocationItem(item);
+                                setAllocationModalOpen(true);
+                              }}
+                              className="focus:outline-none group/badge"
+                              title={batches.length > 0 ? `Allocated Batches:\n${batches.join('\n')}\n\nClick to view / customize allocation` : 'Click to view / customize FEFO batch allocation'}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20 hover:border-emerald-500/50 hover:shadow-sm transition-all"
+                              >
+                                <Layers className="w-2.5 h-2.5 text-emerald-600 group-hover/badge:scale-110 transition-transform" />
+                                <span>AUTO — FEFO {label}</span>
+                              </Badge>
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell className="text-[10px] font-bold text-primary/70 uppercase py-2.5">
@@ -248,6 +295,43 @@ export default function StockTransferTable({ items, onQtyChange, onDelete }: Sto
             </PaginationContent>
           </Pagination>
         </div>
+      )}
+
+      {activeAllocationItem && (
+        <StockAllocationModal
+          open={allocationModalOpen}
+          onOpenChange={(open) => {
+            setAllocationModalOpen(open);
+            if (!open) setActiveAllocationItem(null);
+          }}
+          branchId={branchId || 0}
+          productId={activeAllocationItem.productId}
+          productName={activeAllocationItem.productName}
+          requestedQuantity={activeAllocationItem.unitQty || 1}
+          uomName={activeAllocationItem.unit || 'units'}
+          initialAllocations={
+            activeAllocationItem.allocations && activeAllocationItem.allocations.length > 0
+              ? (activeAllocationItem.allocations as BatchAllocationResult[])
+              : activeAllocationItem.batch_no && (activeAllocationItem.inventory_lot_id || activeAllocationItem.lot_id)
+              ? [
+                  {
+                    inventory_lot_id: activeAllocationItem.inventory_lot_id || 1,
+                    lot_id: activeAllocationItem.lot_id || 1,
+                    batch_no: activeAllocationItem.batch_no,
+                    allocated_quantity: activeAllocationItem.unitQty || 1,
+                    available_quantity: activeAllocationItem.qtyAvailable || activeAllocationItem.unitQty || 1,
+                    status: 'ACTIVE',
+                    qa_status: activeAllocationItem.qa_status || 'GOOD',
+                  } as BatchAllocationResult,
+                ]
+              : undefined
+          }
+          onConfirm={(plan) => {
+            if (onAllocationChange) {
+              onAllocationChange(activeAllocationItem.rfid, plan);
+            }
+          }}
+        />
       )}
     </div>
   );

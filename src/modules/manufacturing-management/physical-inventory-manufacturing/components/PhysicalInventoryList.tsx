@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { MmPhysicalInventorySheet, Branch, ProductType } from "../types";
 import {
     Search,
@@ -19,6 +20,7 @@ import {
     Clock,
     AlertCircle,
     Sparkles,
+    GitCompare,
 } from "lucide-react";
 
 interface Props {
@@ -32,7 +34,7 @@ interface Props {
     onEdit: (sheet: MmPhysicalInventorySheet) => void;
     onSubmit: (sheet: MmPhysicalInventorySheet) => void;
     onReturnToDraft: (sheet: MmPhysicalInventorySheet) => void;
-    onCommit: (sheet: MmPhysicalInventorySheet) => void;
+    onCommit?: (sheet: MmPhysicalInventorySheet) => void;
     onCancel: (sheet: MmPhysicalInventorySheet) => void;
 }
 
@@ -44,9 +46,11 @@ export function formatQty(val: number | string | null | undefined): string {
 }
 
 export function formatMoney(val: number | string | null | undefined): string {
-    const num = Number(val || 0);
-    if (!Number.isFinite(num)) return "₱0.00";
-    return `₱${num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return new Intl.NumberFormat("en-PH", {
+        style: "currency",
+        currency: "PHP",
+        minimumFractionDigits: 2,
+    }).format(Number(val || 0));
 }
 
 export default function PhysicalInventoryList({
@@ -59,7 +63,6 @@ export default function PhysicalInventoryList({
     onView,
     onSubmit,
     onReturnToDraft,
-    onCommit,
     onCancel,
 }: Props) {
     const [search, setSearch] = useState("");
@@ -488,13 +491,14 @@ export default function PhysicalInventoryList({
                                                                 <RotateCcw className="h-4 w-4" />
                                                             </button>
 
-                                                            <button
-                                                                onClick={() => onCommit(s)}
-                                                                className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-md transition-colors"
-                                                                title="Commit Physical Inventory"
+                                                            <Link
+                                                                href={`/mm/physical-inventory-offsetting?id=${s.physical_inventory_id}`}
+                                                                className="p-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-md transition-colors inline-flex items-center gap-1 font-semibold text-xs"
+                                                                title="Go to Physical Inventory Offsetting Module to Review & Commit Stock Adjustments"
                                                             >
-                                                                <CheckCircle2 className="h-4 w-4" />
-                                                            </button>
+                                                                <GitCompare className="h-4 w-4" />
+                                                                <span className="hidden lg:inline text-[11px]">Go to Offsetting</span>
+                                                            </Link>
 
                                                             <button
                                                                 onClick={() => onCancel(s)}

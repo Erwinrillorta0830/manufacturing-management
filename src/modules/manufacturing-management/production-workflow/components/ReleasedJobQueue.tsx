@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { JobOrder } from "../types";
+import { JobOrder, PRODUCTION_WORKFLOW_STATUS_FILTERS } from "../types";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -183,15 +183,15 @@ export function ReleasedJobQueue({
 
                 {/* Status filters */}
                 <div className="flex flex-wrap gap-1.5 pb-1">
-                    {["Active", "All", "Proceed", "Ongoing", "On Hold", "Finished"].map((filter) => (
+                    {PRODUCTION_WORKFLOW_STATUS_FILTERS.map((filter) => (
                         <Button
-                            key={filter}
-                            variant={statusFilter === filter ? "default" : "outline"}
+                            key={filter.value}
+                            variant={statusFilter === filter.value ? "default" : "outline"}
                             size="xs"
                             className="h-7 text-xs px-2.5"
-                            onClick={() => setStatusFilter(filter)}
+                            onClick={() => setStatusFilter(filter.value)}
                         >
-                            {filter === "Proceed" ? "Released" : filter === "Ongoing" ? "In Progress" : filter}
+                            {filter.label}
                         </Button>
                     ))}
                 </div>

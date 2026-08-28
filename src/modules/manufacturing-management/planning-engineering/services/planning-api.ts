@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { Branch, SalesOrder, SalesOrderDetail } from "../types";
+import { Branch, JobOrderMaterial, SalesOrder, SalesOrderDetail } from "../types";
 
 export async function fetchBranches(): Promise<Branch[]> {
     const invRes = await fetch("/api/manufacturing/inventory");
@@ -33,6 +33,24 @@ export async function fetchNetRequirementsRaw(productIds: number[], branchId: nu
         throw new Error("Failed to load net requirements from API.");
     }
     return res.json();
+}
+
+export async function fetchJobMaterials(joId: number | string, signal?: AbortSignal): Promise<JobOrderMaterial[]> {
+    const res = await fetch(
+        `/api/manufacturing/planning-engineering?action=job-materials&joId=${encodeURIComponent(String(joId))}`,
+        { cache: "no-store", signal }
+    );
+    const payload = await res.json().catch(() => null);
+
+    if (!res.ok) {
+        throw new Error(payload?.error || "Required material data is temporarily unavailable.");
+    }
+
+    if (!Array.isArray(payload)) {
+        throw new Error("Materials lookup returned an invalid response.");
+    }
+
+    return payload;
 }
 
 export interface ReleaseJOPayload {

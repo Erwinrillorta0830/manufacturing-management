@@ -38,6 +38,7 @@ export interface Product {
     product_shelf_life?: number;
     cost_per_unit?: number;
     unit_of_measurement?: number | Unit | { unit_id?: number; unit_shortcut?: string; unit_name?: string };
+    unit_of_measurement_count?: number;
     isActive?: boolean | number;
 }
 
@@ -87,6 +88,35 @@ export interface MmPhysicalInventoryDetail {
     unit_cost: number;
     difference_cost?: number;
     remarks?: string | null;
+    offset_qty?: number;
+    net_adjusted_variance?: number;
+}
+
+export interface MmOffsetPairing {
+    id: string;
+    physical_inventory_id?: number;
+    shortage_detail_id: number;
+    shortage_product_id: number;
+    shortage_product_name: string;
+    shortage_product_code?: string;
+    shortage_lot_id: number;
+    shortage_lot_name?: string;
+    shortage_batch_no?: string;
+    surplus_detail_id: number;
+    surplus_product_id: number;
+    surplus_product_name: string;
+    surplus_product_code?: string;
+    surplus_lot_id: number;
+    surplus_lot_name?: string;
+    surplus_batch_no?: string;
+    offset_qty: number;
+    shortage_unit_cost: number;
+    surplus_unit_cost: number;
+    unit_cost_variance: number;
+    net_financial_impact: number;
+    reason_code: "Lot Number Mix-up / Mislabeling" | "Production Batch Pick Swap" | "Wrong SKU Tagging" | "Barcoding Error" | "UOM Miscount" | "Packaging Variation" | string;
+    notes?: string;
+    created_at?: string;
 }
 
 export interface MmPhysicalInventorySheet {
@@ -114,6 +144,9 @@ export interface MmPhysicalInventorySheet {
     cancellation_reason?: string | null;
     created_at?: string | null;
     details?: MmPhysicalInventoryDetail[];
+    offset_pairings?: MmOffsetPairing[];
+    total_offset_qty?: number;
+    net_financial_offset_impact?: number;
 }
 
 export interface PhysicalInventoryFilters {

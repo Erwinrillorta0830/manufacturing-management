@@ -154,11 +154,17 @@ export function useStockTransferSummary() {
     const localGroups: Record<string, SummaryOrderGroup> = {};
     
     base.stockTransfers.forEach((st: SummaryStockTransferRow) => {
+      const rawSource = st.source_branch_id ?? st.source_branch ?? null;
+      const sourceBranch = typeof rawSource === "object" && rawSource !== null ? (rawSource as { id: number }).id : (typeof rawSource === "number" ? rawSource : null);
+
+      const rawTarget = st.target_branch_id ?? st.target_branch ?? null;
+      const targetBranch = typeof rawTarget === "object" && rawTarget !== null ? (rawTarget as { id: number }).id : (typeof rawTarget === "number" ? rawTarget : null);
+
       if (!localGroups[st.order_no]) {
         localGroups[st.order_no] = {
           orderNo: st.order_no,
-          sourceBranch: st.source_branch,
-          targetBranch: st.target_branch,
+          sourceBranch,
+          targetBranch,
           leadDate: st.lead_date,
           dateRequested: st.date_requested,
           dateEncoded: st.date_encoded || "",
@@ -198,7 +204,7 @@ export function useStockTransferSummary() {
       };
       
       localGroups[st.order_no].items.push(item);
-      const qty = st.received_quantity ?? st.allocated_quantity ?? st.ordered_quantity ?? 0;
+      const qty = Number(st.received_quantity) || Number(st.allocated_quantity) || Number(st.ordered_quantity) || 0;
       localGroups[st.order_no].totalAmount += Number((qty * unitPrice).toFixed(2));
     });
 

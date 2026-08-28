@@ -140,8 +140,9 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
             throw new Error(`Failed to update PI header: ${errText}`);
         }
 
-        // If price_type_id changed, recalculate prices for all detail rows
-        if (newPriceTypeId !== null && newPriceTypeId !== extractId(sheet.price_type_id)) {
+        // Recalculate prices for all detail rows using the active price_type_id
+        const activePriceTypeId = newPriceTypeId !== null ? newPriceTypeId : extractId(sheet.price_type_id);
+        if (activePriceTypeId > 0) {
             try {
                 const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1`;
                 const detailsRes = await fetch(detailsUrl, { headers, cache: "no-store" });
@@ -149,7 +150,7 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
                     const detailsList: Array<Record<string, unknown>> = (await detailsRes.json()).data || [];
                     if (detailsList.length > 0) {
                         const productIds = detailsList.map((d) => extractId(d.product_id));
-                        const priceMap = await resolveBatchPrices(productIds, newPriceTypeId);
+                        const priceMap = await resolveBatchPrices(productIds, activePriceTypeId);
 
                         for (const d of detailsList) {
                             const dId = extractId(d.physical_inventory_detail_id || d.id);

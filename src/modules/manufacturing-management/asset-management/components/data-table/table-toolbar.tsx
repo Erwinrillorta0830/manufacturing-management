@@ -19,6 +19,11 @@ const conditionOptions = [
   { label: "Discontinued", value: "Discontinued" },
 ];
 
+const originOptions = [
+  { label: "New", value: "New" },
+  { label: "Existing", value: "Existing" },
+];
+
 interface TableToolbarProps {
   table: Table<unknown>;
 }
@@ -39,7 +44,16 @@ export function TableToolbar({ table }: TableToolbarProps) {
           className="h-9 w-37.5 lg:w-62.5 text-xs"
         />
 
-        {/* 2. The Combobox (Faceted Filter for Condition) */}
+        {/* 2. Faceted Filter for Origin */}
+        {table.getColumn("asset_origin") && (
+          <DataTableFacetedFilter
+            column={table.getColumn("asset_origin")}
+            title="Origin"
+            options={originOptions}
+          />
+        )}
+
+        {/* 3. The Combobox (Faceted Filter for Condition) */}
         {table.getColumn("condition") && (
           <DataTableFacetedFilter
             column={table.getColumn("condition")}

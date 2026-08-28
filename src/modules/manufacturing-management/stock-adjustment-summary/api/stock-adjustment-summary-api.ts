@@ -15,7 +15,7 @@ export const stockAdjustmentSummaryApi = {
     return json.data || [];
   },
 
-  async fetchAdjustments(filters?: SummaryFilters) {
+  async fetchAdjustments(filters?: Partial<SummaryFilters>) {
     const queryParams = new URLSearchParams();
     if (filters?.search) queryParams.set("search", filters.search);
     if (filters?.branchId) queryParams.set("branchId", String(filters.branchId));

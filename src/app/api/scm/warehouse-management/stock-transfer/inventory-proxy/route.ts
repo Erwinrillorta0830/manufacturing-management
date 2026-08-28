@@ -13,15 +13,36 @@ export async function GET(request: NextRequest) {
   }
 
   // Construct the target external URL dynamically
-  const targetUrl = new URL(`${springBase}/api/view-running-inventory/filter`);
+  const targetUrl = new URL(`${springBase}/api/mm-inventory-movements/filter`);
   
   // Forward all query parameters
   searchParams.forEach((value, key) => {
     targetUrl.searchParams.set(key, value);
   });
 
-  // Extract auth token from cookies
-  const token = request.cookies.get('vos_access_token')?.value;
+  // Ensure branch param is mapped correctly for Spring filter
+  const branchVal = searchParams.get('branch') || searchParams.get('branchId') || searchParams.get('branch_id');
+  if (branchVal) {
+    targetUrl.searchParams.set('branch', branchVal);
+  }
+
+  // Extract auth token from cookies or cache
+  let token = request.cookies.get('vos_access_token')?.value || request.cookies.get('springboot_token')?.value;
+  if (!token) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path');
+      const tokenFile = path.resolve(process.cwd(), 'node_modules/.cache/vos-tokens/latest_token.txt');
+      if (fs.existsSync(tokenFile)) {
+        token = fs.readFileSync(tokenFile, 'utf8').trim();
+      }
+    } catch {
+      // Ignore fallback token read
+    }
+  }
+
   console.log(`[Proxy] Target: ${targetUrl.toString()}`);
   console.log(`[Proxy] Token present: ${!!token}, Length: ${token?.length}`);
   

@@ -11,9 +11,11 @@ import {
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
 const EPSILON = 0.000001;
+const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
 
 export interface CompleteYieldClosingInput {
     joId: string | number;
+    yieldLedgerId?: string | number | null;
     productId: string | number;
     productName?: string;
     quantityProduced: string | number;
@@ -55,6 +57,9 @@ interface UpdatedMutation {
 }
 
 export class YieldCompletionError extends Error {
+    reconciliationRequired = false;
+    operationKey?: string;
+
     constructor(
         readonly status: number,
         readonly code: string,
@@ -224,6 +229,9 @@ class MutationJournal {
         );
         if (!data || typeof data !== "object") {
             throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", `${label} returned an invalid record.`);
+        }
+        if (recordId(data) !== id) {
+            throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", `${label} returned an unexpected record identifier.`);
         }
         const previousFields = Object.fromEntries(
             Object.keys(payload).map(field => [field, previous[field]])
@@ -431,25 +439,153 @@ async function buildComponentPlans(
     return plans;
 }
 
-async function findExistingFinishedMovement(productId: number, branchId: number, joNo: string, lotNumber: string): Promise<any | null> {
-    const filter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _eq: productId } },
-            { branch_id: { _eq: branchId } },
-            { batch_no: { _eq: lotNumber } },
-            { source_document_no: { _eq: joNo } },
-            { transaction_type_id: { _eq: 2 } },
-            { quantity: { _gt: 0 } }
-        ]
-    }));
-    const rows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${filter}&limit=1`,
-        `Existing finished-goods movement lookup for ${joNo}`
-    );
-    return rows[0] || null;
+function normalizeDate(value: unknown, label: string): string {
+    const raw = String(value ?? "").trim();
+    const datePart = raw.match(/^(\d{4}-\d{2}-\d{2})(?:T.*)?$/)?.[1] || "";
+    if (!datePart) {
+        throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", `${label} must be a valid date.`);
+    }
+
+    const [year, month, day] = datePart.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (
+        parsed.getUTCFullYear() !== year
+        || parsed.getUTCMonth() !== month - 1
+        || parsed.getUTCDate() !== day
+    ) {
+        throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", `${label} must be a valid date.`);
+    }
+
+    return datePart;
 }
 
-async function hasFinishedGoodsLedger(productId: number, branchId: number, joNo: string, quantity: number): Promise<boolean> {
+function sameDate(left: unknown, right: string): boolean {
+    return String(left ?? "").trim().slice(0, 10) === right;
+}
+
+function isTerminalJobOrderStatus(status: unknown): boolean {
+    return ["completed", "finished", "closed"].includes(String(status ?? "").trim().toLowerCase());
+}
+
+async function findExistingFinishedMovements(
+    productId: number,
+    branchId: number,
+    jobOrderId: number,
+    joNo: string,
+    lotNumber: string
+): Promise<any[]> {
+    const baseConditions = [
+        { product_id: { _eq: productId } },
+        { branch_id: { _eq: branchId } },
+        { batch_no: { _eq: lotNumber } },
+        { transaction_type_id: { _eq: 2 } },
+        { quantity: { _gt: 0 } }
+    ];
+
+    // New records are linked by the numeric job-order ID. Only fall back to
+    // the document number for legacy movements that have no source ID.
+    const bySourceId = await directusRows<any>(
+        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
+            _and: [...baseConditions, { source_document_id: { _eq: jobOrderId } }]
+        }))}&limit=-1`,
+        `Existing finished-goods movement lookup for ${joNo}`
+    );
+    if (bySourceId.length > 0) return bySourceId;
+
+    const legacyRows = await directusRows<any>(
+        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
+            _and: [...baseConditions, { source_document_no: { _eq: joNo } }]
+        }))}&limit=-1`,
+        `Legacy finished-goods movement lookup for ${joNo}`
+    );
+    return legacyRows.filter(row => numericRelationId(row.source_document_id) <= 0);
+}
+
+function matchingFinishedMovement(
+    rows: any[],
+    productId: number,
+    branchId: number,
+    jobOrderId: number,
+    joNo: string,
+    lotNumber: string,
+    quantity: number,
+    manufacturingDate: string,
+    expirationDate: string
+): any | null {
+    return rows.find(row =>
+        Number(row.product_id) === productId
+        && Number(row.branch_id) === branchId
+        && Number(row.transaction_type_id) === 2
+        && Number(row.quantity) === quantity
+        && String(row.batch_no || "").trim() === lotNumber
+        && (
+            numericRelationId(row.source_document_id) === jobOrderId
+            || (numericRelationId(row.source_document_id) <= 0 && String(row.source_document_no || "").trim() === joNo)
+        )
+        && sameDate(row.manufacturing_date, manufacturingDate)
+        && sameDate(row.expiry_date, expirationDate)
+    ) || null;
+}
+
+async function resolveYieldLedger(
+    jobOrder: ResolvedYieldJobOrder,
+    lotNumber: string,
+    requestedLedgerId?: string | number | null
+): Promise<{ id: number; row: any }> {
+    const normalizedLedgerId = Number(requestedLedgerId ?? 0);
+    let rows: any[];
+
+    if (Number.isFinite(normalizedLedgerId) && normalizedLedgerId > 0) {
+        const row = await directusJson<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(normalizedLedgerId))}`,
+            `Yield ledger lookup for ${jobOrder.jobOrderNo}`
+        );
+        rows = [row];
+    } else {
+        rows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
+                _and: [
+                    { job_order_id: { _eq: jobOrder.jobOrderId } },
+                    { lot_number: { _eq: lotNumber } }
+                ]
+            }))}&limit=-1`,
+            `Yield ledger resolution for ${jobOrder.jobOrderNo}`
+        );
+    }
+
+    const matchingRows = rows.filter(row =>
+        numericRelationId(row.job_order_id) === jobOrder.jobOrderId
+        && String(row.lot_number || "").trim() === lotNumber
+    );
+    if (matchingRows.length === 0) {
+        throw new YieldCompletionError(
+            404,
+            "YIELD_LEDGER_NOT_FOUND",
+            `No yield ledger run exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}.`
+        );
+    }
+    if (matchingRows.length > 1) {
+        throw new YieldCompletionError(
+            409,
+            "YIELD_LEDGER_AMBIGUOUS",
+            `More than one yield ledger run exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}. Select the specific run before closing.`
+        );
+    }
+
+    const id = recordId(matchingRows[0]);
+    if (!Number.isFinite(id) || id <= 0) {
+        throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", "The yield ledger run has no valid identifier.");
+    }
+    return { id, row: matchingRows[0] };
+}
+
+async function hasFinishedGoodsLedger(
+    productId: number,
+    branchId: number,
+    joNo: string,
+    quantity: number,
+    expectedLedgerId?: number
+): Promise<boolean> {
     const filter = encodeURIComponent(JSON.stringify({
         _and: [
             { productId: { _eq: productId } },
@@ -460,17 +596,29 @@ async function hasFinishedGoodsLedger(productId: number, branchId: number, joNo:
         ]
     }));
     const rows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/product_ledger?filter=${filter}&limit=1`,
+        `${DIRECTUS_URL}/items/product_ledger?filter=${filter}&limit=-1`,
         `Existing finished-goods ledger lookup for ${joNo}`
     );
-    return rows.length > 0;
+    return rows.some(row => expectedLedgerId === undefined || recordId(row) === expectedLedgerId);
+}
+
+async function findCompletionHistory(jobOrderId: number): Promise<any | null> {
+    const filter = encodeURIComponent(JSON.stringify({
+        job_order_id: { _eq: jobOrderId }
+    }));
+    const rows = await directusRows<any>(
+        `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?filter=${filter}&limit=-1&sort=-changed_at`,
+        `Completion history lookup for Job Order ${jobOrderId}`
+    );
+    return rows.find(row => isTerminalJobOrderStatus(row.new_status)) || null;
 }
 
 async function processSalesOrderAllocations(
     journal: MutationJournal,
     jobOrder: ResolvedYieldJobOrder,
     quantityProduced: number
-): Promise<void> {
+): Promise<SalesAllocationExpectation[]> {
+    const expectations: SalesAllocationExpectation[] = [];
     const links = await directusRows<any>(
         `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrder.jobOrderId))}&limit=-1`,
         `Job-order allocation lookup for ${jobOrder.jobOrderNo}`
@@ -491,19 +639,24 @@ async function processSalesOrderAllocations(
             : linkedQuantity;
         const currentAllocated = finiteNumber(detail.allocated_quantity ?? 0, "Current sales-order allocated quantity", { nonNegative: true });
         const unitPrice = finiteNumber(detail.unit_price ?? 0, "Sales-order unit price", { nonNegative: true });
+        const allocatedQuantity = currentAllocated + proportionalQuantity;
+        const allocatedAmount = allocatedQuantity * unitPrice;
 
         await journal.patch(
             "sales_order_details",
             detailId,
             {
-                allocated_quantity: currentAllocated + proportionalQuantity,
-                allocated_amount: (currentAllocated + proportionalQuantity) * unitPrice
+                allocated_quantity: allocatedQuantity,
+                allocated_amount: allocatedAmount
             },
             `Update sales-order detail allocation ${detailId}`
         );
 
         const parentOrderId = numericRelationId(detail.order_id);
-        if (!Number.isFinite(parentOrderId) || parentOrderId <= 0) continue;
+        if (!Number.isFinite(parentOrderId) || parentOrderId <= 0) {
+            expectations.push({ detailId, allocatedQuantity, allocatedAmount, parentOrderId: null });
+            continue;
+        }
 
         const allDetails = await directusRows<any>(
             `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&limit=-1`,
@@ -521,7 +674,256 @@ async function processSalesOrderAllocations(
                 `Update sales-order status ${parentOrderId}`
             );
         }
+
+        expectations.push({
+            detailId,
+            allocatedQuantity,
+            allocatedAmount,
+            parentOrderId,
+            ...(allFullyAllocated ? { parentStatus: "For Invoicing" } : {})
+        });
     }
+
+    return expectations;
+}
+
+interface SalesAllocationExpectation {
+    detailId: number;
+    allocatedQuantity: number;
+    allocatedAmount: number;
+    parentOrderId: number | null;
+    parentStatus?: string;
+}
+
+async function verifySalesOrderAllocations(expectations: SalesAllocationExpectation[]): Promise<void> {
+    for (const expectation of expectations) {
+        const detail = await directusJson<any>(
+            `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(expectation.detailId))}`,
+            `Sales-order detail verification for ${expectation.detailId}`
+        );
+        if (
+            Math.abs(Number(detail.allocated_quantity || 0) - expectation.allocatedQuantity) > EPSILON
+            || Math.abs(Number(detail.allocated_amount || 0) - expectation.allocatedAmount) > EPSILON
+        ) {
+            throw new YieldCompletionError(
+                502,
+                "PERSISTENCE_VERIFICATION_FAILED",
+                `Sales-order detail ${expectation.detailId} did not retain the completed allocation.`
+            );
+        }
+
+        if (expectation.parentOrderId && expectation.parentStatus) {
+            const parent = await directusJson<any>(
+                `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(expectation.parentOrderId))}`,
+                `Sales-order verification for ${expectation.parentOrderId}`
+            );
+            if (String(parent.order_status || "") !== expectation.parentStatus) {
+                throw new YieldCompletionError(
+                    502,
+                    "PERSISTENCE_VERIFICATION_FAILED",
+                    `Sales order ${expectation.parentOrderId} did not retain its completed allocation status.`
+                );
+            }
+        }
+    }
+}
+
+async function verifyPersistedCompletion(options: {
+    jobOrder: ResolvedYieldJobOrder;
+    yieldLedgerId: number;
+    finishedMovementId: number;
+    finishedLedgerId: number;
+    statusHistoryId: number;
+    quantityProduced: number;
+    branchId: number;
+    lotNumber: string;
+    manufacturingDate: string;
+    expirationDate: string;
+    materials: YieldMaterial[];
+    componentPlans: ComponentPlan[];
+}): Promise<{ movement: any; yieldLedger: any; jobOrder: any }> {
+    const {
+        jobOrder,
+        yieldLedgerId,
+        finishedMovementId,
+        finishedLedgerId,
+        statusHistoryId,
+        quantityProduced,
+        branchId,
+        lotNumber,
+        manufacturingDate,
+        expirationDate,
+        materials,
+        componentPlans
+    } = options;
+
+    const movementRows = await findExistingFinishedMovements(
+        jobOrder.productId,
+        branchId,
+        jobOrder.jobOrderId,
+        jobOrder.jobOrderNo,
+        lotNumber
+    );
+    const movement = movementRows.find(row => recordId(row) === finishedMovementId) || null;
+    if (!movement || !matchingFinishedMovement(
+        [movement],
+        jobOrder.productId,
+        branchId,
+        jobOrder.jobOrderId,
+        jobOrder.jobOrderNo,
+        lotNumber,
+        quantityProduced,
+        manufacturingDate,
+        expirationDate
+    )) {
+        throw new YieldCompletionError(
+            502,
+            "PERSISTENCE_VERIFICATION_FAILED",
+            `Finished-goods movement for ${jobOrder.jobOrderNo} did not retain the submitted lot, dates, or quantity.`
+        );
+    }
+
+    const yieldLedger = await directusJson<any>(
+        `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(yieldLedgerId))}`,
+        `Yield ledger verification for ${jobOrder.jobOrderNo}`
+    );
+    if (
+        recordId(yieldLedger) !== yieldLedgerId
+        || numericRelationId(yieldLedger.job_order_id) !== jobOrder.jobOrderId
+        || String(yieldLedger.lot_number || "").trim() !== lotNumber
+    ) {
+        throw new YieldCompletionError(
+            502,
+            "PERSISTENCE_VERIFICATION_FAILED",
+            `Yield ledger ${yieldLedgerId} did not retain the submitted run metadata.`
+        );
+    }
+
+    const persistedJobOrder = await directusJson<any>(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrder.jobOrderId))}`,
+        `Job-order completion verification for ${jobOrder.jobOrderNo}`
+    );
+    if (
+        !isTerminalJobOrderStatus(persistedJobOrder.status)
+        || Math.abs(Number(persistedJobOrder.actual_quantity_produced || 0) - quantityProduced) > EPSILON
+    ) {
+        throw new YieldCompletionError(
+            502,
+            "PERSISTENCE_VERIFICATION_FAILED",
+            `Job Order ${jobOrder.jobOrderNo} did not retain Completed status and produced quantity.`
+        );
+    }
+
+    const finishedLedgerExists = await hasFinishedGoodsLedger(
+        jobOrder.productId,
+        branchId,
+        jobOrder.jobOrderNo,
+        quantityProduced,
+        finishedLedgerId
+    );
+    if (!finishedLedgerExists || finishedLedgerId <= 0) {
+        throw new YieldCompletionError(
+            502,
+            "PERSISTENCE_VERIFICATION_FAILED",
+            `Finished-goods product ledger for ${jobOrder.jobOrderNo} could not be verified.`
+        );
+    }
+
+    const statusHistory = await findCompletionHistory(jobOrder.jobOrderId);
+    if (!statusHistory || recordId(statusHistory) !== statusHistoryId) {
+        throw new YieldCompletionError(
+            502,
+            "PERSISTENCE_VERIFICATION_FAILED",
+            `Completion history for ${jobOrder.jobOrderNo} could not be verified.`
+        );
+    }
+
+    for (const plan of componentPlans) {
+        const expectedQuantity = -plan.quantity;
+        const componentLedgerRows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/product_ledger?filter=${encodeURIComponent(JSON.stringify({
+                _and: [
+                    { branchId: { _eq: branchId } },
+                    { productId: { _eq: plan.material.productId } },
+                    { documentNo: { _eq: jobOrder.jobOrderNo } },
+                    { documentType: { _eq: "Job Order Issue" } }
+                ]
+            }))}&limit=-1`,
+            `Component product-ledger verification for ${plan.material.productName}`
+        );
+        if (!componentLedgerRows.some(row => Math.abs(Number(row.quantity || 0) - expectedQuantity) <= EPSILON)) {
+            throw new YieldCompletionError(
+                502,
+                "PERSISTENCE_VERIFICATION_FAILED",
+                `Component product ledger for ${plan.material.productName} could not be verified.`
+            );
+        }
+
+        for (const lot of plan.lots) {
+            const componentMovements = await directusRows<any>(
+                `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { source_document_id: { _eq: jobOrder.jobOrderId } },
+                        { transaction_type_id: { _eq: 1 } },
+                        { product_id: { _eq: plan.material.productId } },
+                        { batch_no: { _eq: lot.lotNumber } },
+                        { quantity: { _eq: -lot.quantity } }
+                    ]
+                }))}&limit=-1`,
+                `Component movement verification for ${lot.lotNumber}`
+            );
+            if (componentMovements.length === 0) {
+                throw new YieldCompletionError(
+                    502,
+                    "PERSISTENCE_VERIFICATION_FAILED",
+                    `Component movement for ${lot.lotNumber} could not be verified.`
+                );
+            }
+
+            const genealogyRows = await directusRows<any>(
+                `${DIRECTUS_URL}/items/jo_material_genealogy?filter=${encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { job_order_id: { _eq: jobOrder.jobOrderId } },
+                        { batch_no: { _eq: lotNumber } },
+                        { component_product_id: { _eq: plan.material.productId } },
+                        { component_batch_no: { _eq: lot.lotNumber } },
+                        { consumed_quantity: { _eq: lot.quantity } }
+                    ]
+                }))}&limit=-1`,
+                `Material genealogy verification for ${lot.lotNumber}`
+            );
+            if (genealogyRows.length === 0) {
+                throw new YieldCompletionError(
+                    502,
+                    "PERSISTENCE_VERIFICATION_FAILED",
+                    `Material genealogy for ${lot.lotNumber} could not be verified.`
+                );
+            }
+        }
+    }
+
+    for (const material of materials) {
+        const expectedPlan = componentPlans.find(plan => plan.material.materialId === material.materialId);
+        const expectedIncrement = expectedPlan?.quantity || 0;
+        const persistedMaterial = await directusJson<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${encodeURIComponent(String(material.materialId))}`,
+            `Material consumption verification for ${material.productName}`
+        );
+        const expectedConsumed = material.actualConsumedQuantity + expectedIncrement;
+        const expectedReserved = Math.max(0, material.reservedQuantity - expectedIncrement);
+        if (
+            Math.abs(Number(persistedMaterial.actual_consumed_quantity || 0) - expectedConsumed) > EPSILON
+            || Math.abs(Number(persistedMaterial.reserved_quantity || 0) - expectedReserved) > EPSILON
+        ) {
+            throw new YieldCompletionError(
+                502,
+                "PERSISTENCE_VERIFICATION_FAILED",
+                `Material consumption for ${material.productName} could not be verified.`
+            );
+        }
+    }
+
+    return { movement, yieldLedger, jobOrder: persistedJobOrder };
 }
 
 function completionReceipt(
@@ -530,81 +932,164 @@ function completionReceipt(
     quantityProduced: number,
     branchId: number,
     lotNumber: string,
+    manufacturingDate: string,
     expirationDate: string,
-    movementId: number
+    movement: any,
+    yieldLedgerId: number
 ) {
+    const movementId = recordId(movement);
     return {
         id: movementId,
+        movement_id: movementId,
+        yield_ledger_id: yieldLedgerId,
+        job_order_id: jobOrder.jobOrderId,
+        job_order_status: "Completed",
         jo_id: jobOrder.jobOrderNo,
         product_id: jobOrder.productId,
         product_name: input.productName || "Manufactured Good",
         quantity_produced: quantityProduced,
         branch_id: branchId,
         lot_number: lotNumber,
+        manufacturing_date: manufacturingDate,
         expiration_date: expirationDate,
         unit_cost: finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true }),
-        date_received: new Date().toISOString()
+        date_received: movement.created_at || movement.created_on || new Date().toISOString()
     };
 }
 
-export async function completeYieldClosing(input: CompleteYieldClosingInput): Promise<Record<string, unknown>> {
-    const quantityProduced = finiteNumber(input.quantityProduced, "Produced quantity", { positive: true });
-    const branchId = finiteNumber(input.branchId, "Branch ID", { positive: true });
-    const requestedProductId = finiteNumber(input.productId, "Product ID", { positive: true });
-    const requestedJoId = String(input.joId ?? "").trim();
-    if (!requestedJoId) {
-        throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Job order ID or number is required.");
-    }
-
-    const { jobOrder, materials } = await loadYieldMaterials(requestedJoId);
-    if (requestedProductId !== jobOrder.productId) {
-        throw new YieldCompletionError(422, "JOB_ORDER_PRODUCT_MISMATCH", "The selected product does not belong to this Job Order.");
-    }
-    if (jobOrder.branchId !== null && jobOrder.branchId !== branchId) {
-        throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISMATCH", "The selected branch does not belong to this Job Order.");
-    }
-
-    if (materials.length === 0) {
-        await verifyZeroComponentBOM(jobOrder);
-    } else if (!Array.isArray(input.componentsConsumed) || input.componentsConsumed.length === 0) {
-        throw new YieldCompletionError(
-            422,
-            "MATERIAL_COMPONENTS_REQUIRED",
-            "This Job Order has material requirements. Reload the material requirements before submitting yield closing."
-        );
-    }
-
-    const lotNumber = String(input.lotNumber || `MFG-${jobOrder.jobOrderNo}`).trim();
-    const expirationDate = String(input.expirationDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)));
-    const existingMovement = await findExistingFinishedMovement(jobOrder.productId, branchId, jobOrder.jobOrderNo, lotNumber);
-    const journal = new MutationJournal();
+async function completeYieldClosingInternal(
+    input: CompleteYieldClosingInput,
+    requestOperationKey: string
+): Promise<Record<string, unknown>> {
+    let operationKey = requestOperationKey;
+    let journal: MutationJournal | null = null;
 
     try {
-        const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
+        const quantityProduced = finiteNumber(input.quantityProduced, "Produced quantity", { positive: true });
+        const branchId = finiteNumber(input.branchId, "Branch ID", { positive: true });
+        const requestedProductId = finiteNumber(input.productId, "Product ID", { positive: true });
+        const requestedJoId = String(input.joId ?? "").trim();
+        const lotNumber = String(input.lotNumber ?? "").trim();
+        if (!requestedJoId) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Job order ID or number is required.");
+        }
+        if (!lotNumber) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "A lot number is required for yield closing.");
+        }
+
+        const manufacturingDate = normalizeDate(input.manufacturingDate, "Manufacturing date");
+        const expirationDate = normalizeDate(input.expirationDate, "Expiration date");
+        if (manufacturingDate > expirationDate) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Expiration date cannot be earlier than manufacturing date.");
+        }
+        finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true });
+
+        const { jobOrder, materials } = await loadYieldMaterials(requestedJoId);
+        if (requestedProductId !== jobOrder.productId) {
+            throw new YieldCompletionError(422, "JOB_ORDER_PRODUCT_MISMATCH", "The selected product does not belong to this Job Order.");
+        }
+        if (jobOrder.branchId !== null && jobOrder.branchId !== branchId) {
+            throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISMATCH", "The selected branch does not belong to this Job Order.");
+        }
+
+        if (materials.length === 0) {
+            await verifyZeroComponentBOM(jobOrder);
+        } else if (!Array.isArray(input.componentsConsumed) || input.componentsConsumed.length === 0) {
+            throw new YieldCompletionError(
+                422,
+                "MATERIAL_COMPONENTS_REQUIRED",
+                "This Job Order has material requirements. Reload the material requirements before submitting yield closing."
+            );
+        }
+
+        const yieldLedger = await resolveYieldLedger(jobOrder, lotNumber, input.yieldLedgerId);
+        operationKey = `yield-close:${jobOrder.jobOrderId}:${yieldLedger.id}:${jobOrder.productId}:${branchId}:${lotNumber}:2`;
+
+        const existingMovements = await findExistingFinishedMovements(
+            jobOrder.productId,
+            branchId,
+            jobOrder.jobOrderId,
+            jobOrder.jobOrderNo,
+            lotNumber
+        );
+        if (existingMovements.length > 1) {
+            throw new YieldCompletionError(
+                409,
+                "YIELD_DUPLICATE_MOVEMENTS",
+                `More than one finished-goods movement exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}. Reconciliation is required.`
+            );
+        }
+
+        const existingMovement = existingMovements[0] || null;
+        const expectedExistingMovement = existingMovement
+            ? matchingFinishedMovement(
+                [existingMovement],
+                jobOrder.productId,
+                branchId,
+                jobOrder.jobOrderId,
+                jobOrder.jobOrderNo,
+                lotNumber,
+                quantityProduced,
+                manufacturingDate,
+                expirationDate
+            )
+            : null;
 
         if (existingMovement) {
             const existingQuantity = finiteNumber(existingMovement.quantity, "Existing finished-goods quantity", { positive: true });
-            const hasLedger = await hasFinishedGoodsLedger(jobOrder.productId, branchId, jobOrder.jobOrderNo, existingQuantity);
             const allMaterialConsumptionComplete = materials.every(material =>
                 calculateIncrementalMaterialConsumption(material, quantityProduced, jobOrder.targetQuantity) <= EPSILON
             );
-            const status = String(jobOrder.status || "").toLowerCase();
-            if (Math.abs(existingQuantity - quantityProduced) <= EPSILON && hasLedger && allMaterialConsumptionComplete && status === "completed") {
+            const hasLedger = await hasFinishedGoodsLedger(jobOrder.productId, branchId, jobOrder.jobOrderNo, existingQuantity);
+            const history = await findCompletionHistory(jobOrder.jobOrderId);
+            // The yield ledger stores the run lot, while manufacturing and
+            // expiry dates are authoritative on the finished-goods movement.
+            const yieldMetadataMatches = String(yieldLedger.row.lot_number || "").trim() === lotNumber;
+
+            if (
+                expectedExistingMovement
+                && Math.abs(existingQuantity - quantityProduced) <= EPSILON
+                && hasLedger
+                && allMaterialConsumptionComplete
+                && isTerminalJobOrderStatus(jobOrder.status)
+                && history
+                && yieldMetadataMatches
+            ) {
                 return {
                     success: true,
                     idempotent: true,
-                    data: completionReceipt(jobOrder, input, existingQuantity, branchId, lotNumber, expirationDate, recordId(existingMovement)),
-                    accounting: { finishedMovementId: recordId(existingMovement), componentPlans }
+                    data: completionReceipt(
+                        jobOrder,
+                        input,
+                        existingQuantity,
+                        branchId,
+                        lotNumber,
+                        manufacturingDate,
+                        expirationDate,
+                        existingMovement,
+                        yieldLedger.id
+                    ),
+                    accounting: { finishedMovementId: recordId(existingMovement), yieldLedgerId: yieldLedger.id }
                 };
             }
 
             throw new YieldCompletionError(
                 409,
                 "YIELD_ALREADY_POSTED_INCOMPLETE",
-                `A finished-goods movement already exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}, but its accounting trail is incomplete. Reconciliation is required.`
+                `A finished-goods movement already exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}, but its accounting trail or submitted metadata is incomplete. Reconciliation is required.`
             );
         }
 
+        if (isTerminalJobOrderStatus(jobOrder.status)) {
+            throw new YieldCompletionError(
+                409,
+                "JOB_ORDER_ALREADY_COMPLETED",
+                `Job Order ${jobOrder.jobOrderNo} is already completed but has no matching finished-goods movement.`
+            );
+        }
+
+        const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
+        journal = new MutationJournal();
         const finishedLotId = await resolveMasterLotId(lotNumber, 2, journal);
         const finishedMovement = await journal.create<any>(
             "inventory_movements",
@@ -617,7 +1102,7 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
                 source_document_no: jobOrder.jobOrderNo,
                 batch_no: lotNumber,
                 expiry_date: expirationDate,
-                manufacturing_date: input.manufacturingDate || await getTodayDateString(),
+                manufacturing_date: manufacturingDate,
                 quantity: quantityProduced,
                 created_by: 24,
                 remarks: `Finished yield output from Job Order ${jobOrder.jobOrderNo}`
@@ -639,6 +1124,7 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
             },
             "Create finished-goods product ledger"
         );
+        const finishedLedgerId = recordId(finishedLedger);
 
         const persistedComponentMovements: number[] = [];
         const persistedGenealogy: number[] = [];
@@ -715,7 +1201,17 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
             persistedMaterialUpdates.push(plan.material.materialId);
         }
 
-        await processSalesOrderAllocations(journal, jobOrder, quantityProduced);
+        const updatedYieldLedger = await journal.patch(
+            "manufacturing_job_order_yield_ledger",
+            yieldLedger.id,
+            {
+                lot_number: lotNumber
+            },
+            `Update yield ledger ${yieldLedger.id}`
+        );
+        if (recordId(updatedYieldLedger) !== yieldLedger.id) {
+            throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", "Yield ledger update returned an invalid record identifier.");
+        }
 
         const oldStatus = jobOrder.status || "In Progress";
         await journal.patch(
@@ -729,7 +1225,8 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
             `Complete Job Order ${jobOrder.jobOrderNo}`
         );
 
-        const statusHistory = await journal.create<any>(
+        const existingHistory = await findCompletionHistory(jobOrder.jobOrderId);
+        const statusHistory = existingHistory || await journal.create<any>(
             "manufacturing_job_order_status_history",
             {
                 job_order_id: jobOrder.jobOrderId,
@@ -741,37 +1238,107 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
             },
             `Create Job Order completion history for ${jobOrder.jobOrderNo}`
         );
+        const statusHistoryId = recordId(statusHistory);
+        if (!statusHistoryId) {
+            throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", "Completion history returned no valid identifier.");
+        }
+
+        const verifiedCore = await verifyPersistedCompletion({
+            jobOrder,
+            yieldLedgerId: yieldLedger.id,
+            finishedMovementId,
+            finishedLedgerId,
+            statusHistoryId,
+            quantityProduced,
+            branchId,
+            lotNumber,
+            manufacturingDate,
+            expirationDate,
+            materials,
+            componentPlans
+        });
+
+        const allocationExpectations = await processSalesOrderAllocations(journal, jobOrder, quantityProduced);
+        await verifySalesOrderAllocations(allocationExpectations);
 
         return {
             success: true,
-            data: completionReceipt(jobOrder, input, quantityProduced, branchId, lotNumber, expirationDate, finishedMovementId),
+            data: completionReceipt(
+                jobOrder,
+                input,
+                quantityProduced,
+                branchId,
+                lotNumber,
+                manufacturingDate,
+                expirationDate,
+                verifiedCore.movement,
+                yieldLedger.id
+            ),
             accounting: {
                 finishedMovementId,
-                finishedLedgerId: recordId(finishedLedger),
+                finishedLedgerId,
+                yieldLedgerId: yieldLedger.id,
                 componentLedgerIds: persistedComponentLedgers,
                 componentMovementIds: persistedComponentMovements,
                 genealogyIds: persistedGenealogy,
                 materialIds: persistedMaterialUpdates,
-                statusHistoryId: recordId(statusHistory)
+                statusHistoryId
             }
         };
     } catch (error) {
-        try {
-            await journal.rollback();
-        } catch (rollbackError) {
-            if (rollbackError instanceof YieldCompletionError) throw rollbackError;
-            throw new YieldCompletionError(
-                502,
-                "PARTIAL_WRITE_RECONCILIATION_REQUIRED",
-                "Yield closing failed and automatic rollback was incomplete. Reconciliation is required.",
-                journal.reconciliationIds
-            );
+        if (journal) {
+            try {
+                await journal.rollback();
+            } catch (rollbackError) {
+                if (rollbackError instanceof YieldCompletionError) {
+                    rollbackError.operationKey = operationKey;
+                    rollbackError.reconciliationRequired = true;
+                    throw rollbackError;
+                }
+                const reconciliationError = new YieldCompletionError(
+                    502,
+                    "PARTIAL_WRITE_RECONCILIATION_REQUIRED",
+                    "Yield closing failed and automatic rollback was incomplete. Reconciliation is required.",
+                    journal.reconciliationIds
+                );
+                reconciliationError.operationKey = operationKey;
+                reconciliationError.reconciliationRequired = true;
+                throw reconciliationError;
+            }
         }
 
-        if (error instanceof YieldCompletionError) throw error;
-        if (error instanceof YieldMaterialsError) {
-            throw new YieldCompletionError(error.status, error.code, error.message);
+        if (error instanceof YieldCompletionError) {
+            error.operationKey = operationKey;
+            throw error;
         }
-        throw new YieldCompletionError(502, "YIELD_CLOSING_FAILED", "Yield closing could not be completed.");
+        if (error instanceof YieldMaterialsError) {
+            const materialsError = new YieldCompletionError(error.status, error.code, error.message);
+            materialsError.operationKey = operationKey;
+            throw materialsError;
+        }
+        const closingError = new YieldCompletionError(502, "YIELD_CLOSING_FAILED", "Yield closing could not be completed.");
+        closingError.operationKey = operationKey;
+        throw closingError;
+    }
+}
+
+export async function completeYieldClosing(input: CompleteYieldClosingInput): Promise<Record<string, unknown>> {
+    const requestKey = [
+        String(input.joId ?? "").trim(),
+        String(input.productId ?? "").trim(),
+        String(input.branchId ?? "").trim(),
+        String(input.lotNumber ?? "").trim()
+    ].join(":");
+    const inFlight = inFlightYieldClosures.get(requestKey);
+    if (inFlight) return inFlight;
+
+    const operation = completeYieldClosingInternal(input, `yield-close-request:${requestKey}`);
+    inFlightYieldClosures.set(requestKey, operation);
+    try {
+        return await operation;
+    } finally {
+        if (inFlightYieldClosures.get(requestKey) === operation) {
+            inFlightYieldClosures.delete(requestKey);
+        }
     }
 }

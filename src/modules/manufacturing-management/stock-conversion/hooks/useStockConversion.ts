@@ -42,7 +42,8 @@ export function useStockConversion() {
 
 
   /**
-   * Fetch inventory balances for specific products
+   * Fetch inventory balances for specific products directly from Spring Boot
+   * via /api/manufacturing/product-onhand (client-side proxy — no Directus)
    */
   const loadProductsInventory = useCallback(async (productIds: number[]) => {
     const fetchableIds = productIds.filter(id => !loadingProductsRef.current.has(id));
@@ -55,20 +56,52 @@ export function useStockConversion() {
     ));
 
     try {
-      const sp = new URLSearchParams({ type: "inventory", productIds: fetchableIds.join(",") });
       const activeBranchId = filters.branchId || "";
-      if (activeBranchId !== undefined && activeBranchId !== "") sp.set("branchId", String(activeBranchId));
+      const invMap: Record<number, number> = {};
 
-      const res = await fetch(`/api/scm/transfers/stock-conversion?${sp.toString()}`, { cache: "no-store" });
-      const invJson = await res.json();
-      if (!res.ok) throw new Error(invJson.error || "Inventory load failed");
+      // Fetch per-product on-hand from Spring Boot /api/mm-product-onhand/filter?product=...
+      await Promise.all(
+        fetchableIds.map(async (pid) => {
+          const sp = new URLSearchParams();
+          if (activeBranchId) sp.set("branch", activeBranchId);
+          sp.set("product", String(pid));
 
-      const invMap = invJson.data || {};
+          const res = await fetch(`/api/manufacturing/product-onhand?${sp.toString()}`, { cache: "no-store" });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            console.error(`[useStockConversion] Product ${pid} onhand error (HTTP ${res.status}):`, errData);
+            throw new Error(`Spring Boot error HTTP ${res.status}: ${JSON.stringify(errData)}`);
+          }
+
+          const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number }> = await res.json();
+          console.group(`📦 [ProductOnhand] /api/manufacturing/product-onhand (Product: ${pid}, Branch: ${activeBranchId || 'ALL'})`);
+          console.log(`📌 Raw API response:`, onhandList);
+          console.groupEnd();
+
+          onhandList.forEach((item) => {
+            const pId = Number(item.productId);
+            const qty = Math.max(0, Number(item.onhandQuantity ?? 0));
+            if (pId > 0) {
+              invMap[pId] = (invMap[pId] || 0) + qty;
+            }
+          });
+        })
+      );
+
+      console.group(`✅ [ProductOnhand] Resolved invMap for requested products`);
+      console.table(
+        fetchableIds.map((pid) => ({
+          productId: pid,
+          resolvedQty: invMap[pid] ?? '0 (no movements)',
+        }))
+      );
+      console.groupEnd();
+
       setData(prev => {
         return prev.map(p => {
           if (!fetchableIds.includes(p.productId)) return p;
-          const rawQty = invMap[p.productId] ?? 0;
-          const finalQty = Math.floor(rawQty / (p.conversionFactor || 1));
+          const finalQty = invMap[p.productId] ?? 0;
+          console.log(`[ProductOnhand] "${p.productName}" (ID: ${p.productId}) → ${finalQty} ${p.currentUnit}`);
           return {
             ...p,
             quantity: finalQty,
@@ -80,7 +113,10 @@ export function useStockConversion() {
       });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Unknown error";
-      console.warn("Inventory fetch failed:", message);
+      console.error("[useStockConversion] Inventory fetch failed with error:", message);
+      toast.error("Spring Boot Inventory Error", {
+        description: message,
+      });
       setData(prev => prev.map(p => 
         fetchableIds.includes(p.productId) ? { ...p, inventoryLoaded: true, inventoryError: true } : p
       ));
@@ -113,7 +149,7 @@ export function useStockConversion() {
       setTotalCount(json.totalCount || 0);
       if (json.options) setOptions(json.options);
       
-      if (newData.length && !newData[0].inventoryLoaded) {
+      if (newData.length) {
         loadProductsInventory(newData.map((p: StockConversionProduct) => p.productId));
       }
     } catch (e: unknown) {
@@ -166,7 +202,9 @@ export function useStockConversion() {
   };
 
   useEffect(() => {
-    refresh();
+    queueMicrotask(() => {
+      refresh();
+    });
   }, [refresh]);
 
   return {

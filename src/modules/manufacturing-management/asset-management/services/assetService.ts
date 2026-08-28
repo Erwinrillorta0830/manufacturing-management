@@ -15,6 +15,8 @@ async function apiRequest(url: string, options?: RequestInit) {
 export interface AssetDepreciationFilterParams {
   type?: string;
   assetType?: string;
+  assetOrigin?: string;
+  asset_origin?: string;
   department?: number | string;
   employee?: number | string;
   depreciationMethod?: string;
@@ -84,15 +86,23 @@ export const assetService = {
 
   createAsset: (values: AssetFormValues, encoderId: number) => {
     const acqDate = formatDateTimeForDB(values.date_acquired);
-    const depDate = values.depreciation_start_date
+    const isLegacy = values.asset_origin === "Existing" ||
+      (values.opening_book_value != null && Number(values.opening_book_value) < (values.acquisition_cost != null ? Number(values.acquisition_cost) : (Number(values.cost_per_item) * Number(values.quantity || 1)))) ||
+      Number(values.opening_accumulated_depreciation || 0) > 0;
+
+    const depDate = isLegacy && values.depreciation_start_date
       ? formatDateTimeForDB(values.depreciation_start_date).split(" ")[0]
       : acqDate.split(" ")[0];
+    const openingDate = values.opening_production_date
+      ? formatDateTimeForDB(values.opening_production_date)
+      : null;
 
     return apiRequest(API_ROUTE, {
       method: "POST",
       body: JSON.stringify({
         ...values,
         encoder: encoderId,
+        asset_origin: values.asset_origin || "New",
         date_acquired: acqDate,
         depreciation_start_date: depDate,
         acquisition_cost:
@@ -111,6 +121,13 @@ export const assetService = {
         production_unit_id: values.production_unit_id
           ? Number(values.production_unit_id)
           : null,
+        opening_book_value:
+          values.opening_book_value != null ? Number(values.opening_book_value) : null,
+        opening_accumulated_depreciation:
+          values.opening_accumulated_depreciation != null ? Number(values.opening_accumulated_depreciation) : 0,
+        opening_production_units:
+          values.opening_production_units != null ? Number(values.opening_production_units) : 0,
+        opening_production_date: openingDate,
       }),
     });
   },
@@ -124,9 +141,16 @@ export const assetService = {
     const acqDate = values.date_acquired
       ? formatDateTimeForDB(values.date_acquired)
       : undefined;
-    const depDate = values.depreciation_start_date
+    const isLegacy = values.asset_origin === "Existing" ||
+      (values.opening_book_value != null && Number(values.opening_book_value) < (values.acquisition_cost != null ? Number(values.acquisition_cost) : (Number(values.cost_per_item) * Number(values.quantity || 1)))) ||
+      Number(values.opening_accumulated_depreciation || 0) > 0;
+
+    const depDate = isLegacy && values.depreciation_start_date
       ? formatDateTimeForDB(values.depreciation_start_date).split(" ")[0]
       : (acqDate ? acqDate.split(" ")[0] : undefined);
+    const openingDate = values.opening_production_date
+      ? formatDateTimeForDB(values.opening_production_date)
+      : (values.opening_production_date === null ? null : undefined);
 
     return apiRequest(API_ROUTE, {
       method: "PATCH",
@@ -139,6 +163,7 @@ export const assetService = {
         classification_name: values.item_classification,
         asset_type: values.asset_type,
         depreciation_method: values.depreciation_method,
+        asset_origin: values.asset_origin || "New",
         condition: values.condition,
         cost_per_item: Number(values.cost_per_item),
         quantity: Number(values.quantity),
@@ -161,6 +186,13 @@ export const assetService = {
           : null,
         date_acquired: acqDate,
         depreciation_start_date: depDate,
+        opening_book_value:
+          values.opening_book_value != null ? Number(values.opening_book_value) : null,
+        opening_accumulated_depreciation:
+          values.opening_accumulated_depreciation != null ? Number(values.opening_accumulated_depreciation) : 0,
+        opening_production_units:
+          values.opening_production_units != null ? Number(values.opening_production_units) : 0,
+        opening_production_date: openingDate,
         department: Number(values.department),
         employee: values.employee ? Number(values.employee) : null,
         item_image: imageId,

@@ -113,7 +113,11 @@ export function RFIDManagementModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent 
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="sm:max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl text-primary">
             <div className="p-1.5 bg-blue-500/10 rounded-md">

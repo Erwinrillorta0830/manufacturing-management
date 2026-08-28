@@ -25,12 +25,13 @@ import {
     Lock,
     Unlock
 } from "lucide-react";
-import { StagingJobOrder, MaterialStagingItem, AllocatedLot } from "../types";
+import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } from "../types";
 
 interface StagingPickListProps {
     jobOrder: StagingJobOrder | null;
     onOpenTransferModal: (jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => void;
     onStageAllAvailable: (jobOrder: StagingJobOrder) => Promise<void>;
+    batchStageResult?: BatchStageResult | null;
     isProcessing?: boolean;
 }
 
@@ -38,6 +39,7 @@ export function StagingPickList({
     jobOrder,
     onOpenTransferModal,
     onStageAllAvailable,
+    batchStageResult,
     isProcessing = false
 }: StagingPickListProps) {
     const [expandedMaterials, setExpandedMaterials] = useState<Record<number, boolean>>({});
@@ -166,6 +168,84 @@ export function StagingPickList({
                     </Button>
                 </div>
             </div>
+
+            {batchStageResult?.job_order_id === jobOrder.job_order_id && (
+                <div className={`rounded-xl border p-4 space-y-3 ${
+                    batchStageResult.full_success
+                        ? "border-emerald-500/30 bg-emerald-500/5"
+                        : "border-amber-500/30 bg-amber-500/5"
+                }`}>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                            {batchStageResult.full_success ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
+                            ) : (
+                                <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                            )}
+                            <div>
+                                <div className="text-xs font-semibold text-foreground">Batch staging results</div>
+                                <div className="text-[11px] text-muted-foreground mt-0.5">
+                                    {batchStageResult.fully_staged_material_count} of {batchStageResult.attempted_material_count} material(s) fully staged.
+                                </div>
+                            </div>
+                        </div>
+                        <Badge
+                            variant="outline"
+                            className={batchStageResult.full_success
+                                ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/10 text-[10px]"
+                                : "text-amber-600 border-amber-500/30 bg-amber-500/10 text-[10px]"
+                            }
+                        >
+                            {batchStageResult.full_success ? "COMPLETE" : `${batchStageResult.exception_material_count} EXCEPTION(S)`}
+                        </Badge>
+                    </div>
+
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                        {batchStageResult.material_results.map((material) => (
+                            <div key={material.jo_material_id} className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-xs font-semibold text-foreground">{material.product_name}</div>
+                                        <div className="text-[11px] text-muted-foreground">
+                                            Staged {material.staged_quantity} of {material.requested_quantity} {material.uom}; remaining {material.remaining_quantity} {material.uom}
+                                        </div>
+                                    </div>
+                                    <Badge variant="outline" className={`text-[10px] ${
+                                        material.status === "STAGED"
+                                            ? "text-emerald-600 border-emerald-500/30"
+                                            : material.status === "PARTIAL"
+                                                ? "text-amber-600 border-amber-500/30"
+                                                : "text-red-600 border-red-500/30"
+                                    }`}>
+                                        {material.status}
+                                    </Badge>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">{material.message}</div>
+                                <div className="space-y-1">
+                                    {material.lot_results.map((lot, index) => (
+                                        <div
+                                            key={`${lot.allocation_id ?? "allocation"}-${lot.lot_id}-${lot.batch_no}-${index}`}
+                                            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md bg-muted/40 px-2 py-1.5 text-[11px]"
+                                        >
+                                            <span className="font-mono text-foreground">
+                                                {lot.batch_no || "Unknown batch"} <span className="text-muted-foreground">(Lot {lot.lot_id || "N/A"})</span>
+                                            </span>
+                                            <span className="text-muted-foreground">
+                                                {lot.status === "SKIPPED"
+                                                    ? "Skipped"
+                                                    : `${lot.staged_quantity} / ${lot.requested_quantity} ${material.uom}`}
+                                            </span>
+                                            <span className={lot.status === "STAGED" ? "text-emerald-600" : "text-red-600"}>
+                                                {lot.message}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Staging Readiness Progress Bar */}
             <div className="bg-muted/30 rounded-xl p-4 border border-border/80 space-y-2">
@@ -341,6 +421,9 @@ export function StagingPickList({
                                                                     <div className="flex items-center gap-4">
                                                                         <div className="text-[11px] text-muted-foreground">
                                                                             Allocated: <strong className="font-mono text-foreground">{lot.allocated_quantity} {mat.uom}</strong>
+                                                                        </div>
+                                                                        <div className="text-[11px] text-muted-foreground">
+                                                                            Available: <strong className="font-mono text-foreground">{lot.on_hand_lot_quantity} {mat.uom}</strong>
                                                                         </div>
                                                                         <div className="text-[11px] text-muted-foreground">
                                                                             Bin: <code className="font-mono text-foreground font-semibold">{lot.staging_bin}</code>

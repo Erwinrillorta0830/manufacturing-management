@@ -1,13 +1,18 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import fs from "fs";
-import path from "path";
 import { DIRECTUS_URL, headers, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { createJobOrder } from "@/app/api/manufacturing/planning-engineering/planning-helper";
 import { twoPointQAInspectionRequestSchema } from "./_two-point-contract";
-
-const DISPOSITIONS_FILE = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
+import {
+    createDisposition,
+    DispositionPersistenceError,
+    enrichDispositions,
+    getDisposition,
+    readDispositions,
+    updateDisposition,
+    resolveDispositionMetadata
+} from "./_dispositions";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -161,15 +166,16 @@ async function rollbackTwoPointWrites(state: {
 }
 
 // Helper to resolve job_order_id (integer) and product_id from job_order_no (string)
-async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId: number } | null> {
+async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId: number; status: string | null } | null> {
     try {
-        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joNo)}&limit=1`, { headers });
+        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joNo)}&fields=job_order_id,product_id,status&limit=1`, { headers });
         if (res.ok) {
             const data = (await res.json()).data?.[0];
             if (data) {
                 return {
                     id: Number(data.job_order_id),
-                    productId: Number(data.product_id)
+                    productId: Number(data.product_id),
+                    status: typeof data.status === "string" ? data.status : null
                 };
             }
         }
@@ -177,6 +183,24 @@ async function getJobOrderIdByNo(joNo: string): Promise<{ id: number; productId:
         console.error("Failed to resolve job_order_id for", joNo, e);
     }
     return null;
+}
+
+async function getJobOrderById(jobOrderId: number): Promise<{ id: number; productId: number; status: string | null; jobOrderNo: string } | null> {
+    try {
+        const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,product_id,status`, { headers });
+        if (!res.ok) return null;
+        const data = (await res.json()).data;
+        if (!data) return null;
+        return {
+            id: Number(data.job_order_id),
+            productId: Number(data.product_id),
+            status: typeof data.status === "string" ? data.status : null,
+            jobOrderNo: typeof data.job_order_no === "string" ? data.job_order_no : `JO-${jobOrderId}`
+        };
+    } catch (e) {
+        console.error("Failed to load job order for QA disposition", jobOrderId, e);
+        return null;
+    }
 }
 
 // Helper to resolve or create master lot in lots collection
@@ -210,38 +234,6 @@ async function resolveMasterLotId(name: string, typeId: number): Promise<number>
         console.error(`Error resolving master lot ID for ${name}:`, err);
     }
     return lotId;
-}
-
-// Helper to ensure the local dispositions database file exists and read it
-function readDispositions(): any[] {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        if (!fs.existsSync(DISPOSITIONS_FILE)) {
-            fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify([]));
-            return [];
-        }
-        const fileContent = fs.readFileSync(DISPOSITIONS_FILE, "utf-8");
-        return JSON.parse(fileContent || "[]");
-    } catch (err) {
-        console.error("Error reading dispositions JSON:", err);
-        return [];
-    }
-}
-
-// Helper to write to local dispositions database
-function writeDispositions(data: any[]): void {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify(data, null, 2));
-    } catch (err) {
-        console.error("Error writing dispositions JSON:", err);
-    }
 }
 
 export async function GET(request: Request) {
@@ -377,8 +369,8 @@ export async function GET(request: Request) {
 
         // Action: Fetch supervisor dispositions
         if (action === "dispositions") {
-            const list = readDispositions();
-            return NextResponse.json(list);
+            const list = await readDispositions();
+            return NextResponse.json(await enrichDispositions(list));
         }
 
         // Action: Match dynamic checklist template for a specific task and product
@@ -442,7 +434,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Invalid action parameter" }, { status: 400 });
     } catch (e) {
         console.error("API Error in QA GET:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to process QA request" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as Error).message || "Failed to process QA request" },
+            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+        );
     }
 }
 
@@ -864,38 +859,78 @@ export async function POST(request: Request) {
             const hasCriticalFailure = verifications?.some((v: any) => v.is_failed && v.is_critical);
 
             if (hasCriticalFailure) {
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: "On Hold" })
-                });
+                const taskIdInt = Number(taskId);
+                if (!Number.isSafeInteger(taskIdInt) || taskIdInt <= 0) {
+                    return NextResponse.json({ error: "Invalid taskId" }, { status: 400 });
+                }
 
-                const dispositions = readDispositions();
+                const metadata = await resolveDispositionMetadata(joIdInt, taskIdInt);
                 const newDisp = {
                     id: `DISP-${Date.now()}`,
-                    jo_id: joId,
-                    task_id: taskId,
-                    task_name: taskName || "Unknown Task",
-                    product_name: productName || "Unknown Product",
-                    expected_quantity: expectedQty,
-                    actual_quantity: actualQty,
+                    job_order_id: joIdInt,
+                    jo_id: metadata.jo_id || joId,
+                    product_id: metadata.product_id || (joInfo.productId > 0 ? joInfo.productId : null),
+                    task_id: metadata.task_id || taskIdInt,
+                    task_name: metadata.task_name || taskName || "Routing Task",
+                    station_id: metadata.station_id,
+                    station_name: metadata.station_name,
+                    product_name: metadata.product_name || productName || "Product unavailable",
+                    expected_quantity: Number(expectedQty ?? metadata.expected_quantity ?? 0),
+                    actual_quantity: Number(actualQty ?? 0),
                     failed_parameters: verifications.filter((v: any) => v.is_failed),
                     disposition_status: "Pending",
                     decision: null,
                     supervisor_comments: "",
+                    inspection_remarks: comments || "",
                     recorded_at: new Date().toISOString(),
                     resolved_at: null,
                     resolved_by: null
                 };
-                dispositions.push(newDisp);
-                writeDispositions(dispositions);
 
-                return NextResponse.json({
-                    success: false,
-                    onHold: true,
-                    message: "Critical parameter failure detected. Job Order has been placed ON HOLD.",
-                    disposition: newDisp
-                });
+                let jobOrderPatched = false;
+                try {
+                    await directusMutation(
+                        `/items/manufacturing_job_orders/${joIdInt}`,
+                        {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ status: "On Hold" })
+                        },
+                        "Place Job Order on QA Hold"
+                    );
+                    jobOrderPatched = true;
+                    const persistedDisposition = await createDisposition(newDisp);
+
+                    return NextResponse.json({
+                        success: false,
+                        onHold: true,
+                        message: "Critical parameter failure detected. Job Order has been placed ON HOLD.",
+                        disposition: persistedDisposition
+                    });
+                } catch (error) {
+                    const rollbackFailures: string[] = [];
+                    if (jobOrderPatched && joInfo.status) {
+                        try {
+                            await directusMutation(
+                                `/items/manufacturing_job_orders/${joIdInt}`,
+                                {
+                                    method: "PATCH",
+                                    headers,
+                                    body: JSON.stringify({ status: joInfo.status })
+                                },
+                                "Rollback Job Order QA Hold"
+                            );
+                        } catch (rollbackError) {
+                            rollbackFailures.push(rollbackError instanceof Error ? rollbackError.message : "Job Order rollback failed.");
+                        }
+                    }
+                    const message = error instanceof Error ? error.message : "QA disposition persistence failed.";
+                    throw new DispositionPersistenceError(
+                        rollbackFailures.length > 0
+                            ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
+                            : message
+                    );
+                }
             } else {
                 return NextResponse.json({
                     success: true,
@@ -912,34 +947,66 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "Missing dispositionId or decision" }, { status: 400 });
             }
 
-            const dispositions = readDispositions();
-            const dispIdx = dispositions.findIndex((d: any) => d.id === dispositionId);
-            if (dispIdx === -1) {
+            const disp = await getDisposition(String(dispositionId));
+            if (!disp) {
                 return NextResponse.json({ error: "Disposition record not found" }, { status: 404 });
             }
 
-            const disp = dispositions[dispIdx];
-            const joInfo = await getJobOrderIdByNo(disp.jo_id);
+            const dispositionJobOrderNo = String(disp.jo_id || "");
+            const storedJobOrderId = Number(disp.job_order_id);
+            const joInfo = Number.isSafeInteger(storedJobOrderId) && storedJobOrderId > 0
+                ? await getJobOrderById(storedJobOrderId)
+                : await getJobOrderIdByNo(dispositionJobOrderNo);
             if (!joInfo) {
-                return NextResponse.json({ error: `Job Order not found: ${disp.jo_id}` }, { status: 404 });
+                return NextResponse.json({ error: `Job Order not found: ${dispositionJobOrderNo}` }, { status: 404 });
             }
             const joIdInt = joInfo.id;
 
             const targetStatus = decision === "Scrap" ? "Cancelled" : "In Progress";
-            await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({ status: targetStatus })
-            });
+            let jobOrderPatched = false;
+            try {
+                await directusMutation(
+                    `/items/manufacturing_job_orders/${joIdInt}`,
+                    {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ status: targetStatus })
+                    },
+                    "Update Job Order after QA disposition"
+                );
+                jobOrderPatched = true;
 
-            disp.disposition_status = "Resolved";
-            disp.decision = decision;
-            disp.supervisor_comments = supervisorComments || "";
-            disp.resolved_at = new Date().toISOString();
-            disp.resolved_by = userId || null;
-
-            dispositions[dispIdx] = disp;
-            writeDispositions(dispositions);
+                await updateDisposition(String(dispositionId), {
+                    disposition_status: "Resolved",
+                    decision,
+                    supervisor_comments: supervisorComments || "",
+                    resolved_at: new Date().toISOString(),
+                    resolved_by: Number.isSafeInteger(Number(userId)) && Number(userId) > 0 ? Number(userId) : null
+                });
+            } catch (error) {
+                const rollbackFailures: string[] = [];
+                if (jobOrderPatched && joInfo.status) {
+                    try {
+                        await directusMutation(
+                            `/items/manufacturing_job_orders/${joIdInt}`,
+                            {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify({ status: joInfo.status })
+                            },
+                            "Rollback Job Order after QA disposition failure"
+                        );
+                    } catch (rollbackError) {
+                        rollbackFailures.push(rollbackError instanceof Error ? rollbackError.message : "Job Order rollback failed.");
+                    }
+                }
+                const message = error instanceof Error ? error.message : "QA disposition resolution failed.";
+                throw new DispositionPersistenceError(
+                    rollbackFailures.length > 0
+                        ? `${message} Rollback was incomplete: ${rollbackFailures.join(" ")}`
+                        : message
+                );
+            }
 
             return NextResponse.json({
                 success: true,
@@ -950,6 +1017,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Invalid action parameter" }, { status: 400 });
     } catch (e) {
         console.error("API Error in QA POST:", e);
-        return NextResponse.json({ error: (e as Error).message || "Failed to save QA action" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as Error).message || "Failed to save QA action" },
+            { status: e instanceof DispositionPersistenceError ? e.statusCode : 500 }
+        );
     }
 }

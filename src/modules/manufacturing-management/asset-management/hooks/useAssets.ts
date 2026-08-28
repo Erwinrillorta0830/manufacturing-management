@@ -43,7 +43,9 @@ export function useAssets() {
   }, []);
 
   useEffect(() => {
-    fetchAssets();
+    queueMicrotask(() => {
+      fetchAssets();
+    });
   }, [fetchAssets]);
 
   const refresh = useCallback(() => {

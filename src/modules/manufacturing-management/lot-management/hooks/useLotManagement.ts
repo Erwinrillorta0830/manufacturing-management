@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
     Lot,
     UnitOfMeasure,
+    Branch,
     CreateLotPayload,
     UpdateLotPayload
 } from "../types";
@@ -11,12 +12,14 @@ import {
     createLot,
     updateLot,
     deleteLot,
-    fetchUoms
+    fetchUoms,
+    fetchBranches
 } from "../services/lot-management-api";
 
 export function useLotManagement() {
     const [lots, setLots] = useState<Lot[]>([]);
     const [uoms, setUoms] = useState<UnitOfMeasure[]>([]);
+    const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
@@ -25,16 +28,19 @@ export function useLotManagement() {
 
     const [formData, setFormData] = useState<{
         lotName: string;
+        branchId: number | "";
         uomId: number | "";
         maxBatchCapacity: string;
     }>({
         lotName: "",
+        branchId: "",
         uomId: "",
         maxBatchCapacity: ""
     });
 
     const [formErrors, setFormErrors] = useState<{
         lotName?: boolean;
+        branchId?: boolean;
         uomId?: boolean;
         maxBatchCapacity?: boolean;
     }>({});
@@ -42,12 +48,14 @@ export function useLotManagement() {
     const loadLots = async () => {
         setLoading(true);
         try {
-            const [lotsList, uomsList] = await Promise.all([
+            const [lotsList, uomsList, branchesList] = await Promise.all([
                 fetchLots(),
-                fetchUoms().catch(() => [])
+                fetchUoms().catch(() => []),
+                fetchBranches().catch(() => [])
             ]);
             setLots(lotsList);
             setUoms(uomsList);
+            setBranches(branchesList);
         } catch (e) {
             console.error("Failed to load lots:", e);
             toast.error("Failed to load lots data");
@@ -57,12 +65,37 @@ export function useLotManagement() {
     };
 
     useEffect(() => {
-        loadLots();
+        let isMounted = true;
+        Promise.all([
+            fetchLots(),
+            fetchUoms().catch(() => []),
+            fetchBranches().catch(() => [])
+        ])
+            .then(([lotsList, uomsList, branchesList]) => {
+                if (isMounted) {
+                    setLots(lotsList);
+                    setUoms(uomsList);
+                    setBranches(branchesList);
+                    setLoading(false);
+                }
+            })
+            .catch((e) => {
+                if (isMounted) {
+                    console.error("Failed to load lots:", e);
+                    toast.error("Failed to load lots data");
+                    setLoading(false);
+                }
+            });
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     const openCreateDialog = () => {
+        const defaultBranchId = branches.length > 0 ? branches[0].id : "";
         setFormData({
             lotName: "",
+            branchId: defaultBranchId,
             uomId: "",
             maxBatchCapacity: ""
         });
@@ -74,6 +107,7 @@ export function useLotManagement() {
     const openEditDialog = (lot: Lot) => {
         setFormData({
             lotName: lot.lotName,
+            branchId: lot.branchId || (branches.length > 0 ? branches[0].id : ""),
             uomId: lot.uomId !== null && lot.uomId !== undefined ? lot.uomId : "",
             maxBatchCapacity: String(lot.maxBatchCapacity)
         });
@@ -85,6 +119,7 @@ export function useLotManagement() {
     const closeDialog = () => {
         setFormData({
             lotName: "",
+            branchId: "",
             uomId: "",
             maxBatchCapacity: ""
         });
@@ -96,7 +131,7 @@ export function useLotManagement() {
     const handleFormChange = (field: string, value: string | number) => {
         if (field === "maxBatchCapacity") {
             const numValue = Number(value);
-            if (value !== "" && numValue < 0) return; // Silently reject negative values
+            if (value !== "" && numValue < 0) return;
         }
         setFormData((prev) => ({
             ...prev,
@@ -120,12 +155,14 @@ export function useLotManagement() {
 
     const validateForm = (): boolean => {
         const isNameEmpty = !formData.lotName.trim();
+        const isBranchEmpty = formData.branchId === "";
         const isUomEmpty = !editingLot && formData.uomId === "";
         const capacityNum = Number(formData.maxBatchCapacity);
         const isCapacityInvalid = isNaN(capacityNum) || capacityNum <= 0;
 
         const newErrors = {
             lotName: isNameEmpty || isDuplicateLotName,
+            branchId: isBranchEmpty,
             uomId: isUomEmpty,
             maxBatchCapacity: isCapacityInvalid
         };
@@ -137,6 +174,10 @@ export function useLotManagement() {
         }
         if (isDuplicateLotName) {
             toast.error(`A lot with the name "${formData.lotName.trim()}" already exists`);
+            return false;
+        }
+        if (isBranchEmpty) {
+            toast.error("Branch selection is required");
             return false;
         }
         if (isUomEmpty) {
@@ -157,9 +198,11 @@ export function useLotManagement() {
             const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: CreateLotPayload = {
                 lot_name: formData.lotName.trim(),
-                unit_id: uomNum,
-                uom_id: uomNum,
-                max_batch_capacity: Number(formData.maxBatchCapacity)
+                branch_id: Number(formData.branchId),
+                unit_id: uomNum || 1,
+                uom_id: uomNum || 1,
+                max_batch_capacity: Number(formData.maxBatchCapacity),
+                status: "ACTIVE"
             };
             const result = await createLot(payload);
             if (!result || !result.success) {
@@ -184,9 +227,11 @@ export function useLotManagement() {
             const uomNum = formData.uomId !== "" ? Number(formData.uomId) : null;
             const payload: UpdateLotPayload = {
                 lot_name: formData.lotName.trim(),
-                unit_id: uomNum,
-                uom_id: uomNum,
-                max_batch_capacity: Number(formData.maxBatchCapacity)
+                branch_id: Number(formData.branchId),
+                unit_id: uomNum || 1,
+                uom_id: uomNum || 1,
+                max_batch_capacity: Number(formData.maxBatchCapacity),
+                status: editingLot.status || "ACTIVE"
             };
 
             const result = await updateLot(editingLot.lotId, payload);
@@ -258,6 +303,7 @@ export function useLotManagement() {
     return {
         lots,
         uoms,
+        branches,
         loading,
         saving,
         searchQuery,
