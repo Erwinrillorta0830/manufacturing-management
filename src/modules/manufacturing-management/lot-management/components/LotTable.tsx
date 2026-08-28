@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, RefreshCw, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
+import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
 import { Lot } from "../types";
 import {
     Table,
@@ -25,7 +25,7 @@ interface LotTableProps {
     searchQuery: string;
     onSearchChange: (value: string) => void;
     onEdit: (lot: Lot) => void;
-    onRefresh: () => void;
+    onRefresh?: () => void;
     onAddClick?: () => void;
 }
 
@@ -35,7 +35,6 @@ export default function LotTable({
     searchQuery,
     onSearchChange,
     onEdit,
-    onRefresh,
     onAddClick
 }: LotTableProps) {
     const [currentPage, setCurrentPage] = React.useState(1);

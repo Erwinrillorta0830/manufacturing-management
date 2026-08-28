@@ -378,7 +378,6 @@ export function StockAdjustmentForm({
   const [branchSearch, setBranchSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [docSearch, setDocSearch] = useState("");
-  const [sourceType, setSourceType] = useState<string>("");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [tableSearch, setTableSearch] = useState("");

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import  { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/select";
 import {
   ArrowRight,
-  Cuboid,
   AlertCircle,
   Clock,
   CheckCircle2,
@@ -31,7 +30,6 @@ import {
   Sparkles,
   SlidersHorizontal,
   RotateCcw,
-  Warehouse,
   Scale,
   ShieldAlert,
   AlertTriangle,
@@ -337,61 +335,65 @@ export function StockConversionModal({
   // ── Auto-Initialize / Auto-Sync Target Lot Groups ────────────────
   useEffect(() => {
     if (wholeUnits > 0 && lots.length > 0) {
-      setTargetLotGroups((prev) => {
-        // If empty, create initial lot group with 1 batch
-        if (prev.length === 0) {
-          // Find matching lot by UOM or first lot
-          const matchingLot =
-            lots.find((l) => targetUnit && l.unit_id && Number(l.unit_id) === Number(targetUnit.unitId)) ||
-            lots[0];
+      const timer = setTimeout(() => {
+        setTargetLotGroups((prev) => {
+          // If empty, create initial lot group with 1 batch
+          if (prev.length === 0) {
+            // Find matching lot by UOM or first lot
+            const matchingLot =
+              lots.find((l) => targetUnit && l.unit_id && Number(l.unit_id) === Number(targetUnit.unitId)) ||
+              lots[0];
 
-          return [
-            {
-              lot_id: matchingLot.lot_id,
-              lot_name: matchingLot.lot_name,
-              max_batch_capacity: matchingLot.max_batch_capacity || 10,
-              unit_id: matchingLot.unit_id,
-              unit_name: matchingLot.unit_name,
-              current_stock_quantity: matchingLot.current_stock_quantity || 0,
-              allocated_quantity: wholeUnits,
-              batches: [
-                {
-                  batch_no: generateBatchNo(),
-                  quantity: wholeUnits,
-                  manufacturing_date: todayStr,
-                  expiry_date: defaultExpDate || null,
-                  qa_status: "GOOD",
-                },
-              ],
-            },
-          ];
-        }
+            return [
+              {
+                lot_id: matchingLot.lot_id,
+                lot_name: matchingLot.lot_name,
+                max_batch_capacity: matchingLot.max_batch_capacity || 10,
+                unit_id: matchingLot.unit_id,
+                unit_name: matchingLot.unit_name,
+                current_stock_quantity: matchingLot.current_stock_quantity || 0,
+                allocated_quantity: wholeUnits,
+                batches: [
+                  {
+                    batch_no: generateBatchNo(),
+                    quantity: wholeUnits,
+                    manufacturing_date: todayStr,
+                    expiry_date: defaultExpDate || null,
+                    qa_status: "GOOD",
+                  },
+                ],
+              },
+            ];
+          }
 
-        // If there's exactly 1 lot and 1 batch, automatically sync quantity with wholeUnits
-        if (prev.length === 1 && prev[0].batches.length === 1) {
-          const singleLot = prev[0];
-          const matchedLot = lots.find((l) => Number(l.lot_id) === Number(singleLot.lot_id)) || singleLot;
-          return [
-            {
-              ...singleLot,
-              max_batch_capacity: matchedLot.max_batch_capacity || singleLot.max_batch_capacity,
-              unit_id: matchedLot.unit_id,
-              unit_name: matchedLot.unit_name,
-              current_stock_quantity: matchedLot.current_stock_quantity || singleLot.current_stock_quantity,
-              allocated_quantity: wholeUnits,
-              batches: [
-                {
-                  ...singleLot.batches[0],
-                  quantity: wholeUnits,
-                  expiry_date: singleLot.batches[0].expiry_date || defaultExpDate || null,
-                },
-              ],
-            },
-          ];
-        }
+          // If there's exactly 1 lot and 1 batch, automatically sync quantity with wholeUnits
+          if (prev.length === 1 && prev[0].batches.length === 1) {
+            const singleLot = prev[0];
+            const matchedLot = lots.find((l) => Number(l.lot_id) === Number(singleLot.lot_id)) || singleLot;
+            return [
+              {
+                ...singleLot,
+                max_batch_capacity: matchedLot.max_batch_capacity || singleLot.max_batch_capacity,
+                unit_id: matchedLot.unit_id,
+                unit_name: matchedLot.unit_name,
+                current_stock_quantity: matchedLot.current_stock_quantity || singleLot.current_stock_quantity,
+                allocated_quantity: wholeUnits,
+                batches: [
+                  {
+                    ...singleLot.batches[0],
+                    quantity: wholeUnits,
+                    expiry_date: singleLot.batches[0].expiry_date || defaultExpDate || null,
+                  },
+                ],
+              },
+            ];
+          }
 
-        return prev;
-      });
+          return prev;
+        });
+      }, 0);
+
+      return () => clearTimeout(timer);
     }
   }, [wholeUnits, lots, targetUnit, defaultExpDate, todayStr]);
 
@@ -645,8 +647,7 @@ export function StockConversionModal({
     product?.currentUnit,
     requiredRatio,
     remainderSourceUnits,
-    targetUnit?.name,
-    targetUnit?.unitId,
+    targetUnit,
   ]);
 
   const isValid = validationErrors.length === 0;

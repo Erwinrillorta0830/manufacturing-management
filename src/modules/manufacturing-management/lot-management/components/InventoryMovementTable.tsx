@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from "react";
 import {
     Search,
-    RefreshCw,
     Loader2,
     ArrowDownLeft,
     ArrowUpRight,
@@ -13,7 +12,6 @@ import {
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
 import { SearchableLotSelect } from "./SearchableLotSelect";
-import { SearchableProductSelect } from "./SearchableProductSelect";
 import {
     Table,
     TableHeader,
@@ -48,7 +46,7 @@ interface InventoryMovementTableProps {
     productFilter?: number | "ALL";
     onProductFilterChange?: (val: number | "ALL") => void;
     availableTransactionTypes: string[];
-    onRefresh: () => void;
+    onRefresh?: () => void;
     onResetFilters?: () => void;
     stats?: {
         totalCount: number;
@@ -62,7 +60,6 @@ interface InventoryMovementTableProps {
 export default function InventoryMovementTable({
     movements,
     lots,
-    products = [],
     loading,
     searchQuery,
     onSearchChange,
@@ -72,10 +69,7 @@ export default function InventoryMovementTable({
     onTransactionTypeFilterChange,
     lotFilter,
     onLotFilterChange,
-    productFilter,
-    onProductFilterChange,
     availableTransactionTypes,
-    onRefresh,
     onResetFilters,
     stats
 }: InventoryMovementTableProps) {

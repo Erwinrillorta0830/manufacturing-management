@@ -1,6 +1,6 @@
 import React from "react";
-import { Search, RefreshCw, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
-import { Batch, Lot, BatchStatus } from "../types";
+import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
+import { Batch, Lot } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
 import {
@@ -33,7 +33,7 @@ interface BatchTableProps {
     onStatusFilterChange: (value: string) => void;
     selectedProductId?: number | "ALL";
     onDelete: (batchId: number) => void;
-    onRefresh: () => void;
+    onRefresh?: () => void;
     onAddClick: () => void;
     onViewMovements?: (batch: Batch) => void;
 }
@@ -50,7 +50,6 @@ export default function BatchTable({
     onStatusFilterChange,
     selectedProductId = "ALL",
     onDelete,
-    onRefresh,
     onAddClick,
     onViewMovements
 }: BatchTableProps) {
