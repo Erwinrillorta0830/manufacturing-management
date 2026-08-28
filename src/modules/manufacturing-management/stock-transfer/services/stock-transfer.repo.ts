@@ -35,6 +35,9 @@ export async function fetchStockTransfers(status?: string): Promise<StockTransfe
       "product_id.product_brand.brand_name",
       "product_id.product_category.category_id",
       "product_id.product_category.category_name",
+      "product_id.product_type.id",
+      "product_id.product_type.name",
+      "product_id.product_type",
       "product_id.product_per_supplier.supplier_id.supplier_shortcut",
     ].join(","),
     limit: -1,
@@ -104,6 +107,9 @@ export async function fetchProducts(search?: string): Promise<ProductRow[]> {
       "product_brand.brand_name",
       "product_category.category_id",
       "product_category.category_name",
+      "product_type.id",
+      "product_type.name",
+      "product_type",
       "product_per_supplier.supplier_id.supplier_shortcut",
     ].join(","),
     limit: -1,
@@ -321,6 +327,7 @@ export async function updateTransfersStatus(
     approved_by?: number | null;
     rejected_by?: number | null;
     rejected_at?: string | null;
+    remarks?: string | null;
   }[]
 ): Promise<void> {
   if (items.length === 0) return;
@@ -342,6 +349,7 @@ export async function updateTransfersStatus(
       ...(item.approved_by !== undefined ? { approved_by: item.approved_by } : {}),
       ...(item.rejected_by !== undefined ? { rejected_by: item.rejected_by } : {}),
       ...(item.rejected_at !== undefined ? { rejected_at: item.rejected_at } : {}),
+      ...(item.remarks !== undefined ? { remarks: item.remarks } : {}),
     });
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push(item.id);
@@ -449,27 +457,57 @@ export async function fetchStockTransferDetails(transferIds: number[]): Promise<
 }
 
 /**
- * Inserts line detail rows into mm_stock_transfer_details table.
+ * Helper to get current Asia/Manila PH timestamp.
+ */
+function getPhNowString(): string {
+  return new Date().toLocaleString("sv-SE", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replace(" ", "T");
+}
+
+/**
+ * Inserts line detail rows into mm_stock_transfer_details table with local PH timestamps.
  */
 export async function createStockTransferDetails(details: MMStockTransferDetail[]): Promise<MMStockTransferDetail[]> {
   if (details.length === 0) return [];
-  const res = await createItems<MMStockTransferDetail[]>("items/mm_stock_transfer_details", details);
+  const nowPHT = getPhNowString();
+  const enriched = details.map((d) => ({
+    ...d,
+    encoded_at: d.encoded_at || d.date_encoded || nowPHT,
+    date_encoded: d.date_encoded || d.encoded_at || nowPHT,
+    updated_at: d.updated_at || nowPHT,
+  }));
+  const res = await createItems<MMStockTransferDetail[]>("items/mm_stock_transfer_details", enriched);
   return res.data;
 }
 
 /**
- * Updates a single transfer detail record.
+ * Updates a single transfer detail record with local PH timestamp.
  */
 export async function updateStockTransferDetail(id: number, data: Partial<MMStockTransferDetail>): Promise<void> {
-  await updateItem("items/mm_stock_transfer_details", id, data);
+  const nowPHT = getPhNowString();
+  await updateItem("items/mm_stock_transfer_details", id, {
+    ...data,
+    updated_at: data.updated_at || nowPHT,
+  });
 }
 
 /**
- * Bulk updates multiple transfer detail records.
+ * Bulk updates multiple transfer detail records with local PH timestamp.
  */
 export async function bulkUpdateStockTransferDetails(ids: number[], data: Partial<MMStockTransferDetail>): Promise<void> {
   if (ids.length === 0) return;
-  await bulkUpdateItems("items/mm_stock_transfer_details", ids, data as Record<string, unknown>);
+  const nowPHT = getPhNowString();
+  await bulkUpdateItems("items/mm_stock_transfer_details", ids, {
+    ...data,
+    updated_at: data.updated_at || nowPHT,
+  } as Record<string, unknown>);
 }
 
 

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PackageOpen, Printer, Loader2, CheckCircle2, Radar, Edit2, Layers } from 'lucide-react';
+import { PackageOpen, Printer, Loader2, CheckCircle2, Radar, Edit2, Layers, AlertTriangle } from 'lucide-react';
 import { useStockTransferReceive } from './hooks/use-stock-transfer-receive';
 import { OrderGroupItem, ProductRow, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
@@ -11,6 +11,7 @@ import { ScanHistorySidebar } from '../shared/components/ScanHistorySidebar';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { getAssetUrl } from '@/lib/assets';
 import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
+import { checkLotProductTypeCompatibility } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -47,6 +48,9 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
     updateDestinationBatchNo,
     targetLots,
     loadingLots,
+    lotStoredSummaryMap,
+    getItemClassification,
+    getLotCompatibility,
   } = useStockTransferReceive({ currentUser });
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -211,7 +215,7 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                       const progress = targetQty > 0 ? (item.receivedQty || 0) / targetQty : 0;
                     const complete = progress >= 1;
                     const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
-                    const productName = product?.product_name || `PRD-${item.product_id}`;
+                    const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
 
                     return (
                       <TableRow key={item.id} className="border-b border-border/50 group hover:bg-muted/20 transition-colors">
@@ -288,18 +292,71 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                           </Badge>
                         </TableCell>
                         <TableCell className="print:hidden py-2">
-                          <SearchableSelect
-                            options={targetLots.map((l) => ({
-                              value: String(l.lot_id),
-                              label: l.lot_name || `Lot #${l.lot_id}`,
-                            }))}
-                            value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
-                            onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
-                            placeholder={loadingLots ? "Loading..." : "Select Lot"}
-                            searchPlaceholder="Search lots..."
-                            disabled={loadingLots}
-                            triggerClassName="h-8 text-xs font-semibold w-[140px] border-border bg-background"
-                          />
+                          {(() => {
+                            const itemClass = getItemClassification(item);
+                            const selectedLotId = destinationLotIds[item.id];
+                            const selectedCompat = selectedLotId ? getLotCompatibility(item, selectedLotId) : null;
+                            const isConflict = selectedCompat?.isTypeMismatch;
+                            const storedForSelected = selectedLotId ? lotStoredSummaryMap.get(Number(selectedLotId)) : null;
+
+                            return (
+                              <div className="space-y-1">
+                                <SearchableSelect
+                                  options={targetLots.map((l) => {
+                                    const lStock = Number(l.current_stock_quantity || 0);
+                                    const lCap = Number(l.max_batch_capacity || 0);
+                                    const isF = lCap > 0 && lStock >= lCap;
+                                    const stored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                    const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
+                                    const isTConflict = tCompat.isTypeMismatch;
+                                    const isDraft = stored?.is_draft_allocation;
+                                    const typeSourceLabel = isDraft ? "Draft" : "Stock";
+
+                                    let badgeText: string | undefined;
+                                    let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+
+                                    if (isTConflict && stored) {
+                                      badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
+                                      badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                    } else if (isF) {
+                                      badgeText = `Full (${lStock}/${lCap})`;
+                                      badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                    } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
+                                      badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                      badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                    } else if (stored?.is_empty) {
+                                      badgeText = "Empty Lot";
+                                      badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                    }
+
+                                    const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
+                                    const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                    const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+
+                                    return {
+                                      value: String(l.lot_id),
+                                      label: `${prefix}${l.lot_name}${capStr}`,
+                                      subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                      badge: badgeText,
+                                      badgeClassName: badgeClass,
+                                    };
+                                  })}
+                                  value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
+                                  onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
+                                  placeholder={loadingLots ? "Loading..." : "Select Lot"}
+                                  searchPlaceholder="Search lots..."
+                                  disabled={loadingLots}
+                                  triggerClassName={`h-8 text-xs font-semibold w-[160px] border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
+                                />
+                                {isConflict && (
+                                  <div className="flex items-center gap-1 text-[10px] text-destructive font-bold">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    <span>Type conflict: {storedForSelected?.primary_classification_label}</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="print:hidden py-2">
                           <Input

@@ -67,6 +67,8 @@ export const StockAdjustmentItemSchema = z.object({
   description: z.string().nullable().optional(),
   inferred_supplier_id: z.number().optional(),
   category_name: z.string().nullable().optional(),
+  product_type: z.any().optional(),
+  product_category: z.any().optional(),
   unit_order: z.number().nullable().optional(),
   db_id: z.number().optional(),
   // Lot & Batch Tracking

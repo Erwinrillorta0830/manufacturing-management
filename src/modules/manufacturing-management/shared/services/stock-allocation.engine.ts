@@ -4,8 +4,9 @@ import {
   BatchAllocationResult,
   AllocateStockOptions,
   AllocationStrategy,
+  QAStatus,
 } from "../types/lot-tracking.types";
-import { fetchInventoryLots } from "./lot-tracking.service";
+import { fetchInventoryLots, fetchBatchOnhand } from "./lot-tracking.service";
 
 /**
  * Calculates days remaining until expiration from today.
@@ -242,13 +243,72 @@ export async function allocateStock(params: {
   requestedQuantity: number;
   options?: AllocateStockOptions;
 }): Promise<StockAllocationPlan> {
-  const batches = await fetchInventoryLots({
-    branchId: params.branchId,
-    productId: params.productId,
-    token: params.options?.token,
-  });
+  let liveBatches: MMInventoryLot[] = [];
 
-  return allocateStockSync(batches, params.requestedQuantity, params.options);
+  // 1. Try authoritative batch onhand first
+  try {
+    const onhandData = await fetchBatchOnhand({
+      branchId: params.branchId,
+      productId: params.productId,
+    });
+
+    if (onhandData && onhandData.length > 0) {
+      const batchMap = new Map<string, MMInventoryLot>();
+      for (const oh of onhandData) {
+        if (Number(oh.branchId) !== Number(params.branchId)) continue;
+        const key = oh.batchNo || `lot-${oh.inventoryLotId || oh.lotId}`;
+        const existing = batchMap.get(key);
+        const qty = Number(oh.onhandQuantity || 0);
+
+        if (existing) {
+          existing.available_quantity = (existing.available_quantity || 0) + qty;
+          if (!existing.expiry_date && oh.expirationDate) {
+            existing.expiry_date = oh.expirationDate;
+          }
+          if (!existing.manufacturing_date && oh.manufacturingDate) {
+            existing.manufacturing_date = oh.manufacturingDate;
+          }
+          if (oh.inventoryLotId && Number(oh.inventoryLotId) > 0) {
+            existing.inventory_lot_id = Number(oh.inventoryLotId);
+          }
+        } else {
+          batchMap.set(key, {
+            inventory_lot_id: Number(oh.inventoryLotId || oh.lotId || 1),
+            lot_id: Number(oh.lotId || 1),
+            branch_id: Number(oh.branchId),
+            product_id: Number(oh.productId || params.productId),
+            batch_no: oh.batchNo,
+            manufacturing_date: oh.manufacturingDate || null,
+            expiry_date: oh.expirationDate || null,
+            qa_status: (oh.inventoryCondition as QAStatus) || "GOOD",
+            status: "ACTIVE",
+            unit_cost: 0,
+            available_quantity: qty,
+            lot_name: oh.lotName || `Lot #${oh.lotId}`,
+            product_name: oh.productName,
+            product_code: oh.productCode,
+          });
+        }
+      }
+      liveBatches = Array.from(batchMap.values()).filter(
+        (b) => (b.available_quantity || 0) > 0
+      );
+    }
+  } catch (err) {
+    console.warn("[StockAllocation] fetchBatchOnhand warning:", err);
+  }
+
+  // 2. Fallback to fetchInventoryLots if no live batches were found
+  if (liveBatches.length === 0) {
+    const rawLots = await fetchInventoryLots({
+      branchId: params.branchId,
+      productId: params.productId,
+      token: params.options?.token,
+    });
+    liveBatches = rawLots;
+  }
+
+  return allocateStockSync(liveBatches, params.requestedQuantity, params.options);
 }
 
 function getOrdinalSuffix(n: number): string {

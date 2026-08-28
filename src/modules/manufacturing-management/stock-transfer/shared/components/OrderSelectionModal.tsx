@@ -167,7 +167,7 @@ export function OrderSelectionModal({
                       </div>
                     </TableCell>
                     <TableCell className="text-center font-bold text-[10px]">
-                      {group.items.length} PRD
+                      {group.items.length} {group.items.length === 1 ? 'Item' : 'Items'}
                     </TableCell>
                     <TableCell className="text-center">
                         <span className={`inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[9px] font-black uppercase tracking-widest border

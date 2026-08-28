@@ -91,9 +91,6 @@ export default function StockTransferTable({
               No.
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
-              RFID
-            </TableHead>
-            <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
               Product Name
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
@@ -122,9 +119,6 @@ export default function StockTransferTable({
               >
                 <TableCell className="text-[10px] font-medium text-muted-foreground py-2.5">
                   {start + index + 1}
-                </TableCell>
-                <TableCell className="text-xs font-bold text-primary py-2.5 font-mono">
-                  {item.rfid}
                 </TableCell>
                 <TableCell className="text-xs font-semibold text-foreground py-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -212,10 +206,10 @@ export default function StockTransferTable({
           ) : (
             <TableRow>
               <TableCell
-                colSpan={8}
+                colSpan={7}
                 className="h-32 text-center text-muted-foreground text-xs italic"
               >
-                No items added. Please scan an RFID to begin.
+                No products added. Click &apos;Add Products&apos; to begin.
               </TableCell>
             </TableRow>
           )}
@@ -223,7 +217,7 @@ export default function StockTransferTable({
         {items.length > 0 && (
           <TableFooter className="bg-muted/10">
             <TableRow>
-              <TableCell colSpan={6} className="font-bold text-right text-[10px] uppercase tracking-widest text-muted-foreground">Total Value</TableCell>
+              <TableCell colSpan={5} className="font-bold text-right text-[10px] uppercase tracking-widest text-muted-foreground">Total Value</TableCell>
               <TableCell className="font-bold text-right text-xs text-emerald-600 font-mono">
                 ₱{items.reduce((sum, item) => sum + (item.totalAmount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
               </TableCell>

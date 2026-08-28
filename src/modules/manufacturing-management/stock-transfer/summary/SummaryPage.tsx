@@ -6,16 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { 
   Search, 
   RefreshCcw, 
-  Calendar,
-  Layers,
-  MapPin,
-  ArrowUp,
-  ArrowDown,
-  ArrowUpDown,
-  Loader2,
-  ServerCrash,
-  Filter,
-  ExternalLink
+  Calendar, 
+  Layers, 
+  MapPin, 
+  ArrowUp, 
+  ArrowDown, 
+  ArrowUpDown, 
+  Loader2, 
+  ServerCrash, 
+  Filter, 
+  ExternalLink,
+  Paperclip
 } from 'lucide-react';
 import { useStockTransferSummary, SortConfig } from './hooks/use-stock-transfer-summary';
 import { TransferDetailModal } from './components/TransferDetailModal';
@@ -312,6 +313,7 @@ export default function StockTransferSummaryView() {
                     <SortableHeader label="Items" sortKey="items" filters={filters} toggleSort={toggleSort} className="text-center" />
                     <SortableHeader label="Value" sortKey="totalAmount" filters={filters} toggleSort={toggleSort} className="text-right" />
                     <SortableHeader label="Requested At" sortKey="dateRequested" filters={filters} toggleSort={toggleSort} className="text-center" />
+                    <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Attachments</TableHead>
                     <SortableHeader label="Status" sortKey="status" filters={filters} toggleSort={toggleSort} className="text-center" />
                     <TableHead className="w-[80px]" />
                   </TableRow>
@@ -319,7 +321,7 @@ export default function StockTransferSummaryView() {
                 <TableBody>
                   {paginatedGroups.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-48 text-center">
+                      <TableCell colSpan={9} className="h-48 text-center">
                         <div className="flex flex-col items-center justify-center space-y-2 text-muted-foreground opacity-30">
                           <Filter className="w-10 h-10" />
                           <p className="text-sm font-bold uppercase tracking-widest">No transfers match your filters</p>
@@ -361,6 +363,20 @@ export default function StockTransferSummaryView() {
                               {formatPhDateTime(group.dateRequested, { formatType: 'timeOnly' })}
                             </span>
                           </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {group.attachments && group.attachments.length > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] font-bold gap-1 bg-primary/5 text-primary border-primary/20 hover:bg-primary/10 transition-colors"
+                              title={`${group.attachments.length} attached document(s)`}
+                            >
+                              <Paperclip className="w-2.5 h-2.5" />
+                              {group.attachments.length} {group.attachments.length === 1 ? 'file' : 'files'}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground/30 text-xs font-mono">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge 

@@ -1,4 +1,3 @@
-//src/modules/supply-chain-management/traceability-compliance/product-tracing/components/ProductTracingTable.tsx
 "use client";
 
 import * as React from "react";
@@ -15,725 +14,752 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ProductMovementRow, ConsolidationDispatchTraceRow } from "../types";
-import { fetchConsolidationDispatchTrace } from "../providers/fetchProvider";
+import { MMInventoryMovement } from "../types";
+import {
+    ArrowUpDown,
+    ChevronUp,
+    ChevronDown,
+    FileSearch,
+    Download,
+    Eye,
+    ArrowUpRight,
+    ArrowDownRight,
+    Copy,
+    Check,
+    Layers,
+    ListFilter,
+    Calendar,
+    AlertCircle
+} from "lucide-react";
 import { toast } from "sonner";
-import { Loader2, ArrowUpDown, ChevronUp, ChevronDown, Layout, Columns, FileSearch } from "lucide-react";
+import { MovementDetailModal } from "./MovementDetailModal";
 import { generateProductTracingHtml } from "../utils/printProductTracingReport";
 import { TracingReportPreviewModal } from "./TracingReportPreviewModal";
 
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogDescription,
-} from "@/components/ui/dialog";
-import { ListIcon, EyeIcon } from "lucide-react";
+type ViewMode = "flat" | "by-doc" | "by-batch";
 
-type Props = React.HTMLAttributes<HTMLDivElement> & {
-    data: ProductMovementRow[];
+type Props = {
+    data: MMInventoryMovement[];
     isLoading?: boolean;
-    familyDivisor: number;
-    familyUnitName: string;
-    costPerUnit: number | null;
-    beginningBaseBalance?: number;
-    familyRunningTotal?: number;
     branchName?: string | null;
-    productName?: string | null;
+    productTypeName?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    className?: string;
 };
 
-export const ProductTracingTable = React.forwardRef<HTMLDivElement, Props>(({
+export function ProductTracingTable({
     data,
     isLoading,
-    familyDivisor,
-    familyUnitName,
-    costPerUnit,
-    beginningBaseBalance,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    familyRunningTotal: _familyRunningTotal,
     branchName,
-    productName,
+    productTypeName,
     startDate,
     endDate,
-    className,
-    ...props
-}, ref) => {
-    const [selectedDocNo, setSelectedDocNo] = React.useState<string | null>(null);
-    const [selectedConsolidationDoc, setSelectedConsolidationDoc] = React.useState<string | null>(null);
-    const [traceData, setTraceData] = React.useState<ConsolidationDispatchTraceRow[]>([]);
-    const [isTracing, setIsTracing] = React.useState(false);
-    const [showMainUnits, setShowMainUnits] = React.useState(true);
-    const [sortConfig, setSortConfig] = React.useState<{ key: string | null; direction: "asc" | "desc" | null }>({
-        key: 'ts',
-        direction: 'asc'
-    });
+    className
+}: Props) {
+    const [selectedMovement, setSelectedMovement] = React.useState<MMInventoryMovement | null>(null);
+    const [isDetailOpen, setIsDetailOpen] = React.useState(false);
+    const [viewMode, setViewMode] = React.useState<ViewMode>("flat");
+    const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
     const [previewHtml, setPreviewHtml] = React.useState<string | null>(null);
     const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
+
+    const [sortConfig, setSortConfig] = React.useState<{ key: string | null; direction: "asc" | "desc" | null }>({
+        key: "transactionDate",
+        direction: "desc"
+    });
 
     const handleSort = (key: string) => {
         setSortConfig(current => {
             if (current.key === key) {
-                if (current.direction === 'asc') return { key, direction: 'desc' };
+                if (current.direction === "asc") return { key, direction: "desc" };
                 return { key: null, direction: null };
             }
-            return { key, direction: 'asc' };
+            return { key, direction: "asc" };
         });
     };
 
     const SortIcon = ({ columnKey }: { columnKey: string }) => {
         if (sortConfig.key !== columnKey) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
-        return sortConfig.direction === 'asc'
+        return sortConfig.direction === "asc"
             ? <ChevronUp className="ml-1 h-3 w-3 text-primary font-bold" />
             : <ChevronDown className="ml-1 h-3 w-3 text-primary font-bold" />;
     };
 
-    const handleConsolidationClick = async (row: ProductMovementRow) => {
-        const docNo = row.docNo;
-        // Extract PDP number from description (descr) like "Picked for DPS - PDP-01116"
-        const protocolMatch = row.descr?.match(/(?:PDP|DP)-[A-Z0-9-]+/i);
-        const protocolNo = protocolMatch ? protocolMatch[0] : null;
-
-        // Extract potential Sales Order No from description (regex handles common prefixes like NFPI, SKN, SMPI)
-        // specifically avoids matching PDP/DP to prevent collisions
-        const soMatch = row.descr?.match(/(?!(?:PDP|DP)-)(?:[A-Z]{2,7})-?[0-9]{3,20}/i);
-        const orderNo = soMatch ? soMatch[0] : null;
-
-        const targetProductId = data[0]?.productId || data[0]?.parentId;
-        if (!targetProductId) return;
-
-        setSelectedConsolidationDoc(docNo);
-        setIsTracing(true);
-        try {
-            const results = await fetchConsolidationDispatchTrace(targetProductId, docNo, protocolNo, orderNo, row.productName);
-            setTraceData(results);
-        } catch (error) {
-            console.error(error);
-            toast.error("Failed to fetch consolidation trace details.");
-        } finally {
-            setIsTracing(false);
-        }
+    const copyToClipboard = (text: string, id: string) => {
+        navigator.clipboard.writeText(text);
+        setCopiedKey(id);
+        toast.success("Copied to clipboard!");
+        setTimeout(() => setCopiedKey(null), 2000);
     };
 
-    // Identify all unique UOMs present in the data to create dynamic columns
-    const uniqueUOMs = React.useMemo(() => {
-        const uoms = new Map<string, number>();
-        data.forEach(row => {
-            if (row.unit) {
-                const normalizedUnit = row.unit.trim().toUpperCase();
-                const currentCount = uoms.get(normalizedUnit) || 0;
-                // If we have conflicting counts for the same unit name (e.g., "Pack"), 
-                // prioritize the larger family-standard unit count (e.g., 2 instead of 1)
-                if ((row.unitCount || 1) > currentCount) {
-                    uoms.set(normalizedUnit, row.unitCount || 1);
-                }
-            }
-        });
-        // Include familyUnitName if not already present
-        const normalizedFamilyUnit = familyUnitName?.trim().toUpperCase();
-        if (normalizedFamilyUnit && !uoms.get(normalizedFamilyUnit)) {
-            uoms.set(normalizedFamilyUnit, familyDivisor || 1);
-        }
+    // Sorting
+    const sortedData = React.useMemo(() => {
+        if (!sortConfig.key || !sortConfig.direction) return data;
 
-        return Array.from(uoms.entries())
-            .sort((a, b) => b[1] - a[1]) // Sort by unitCount descending (e.g., Box > Pack > Pcs)
-            .map(([unit, count]) => ({ unit, count }));
-    }, [data, familyUnitName, familyDivisor]);
-
-    // Calculate balances then group
-    const groupedRows = React.useMemo(() => {
-        let currentBaseBalance = beginningBaseBalance || 0;
-
-        // Pass 0: Sort data chronologically ascending for balance calculation
-        const sortedData = [...data].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-
-        // Pass 1: Compute Running Balances
-        const enriched = sortedData.map(row => {
-            const isPH = row.docType?.toUpperCase() === "PHYSICAL INVENTORY" || row.docNo?.toUpperCase().startsWith("PH");
-            const phys = row.physical_count !== undefined ? row.physical_count : row.physicalCount;
-            const sys = row.system_count !== undefined ? row.system_count : row.systemCount;
-            // Use variance from API if available (newly added to the view), otherwise fallback to manual calc
-            const calcVariance = isPH ? (row.variance ?? ((phys || 0) - (sys || 0))) : 0;
-            const internalMovement = isPH
-                ? (calcVariance * (row.unitCount || 1))
-                : ((row.inBase || 0) - (row.outBase || 0));
-
-            const prevBalance = currentBaseBalance;
-            currentBaseBalance += internalMovement;
-
-            // The movement shown in the table should explain the change in currentBaseBalance
-            const movement = currentBaseBalance - prevBalance;
-
-            const fDivisor = familyDivisor || 1;
-            const absMovement = Math.abs(movement);
-
-            const uomBreakdown: Record<string, number> = {};
-            uniqueUOMs.forEach(u => uomBreakdown[u.unit] = 0);
-
-            if (isPH) {
-                // For PH, we use the variance directly for the unit specified in the row
-                if (row.unit) {
-                    const normalized = row.unit.trim().toUpperCase();
-                    if (uomBreakdown[normalized] !== undefined) {
-                        uomBreakdown[normalized] = calcVariance;
-                    }
-                }
-            } else {
-                // For non-PH, we use greedy decomposition but PRIORITIZE the row's own unit if it matches a known family column
-                let remaining = absMovement;
-
-                const normalizedRowUnit = row.unit?.trim().toUpperCase();
-                // If the row explicitly has a unit that matches one of our family columns, use its count first
-                if (normalizedRowUnit && row.unitCount && uomBreakdown[normalizedRowUnit] !== undefined) {
-                    const explicitCount = Math.floor(remaining / row.unitCount);
-                    if (explicitCount > 0) {
-                        uomBreakdown[normalizedRowUnit] = (movement < 0 ? -explicitCount : explicitCount);
-                        remaining -= explicitCount * row.unitCount;
-                    }
-                }
-
-                // Decompose any remainder greedily across the established family units
-                uniqueUOMs.forEach(u => {
-                    const count = Math.floor(remaining / u.count);
-                    if (count > 0) {
-                        // Avoid double-counting if we already partially filled this unit
-                        const currentVal = uomBreakdown[u.unit] || 0;
-                        uomBreakdown[u.unit] = (movement < 0 ? currentVal - count : currentVal + count);
-                        remaining -= count * u.count;
-                    }
-                });
-
-                // If pieces are still remaining (e.g. piece count not in uniqueUOMs), 
-                // we should keep it logged somewhere, but usually piecewise is the smallest.
-            }
-
-            return {
-                ...row,
-                displayBalance: currentBaseBalance / fDivisor,
-                currentBaseBalance,
-                isPH,
-                absMovement,
-                movement,
-                effectiveIn: movement > 0 ? absMovement : 0,
-                effectiveOut: movement < 0 ? absMovement : 0,
-                uomBreakdown
-            };
-        });
-
-        // The displayBalance is cleanly calculated directly from the absolute movement math since beginningBaseBalance is already completely consolidated.
-
-        // Pass 2: Group by docNo
-        const groups: Array<{
-            main: typeof enriched[0];
-            items: typeof enriched;
-            isGroup: boolean;
-        }> = [];
-
-        enriched.forEach(row => {
-            const lastGroup = groups.length > 0 ? groups[groups.length - 1] : null;
-
-            if (!lastGroup || lastGroup.main.docNo !== row.docNo) {
-                groups.push({
-                    main: { ...row },
-                    items: [row],
-                    isGroup: false
-                });
-            } else {
-                lastGroup.items.push(row);
-                lastGroup.isGroup = true;
-
-                // Aggregate movements
-                lastGroup.main.effectiveIn += row.effectiveIn;
-                lastGroup.main.effectiveOut += row.effectiveOut;
-                lastGroup.main.movement += row.movement;
-                lastGroup.main.absMovement += row.absMovement;
-
-                // Aggregate UOM breakdown
-                Object.keys(row.uomBreakdown).forEach(unit => {
-                    lastGroup.main.uomBreakdown[unit] = (lastGroup.main.uomBreakdown[unit] || 0) + row.uomBreakdown[unit];
-                });
-
-                // Balance should be row's balance (the last item in sequence)
-                lastGroup.main.displayBalance = row.displayBalance;
-                lastGroup.main.currentBaseBalance = row.currentBaseBalance;
-            }
-        });
-
-        return groups;
-    }, [data, uniqueUOMs, familyDivisor, beginningBaseBalance]);
-
-    const sortedGroupedRows = React.useMemo(() => {
-        if (!sortConfig.key || !sortConfig.direction) return groupedRows;
-
-        return [...groupedRows].sort((a, b) => {
-            let valA: string | number;
-            let valB: string | number;
+        return [...data].sort((a, b) => {
+            let valA: string | number = 0;
+            let valB: string | number = 0;
 
             switch (sortConfig.key) {
-                case 'ts':
-                    valA = new Date(a.main.ts).getTime();
-                    valB = new Date(b.main.ts).getTime();
+                case "transactionDate":
+                    valA = new Date(a.transactionDate || a.postedAt || 0).getTime();
+                    valB = new Date(b.transactionDate || b.postedAt || 0).getTime();
                     break;
-                case 'docType':
-                    valA = a.main.docType?.toLowerCase() || '';
-                    valB = b.main.docType?.toLowerCase() || '';
+                case "referenceNo":
+                    valA = a.referenceNo || "";
+                    valB = b.referenceNo || "";
                     break;
-                case 'qty':
-                    valA = a.main.movement / (familyDivisor || 1);
-                    valB = b.main.movement / (familyDivisor || 1);
+                case "productName":
+                    valA = a.productName || "";
+                    valB = b.productName || "";
                     break;
-                case 'base':
-                    valA = a.main.movement;
-                    valB = b.main.movement;
+                case "batchNo":
+                    valA = a.batchNo || "";
+                    valB = b.batchNo || "";
+                    break;
+                case "transactionType":
+                    valA = a.transactionType || "";
+                    valB = b.transactionType || "";
+                    break;
+                case "quantityIn":
+                    valA = Number(a.quantityIn || 0);
+                    valB = Number(b.quantityIn || 0);
+                    break;
+                case "quantityOut":
+                    valA = Number(a.quantityOut || 0);
+                    valB = Number(b.quantityOut || 0);
+                    break;
+                case "runningBalance":
+                    valA = Number(a.runningBalance || 0);
+                    valB = Number(b.runningBalance || 0);
+                    break;
+                case "unitCost":
+                    valA = Number(a.unitCost || 0);
+                    valB = Number(b.unitCost || 0);
+                    break;
+                case "differenceCost":
+                    valA = Number(a.differenceCost || 0);
+                    valB = Number(b.differenceCost || 0);
                     break;
                 default:
-                    // Check if it's a dynamic UOM
-                    if (sortConfig.key?.startsWith('uom:')) {
-                        const unit = sortConfig.key.replace('uom:', '');
-                        valA = a.main.uomBreakdown?.[unit] || 0;
-                        valB = b.main.uomBreakdown?.[unit] || 0;
-                    } else {
-                        return 0;
-                    }
+                    return 0;
             }
 
-            if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-            if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+            if (valA < valB) return sortConfig.direction === "asc" ? -1 : 1;
+            if (valA > valB) return sortConfig.direction === "asc" ? 1 : -1;
             return 0;
         });
-    }, [groupedRows, sortConfig, familyDivisor]);
+    }, [data, sortConfig]);
 
-    const selectedGroup = React.useMemo(() => {
-        if (!selectedDocNo) return null;
-        return sortedGroupedRows.find(g => g.main.docNo === selectedDocNo);
-    }, [selectedDocNo, sortedGroupedRows]);
+    // Grouping by Reference Document
+    const groupedByDoc = React.useMemo(() => {
+        const groups = new Map<string, MMInventoryMovement[]>();
+        data.forEach(item => {
+            const key = item.referenceNo || "NO-REF";
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(item);
+        });
+        return Array.from(groups.entries()).map(([refNo, items]) => ({
+            refNo,
+            items,
+            main: items[0],
+            totalIn: items.reduce((sum, i) => sum + Number(i.quantityIn || 0), 0),
+            totalOut: items.reduce((sum, i) => sum + Number(i.quantityOut || 0), 0),
+            lastDate: items[items.length - 1].transactionDate
+        }));
+    }, [data]);
+
+    // Grouping by Batch
+    const groupedByBatch = React.useMemo(() => {
+        const groups = new Map<string, MMInventoryMovement[]>();
+        data.forEach(item => {
+            const key = `${item.productId}-${item.batchNo || "NO-BATCH"}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(item);
+        });
+        return Array.from(groups.entries()).map(([key, items]) => ({
+            key,
+            items,
+            main: items[0],
+            totalIn: items.reduce((sum, i) => sum + Number(i.quantityIn || 0), 0),
+            totalOut: items.reduce((sum, i) => sum + Number(i.quantityOut || 0), 0),
+            balance: items.reduce((sum, i) => sum + Number(i.quantityIn || 0) - Number(i.quantityOut || 0), 0),
+            lastDate: items[items.length - 1].transactionDate
+        }));
+    }, [data]);
+
+    // Export to CSV
+    const handleExportCsv = () => {
+        if (data.length === 0) {
+            toast.error("No movements to export.");
+            return;
+        }
+
+        const headers = [
+            "Movement Key",
+            "Transaction Date",
+            "Reference No",
+            "Transaction Type",
+            "Direction",
+            "Source Module",
+            "Product ID",
+            "Product Code",
+            "Product Name",
+            "Product Type",
+            "Batch No",
+            "Lot ID",
+            "Condition",
+            "Mfg Date",
+            "Exp Date",
+            "Qty In",
+            "Qty Out",
+            "Running Balance",
+            "Unit Cost",
+            "Difference Cost",
+            "Status",
+            "Remarks"
+        ];
+
+        const rows = data.map(m => [
+            `"${m.movementKey || ""}"`,
+            `"${m.transactionDate || m.postedAt || ""}"`,
+            `"${m.referenceNo || ""}"`,
+            `"${m.transactionType || ""}"`,
+            `"${m.movementDirection || ""}"`,
+            `"${m.sourceModule || ""}"`,
+            m.productId || "",
+            `"${m.productCode || ""}"`,
+            `"${(m.productName || "").replace(/"/g, '""')}"`,
+            `"${m.productTypeName || ""}"`,
+            `"${m.batchNo || ""}"`,
+            m.lotId || "",
+            `"${m.inventoryCondition || ""}"`,
+            `"${m.manufacturingDate || ""}"`,
+            `"${m.expirationDate || ""}"`,
+            m.quantityIn || 0,
+            m.quantityOut || 0,
+            m.runningBalance || 0,
+            m.unitCost || 0,
+            m.differenceCost || 0,
+            `"${m.sourceStatus || ""}"`,
+            `"${(m.remarks || "").replace(/"/g, '""')}"`
+        ]);
+
+        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Product_Tracing_Ledger_${format(new Date(), "yyyyMMdd_HHmmss")}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success("CSV export downloaded successfully!");
+    };
 
     if (isLoading) {
         return (
-            <div className="space-y-4">
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div key={i} className="h-16 w-full animate-pulse bg-muted/40 rounded-2xl border border-muted" />
+            <div className="space-y-3">
+                {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+                    <div key={i} className="h-14 w-full animate-pulse bg-muted/40 rounded-2xl border border-muted" />
                 ))}
             </div>
         );
     }
 
     return (
-        <div className="space-y-4">
-            <div className="flex justify-end pr-2 gap-2">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                        "h-8 rounded-xl px-3 text-[10px] uppercase font-bold tracking-widest gap-2 transition-all",
-                        !showMainUnits ? "bg-primary/10 text-primary border-primary/20" : "text-muted-foreground opacity-60"
-                    )}
-                    onClick={() => setShowMainUnits(!showMainUnits)}
-                >
-                    {showMainUnits ? (
-                        <>
-                            <Columns className="h-3 w-3" />
-                            Hide Qty/Base
-                        </>
-                    ) : (
-                        <>
-                            <Layout className="h-3 w-3" />
-                            Show Qty/Base
-                        </>
-                    )}
-                </Button>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 rounded-xl border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary font-bold transition-all shadow-sm active:scale-95"
-                    onClick={() => {
-                        const printableMovements = sortedGroupedRows.map(g => ({
-                            ...g.main,
-                            isGroup: g.isGroup,
-                            itemCount: g.items.length
-                        }));
+        <div className={cn("space-y-4", className)}>
+            {/* Table Header Controls */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-1">
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-bold uppercase tracking-wider">
+                        View Mode:
+                    </span>
+                    <div className="inline-flex rounded-xl bg-muted/60 p-1">
+                        <button
+                            type="button"
+                            onClick={() => setViewMode("flat")}
+                            className={cn(
+                                "px-3 py-1 text-xs font-bold rounded-lg transition-all",
+                                viewMode === "flat" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            Ledger View
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setViewMode("by-doc")}
+                            className={cn(
+                                "px-3 py-1 text-xs font-bold rounded-lg transition-all",
+                                viewMode === "by-doc" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            By Document ({groupedByDoc.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setViewMode("by-batch")}
+                            className={cn(
+                                "px-3 py-1 text-xs font-bold rounded-lg transition-all",
+                                viewMode === "by-batch" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            By Batch ({groupedByBatch.length})
+                        </button>
+                    </div>
+                </div>
 
-                        const html = generateProductTracingHtml({
-                            movements: printableMovements,
-                            beginningBalance: beginningBaseBalance || 0,
-                            branchName: branchName || "Selected Branch",
-                            productName: productName || "Selected Product",
-                            startDate: (startDate ?? null) as string | null,
-                            endDate: (endDate ?? null) as string | null,
-                            uniqueUOMs: uniqueUOMs,
-                            showQtyBase: showMainUnits,
-                            familyDivisor: familyDivisor || 1
-                        });
-                        setPreviewHtml(html);
-                        setIsPreviewOpen(true);
-                    }}
-                >
-                    <FileSearch className="h-4 w-4 mr-2" />
-                    Preview & Print
-                </Button>
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-xl px-3 text-xs font-bold text-muted-foreground hover:text-foreground gap-1.5"
+                        onClick={handleExportCsv}
+                        disabled={data.length === 0}
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                        Export CSV
+                    </Button>
+
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-xl px-3 text-xs font-bold border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary gap-1.5"
+                        onClick={() => {
+                            const html = generateProductTracingHtml({
+                                movements: data,
+                                branchName: branchName || "Selected Branch",
+                                productTypeName: productTypeName || "All Products",
+                                startDate: startDate || null,
+                                endDate: endDate || null
+                            });
+                            setPreviewHtml(html);
+                            setIsPreviewOpen(true);
+                        }}
+                        disabled={data.length === 0}
+                    >
+                        <FileSearch className="h-3.5 w-3.5" />
+                        Preview & Print
+                    </Button>
+                </div>
             </div>
 
-            <Card ref={ref} className={cn("rounded-[2rem] border shadow-sm bg-background/50 backdrop-blur-sm", className)} {...props}>
-                <Table noWrapper>
-                    <TableHeader className="bg-background/95 border-b sticky top-0 z-20 backdrop-blur-md shadow-sm">
-                        <TableRow className="hover:bg-transparent">
-                            <TableHead
-                                className="w-[120px] h-12 text-[10px] font-bold uppercase tracking-widest pl-6 cursor-pointer group select-none"
-                                onClick={() => handleSort('ts')}
-                            >
-                                <div className="flex items-center">
-                                    Timestamp
-                                    <SortIcon columnKey="ts" />
-                                </div>
-                            </TableHead>
-                            <TableHead className="w-[120px] h-12 text-[10px] font-bold uppercase tracking-widest">Reference No.</TableHead>
-                            <TableHead
-                                className="h-12 text-[10px] font-bold uppercase tracking-widest text-center cursor-pointer group select-none"
-                                onClick={() => handleSort('docType')}
-                            >
-                                <div className="flex items-center justify-center">
-                                    Type
-                                    <SortIcon columnKey="docType" />
-                                </div>
-                            </TableHead>
-                            <TableHead className="max-w-[200px] h-12 text-[10px] font-bold uppercase tracking-widest underline decoration-dotted underline-offset-4">Description </TableHead>
-
-                            {/* Dynamic UOM Columns */}
-                            {uniqueUOMs.map((uom, i) => (
-                                <TableHead
-                                    key={uom.unit}
-                                    className={cn(
-                                        "h-12 text-[10px] font-bold uppercase tracking-widest text-right px-4 cursor-pointer group select-none border-l border-muted/20",
-                                        i % 2 === 0 ? "bg-muted/20" : "bg-muted/10"
-                                    )}
-                                    onClick={() => handleSort(`uom:${uom.unit}`)}
-                                >
-                                    <div className="flex items-center justify-end">
-                                        {uom.unit}
-                                        <SortIcon columnKey={`uom:${uom.unit}`} />
-                                    </div>
-                                </TableHead>
-                            ))}
-
-                            {showMainUnits && (
-                                <>
+            {/* Flat Ledger Table */}
+            {viewMode === "flat" && (
+                <Card className="rounded-[1.75rem] border shadow-sm bg-card/60 backdrop-blur-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <Table noWrapper>
+                            <TableHeader className="bg-muted/40 border-b sticky top-0 z-20 backdrop-blur-md">
+                                <TableRow className="hover:bg-transparent">
                                     <TableHead
-                                        className="text-right h-12 text-[10px] font-bold uppercase tracking-widest px-4 cursor-pointer group select-none border-l border-muted/20"
-                                        onClick={() => handleSort('qty')}
+                                        className="w-[110px] h-11 text-[10px] font-black uppercase tracking-widest pl-5 cursor-pointer group select-none"
+                                        onClick={() => handleSort("transactionDate")}
                                     >
-                                        <div className="flex items-center justify-end">
-                                            Qty ({familyUnitName})
-                                            <SortIcon columnKey="qty" />
+                                        <div className="flex items-center">
+                                            Date / Time
+                                            <SortIcon columnKey="transactionDate" />
                                         </div>
                                     </TableHead>
+
                                     <TableHead
-                                        className="text-right h-12 text-[10px] font-bold uppercase tracking-widest px-4 cursor-pointer group select-none border-l border-muted/20"
-                                        onClick={() => handleSort('base')}
+                                        className="w-[150px] h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("referenceNo")}
                                     >
-                                        <div className="flex items-center justify-end">
-                                            Base (Pcs)
-                                            <SortIcon columnKey="base" />
+                                        <div className="flex items-center">
+                                            Reference No
+                                            <SortIcon columnKey="referenceNo" />
                                         </div>
                                     </TableHead>
-                                </>
-                            )}
-                            <TableHead className="text-right h-12 text-[10px] font-bold uppercase tracking-widest font-bold px-4 border-l border-muted/20">
-                                <div className="flex items-center justify-end">
-                                    Balance ({familyUnitName})
-                                </div>
-                            </TableHead>
-                            <TableHead className="text-right h-12 text-[10px] font-bold uppercase tracking-widest font-bold pl-4 pr-6 border-l border-muted/20">
-                                <div className="flex items-center justify-end">
-                                    Gross Amount
-                                </div>
-                            </TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {/* Beginning Balance Row */}
-                        {(beginningBaseBalance !== undefined || data.length > 0) && (
-                            <TableRow className="bg-muted/10 hover:bg-muted/20 transition-colors border-b-2">
-                                <TableCell className="py-4 pl-6" colSpan={4 + uniqueUOMs.length + (showMainUnits ? 2 : 0)}>
-                                    <span className="font-bold text-muted-foreground uppercase tracking-widest text-[10px]">
-                                        Beginning Balance
-                                    </span>
-                                </TableCell>
-                                <TableCell className="text-right font-black tabular-nums text-foreground/90 bg-muted/20 px-4 border-l border-muted/30">
-                                    {((beginningBaseBalance || 0) / (familyDivisor || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                                </TableCell>
-                                <TableCell className="text-right font-black tabular-nums text-emerald-700/90 bg-emerald-500/10 pl-4 pr-6 border-l border-muted/30">
-                                    {costPerUnit != null ? (((beginningBaseBalance || 0) / (familyDivisor || 1)) * costPerUnit).toLocaleString(undefined, { style: 'currency', currency: 'PHP' }) : "—"}
-                                </TableCell>
-                            </TableRow>
-                        )}
 
-                        {sortedGroupedRows.map(({ main: row, items, isGroup }, index) => (
-                            <TableRow
-                                key={`${row.docNo}-${index}`}
-                                className={cn(
-                                    "group transition-colors border-muted/50",
-                                    isGroup ? "hover:bg-primary/5 cursor-pointer" : "hover:bg-muted/30"
-                                )}
-                                onClick={() => {
-                                    if (isGroup) {
-                                        setSelectedDocNo(row.docNo);
-                                    } else if (row.docType === "Consolidation Dispatches") {
-                                        handleConsolidationClick(row);
-                                    }
-                                }}
-                            >
-                                <TableCell className="py-4 pl-6">
-                                    <span className="text-[10px] font-bold text-muted-foreground opacity-60 uppercase">{format(new Date(row.ts), "MMM dd, HH:mm")}</span>
-                                </TableCell>
-                                <TableCell className="py-4">
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="font-mono text-sm font-bold tracking-tight">{row.docNo}</span>
-                                        {isGroup && <ListIcon className="h-3 w-3 text-primary opacity-50" />}
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-center">
-                                    <Badge variant="outline" className={cn(
-                                        "font-bold text-[9px] uppercase tracking-wider py-0.5 px-2 rounded-full",
-                                        row.effectiveIn > 0
-                                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
-                                            : "border-amber-500/20 bg-amber-500/10 text-amber-600"
-                                    )}>
-                                        {row.docType}
-                                    </Badge>
-                                </TableCell>
-                                <TableCell className="max-w-[200px] truncate text-muted-foreground font-medium text-sm" title={row.descr || ""}>
-                                    <div className="flex items-center gap-2">
-                                        {isGroup ? (
-                                            <span className="italic text-primary/80 flex items-center gap-1 font-bold">
-                                                Consolidated ({items.length} items)
-                                            </span>
-                                        ) : (
-                                            row.descr || "—"
-                                        )}
-                                    </div>
-                                </TableCell>
-                                {/* Dynamic UOM Cells */}
-                                {uniqueUOMs.map((uom, i) => {
-                                    const val = row.uomBreakdown?.[uom.unit] || 0;
-                                    return (
-                                        <TableCell key={uom.unit} className={cn(
-                                            "text-right font-bold tabular-nums pr-4",
-                                            i % 2 === 0 ? "bg-muted/10 text-foreground/80 font-black" : "bg-muted/5 text-muted-foreground"
-                                        )}>
-                                            {val !== 0 ? (val > 0 ? `+${val.toLocaleString()}` : val.toLocaleString()) : "0"}
-                                        </TableCell>
-                                    );
-                                })}
+                                    <TableHead
+                                        className="h-11 text-[10px] font-black uppercase tracking-widest text-center cursor-pointer group select-none"
+                                        onClick={() => handleSort("transactionType")}
+                                    >
+                                        <div className="flex items-center justify-center">
+                                            Type / Module
+                                            <SortIcon columnKey="transactionType" />
+                                        </div>
+                                    </TableHead>
 
-                                {showMainUnits && (
-                                    <>
-                                        <TableCell className={cn(
-                                            "text-right font-bold tabular-nums px-4",
-                                            row.movement > 0 ? "text-emerald-600" : row.movement < 0 ? "text-amber-600" : "text-muted-foreground"
-                                        )}>
-                                            {row.movement !== 0 ? (row.movement > 0 ? "+" : "") : ""}
-                                            {(row.movement / (familyDivisor || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                                        </TableCell>
-                                        <TableCell className="text-right text-muted-foreground font-medium tabular-nums px-4 font-bold">
-                                            {row.movement !== 0 ? (row.movement > 0 ? "+" : "") : ""}
-                                            {row.movement.toLocaleString()}
-                                        </TableCell>
-                                    </>
-                                )}
-                                <TableCell className="text-right font-black tabular-nums text-foreground/90 bg-muted/20 group-hover:bg-muted/40 transition-colors px-4 border-l border-muted/30">
-                                    {(row.displayBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                                </TableCell>
-                                <TableCell className="text-right font-black tabular-nums text-emerald-700/90 bg-emerald-500/10 group-hover:bg-emerald-500/20 transition-colors pl-4 pr-6 border-l border-muted/30">
-                                    {costPerUnit != null ? ((row.displayBalance || 0) * costPerUnit).toLocaleString(undefined, { style: 'currency', currency: 'PHP' }) : "—"}
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
+                                    <TableHead
+                                        className="min-w-[200px] h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("productName")}
+                                    >
+                                        <div className="flex items-center">
+                                            Product & Item
+                                            <SortIcon columnKey="productName" />
+                                        </div>
+                                    </TableHead>
 
-                <Dialog open={!!selectedDocNo} onOpenChange={(open) => !open && setSelectedDocNo(null)}>
-                    <DialogContent className="sm:max-w-5xl w-full rounded-[1.5rem] border shadow-2xl p-0 overflow-hidden">
-                        <DialogHeader className="p-6 bg-muted/30 border-b">
-                            <DialogTitle className="flex items-center gap-3 text-xl font-bold">
-                                <div className="p-2 bg-primary/10 rounded-xl">
-                                    <EyeIcon className="h-5 w-5 text-primary" />
-                                </div>
-                                Consolidated Entries
-                            </DialogTitle>
-                            <DialogDescription className="font-mono mt-1 text-sm bg-background/50 px-2 py-1 rounded inline-block w-fit">
-                                Ref: {selectedDocNo}
-                            </DialogDescription>
-                        </DialogHeader>
+                                    <TableHead
+                                        className="w-[140px] h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("batchNo")}
+                                    >
+                                        <div className="flex items-center">
+                                            Batch & Condition
+                                            <SortIcon columnKey="batchNo" />
+                                        </div>
+                                    </TableHead>
 
-                        <div className="max-h-[60vh] overflow-y-auto">
-                            <Table>
-                                <TableHeader className="bg-muted/20 sticky top-0 backdrop-blur z-10">
+                                    <TableHead className="w-[80px] h-11 text-[10px] font-black uppercase tracking-widest text-center">
+                                        Direction
+                                    </TableHead>
+
+                                    <TableHead
+                                        className="w-[90px] text-right h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("quantityIn")}
+                                    >
+                                        <div className="flex items-center justify-end">
+                                            Qty In
+                                            <SortIcon columnKey="quantityIn" />
+                                        </div>
+                                    </TableHead>
+
+                                    <TableHead
+                                        className="w-[90px] text-right h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("quantityOut")}
+                                    >
+                                        <div className="flex items-center justify-end">
+                                            Qty Out
+                                            <SortIcon columnKey="quantityOut" />
+                                        </div>
+                                    </TableHead>
+
+                                    <TableHead
+                                        className="w-[110px] text-right h-11 text-[10px] font-black uppercase tracking-widest font-black px-4 bg-muted/20 border-l border-muted/30 cursor-pointer group select-none"
+                                        onClick={() => handleSort("runningBalance")}
+                                    >
+                                        <div className="flex items-center justify-end">
+                                            Run. Balance
+                                            <SortIcon columnKey="runningBalance" />
+                                        </div>
+                                    </TableHead>
+
+                                    <TableHead
+                                        className="w-[100px] text-right h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("unitCost")}
+                                    >
+                                        <div className="flex items-center justify-end">
+                                            Unit Cost
+                                            <SortIcon columnKey="unitCost" />
+                                        </div>
+                                    </TableHead>
+
+                                    <TableHead
+                                        className="w-[110px] text-right h-11 text-[10px] font-black uppercase tracking-widest cursor-pointer group select-none"
+                                        onClick={() => handleSort("differenceCost")}
+                                    >
+                                        <div className="flex items-center justify-end">
+                                            Diff Cost
+                                            <SortIcon columnKey="differenceCost" />
+                                        </div>
+                                    </TableHead>
+
+                                    <TableHead className="w-[60px] text-center h-11 text-[10px] font-black uppercase tracking-widest pr-4">
+                                        Action
+                                    </TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {sortedData.length === 0 ? (
                                     <TableRow>
-                                        <TableHead className="text-[10px] font-bold uppercase pl-6 py-2">Line Description</TableHead>
-                                        {uniqueUOMs.map(uom => (
-                                            <TableHead key={uom.unit} className="text-right text-[10px] font-bold uppercase py-2">{uom.unit}</TableHead>
-                                        ))}
-                                        <TableHead className="text-right text-[10px] font-bold uppercase pr-6 py-2">Base (Total Pcs)</TableHead>
+                                        <TableCell colSpan={12} className="text-center py-16 text-muted-foreground">
+                                            <div className="flex flex-col items-center justify-center space-y-2">
+                                                <Layers className="h-8 w-8 text-muted-foreground/40" />
+                                                <p className="text-sm font-semibold">No movement records found</p>
+                                                <p className="text-xs text-muted-foreground/70">
+                                                    Try adjusting your search criteria, branch, or date filters.
+                                                </p>
+                                            </div>
+                                        </TableCell>
                                     </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {selectedGroup?.items.map((item, i) => (
-                                        <TableRow
-                                            key={i}
-                                            className={cn(
-                                                "group transition-colors border-muted/50",
-                                                item.docType === "Consolidation Dispatches" ? "hover:bg-primary/5 cursor-pointer" : "hover:bg-muted/30"
-                                            )}
-                                            onClick={() => {
-                                                if (item.docType === "Consolidation Dispatches") {
-                                                    handleConsolidationClick(item);
-                                                }
-                                            }}
-                                        >
-                                            <TableCell className="text-sm font-medium py-3 pl-6">
-                                                <div className="flex flex-col">
-                                                    <div className="flex items-center gap-2">
-                                                        {item.descr || "—"}
-                                                        {item.docType === "Consolidation Dispatches" && (
-                                                            <ListIcon className="h-3 w-3 text-primary opacity-50 group-hover:opacity-100 transition-opacity" />
-                                                        )}
+                                ) : (
+                                    sortedData.map((row, idx) => {
+                                        const isOut = row.movementDirection === "OUT" || Number(row.quantityOut) > 0;
+                                        const isGood = row.inventoryCondition?.toUpperCase() === "GOOD";
+                                        const isExpired = row.inventoryCondition?.toUpperCase() === "EXPIRED";
+                                        const isDamaged = row.inventoryCondition?.toUpperCase() === "DAMAGED";
+                                        const isQuarantined = row.inventoryCondition?.toUpperCase() === "QUARANTINED";
+
+                                        return (
+                                            <TableRow
+                                                key={`${row.movementKey || row.referenceNo}-${idx}`}
+                                                className="group hover:bg-muted/30 transition-colors border-muted/40 cursor-pointer"
+                                                onClick={() => {
+                                                    setSelectedMovement(row);
+                                                    setIsDetailOpen(true);
+                                                }}
+                                            >
+                                                {/* Date & Time */}
+                                                <TableCell className="py-3.5 pl-5">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs font-bold text-foreground">
+                                                            {row.transactionDate ? format(new Date(row.transactionDate), "MMM dd, yyyy") : "N/A"}
+                                                        </span>
+                                                        <span className="text-[10px] font-semibold text-muted-foreground opacity-70">
+                                                            {row.transactionDate ? format(new Date(row.transactionDate), "HH:mm:ss") : ""}
+                                                        </span>
                                                     </div>
-                                                    <span className="text-[10px] text-muted-foreground opacity-50">
-                                                        Product ID: {item.productId} | Unit: {item.unit} (x{item.unitCount})
+                                                </TableCell>
+
+                                                {/* Reference No */}
+                                                <TableCell className="py-3.5">
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="font-mono text-xs font-bold text-foreground truncate max-w-[130px]" title={row.referenceNo}>
+                                                            {row.referenceNo || "—"}
+                                                        </span>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                copyToClipboard(row.referenceNo, `ref-${idx}`);
+                                                            }}
+                                                            className="text-muted-foreground/50 hover:text-foreground transition-opacity"
+                                                        >
+                                                            {copiedKey === `ref-${idx}` ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                                                        </button>
+                                                    </div>
+                                                    <span className="text-[10px] font-mono text-muted-foreground/60 block">
+                                                        {row.movementKey}
                                                     </span>
-                                                </div>
-                                            </TableCell>
-                                            {uniqueUOMs.map(uom => {
-                                                const val = item.uomBreakdown?.[uom.unit] || 0;
-                                                return (
-                                                    <TableCell key={uom.unit} className="text-right text-sm font-black tabular-nums py-3">
-                                                        {val !== 0 ? (val > 0 ? `+${val.toLocaleString()}` : val.toLocaleString()) : "—"}
-                                                    </TableCell>
-                                                );
-                                            })}
-                                            <TableCell className="text-right text-sm font-mono text-muted-foreground py-3 pr-6 font-bold">
-                                                {item.movement !== 0 ? (item.movement > 0 ? "+" : "") : ""}
-                                                {item.movement.toLocaleString()}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
+                                                </TableCell>
 
-                        <div className="p-6 bg-muted/30 border-t flex justify-between items-center">
-                            <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Group Total Movement</span>
-                                <span className="text-lg font-black tabular-nums">
-                                    {(selectedGroup?.main.movement || 0).toLocaleString()} PCS ({((selectedGroup?.main.movement || 0) / (familyDivisor || 1)).toLocaleString(undefined, { maximumFractionDigits: 2 })} {familyUnitName.toUpperCase()})
-                                </span>
-                            </div>
-                            <div className="text-right">
-                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Balance Position</span>
-                                <span className="text-lg font-black tabular-nums text-primary">
-                                    {(selectedGroup?.main.displayBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                                </span>
-                            </div>
-                        </div>
-                    </DialogContent>
-                </Dialog>
-
-                {/* Consolidation Dispatches Trace Dialog */}
-                <Dialog open={!!selectedConsolidationDoc} onOpenChange={(open) => !open && setSelectedConsolidationDoc(null)}>
-                    <DialogContent className="sm:max-w-6xl w-full rounded-[1.5rem] border shadow-2xl p-0 overflow-hidden">
-                        <DialogHeader className="p-6 bg-primary/5 border-b">
-                            <DialogTitle className="flex items-center gap-3 text-xl font-bold">
-                                <div className="p-2 bg-primary/10 rounded-xl">
-                                    <ListIcon className="h-5 w-5 text-primary" />
-                                </div>
-                                Consolidation Dispatches Summary
-                            </DialogTitle>
-                            <DialogDescription className="font-mono mt-1 text-sm bg-background/50 px-2 py-1 rounded inline-block w-fit">
-                                Ref: {selectedConsolidationDoc}
-                            </DialogDescription>
-                        </DialogHeader>
-
-                        <div className="max-h-[60vh] overflow-y-auto min-h-[300px] flex flex-col">
-                            {isTracing ? (
-                                <div className="flex-1 flex flex-col items-center justify-center p-12 space-y-4">
-                                    <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                                    <p className="text-sm font-medium text-muted-foreground">Tracing sales orders...</p>
-                                </div>
-                            ) : traceData.length === 0 ? (
-                                <div className="flex-1 flex flex-col items-center justify-center p-20 text-center space-y-2">
-                                    <p className="text-lg font-bold opacity-40">No records found</p>
-                                    <p className="text-sm text-muted-foreground">No related invoice details were found for this product in the consolidation flow.</p>
-                                </div>
-                            ) : (
-                                <Table>
-                                    <TableHeader className="bg-muted/20 sticky top-0 backdrop-blur z-10">
-                                        <TableRow>
-                                            <TableHead className="text-[10px] font-bold uppercase pl-8 py-4">Sales Invoice</TableHead>
-                                            <TableHead className="text-[10px] font-bold uppercase py-4">Customer Name</TableHead>
-                                            <TableHead className="text-right text-[10px] font-bold uppercase py-4">Quantity</TableHead>
-                                            <TableHead className="text-center text-[10px] font-bold uppercase py-4">UOM</TableHead>
-                                            <TableHead className="text-center text-[10px] font-bold uppercase py-4">Status</TableHead>
-                                            <TableHead className="text-[10px] font-bold uppercase pr-8 py-4">Remarks</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {traceData.map((row, i) => (
-                                            <TableRow key={i} className="hover:bg-muted/50 border-muted/50 transition-colors">
-                                                <TableCell className="text-[11px] font-bold py-4 pl-8 font-mono max-w-[150px] truncate" title={row.sales_invoice}>
-                                                    {row.sales_invoice}
-                                                </TableCell>
-                                                <TableCell className="text-xs font-medium py-4 text-muted-foreground">
-                                                    {row.customer_name}
-                                                </TableCell>
-                                                <TableCell className="text-right text-sm font-black py-4 tabular-nums">
-                                                    {(row.quantity ?? 0).toLocaleString()}
-                                                </TableCell>
-                                                <TableCell className="text-center py-4">
-                                                    <Badge variant="secondary" className="text-[9px] font-bold uppercase tracking-tighter px-1.5 py-0">
-                                                        {row.uom}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="text-center py-4">
-                                                    <Badge className={cn(
-                                                        "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm",
-                                                        row.order_status === "Remitted" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
-                                                            row.order_status === "Dispatched" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
-                                                                row.order_status === "Posted" ? "bg-orange-500/10 text-orange-600 border-orange-500/20" :
-                                                                    row.order_status === "Receipt" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
-                                                                        "bg-muted text-muted-foreground font-medium"
+                                                {/* Type & Module */}
+                                                <TableCell className="text-center py-3.5">
+                                                    <Badge variant="outline" className={cn(
+                                                        "text-[9px] font-black uppercase tracking-wider py-0.5 px-2 rounded-full border shadow-2xs",
+                                                        row.transactionType === "STOCK_TRANSFER" ? "border-blue-500/20 bg-blue-500/10 text-blue-600" :
+                                                        row.transactionType === "STOCK_ADJUSTMENT" ? "border-purple-500/20 bg-purple-500/10 text-purple-600" :
+                                                        row.transactionType === "PHYSICAL_INVENTORY" ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-600" :
+                                                        "border-slate-500/20 bg-slate-500/10 text-slate-600"
                                                     )}>
-                                                        {row.order_status}
+                                                        {row.transactionType?.replace(/_/g, " ") || "MOVEMENT"}
+                                                    </Badge>
+                                                    <span className="text-[9px] font-mono text-muted-foreground/60 block mt-0.5">
+                                                        {row.sourceModule}
+                                                    </span>
+                                                </TableCell>
+
+                                                {/* Product */}
+                                                <TableCell className="py-3.5">
+                                                    <div className="flex flex-col max-w-[260px]">
+                                                        <span className="text-xs font-bold text-foreground truncate" title={row.productName}>
+                                                            {row.productName || "Unknown Product"}
+                                                        </span>
+                                                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                                                            {row.productCode && <span className="font-mono">{row.productCode}</span>}
+                                                            {row.productTypeName && (
+                                                                <span className="opacity-70">• {row.productTypeName}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </TableCell>
+
+                                                {/* Batch & Condition */}
+                                                <TableCell className="py-3.5">
+                                                    <div className="flex flex-col items-start gap-1">
+                                                        <span className="font-mono text-xs font-black text-foreground">
+                                                            {row.batchNo || "N/A"}
+                                                        </span>
+                                                        <Badge className={cn(
+                                                            "text-[9px] font-bold uppercase tracking-tight py-0 px-1.5 rounded-md border",
+                                                            isGood ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
+                                                            isExpired ? "bg-destructive/10 text-destructive border-destructive/20" :
+                                                            isDamaged ? "bg-amber-500/10 text-amber-600 border-amber-500/20" :
+                                                            "bg-yellow-500/10 text-yellow-700 border-yellow-500/20"
+                                                        )}>
+                                                            {row.inventoryCondition || "GOOD"}
+                                                        </Badge>
+                                                    </div>
+                                                </TableCell>
+
+                                                {/* Direction */}
+                                                <TableCell className="text-center py-3.5">
+                                                    <Badge className={cn(
+                                                        "text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border shadow-2xs gap-0.5",
+                                                        isOut ? "bg-rose-500/10 text-rose-600 border-rose-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                                                    )}>
+                                                        {isOut ? <ArrowDownRight className="h-2.5 w-2.5" /> : <ArrowUpRight className="h-2.5 w-2.5" />}
+                                                        {isOut ? "OUT" : "IN"}
                                                     </Badge>
                                                 </TableCell>
-                                                <TableCell className="text-xs italic text-muted-foreground/60 py-4 pr-8 max-w-[120px] truncate" title={row.remarks || ""}>
-                                                    {row.remarks || "—"}
+
+                                                {/* Qty In */}
+                                                <TableCell className="text-right py-3.5 font-bold tabular-nums text-xs">
+                                                    {Number(row.quantityIn) > 0 ? (
+                                                        <span className="text-emerald-600 font-black">
+                                                            +{Number(row.quantityIn).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-muted-foreground/40">—</span>
+                                                    )}
+                                                </TableCell>
+
+                                                {/* Qty Out */}
+                                                <TableCell className="text-right py-3.5 font-bold tabular-nums text-xs">
+                                                    {Number(row.quantityOut) > 0 ? (
+                                                        <span className="text-rose-600 font-black">
+                                                            -{Number(row.quantityOut).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-muted-foreground/40">—</span>
+                                                    )}
+                                                </TableCell>
+
+                                                {/* Running Balance */}
+                                                <TableCell className="text-right py-3.5 font-black tabular-nums text-xs text-foreground bg-muted/20 px-4 border-l border-muted/30">
+                                                    {row.runningBalance !== undefined ? (
+                                                        <span>{Number(row.runningBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                    ) : (
+                                                        <span>—</span>
+                                                    )}
+                                                </TableCell>
+
+                                                {/* Unit Cost */}
+                                                <TableCell className="text-right py-3.5 font-medium tabular-nums text-xs text-muted-foreground">
+                                                    ₱{Number(row.unitCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </TableCell>
+
+                                                {/* Difference Cost */}
+                                                <TableCell className="text-right py-3.5 font-bold tabular-nums text-xs text-foreground">
+                                                    ₱{Number(row.differenceCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </TableCell>
+
+                                                {/* Action */}
+                                                <TableCell className="text-center py-3.5 pr-4">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelectedMovement(row);
+                                                            setIsDetailOpen(true);
+                                                        }}
+                                                    >
+                                                        <Eye className="h-3.5 w-3.5" />
+                                                    </Button>
                                                 </TableCell>
                                             </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            )}
-                        </div>
+                                        );
+                                    })
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </Card>
+            )}
 
-                        <div className="p-4 bg-muted/30 border-t flex justify-end">
-                            <Badge variant="outline" className="px-3 py-1 font-bold text-[10px] uppercase tracking-wider">
-                                Total Records: {traceData.length}
-                            </Badge>
-                        </div>
-                    </DialogContent>
-                </Dialog>
-            </Card>
+            {/* Grouped by Document View */}
+            {viewMode === "by-doc" && (
+                <div className="space-y-3">
+                    {groupedByDoc.map((group, gIdx) => (
+                        <Card key={group.refNo + gIdx} className="rounded-2xl border shadow-sm bg-card p-4 space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="outline" className="font-mono text-xs font-black px-2.5 py-1">
+                                        {group.refNo}
+                                    </Badge>
+                                    <Badge className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border-primary/20">
+                                        {group.items.length} Movement{group.items.length > 1 ? "s" : ""}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                        {group.lastDate ? format(new Date(group.lastDate), "MMM dd, yyyy HH:mm") : ""}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-4 text-xs font-bold">
+                                    {group.totalIn > 0 && <span className="text-emerald-600">In: +{group.totalIn.toLocaleString()}</span>}
+                                    {group.totalOut > 0 && <span className="text-rose-600">Out: -{group.totalOut.toLocaleString()}</span>}
+                                </div>
+                            </div>
+
+                            <div className="divide-y divide-muted/40">
+                                {group.items.map((m, mIdx) => (
+                                    <div
+                                        key={mIdx}
+                                        className="py-2.5 flex items-center justify-between text-xs hover:bg-muted/20 px-2 rounded-lg cursor-pointer"
+                                        onClick={() => {
+                                            setSelectedMovement(m);
+                                            setIsDetailOpen(true);
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <span className="font-bold text-foreground">{m.productName}</span>
+                                            <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
+                                                Batch: {m.batchNo || "N/A"}
+                                            </Badge>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <span className={cn("font-bold tabular-nums", m.movementDirection === "OUT" ? "text-rose-600" : "text-emerald-600")}>
+                                                {m.movementDirection === "OUT" ? `-${m.quantityOut}` : `+${m.quantityIn}`}
+                                            </span>
+                                            <span className="text-muted-foreground font-mono">₱{m.unitCost}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </Card>
+                    ))}
+                </div>
+            )}
+
+            {/* Grouped by Batch View */}
+            {viewMode === "by-batch" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {groupedByBatch.map((group, bIdx) => (
+                        <Card key={group.key + bIdx} className="rounded-2xl border shadow-sm bg-card p-4 space-y-2.5">
+                            <div className="flex items-start justify-between">
+                                <div>
+                                    <h4 className="text-xs font-black text-foreground">{group.main.productName}</h4>
+                                    <span className="font-mono text-[11px] font-bold text-primary block mt-0.5">
+                                        Batch #{group.main.batchNo || "NO-BATCH"}
+                                    </span>
+                                </div>
+                                <Badge className={cn(
+                                    "text-[9px] font-bold uppercase",
+                                    group.main.inventoryCondition === "GOOD" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-destructive/10 text-destructive"
+                                )}>
+                                    {group.main.inventoryCondition || "GOOD"}
+                                </Badge>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-muted/30 text-xs">
+                                <div>
+                                    <span className="text-[10px] text-muted-foreground block">Inflow</span>
+                                    <span className="font-bold text-emerald-600">+{group.totalIn.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                    <span className="text-[10px] text-muted-foreground block">Outflow</span>
+                                    <span className="font-bold text-rose-600">-{group.totalOut.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                    <span className="text-[10px] text-muted-foreground block">Net Bal</span>
+                                    <span className="font-black text-foreground">{group.balance.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        </Card>
+                    ))}
+                </div>
+            )}
+
+            {/* Movement Detail Modal */}
+            <MovementDetailModal
+                movement={selectedMovement}
+                isOpen={isDetailOpen}
+                onClose={() => {
+                    setIsDetailOpen(false);
+                    setSelectedMovement(null);
+                }}
+                branchName={branchName || undefined}
+            />
+
+            {/* Report Preview Modal */}
             <TracingReportPreviewModal
                 isOpen={isPreviewOpen}
                 onClose={() => setIsPreviewOpen(false)}
                 html={previewHtml || ""}
-                title="Product Movement Ledger"
-                subtitle={productName || "Selected Product Family"}
+                title="Product Movement Ledger Report"
+                subtitle={productTypeName || branchName || "Manufacturing Inventory"}
             />
         </div>
     );
-});
-
-ProductTracingTable.displayName = "ProductTracingTable";
+}

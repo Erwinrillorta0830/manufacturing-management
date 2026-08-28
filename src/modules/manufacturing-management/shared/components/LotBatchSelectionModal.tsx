@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -35,9 +35,12 @@ import {
   QAStatus,
   LotAllocationGroup,
   BatchRowAllocation,
+  LotStoredProductSummary,
 } from '../types/lot-tracking.types';
-import { fetchLotsByBranch, fetchInventoryLots, fetchBatchOnhand } from '../services/lot-tracking.service';
+import { fetchLotsByBranch, fetchInventoryLots, fetchBatchOnhand, resolveProductClassification } from '../services/lot-tracking.service';
 import { SearchableSelect } from './SearchableSelect';
+
+export type ProductClassification = 'RM' | 'PKG' | 'FG' | 'OTHER';
 
 export interface LotBatchSelectionResult {
   lot_id: number;
@@ -52,6 +55,21 @@ export interface LotBatchSelectionResult {
   total_quantity?: number;
 }
 
+export interface FormSiblingAllocation {
+  product_id?: number | null;
+  product_name?: string | null;
+  product_code?: string | null;
+  product_type?: any;
+  product_category?: any;
+  category_name?: string | null;
+  quantity?: number | null;
+  lot_id?: number | null;
+  lot_name?: string | null;
+  lot_allocations?: LotAllocationGroup[] | any[];
+  batch_no?: string | null;
+  batches?: Array<{ quantity?: number | null; batch_no?: string | null; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: QAStatus | null }>;
+}
+
 interface LotBatchSelectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,11 +79,15 @@ interface LotBatchSelectionModalProps {
   productCode?: string;
   productUomId?: number | null;
   productUomName?: string;
+  productType?: any;
+  productCategory?: any;
+  categoryName?: string;
   requestedQuantity?: number;
   adjustmentType?: 'IN' | 'OUT';
   mode?: 'SELECT_EXISTING' | 'CREATE_OR_ASSIGN';
   initialValues?: Partial<LotBatchSelectionResult>;
   initialLotAllocations?: LotAllocationGroup[];
+  existingFormAllocations?: FormSiblingAllocation[];
   onConfirm: (result: LotBatchSelectionResult) => void;
 }
 
@@ -78,10 +100,14 @@ export function LotBatchSelectionModal({
   productCode,
   productUomId,
   productUomName = 'units',
+  productType,
+  productCategory,
+  categoryName,
   requestedQuantity = 1,
   adjustmentType = 'IN',
   initialValues,
   initialLotAllocations,
+  existingFormAllocations,
   onConfirm,
 }: LotBatchSelectionModalProps) {
   const [lots, setLots] = useState<MMLot[]>([]);
@@ -90,12 +116,94 @@ export function LotBatchSelectionModal({
   // Maps for tracking lot capacities and available onhand quantities across entire branch
   const [lotBatchCountMap, setLotBatchCountMap] = useState<Map<number, number>>(new Map());
   const [lotStockQtyMap, setLotStockQtyMap] = useState<Map<number, number>>(new Map());
+  const [lotStoredSummaryMap, setLotStoredSummaryMap] = useState<Map<number, LotStoredProductSummary>>(new Map());
 
   // Multi-Lot Allocation Groups State
   const [lotGroups, setLotGroups] = useState<LotAllocationGroup[]>([]);
 
   // Toolbar Dates (stored locally until user explicitly clicks 'Apply to all')
   const [toolbarDates, setToolbarDates] = useState<Record<number, { mfg: string; exp: string }>>({});
+
+  // Current item classification
+  const currentItemClassification = useMemo(() => {
+    return resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
+  }, [productType, productCategory, categoryName, productCode, productName]);
+
+  // Check lot compatibility based on stored products and product types
+  const checkLotCompatibility = useCallback(
+    (lotId: number, currentClassification = currentItemClassification) => {
+      const summary = lotStoredSummaryMap.get(Number(lotId));
+      if (!summary || summary.is_empty) {
+        return {
+          isCompatible: true,
+          isEmpty: true,
+          reason: 'Empty lot (available for all product types)',
+          storedClassification: undefined,
+          storedLabel: 'Empty Lot',
+          storedSummary: summary,
+        };
+      }
+
+      // If current item classification is OTHER (general/fallback), allow allocation
+      if (currentClassification.code === 'OTHER') {
+        return {
+          isCompatible: true,
+          isEmpty: false,
+          reason: `Compatible with ${summary.primary_classification_label}`,
+          storedClassification: summary.primary_classification,
+          storedLabel: summary.primary_classification_label || 'General',
+          storedSummary: summary,
+        };
+      }
+
+      const hasSameType =
+        summary.stored_products.some((p) => p.classification === currentClassification.code) ||
+        summary.primary_classification === currentClassification.code;
+
+      const hasMismatchedType = summary.stored_products.some(
+        (p) => p.classification !== currentClassification.code && p.classification !== 'OTHER'
+      );
+
+      if (hasSameType && !hasMismatchedType) {
+        return {
+          isCompatible: true,
+          isEmpty: false,
+          reason: `Matching Product Type (${summary.primary_classification_label})`,
+          storedClassification: summary.primary_classification,
+          storedLabel: summary.primary_classification_label || 'Matched',
+          storedSummary: summary,
+        };
+      }
+
+      if (hasMismatchedType) {
+        const conflictingNames = summary.stored_products
+          .filter((p) => p.classification !== currentClassification.code)
+          .map((p) => p.product_name || p.product_code || `Product #${p.product_id}`)
+          .slice(0, 3)
+          .join(', ');
+
+        return {
+          isCompatible: false,
+          isEmpty: false,
+          reason: `Stores ${summary.primary_classification_label || 'different product type'}${conflictingNames ? ` (${conflictingNames})` : ''}`,
+          storedClassification: summary.primary_classification,
+          storedLabel: summary.primary_classification_label || 'Incompatible',
+          conflictingNames,
+          storedSummary: summary,
+        };
+      }
+
+      return {
+        isCompatible: true,
+        isEmpty: false,
+        reason: `Compatible with ${summary.primary_classification_label}`,
+        storedClassification: summary.primary_classification,
+        storedLabel: summary.primary_classification_label || 'General',
+        storedSummary: summary,
+      };
+    },
+    [lotStoredSummaryMap, currentItemClassification]
+  );
 
   // Initialize clean state and load lots whenever modal opens or product changes
   useEffect(() => {
@@ -143,8 +251,225 @@ export function LotBatchSelectionModal({
           }
         });
 
+        // Also incorporate allocations already configured in the current form table for sibling products
+        if (existingFormAllocations && existingFormAllocations.length > 0) {
+          existingFormAllocations.forEach((sibling) => {
+            if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
+              sibling.lot_allocations.forEach((grp: any) => {
+                const sLotId = Number(grp.lot_id);
+                if (sLotId > 0) {
+                  const grpQty = (grp.batches || []).reduce((sum: number, b: any) => sum + Number(b?.quantity || 0), 0) || Number(grp.allocated_quantity || 0);
+                  const grpBchCount = (grp.batches || []).length || 1;
+                  if (grpQty > 0 || grpBchCount > 0) {
+                    sQtyMap.set(sLotId, (sQtyMap.get(sLotId) || 0) + grpQty);
+                    bCountMap.set(sLotId, (bCountMap.get(sLotId) || 0) + grpBchCount);
+                  }
+                }
+              });
+            } else if (sibling.lot_id && Number(sibling.lot_id) > 0) {
+              const sLotId = Number(sibling.lot_id);
+              const itemQty = Number(sibling.quantity || 0);
+              const itemBchCount = (sibling.batches || []).length || 1;
+              if (itemQty > 0 || itemBchCount > 0) {
+                sQtyMap.set(sLotId, (sQtyMap.get(sLotId) || 0) + itemQty);
+                bCountMap.set(sLotId, (bCountMap.get(sLotId) || 0) + itemBchCount);
+              }
+            }
+          });
+        }
+
         setLotBatchCountMap(bCountMap);
         setLotStockQtyMap(sQtyMap);
+
+        // Build Lot Stored Products Map for Product Type Validation
+        const storedMap = new Map<number, LotStoredProductSummary>();
+        (lotsData || []).forEach((lot) => {
+          const lId = Number(lot.lot_id);
+          const onhandForLot = (branchOnhandData || []).filter(
+            (bo) => Number(bo.lotId) === lId && Number(bo.onhandQuantity || 0) > 0
+          );
+          const invLotsForLot = (branchInvLotsData || []).filter((ib) => Number(ib.lot_id) === lId);
+
+          const productQtyMap = new Map<
+            number,
+            {
+              qty: number;
+              warehouseQty: number;
+              draftQty: number;
+              name?: string | null;
+              code?: string | null;
+              type?: any;
+              cat?: string | null;
+            }
+          >();
+
+          onhandForLot.forEach((bo) => {
+            const pId = Number(bo.productId);
+            if (pId > 0) {
+              const existing = productQtyMap.get(pId) || {
+                qty: 0,
+                warehouseQty: 0,
+                draftQty: 0,
+                name: bo.productName,
+                code: bo.productCode,
+              };
+              const addQty = Number(bo.onhandQuantity || 0);
+              existing.qty += addQty;
+              existing.warehouseQty += addQty;
+              if (!existing.name && bo.productName) existing.name = bo.productName;
+              if (!existing.code && bo.productCode) existing.code = bo.productCode;
+              productQtyMap.set(pId, existing);
+            }
+          });
+
+          invLotsForLot.forEach((ib) => {
+            const pId = Number(ib.product_id);
+            if (pId > 0) {
+              const existing = productQtyMap.get(pId);
+              if (existing) {
+                if (!existing.type && ib.product_type) existing.type = ib.product_type;
+                if (!existing.cat && ib.category_name) existing.cat = ib.category_name;
+                if (!existing.name && ib.product_name) existing.name = ib.product_name;
+                if (!existing.code && ib.product_code) existing.code = ib.product_code;
+              } else if (onhandForLot.length === 0 && Number(ib.available_quantity || 0) > 0) {
+                const addQty = Number(ib.available_quantity || 0);
+                productQtyMap.set(pId, {
+                  qty: addQty,
+                  warehouseQty: addQty,
+                  draftQty: 0,
+                  name: ib.product_name,
+                  code: ib.product_code,
+                  type: ib.product_type,
+                  cat: ib.category_name,
+                });
+              }
+            }
+          });
+
+          // Include sibling items allocated to this lot in the current form session
+          if (existingFormAllocations && existingFormAllocations.length > 0) {
+            existingFormAllocations.forEach((sibling) => {
+              const pId = Number(sibling.product_id || 0);
+              if (pId <= 0) return;
+
+              let allocatedToThisLot = 0;
+              if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
+                sibling.lot_allocations.forEach((grp: any) => {
+                  if (Number(grp.lot_id) === lId) {
+                    allocatedToThisLot +=
+                      (grp.batches || []).reduce((sum: number, b: any) => sum + Number(b?.quantity || 0), 0) ||
+                      Number(grp.allocated_quantity || 0);
+                  }
+                });
+              } else if (Number(sibling.lot_id) === lId) {
+                allocatedToThisLot += Number(sibling.quantity || 0);
+              }
+
+              if (allocatedToThisLot > 0) {
+                const sCat =
+                  sibling.category_name ||
+                  (typeof sibling.product_category === 'object'
+                    ? (sibling.product_category as { category_name?: string })?.category_name
+                    : String(sibling.product_category || ''));
+
+                const existing = productQtyMap.get(pId) || {
+                  qty: 0,
+                  warehouseQty: 0,
+                  draftQty: 0,
+                  name: sibling.product_name,
+                  code: sibling.product_code,
+                  type: sibling.product_type,
+                  cat: sCat,
+                };
+                existing.qty += allocatedToThisLot;
+                existing.draftQty += allocatedToThisLot;
+                if (!existing.name && sibling.product_name) existing.name = sibling.product_name;
+                if (!existing.code && sibling.product_code) existing.code = sibling.product_code;
+                if (!existing.type && sibling.product_type) existing.type = sibling.product_type;
+                if (!existing.cat && sCat) existing.cat = sCat;
+                productQtyMap.set(pId, existing);
+              }
+            });
+          }
+
+          const storedProductSummaryMap = new Map<
+            string,
+            {
+              product_id: number;
+              product_name?: string;
+              product_code?: string;
+              product_type?: any;
+              category_name?: string;
+              classification: ProductClassification;
+              classification_label: string;
+              onhand_quantity: number;
+              warehouse_quantity: number;
+              draft_quantity: number;
+              is_draft: boolean;
+            }
+          >();
+
+          let totalQty = 0;
+          let totalWarehouseQty = 0;
+          let totalDraftQty = 0;
+          let primaryLabel = '';
+          let primaryClass: ProductClassification | undefined = undefined;
+
+          productQtyMap.forEach((info, pId) => {
+            if (info.qty > 0) {
+              totalQty += info.qty;
+              totalWarehouseQty += info.warehouseQty;
+              totalDraftQty += info.draftQty;
+              const c = resolveProductClassification(info.type, info.cat || undefined, info.code || undefined, info.name || undefined);
+              if (!primaryLabel) {
+                primaryLabel = c.label;
+                primaryClass = c.code;
+              }
+              const key = info.code || info.name || String(pId);
+              const existing = storedProductSummaryMap.get(key);
+              if (existing) {
+                existing.onhand_quantity += info.qty;
+                existing.warehouse_quantity += info.warehouseQty;
+                existing.draft_quantity += info.draftQty;
+                existing.is_draft = existing.warehouse_quantity === 0 && existing.draft_quantity > 0;
+              } else {
+                storedProductSummaryMap.set(key, {
+                  product_id: pId,
+                  product_name: info.name || undefined,
+                  product_code: info.code || undefined,
+                  product_type: info.type,
+                  category_name: info.cat || undefined,
+                  classification: c.code,
+                  classification_label: c.label,
+                  onhand_quantity: info.qty,
+                  warehouse_quantity: info.warehouseQty,
+                  draft_quantity: info.draftQty,
+                  is_draft: info.warehouseQty === 0 && info.draftQty > 0,
+                });
+              }
+            }
+          });
+
+          const storedItems = Array.from(storedProductSummaryMap.values());
+          const isEmpty = totalQty <= 0 && storedItems.length === 0;
+          const isDraftOnly = totalWarehouseQty === 0 && totalDraftQty > 0;
+
+          storedMap.set(lId, {
+            lot_id: lId,
+            lot_name: lot.lot_name,
+            total_stored_quantity: totalQty,
+            warehouse_stock_quantity: totalWarehouseQty,
+            draft_allocated_quantity: totalDraftQty,
+            is_draft_allocation: isDraftOnly,
+            active_batch_count: bCountMap.get(lId) || 0,
+            stored_products: storedItems,
+            primary_classification: primaryClass,
+            primary_classification_label: primaryLabel || (isEmpty ? 'Empty Lot' : 'General Stock'),
+            is_empty: isEmpty,
+          });
+        });
+
+        setLotStoredSummaryMap(storedMap);
 
         // 1. If item already has structured lot allocations, restore them cleanly
         if (initialLotAllocations && initialLotAllocations.length > 0) {
@@ -200,9 +525,18 @@ export function LotBatchSelectionModal({
           return;
         }
 
-        // 3. Fresh clean initialization for new product
-        // Find first compatible active lot
+        // 3. Fresh clean initialization for new product:
+        // Find first active lot that matches UOM AND is product type compatible (empty or matching type)
+        const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
+
         const compatibleLot = (lotsData || []).find((l) => {
+          if (l.status && l.status !== 'ACTIVE') return false;
+          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          const stored = storedMap.get(Number(l.lot_id));
+          if (!stored || stored.is_empty) return true;
+          if (targetClass.code === 'OTHER') return true;
+          return stored.primary_classification === targetClass.code;
+        }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
           return true;
@@ -246,7 +580,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, initialLotAllocations, initialValues]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -262,7 +596,24 @@ export function LotBatchSelectionModal({
   // Add a new storage lot allocation group
   const handleAddLotGroup = () => {
     const usedLotIds = new Set(lotGroups.map((g) => Number(g.lot_id)));
-    const nextLot = lots.find((l) => !usedLotIds.has(Number(l.lot_id))) || lots[0];
+
+    // Prioritize selecting an active, UOM-matching, and product-type compatible lot
+    const nextLot =
+      lots.find((l) => {
+        if (usedLotIds.has(Number(l.lot_id))) return false;
+        if (l.status && l.status !== 'ACTIVE') return false;
+        if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        const comp = checkLotCompatibility(Number(l.lot_id));
+        return comp.isCompatible;
+      }) ||
+      lots.find((l) => {
+        if (usedLotIds.has(Number(l.lot_id))) return false;
+        if (l.status && l.status !== 'ACTIVE') return false;
+        if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        return true;
+      }) ||
+      lots.find((l) => !usedLotIds.has(Number(l.lot_id))) ||
+      lots[0];
 
     if (!nextLot) return;
 
@@ -402,7 +753,7 @@ export function LotBatchSelectionModal({
     );
   };
 
-  // Comprehensive Validation for Current Quantity, Allocating Quantity, Capacities, and UOM
+  // Comprehensive Validation for Current Quantity, Allocating Quantity, Capacities, UOM, and Product Type
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
 
@@ -425,15 +776,28 @@ export function LotBatchSelectionModal({
     }
 
     lotGroups.forEach((g, gIdx) => {
-      // 2. UOM Integrity Check
+      // 2. Product Type Compatibility Check
+      const comp = checkLotCompatibility(Number(g.lot_id));
+      if (!comp.isCompatible) {
+        const storedInfo = lotStoredSummaryMap.get(Number(g.lot_id));
+        const storedLabel = storedInfo?.primary_classification_label || 'different';
+        const sourceNote = storedInfo?.is_draft_allocation ? ' in current draft' : ' in warehouse';
+
+        errors.push(
+          `Lot #${gIdx + 1} (${g.lot_name}): Product Type Conflict (${storedLabel}${sourceNote}, allocating ${currentItemClassification.label}).`
+        );
+      }
+
+      // 3. UOM Integrity Check
       if (g.unit_id && productUomId && Number(g.unit_id) !== Number(productUomId)) {
         errors.push(
-          `Lot #${gIdx + 1} (${g.lot_name}): UOM Mismatch! Lot requires UOM #${g.unit_id}${g.unit_name ? ` (${g.unit_name})` : ''
+          `Lot #${gIdx + 1} (${g.lot_name}): UOM Mismatch! Lot requires UOM #${g.unit_id}${
+            g.unit_name ? ` (${g.unit_name})` : ''
           }, but product is ${productUomName}.`
         );
       }
 
-      // 3. Current Quantity vs Allocating Quantity vs Max Capacity Check
+      // 4. Current Quantity vs Allocating Quantity vs Max Capacity Check
       const currentStockQty = g.current_stock_quantity || 0;
       const allocatingQty = (g.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
       const projectedTotalStock = currentStockQty + allocatingQty;
@@ -453,14 +817,14 @@ export function LotBatchSelectionModal({
         }
       }
 
-      // 4. Stock OUT Validation: Cannot deduct more than available in lot
+      // 5. Stock OUT Validation: Cannot deduct more than available in lot
       if (adjustmentType === 'OUT' && allocatingQty > currentStockQty) {
         errors.push(
           `Lot #${gIdx + 1} (${g.lot_name}): Cannot deduct ${allocatingQty.toLocaleString()} ${productUomName} for Stock OUT. Only ${currentStockQty.toLocaleString()} ${productUomName} currently available in this lot.`
         );
       }
 
-      // 5. Batch Row Level Validations
+      // 6. Batch Row Level Validations
       if (!g.batches || g.batches.length === 0) {
         errors.push(`Lot #${gIdx + 1} (${g.lot_name}): Must contain at least 1 batch split.`);
       } else {
@@ -483,7 +847,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, requestedQuantity, productUomId, productUomName, adjustmentType]);
+  }, [lotGroups, totalAllocated, requestedQuantity, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, productName, currentItemClassification]);
 
   const isValid = validationErrors.length === 0;
 
@@ -520,11 +884,14 @@ export function LotBatchSelectionModal({
               <Boxes className="w-5 h-5 text-primary" />
               Multi-Lot & Multi-Batch Allocation
             </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground flex items-center gap-2">
+            <DialogDescription className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
               <span>PRODUCT: <strong className="text-foreground">{productName || 'Selected Item'}</strong></span>
               {productCode && <Badge variant="outline" className="text-[10px] font-mono">{productCode}</Badge>}
               <Badge variant="secondary" className="text-[10px] uppercase font-bold">
                 UOM: {productUomName}
+              </Badge>
+              <Badge variant="outline" className="text-[10px] uppercase font-bold text-primary border-primary/40">
+                Type: {currentItemClassification.label}
               </Badge>
               <Badge variant="outline" className="text-[10px] uppercase font-bold text-primary border-primary/40">
                 Mode: Stock {adjustmentType}
@@ -606,6 +973,11 @@ export function LotBatchSelectionModal({
                 const isUomMatch = !lotUomId || (productUomId && Number(lotUomId) === Number(productUomId));
                 const isUomNull = lotUomId === null || lotUomId === undefined;
 
+                // Product type compatibility analysis
+                const groupStoredSummary = lotStoredSummaryMap.get(Number(group.lot_id));
+                const groupComp = checkLotCompatibility(Number(group.lot_id));
+                const isTypeMatch = groupComp.isCompatible;
+
                 // Live Quantity-Based Capacity calculation metrics
                 const activeBatchCount = group.active_batch_count || 0;
                 const currentStockQty = group.current_stock_quantity || 0;
@@ -626,13 +998,15 @@ export function LotBatchSelectionModal({
                 return (
                   <div
                     key={`lot-group-${gIdx}`}
-                    className={`bg-card rounded-2xl border transition-all shadow-sm ${!isUomMatch
-                      ? 'border-rose-400 dark:border-rose-800'
-                      : isCapacityExceeded
-                        ? 'border-red-500 dark:border-red-700 ring-1 ring-red-500/20'
-                        : isNearCapacity
-                          ? 'border-amber-400 dark:border-amber-700'
-                          : 'border-border'
+                    className={`bg-card rounded-2xl border transition-all shadow-sm ${!isTypeMatch
+                      ? 'border-red-500 dark:border-red-800 ring-1 ring-red-500/20'
+                      : !isUomMatch
+                        ? 'border-rose-400 dark:border-rose-800'
+                        : isCapacityExceeded
+                          ? 'border-red-500 dark:border-red-700 ring-1 ring-red-500/20'
+                          : isNearCapacity
+                            ? 'border-amber-400 dark:border-amber-700'
+                            : 'border-border'
                       }`}
                   >
                     {/* LOT HEADER & CONTROLS */}
@@ -646,9 +1020,27 @@ export function LotBatchSelectionModal({
                             <SearchableSelect
                               options={lots.map((l) => {
                                 const isMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                                const lComp = checkLotCompatibility(Number(l.lot_id));
+                                const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
+
+                                let statusTag = '';
+                                if (!isMatch) {
+                                  statusTag = ' [UOM Mismatch]';
+                                } else if (!lComp.isCompatible) {
+                                  statusTag = lStored?.is_draft_allocation
+                                    ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
+                                    : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
+                                } else if (lStored && !lStored.is_empty) {
+                                  statusTag = lStored.is_draft_allocation
+                                    ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
+                                    : ` [Compatible: ${lStored.primary_classification_label}]`;
+                                } else {
+                                  statusTag = ' [Empty Lot]';
+                                }
+
                                 return {
                                   value: String(l.lot_id),
-                                  label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${!isMatch ? ' [UOM Mismatch]' : ''}`,
+                                  label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
                                 };
                               })}
                               value={String(group.lot_id)}
@@ -661,11 +1053,11 @@ export function LotBatchSelectionModal({
                           </div>
                         </div>
 
-                        {/* UOM BADGE & CAPACITY BADGE */}
+                        {/* UOM BADGE, PRODUCT TYPE BADGE & CAPACITY BADGE */}
                         <div className="flex items-center gap-2 flex-wrap">
                           {isUomNull ? (
                             <Badge variant="outline" className="text-[10px] bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700">
-                              UOM: Unrestricted / Generic
+                              UOM: Unrestricted
                             </Badge>
                           ) : isUomMatch ? (
                             <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
@@ -674,6 +1066,25 @@ export function LotBatchSelectionModal({
                           ) : (
                             <Badge variant="destructive" className="text-[10px]">
                               UOM Mismatch: Lot is {lotUomName || `#${lotUomId}`}, Item is {productUomName}
+                            </Badge>
+                          )}
+
+                          {/* PRODUCT TYPE BADGE */}
+                          {groupStoredSummary?.is_empty ? (
+                            <Badge variant="outline" className="text-[10px] bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700">
+                              Type: Unassigned (Empty Lot)
+                            </Badge>
+                          ) : isTypeMatch ? (
+                            <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
+                              Type: Matched ({groupStoredSummary?.primary_classification_label || currentItemClassification.label})
+                              {groupStoredSummary?.is_draft_allocation ? ' [Form Draft]' : ''}
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-[10px] flex items-center gap-1 font-bold">
+                              <AlertTriangle className="w-3 h-3" />
+                              {groupStoredSummary?.is_draft_allocation
+                                ? `Type Mismatch: Form Draft (${groupComp.storedLabel})`
+                                : `Type Mismatch: Stores ${groupComp.storedLabel}`}
                             </Badge>
                           )}
 
@@ -710,6 +1121,43 @@ export function LotBatchSelectionModal({
                       </div>
                     </div>
 
+                    {/* STORED PRODUCTS SUMMARY INFO BAR */}
+                    {groupStoredSummary && !groupStoredSummary.is_empty && (
+                      <div className="px-4 py-2 bg-muted/15 border-b border-border/50 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-muted-foreground flex items-center gap-1.5 font-medium flex-wrap">
+                          <span className="font-semibold text-foreground">
+                            {groupStoredSummary.is_draft_allocation
+                              ? 'Allocated in Current Form Draft:'
+                              : groupStoredSummary.draft_allocated_quantity && groupStoredSummary.draft_allocated_quantity > 0
+                                ? 'Warehouse Stock & Form Draft:'
+                                : 'Stored Content:'}
+                          </span>
+                          <span>
+                            {groupStoredSummary.stored_products
+                              .slice(0, 2)
+                              .map((p) => {
+                                const draftTag = p.is_draft ? ' (in current draft)' : '';
+                                return `${p.product_name || p.product_code || 'Product'} (${p.onhand_quantity.toLocaleString()} ${lotUomName || productUomName})${draftTag}`;
+                              })
+                              .join(', ')}
+                            {groupStoredSummary.stored_products.length > 2
+                              ? ` (+${groupStoredSummary.stored_products.length - 2} more)`
+                              : ''}
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {groupStoredSummary.is_draft_allocation && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                              Current Draft
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-background border border-border/60 text-muted-foreground">
+                            Storage Type: <strong className="text-foreground">{groupStoredSummary.primary_classification_label}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {/* LIVE 4-METRIC CAPACITY & ALLOCATION ANALYSIS PANEL */}
                     <div className="px-4 py-3 bg-muted/10 border-b border-border/60 space-y-2.5">
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
@@ -719,7 +1167,13 @@ export function LotBatchSelectionModal({
                           <div className="text-xs font-mono font-bold text-foreground mt-0.5">
                             {currentStockQty.toLocaleString()} <span className="text-[10px] font-normal text-muted-foreground">{productUomName}</span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground">{currentStockPct}% of max ({activeBatchCount} bch)</span>
+                          <span className="text-[10px] text-muted-foreground block truncate">
+                            {groupStoredSummary?.is_draft_allocation
+                              ? `(Draft Form: ${groupStoredSummary.draft_allocated_quantity?.toLocaleString()} ${productUomName})`
+                              : groupStoredSummary?.draft_allocated_quantity && groupStoredSummary.draft_allocated_quantity > 0
+                                ? `(${groupStoredSummary.warehouse_stock_quantity?.toLocaleString()} whse + ${groupStoredSummary.draft_allocated_quantity?.toLocaleString()} draft)`
+                                : `${currentStockPct}% of max (${activeBatchCount} bch)`}
+                          </span>
                         </div>
 
                         {/* 2. Allocating Quantity */}
@@ -786,24 +1240,41 @@ export function LotBatchSelectionModal({
                     </div>
 
                     {/* WARNING ALERTS */}
-                    {(!isUomMatch || isCapacityExceeded || isNearCapacity) && (
-                      <div className="p-3 mx-4 mt-3 rounded-lg text-xs space-y-1.5 bg-muted/30 border border-border">
+                    {(!isTypeMatch || !isUomMatch || isCapacityExceeded || isNearCapacity) && (
+                      <div className="p-2.5 mx-4 mt-3 rounded-lg text-xs space-y-1.5 bg-muted/30 border border-border">
+                        {!isTypeMatch && (
+                          <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold">
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                            <span>
+                              <strong>Product Type Conflict:</strong>{' '}
+                              {groupStoredSummary?.is_draft_allocation ? (
+                                <>
+                                  This lot is allocated for <strong>{groupStoredSummary?.primary_classification_label}</strong> items in the current form draft (not yet saved to warehouse). Cannot allocate <strong>{currentItemClassification.label}</strong> items into the same lot.
+                                </>
+                              ) : (
+                                <>
+                                  This lot contains <strong>{groupStoredSummary?.primary_classification_label}</strong> warehouse stock. Cannot allocate <strong>{currentItemClassification.label}</strong> items here.
+                                </>
+                              )}
+                            </span>
+                          </div>
+                        )}
                         {!isUomMatch && (
                           <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>This storage lot is reserved for UOM {lotUomName || `#${lotUomId}`}. Please select a compatible lot matching product UOM ({productUomName}).</span>
+                            <span>This lot is reserved for UOM {lotUomName || `#${lotUomId}`}. Please select a compatible lot ({productUomName}).</span>
                           </div>
                         )}
                         {isCapacityExceeded && (
                           <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-bold">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>Storage lot max capacity exceeded! Max limit is {maxCap.toLocaleString()} ${productUomName}. Current stock is {currentStockQty.toLocaleString()} ${productUomName}, and allocating {groupQtyTotal.toLocaleString()} ${productUomName} reaches {projectedTotalStock.toLocaleString()} ${productUomName} (+{overage.toLocaleString()} ${productUomName} excess). Please reduce quantity or split into another storage lot.</span>
+                            <span>Lot capacity exceeded ({projectedTotalStock.toLocaleString()} / {maxCap.toLocaleString()} {productUomName}).</span>
                           </div>
                         )}
                         {isNearCapacity && (
                           <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-medium">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>Notice: This storage lot will be at {projectedUtilizationPct}% capacity ({projectedTotalStock.toLocaleString()} / {maxCap.toLocaleString()} {productUomName}).</span>
+                            <span>Notice: Lot will reach {projectedUtilizationPct}% capacity ({projectedTotalStock.toLocaleString()} / {maxCap.toLocaleString()} {productUomName}).</span>
                           </div>
                         )}
                       </div>
@@ -1027,18 +1498,18 @@ export function LotBatchSelectionModal({
           )}
         </div>
 
-        {/* FOOTER & VALIDATION SUMMARY */}
+        {/* FOOTER & ACTIONS */}
         <DialogFooter className="p-4 border-t border-border bg-card shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-muted-foreground text-left flex-1">
             {validationErrors.length > 0 ? (
-              <span className="text-red-500 font-bold flex items-center gap-1.5">
+              <span className="text-red-500 font-semibold flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                {validationErrors[0]}
+                Please resolve the highlighted lot issues above.
               </span>
             ) : (
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1.5">
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                All storage lots, capacities ({requestedQuantity.toLocaleString()} {productUomName}), and batch splits are valid.
+                Allocations ready to apply.
               </span>
             )}
           </div>

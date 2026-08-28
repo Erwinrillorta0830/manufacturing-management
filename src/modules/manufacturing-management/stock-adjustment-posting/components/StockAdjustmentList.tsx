@@ -295,11 +295,26 @@ export function StockAdjustmentList({
                             <span className="text-[10px] uppercase font-bold text-muted-foreground/60 mb-0.5">Items</span>
                             <span className="font-bold text-primary">
                               {(() => {
-                                if (Array.isArray(item.items)) return item.items.length;
                                 const raw = item as Record<string, unknown>;
-                                if (Array.isArray(raw.stock_adjustment)) return raw.stock_adjustment.length;
-                                return 0;
-                              })()} products
+                                const sourceList = Array.isArray(item.items) && item.items.length > 0
+                                  ? item.items
+                                  : Array.isArray(raw.stock_adjustment)
+                                  ? raw.stock_adjustment
+                                  : [];
+                                if (sourceList.length === 0) return "0 products";
+                                const uniqueProductKeys = new Set(
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                  sourceList.map((sub: any) => {
+                                    const p = sub.product_id;
+                                    if (typeof p === "object" && p !== null) {
+                                      return p.product_id ?? p.id ?? p.product_code ?? p.description ?? p.product_name;
+                                    }
+                                    return p ?? sub.product_code ?? sub.product_name;
+                                  }).filter((k: unknown) => k !== undefined && k !== null && String(k).trim() !== "")
+                                );
+                                const count = uniqueProductKeys.size > 0 ? uniqueProductKeys.size : sourceList.length;
+                                return `${count} ${count === 1 ? "product" : "products"}`;
+                              })()}
                             </span>
                           </div>
                           <div className="flex flex-col">

@@ -1,4 +1,11 @@
-import { MMLot, MMInventoryLot, CreateInventoryLotPayload, QAStatus } from "../types/lot-tracking.types";
+import {
+  MMLot,
+  MMInventoryLot,
+  CreateInventoryLotPayload,
+  QAStatus,
+  ProductClassification,
+  LotStoredProductSummary,
+} from "../types/lot-tracking.types";
 
 const DIRECTUS_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -210,6 +217,8 @@ export async function fetchInventoryLots(params: {
         const prodObj = typeof r.product_id === "object" && r.product_id !== null ? (r.product_id as Record<string, unknown>) : null;
         const uomObj = prodObj && typeof prodObj.unit_of_measurement === "object" && prodObj.unit_of_measurement !== null ? (prodObj.unit_of_measurement as Record<string, unknown>) : null;
 
+        const catObj = prodObj && typeof prodObj.product_category === "object" && prodObj.product_category !== null ? (prodObj.product_category as Record<string, unknown>) : null;
+
         return {
           inventory_lot_id: Number(r.inventory_lot_id || r.id),
           lot_id: Number(lotObj ? lotObj.lot_id || lotObj.id : r.lot_id || 0),
@@ -229,6 +238,9 @@ export async function fetchInventoryLots(params: {
           lot_name: lotObj ? String(lotObj.lot_name || "") : undefined,
           product_name: prodObj ? String(prodObj.product_name || "") : undefined,
           product_code: prodObj ? String(prodObj.product_code || "") : undefined,
+          product_type: prodObj?.product_type || r.product_type,
+          product_category: prodObj?.product_category || r.product_category,
+          category_name: (catObj?.category_name as string) || (prodObj?.category_name as string) || (r.category_name as string) || undefined,
           unit_name: uomObj ? String(uomObj.unit_name || "") : undefined,
           available_quantity: Number(r.quantity || r.available_quantity || 0),
         };
@@ -247,7 +259,7 @@ export async function fetchInventoryLots(params: {
       ? `&filter=${encodeURIComponent(JSON.stringify(filters))}`
       : "";
 
-    const fields = "*,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.unit_of_measurement.unit_name";
+    const fields = "*,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.product_category.category_name,product_id.unit_of_measurement.unit_name";
     
     let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
       headers: getHeaders(params.token),
@@ -272,6 +284,7 @@ export async function fetchInventoryLots(params: {
       const lotObj = typeof r.lot_id === "object" && r.lot_id !== null ? (r.lot_id as Record<string, unknown>) : null;
       const prodObj = typeof r.product_id === "object" && r.product_id !== null ? (r.product_id as Record<string, unknown>) : null;
       const uomObj = prodObj && typeof prodObj.unit_of_measurement === "object" && prodObj.unit_of_measurement !== null ? (prodObj.unit_of_measurement as Record<string, unknown>) : null;
+      const catObj = prodObj && typeof prodObj.product_category === "object" && prodObj.product_category !== null ? (prodObj.product_category as Record<string, unknown>) : null;
 
       return {
         inventory_lot_id: Number(r.inventory_lot_id || r.id),
@@ -292,6 +305,9 @@ export async function fetchInventoryLots(params: {
         lot_name: lotObj ? String(lotObj.lot_name || "") : undefined,
         product_name: prodObj ? String(prodObj.product_name || "") : undefined,
         product_code: prodObj ? String(prodObj.product_code || "") : undefined,
+        product_type: prodObj?.product_type || r.product_type,
+        product_category: prodObj?.product_category || r.product_category,
+        category_name: (catObj?.category_name as string) || (prodObj?.category_name as string) || (r.category_name as string) || undefined,
         unit_name: uomObj ? String(uomObj.unit_name || "") : undefined,
         available_quantity: Number(r.quantity || r.available_quantity || 0),
       };
@@ -808,5 +824,373 @@ export async function fetchInventoryMovements(params: {
     return [];
   }
 }
+
+// ─── Product Classification & Stored Product Utilities ──────────────
+
+/**
+ * Resolves high-level product classification (RM, PKG, FG, OTHER)
+ */
+/**
+ * Resolves high-level product classification (RM, PKG, FG, OTHER)
+ */
+export function resolveProductClassification(
+  productType?: unknown,
+  categoryName?: unknown,
+  productCode?: string,
+  productName?: string
+): { code: ProductClassification; label: string } {
+  let typeId: number | null = null;
+  let typeName = "";
+
+  if (typeof productType === "number") {
+    typeId = productType;
+  } else if (typeof productType === "string" && !isNaN(Number(productType)) && Number(productType) > 0) {
+    typeId = Number(productType);
+  } else if (typeof productType === "object" && productType !== null) {
+    const ptObj = productType as Record<string, unknown>;
+    if (ptObj.id || ptObj.product_type_id || ptObj.type_id) {
+      typeId = Number(ptObj.id || ptObj.product_type_id || ptObj.type_id);
+    }
+    typeName = String(ptObj.name || ptObj.type_name || ptObj.description || "").toLowerCase();
+  } else if (typeof productType === "string") {
+    typeName = productType.toLowerCase();
+  }
+
+  // 1. Direct Product Type ID check
+  if (typeId === 389) return { code: "RM", label: "Raw Material" };
+  if (typeId === 390) return { code: "PKG", label: "Packaging" };
+  if (typeId === 388) return { code: "FG", label: "Finished Good" };
+
+  // 2. Direct Product Type Name check
+  if (typeName) {
+    if (typeName.includes("raw") || typeName.includes("ingredient") || typeName === "rm" || typeName.includes("bulk")) {
+      return { code: "RM", label: "Raw Material" };
+    }
+    if (typeName.includes("packag") || typeName.includes("container") || typeName.includes("bottle") || typeName === "pkg" || typeName.includes("wrapper") || typeName.includes("cap") || typeName.includes("box")) {
+      return { code: "PKG", label: "Packaging" };
+    }
+    if (typeName.includes("finish") || typeName.includes("commercial") || typeName === "fg" || typeName.includes("merchandise")) {
+      return { code: "FG", label: "Finished Good" };
+    }
+  }
+
+  // 3. Product Category Name check
+  const cat = typeof categoryName === "object" && categoryName !== null
+    ? String((categoryName as { category_name?: string; name?: string }).category_name || (categoryName as { name?: string }).name || "")
+    : String(categoryName || "");
+  const catLower = cat.toLowerCase();
+  if (catLower) {
+    if (catLower.includes("bihon") || catLower.includes("canton") || catLower.includes("noodle") || catLower.includes("pasta") || catLower.includes("finish") || catLower.includes("commercial") || catLower.includes("fg")) {
+      return { code: "FG", label: "Finished Good" };
+    }
+    if (catLower.includes("raw") || catLower.includes("ingredient") || catLower.includes("flour") || catLower.includes("bulk") || catLower.includes("chemical") || catLower.includes("spice") || catLower.includes("seasoning") || catLower.includes("rm")) {
+      return { code: "RM", label: "Raw Material" };
+    }
+    if (catLower.includes("packag") || catLower.includes("bottle") || catLower.includes("cap") || catLower.includes("container") || catLower.includes("wrapping") || catLower.includes("label") || catLower.includes("film") || catLower.includes("box") || catLower.includes("pouch") || catLower.includes("pm") || catLower.includes("pkg")) {
+      return { code: "PKG", label: "Packaging" };
+    }
+  }
+
+  // 4. Product Code Prefix / Pattern check
+  const codeLower = String(productCode || "").toLowerCase();
+  if (codeLower.startsWith("rm-") || codeLower.startsWith("rm_") || codeLower.startsWith("raw-") || codeLower.startsWith("raw_")) {
+    return { code: "RM", label: "Raw Material" };
+  }
+  if (codeLower.startsWith("pkg-") || codeLower.startsWith("pkg_") || codeLower.startsWith("pack-") || codeLower.startsWith("pm-") || codeLower.startsWith("pm_")) {
+    return { code: "PKG", label: "Packaging" };
+  }
+  if (codeLower.startsWith("fg-") || codeLower.startsWith("fg_") || codeLower.startsWith("fin-") || codeLower.startsWith("test-pgb") || codeLower.startsWith("pgb") || codeLower.includes("-pgb-")) {
+    return { code: "FG", label: "Finished Good" };
+  }
+
+  // 5. Product Name Keyword check
+  const nameLower = String(productName || "").toLowerCase();
+  if (nameLower.includes("bihon") || nameLower.includes("canton") || nameLower.includes("noodle") || nameLower.includes("pasta") || nameLower.includes("finished") || nameLower.includes("commercial") || nameLower.includes("premium golden") || nameLower.includes("golden bihon")) {
+    return { code: "FG", label: "Finished Good" };
+  }
+  if (nameLower.includes("raw") || nameLower.includes("ingredient") || nameLower.includes("flour") || nameLower.includes("sugar") || nameLower.includes("salt") || nameLower.includes("oil") || nameLower.includes("starch") || nameLower.includes("cassava") || nameLower.includes("cornstarch") || nameLower.includes("flavor") || nameLower.includes("chemical") || nameLower.includes("water")) {
+    return { code: "RM", label: "Raw Material" };
+  }
+  if (nameLower.includes("box") || nameLower.includes("pouch") || nameLower.includes("bottle") || nameLower.includes("carton") || nameLower.includes("film") || nameLower.includes("label") || nameLower.includes("cap") || nameLower.includes("wrapper") || nameLower.includes("packag") || nameLower.includes("container")) {
+    return { code: "PKG", label: "Packaging" };
+  }
+
+  return { code: "OTHER", label: "Unclassified" };
+}
+
+/**
+ * Builds a Map of LotStoredProductSummary for each lot combining warehouse balances and draft session allocations
+ */
+export function buildLotStoredProductSummaryMap(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  allBranchOnhand: any[],
+  lots: MMLot[],
+  activeDraftAllocations?: Array<{
+    lot_id: number;
+    product_id?: number;
+    product_name?: string;
+    product_code?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    product_type?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    category_name?: any;
+    allocated_quantity: number;
+  }>,
+  inventoryLots?: MMInventoryLot[]
+): Map<number, LotStoredProductSummary> {
+  const map = new Map<number, LotStoredProductSummary>();
+
+  // Pre-build metadata lookup map from Directus inventory lots (with product_type and category relations)
+  const productMetaMap = new Map<
+    number,
+    {
+      name?: string;
+      code?: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      type?: any;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      cat?: any;
+    }
+  >();
+
+  (inventoryLots || []).forEach((ib) => {
+    const pId = Number(ib.product_id);
+    if (pId > 0) {
+      const existing = productMetaMap.get(pId) || {};
+      if (!existing.type && ib.product_type) existing.type = ib.product_type;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!existing.cat && (ib.category_name || (ib as any).product_category)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        existing.cat = ib.category_name || (ib as any).product_category;
+      }
+      if (!existing.name && ib.product_name) existing.name = ib.product_name;
+      if (!existing.code && ib.product_code) existing.code = ib.product_code;
+      productMetaMap.set(pId, existing);
+    }
+  });
+
+  (lots || []).forEach((lot) => {
+    const lId = Number(lot.lot_id);
+    if (!lId) return;
+
+    const productQtyMap = new Map<
+      number,
+      {
+        name?: string;
+        code?: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        type?: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        cat?: any;
+        qty: number;
+        warehouseQty: number;
+        draftQty: number;
+      }
+    >();
+
+    // 1. Warehouse on-hand items from Spring Boot / Directus
+    (allBranchOnhand || []).forEach((b) => {
+      const bLotId = Number(b.lotId || b.lot_id);
+      if (bLotId === lId) {
+        const pId = Number(b.productId || b.product_id || 0);
+        const ohQty = Number(b.onhandQuantity || b.available_quantity || 0);
+        if (pId > 0 && ohQty > 0) {
+          const meta = productMetaMap.get(pId);
+          const entry = productQtyMap.get(pId) || {
+            name: b.productName || b.product_name || meta?.name,
+            code: b.productCode || b.product_code || meta?.code,
+            type: b.productType || b.product_type || meta?.type,
+            cat: b.categoryName || b.category_name || meta?.cat,
+            qty: 0,
+            warehouseQty: 0,
+            draftQty: 0,
+          };
+          entry.qty += ohQty;
+          entry.warehouseQty += ohQty;
+          if (!entry.name && (b.productName || b.product_name || meta?.name)) {
+            entry.name = b.productName || b.product_name || meta?.name;
+          }
+          if (!entry.code && (b.productCode || b.product_code || meta?.code)) {
+            entry.code = b.productCode || b.product_code || meta?.code;
+          }
+          if (!entry.type && (b.productType || b.product_type || meta?.type)) {
+            entry.type = b.productType || b.product_type || meta?.type;
+          }
+          if (!entry.cat && (b.categoryName || b.category_name || meta?.cat)) {
+            entry.cat = b.categoryName || b.category_name || meta?.cat;
+          }
+          productQtyMap.set(pId, entry);
+        }
+      }
+    });
+
+    // 1b. Directus inventory lots fallback / enrichment
+    (inventoryLots || []).forEach((ib) => {
+      const ibLotId = Number(ib.lot_id);
+      if (ibLotId === lId) {
+        const pId = Number(ib.product_id);
+        if (pId > 0) {
+          const existing = productQtyMap.get(pId);
+          if (existing) {
+            if (!existing.type && ib.product_type) existing.type = ib.product_type;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (!existing.cat && (ib.category_name || (ib as any).product_category)) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              existing.cat = ib.category_name || (ib as any).product_category;
+            }
+            if (!existing.name && ib.product_name) existing.name = ib.product_name;
+            if (!existing.code && ib.product_code) existing.code = ib.product_code;
+          } else if (productQtyMap.size === 0 && Number(ib.available_quantity || 0) > 0) {
+            const addQty = Number(ib.available_quantity || 0);
+            productQtyMap.set(pId, {
+              qty: addQty,
+              warehouseQty: addQty,
+              draftQty: 0,
+              name: ib.product_name,
+              code: ib.product_code,
+              type: ib.product_type,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              cat: ib.category_name || (ib as any).product_category,
+            });
+          }
+        }
+      }
+    });
+
+    // 2. Draft session allocations (uncommitted items in active form/cart)
+    (activeDraftAllocations || []).forEach((alloc) => {
+      if (Number(alloc.lot_id) === lId) {
+        const pId = Number(alloc.product_id || 0);
+        const aQty = Number(alloc.allocated_quantity || 0);
+        if (aQty > 0) {
+          const entry = productQtyMap.get(pId) || {
+            name: alloc.product_name,
+            code: alloc.product_code,
+            type: alloc.product_type,
+            cat: alloc.category_name,
+            qty: 0,
+            warehouseQty: 0,
+            draftQty: 0,
+          };
+          entry.qty += aQty;
+          entry.draftQty += aQty;
+          if (!entry.name && alloc.product_name) entry.name = alloc.product_name;
+          if (!entry.code && alloc.product_code) entry.code = alloc.product_code;
+          if (!entry.type && alloc.product_type) entry.type = alloc.product_type;
+          if (!entry.cat && alloc.category_name) entry.cat = alloc.category_name;
+          productQtyMap.set(pId, entry);
+        }
+      }
+    });
+
+    const storedProductSummaryMap = new Map<
+      string,
+      {
+        product_id: number;
+        product_name?: string;
+        product_code?: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        product_type?: any;
+        category_name?: string;
+        classification: ProductClassification;
+        classification_label: string;
+        onhand_quantity: number;
+        warehouse_quantity: number;
+        draft_quantity: number;
+        is_draft: boolean;
+      }
+    >();
+
+    let totalQty = 0;
+    let totalWarehouseQty = 0;
+    let totalDraftQty = 0;
+    let primaryLabel = "";
+    let primaryClass: ProductClassification | undefined = undefined;
+
+    productQtyMap.forEach((info, pId) => {
+      if (info.qty > 0) {
+        totalQty += info.qty;
+        totalWarehouseQty += info.warehouseQty;
+        totalDraftQty += info.draftQty;
+        const c = resolveProductClassification(info.type, info.cat || undefined, info.code || undefined, info.name || undefined);
+        if (!primaryLabel) {
+          primaryLabel = c.label;
+          primaryClass = c.code;
+        }
+        const key = info.code || info.name || String(pId);
+        const existing = storedProductSummaryMap.get(key);
+        if (existing) {
+          existing.onhand_quantity += info.qty;
+          existing.warehouse_quantity += info.warehouseQty;
+          existing.draft_quantity += info.draftQty;
+          existing.is_draft = existing.warehouse_quantity === 0 && existing.draft_quantity > 0;
+        } else {
+          storedProductSummaryMap.set(key, {
+            product_id: pId,
+            product_name: info.name || undefined,
+            product_code: info.code || undefined,
+            product_type: info.type,
+            category_name: typeof info.cat === "object" && info.cat !== null ? String((info.cat as { category_name?: string }).category_name || "") : String(info.cat || ""),
+            classification: c.code,
+            classification_label: c.label,
+            onhand_quantity: info.qty,
+            warehouse_quantity: info.warehouseQty,
+            draft_quantity: info.draftQty,
+            is_draft: info.warehouseQty === 0 && info.draftQty > 0,
+          });
+        }
+      }
+    });
+
+    const storedItems = Array.from(storedProductSummaryMap.values());
+    const isEmpty = totalQty <= 0 && storedItems.length === 0;
+    const isDraftOnly = totalWarehouseQty === 0 && totalDraftQty > 0;
+
+    map.set(lId, {
+      lot_id: lId,
+      lot_name: lot.lot_name,
+      total_stored_quantity: totalQty,
+      warehouse_stock_quantity: totalWarehouseQty,
+      draft_allocated_quantity: totalDraftQty,
+      is_draft_allocation: isDraftOnly,
+      active_batch_count: storedItems.length,
+      stored_products: storedItems,
+      primary_classification: primaryClass,
+      primary_classification_label: primaryLabel || (isEmpty ? "Empty Lot" : "General Stock"),
+      is_empty: isEmpty,
+    });
+  });
+
+  return map;
+}
+
+/**
+ * Checks if a lot is compatible with a candidate product classification
+ */
+export function checkLotProductTypeCompatibility(
+  lotStoredSummary: LotStoredProductSummary | undefined,
+  targetClassification: { code: ProductClassification; label: string }
+): { isCompatible: boolean; isTypeMismatch: boolean; mismatchReason?: string } {
+  if (!lotStoredSummary || lotStoredSummary.is_empty) {
+    return { isCompatible: true, isTypeMismatch: false };
+  }
+
+  if (targetClassification.code === "OTHER" || !lotStoredSummary.primary_classification || lotStoredSummary.primary_classification === "OTHER") {
+    return { isCompatible: true, isTypeMismatch: false };
+  }
+
+  const isTypeMismatch = lotStoredSummary.primary_classification !== targetClassification.code;
+  if (isTypeMismatch) {
+    const sourceKind = lotStoredSummary.is_draft_allocation ? "Form Draft" : "Warehouse";
+    return {
+      isCompatible: false,
+      isTypeMismatch: true,
+      mismatchReason: `Lot holds ${sourceKind} (${lotStoredSummary.primary_classification_label || "Other"}), incompatible with ${targetClassification.label}`,
+    };
+  }
+
+  return { isCompatible: true, isTypeMismatch: false };
+}
+
 
 

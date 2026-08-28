@@ -247,6 +247,11 @@ export function ProductSelectionModal({
       brand_name: product.brand_name || "N/A",
       barcode: product.barcode || "N/A",
       description: product.description || "No description available.",
+      product_type: product.product_type,
+      product_category: product.product_category,
+      category_name:
+        (product.product_category as { category_name?: string })?.category_name ||
+        (product as { category_name?: string })?.category_name,
       unit_order: product.unit_of_measurement?.order || 1,
       remarks: "",
     };
