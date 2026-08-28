@@ -1,5 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
+import { readDispositions, resolveDispositionMetadata, writeDispositions } from "@/app/api/manufacturing/qa/_dispositions";
+import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -133,121 +135,109 @@ export async function POST(request: Request) {
         const inspectionsFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}`, { headers, cache: "no-store" });
         const inspections = inspectionsFetch.ok ? (await inspectionsFetch.json()).data || [] : [];
 
-        // Check if there are failed inspections or if all steps have been QA'd
-        const hasFailedInspection = inspections.some((ins: any) => 
-            ins.sensory_status === "Failed" || ins.lab_status === "Failed" || ins.action_taken === "Quarantined"
+        // Use the same precedence as the Daily QA queue: failures take priority over
+        // incomplete audits, and only fully released passing audits become Passed.
+        const outcome = deriveDailyQAOutcome(
+            inspections,
+            routes.map((route: any) => route.jo_route_id)
         );
+        const finalLedgerStatus = outcome.status;
 
-        let finalLedgerStatus = "Pending";
-        if (hasFailedInspection) {
-            finalLedgerStatus = "QA Hold";
-            
-            // 1. Update the Job Order status to "On Hold"
-            try {
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: "On Hold" })
-                });
-            } catch (joHoldErr) {
-                console.error("Failed to patch Job Order to On Hold:", joHoldErr);
+        if (outcome.hasFailure) {
+            // 1. Update the Job Order status to "On Hold" and fail the request if
+            // the authoritative state could not be persisted.
+            const holdResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ status: "On Hold" })
+            });
+            if (!holdResponse.ok) {
+                throw new Error(`Failed to place Job Order ${jobOrderId} on QA Hold.`);
             }
 
-            // 2. Alert supervisor disposition dashboard by creating a pending disposition entry
-            try {
-                const fs = require("fs");
-                const path = require("path");
-                const DISPOSITIONS_FILE = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
-                
-                let dispositions = [];
-                if (fs.existsSync(DISPOSITIONS_FILE)) {
-                    dispositions = JSON.parse(fs.readFileSync(DISPOSITIONS_FILE, "utf-8") || "[]");
+            // 2. Alert the supervisor disposition dashboard with authoritative
+            // product, operation, and station metadata.
+            const dispositions = readDispositions();
+            const failedInps = inspections.filter((ins: any) =>
+                deriveDailyQAOutcome([ins], []).status === "QA Hold"
+            );
+
+            for (const ins of failedInps) {
+                const routeId = Number(ins.jo_route_id || 0) || null;
+                const metadata = await resolveDispositionMetadata(Number(jobOrderId), routeId);
+                const matchingPayloadEntry = inspectionsList.find((p: any) => Number(p.joRouteId) === Number(routeId));
+                const failedParams = (matchingPayloadEntry?.qaParameters || [])
+                    .filter((p: any) => p.is_failed)
+                    .map((p: any) => ({
+                        parameter_id: p.parameter_id,
+                        test_name: p.test_name || "Check",
+                        value: p.value,
+                        is_failed: true,
+                        is_critical: true
+                    }));
+
+                if (failedParams.length === 0) {
+                    failedParams.push({
+                        parameter_id: 999,
+                        test_name: String(ins.sensory_status || "").trim().toLowerCase() === "failed"
+                            ? "Sensory Inspection"
+                            : "Lab Test Check",
+                        value: ins.remarks || "Out of Spec",
+                        is_failed: true,
+                        is_critical: true
+                    });
                 }
 
-                // Get Job Order details to resolve product name and target quantity
-                let productName = "Unknown Product";
-                let expectedQty = 0;
-                let jobOrderNo = `JO-${jobOrderId}`;
-                const joFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, { headers, cache: "no-store" });
-                if (joFetch.ok) {
-                    const joData = (await joFetch.json()).data;
-                    if (joData) {
-                        productName = joData.product_name || productName;
-                        expectedQty = Number(joData.target_quantity || 0);
-                        jobOrderNo = joData.job_order_no || jobOrderNo;
-                    }
-                }
+                const newDisp = {
+                    id: `DISP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                    job_order_id: metadata.job_order_id || Number(jobOrderId),
+                    jo_id: metadata.jo_id,
+                    product_id: metadata.product_id,
+                    task_id: metadata.task_id || routeId,
+                    task_name: metadata.task_name,
+                    station_id: metadata.station_id,
+                    station_name: metadata.station_name,
+                    product_name: metadata.product_name,
+                    expected_quantity: metadata.expected_quantity,
+                    actual_quantity: metadata.expected_quantity,
+                    failed_parameters: failedParams,
+                    disposition_status: "Pending",
+                    decision: null,
+                    supervisor_comments: "",
+                    inspection_remarks: String(ins.remarks || ""),
+                    recorded_at: new Date().toISOString(),
+                    resolved_at: null,
+                    resolved_by: null
+                };
 
-                // Filter failed inspections from this ledgerId
-                const failedInps = inspections.filter((ins: any) => 
-                    ins.sensory_status === "Failed" || ins.lab_status === "Failed" || ins.action_taken === "Quarantined"
+                const existingIndex = dispositions.findIndex((disp: any) =>
+                    disp.disposition_status === "Pending"
+                    && Number(disp.job_order_id || 0) === Number(newDisp.job_order_id)
+                    && Number(disp.task_id || 0) === Number(newDisp.task_id || 0)
                 );
-
-                for (const ins of failedInps) {
-                    // Gather failed parameters from qaParameters in inspectionsList
-                    const matchingPayloadEntry = inspectionsList.find((p: any) => Number(p.joRouteId) === Number(ins.jo_route_id));
-                    const failedParams = (matchingPayloadEntry?.qaParameters || [])
-                        .filter((p: any) => p.is_failed)
-                        .map((p: any) => ({
-                            parameter_id: p.parameter_id,
-                            test_name: p.test_name || "Check",
-                            value: p.value,
-                            is_failed: true,
-                            is_critical: true
-                        }));
-
-                    if (failedParams.length === 0) {
-                        failedParams.push({
-                            parameter_id: 999,
-                            test_name: ins.sensory_status === "Failed" ? "Sensory Inspection" : "Lab Test Check",
-                            value: ins.remarks || "Out of Spec",
-                            is_failed: true,
-                            is_critical: true
-                        });
-                    }
-
-                    const newDisp = {
-                        id: `DISP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                        jo_id: jobOrderNo,
-                        task_id: ins.jo_route_id,
-                        task_name: ins.remarks ? ins.remarks.substring(0, 50) : "Daily Yield QA Check Failure",
-                        product_name: productName,
-                        expected_quantity: expectedQty,
-                        actual_quantity: expectedQty,
-                        failed_parameters: failedParams,
-                        disposition_status: "Pending",
-                        decision: null,
-                        supervisor_comments: "",
-                        recorded_at: new Date().toISOString(),
-                        resolved_at: null,
-                        resolved_by: null
+                if (existingIndex >= 0) {
+                    dispositions[existingIndex] = {
+                        ...dispositions[existingIndex],
+                        ...newDisp,
+                        id: dispositions[existingIndex].id
                     };
+                } else {
                     dispositions.push(newDisp);
                 }
+            }
 
-                const dir = path.dirname(DISPOSITIONS_FILE);
-                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify(dispositions, null, 2));
-            } catch (dispErr) {
-                console.error("Failed to write supervisor quarantine disposition:", dispErr);
-            }
-        } else {
-            const allStepsAudited = routes.length === 0 || routes.every((r: any) => {
-                return inspections.some((ins: any) => Number(ins.jo_route_id) === Number(r.jo_route_id));
-            });
-            if (allStepsAudited) {
-                finalLedgerStatus = "Passed";
-            } else {
-                finalLedgerStatus = "Pending"; // still pending other steps
-            }
+            writeDispositions(dispositions);
         }
 
         // Sync QA disposition back to yield ledger (only "Passed" if all steps have been QA'd)
-        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
+        const ledgerPatchResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({ qa_status: finalLedgerStatus })
-        }).catch(err => console.error("Failed to patch yield ledger status:", err));
+        });
+        if (!ledgerPatchResponse.ok) {
+            throw new Error(`Failed to persist Daily QA status for yield ledger ${ledgerId}.`);
+        }
 
         // Sync inventory lot status as well - removed since inventory_lots is deprecated
 

@@ -1,1 +1,205 @@
-[]
+[
+  {
+    "id": "DISP-1787886330129-269",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 236,
+    "task_name": "Dough Ingredient Batching & Mixing",
+    "station_id": 112,
+    "station_name": "Dough & Batch Mixing Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:30.130Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886330353-117",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 237,
+    "task_name": "Dough Sheeting & Thickness Kneading",
+    "station_id": 113,
+    "station_name": "Extrusion & Sheeting Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:30.353Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886330604-983",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 238,
+    "task_name": "Noodle Strand Slitting & Length Cutting",
+    "station_id": 114,
+    "station_name": "Slitting & Cutting Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:30.604Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886330911-729",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 239,
+    "task_name": "Continuous Steam Gelatinization Cooking",
+    "station_id": 115,
+    "station_name": "Continuous Steam Tunnel Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:30.911Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886331222-387",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 240,
+    "task_name": "Continuous Oil Frying & Dehydration",
+    "station_id": 116,
+    "station_name": "Oil Frying Tunnel Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:31.222Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886331537-31",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 241,
+    "task_name": "Post-Drying Conveyor Tunnel Run",
+    "station_id": 117,
+    "station_name": "Post-Drying & Cooling Conveyor Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:31.537Z",
+    "resolved_at": null,
+    "resolved_by": null
+  },
+  {
+    "id": "DISP-1787886331821-911",
+    "job_order_id": 100,
+    "jo_id": "JO-BUF-488750-SUB25747",
+    "product_id": 25747,
+    "task_id": 242,
+    "task_name": "Flow Wrap Inner Plastic Sealing",
+    "station_id": 120,
+    "station_name": "QA Inspection & Packaging Center",
+    "product_name": "Pancit Canton 300g (Piece)",
+    "expected_quantity": 60000,
+    "actual_quantity": 60000,
+    "failed_parameters": [
+      {
+        "parameter_id": 999,
+        "test_name": "Sensory Inspection",
+        "value": "MQA-006 disposition mapping verification",
+        "is_failed": true,
+        "is_critical": true
+      }
+    ],
+    "disposition_status": "Pending",
+    "decision": null,
+    "supervisor_comments": "",
+    "inspection_remarks": "MQA-006 disposition mapping verification",
+    "recorded_at": "2026-08-28T03:05:31.821Z",
+    "resolved_at": null,
+    "resolved_by": null
+  }
+]

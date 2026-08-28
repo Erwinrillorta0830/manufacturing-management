@@ -164,8 +164,12 @@ export interface QALog {
 export interface DispositionRecord {
     id: string;
     jo_id: string;
+    job_order_id?: number | null;
     task_id: string | number;
     task_name: string;
+    station_id?: number | null;
+    station_name?: string;
+    product_id?: number | null;
     product_name: string;
     expected_quantity: number;
     actual_quantity: number;
@@ -181,6 +185,7 @@ export interface DispositionRecord {
     disposition_status: "Pending" | "Resolved";
     decision: "Release with Deviation" | "Rework" | "Scrap" | null;
     supervisor_comments: string;
+    inspection_remarks?: string;
     recorded_at: string;
     resolved_at: string | null;
     resolved_by: number | null;
