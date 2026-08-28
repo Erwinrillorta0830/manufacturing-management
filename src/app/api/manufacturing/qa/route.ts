@@ -1,13 +1,10 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import fs from "fs";
-import path from "path";
 import { DIRECTUS_URL, headers, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { createJobOrder } from "@/app/api/manufacturing/planning-engineering/planning-helper";
 import { twoPointQAInspectionRequestSchema } from "./_two-point-contract";
-
-const DISPOSITIONS_FILE = path.join(process.cwd(), "src/app/api/manufacturing/qa/dispositions.json");
+import { enrichDispositions, readDispositions, writeDispositions } from "./_dispositions";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -212,38 +209,6 @@ async function resolveMasterLotId(name: string, typeId: number): Promise<number>
     return lotId;
 }
 
-// Helper to ensure the local dispositions database file exists and read it
-function readDispositions(): any[] {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        if (!fs.existsSync(DISPOSITIONS_FILE)) {
-            fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify([]));
-            return [];
-        }
-        const fileContent = fs.readFileSync(DISPOSITIONS_FILE, "utf-8");
-        return JSON.parse(fileContent || "[]");
-    } catch (err) {
-        console.error("Error reading dispositions JSON:", err);
-        return [];
-    }
-}
-
-// Helper to write to local dispositions database
-function writeDispositions(data: any[]): void {
-    try {
-        const dir = path.dirname(DISPOSITIONS_FILE);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        fs.writeFileSync(DISPOSITIONS_FILE, JSON.stringify(data, null, 2));
-    } catch (err) {
-        console.error("Error writing dispositions JSON:", err);
-    }
-}
-
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -378,7 +343,7 @@ export async function GET(request: Request) {
         // Action: Fetch supervisor dispositions
         if (action === "dispositions") {
             const list = readDispositions();
-            return NextResponse.json(list);
+            return NextResponse.json(await enrichDispositions(list));
         }
 
         // Action: Match dynamic checklist template for a specific task and product
@@ -919,9 +884,10 @@ export async function POST(request: Request) {
             }
 
             const disp = dispositions[dispIdx];
-            const joInfo = await getJobOrderIdByNo(disp.jo_id);
+            const dispositionJobOrderNo = String(disp.jo_id || "");
+            const joInfo = await getJobOrderIdByNo(dispositionJobOrderNo);
             if (!joInfo) {
-                return NextResponse.json({ error: `Job Order not found: ${disp.jo_id}` }, { status: 404 });
+                return NextResponse.json({ error: `Job Order not found: ${dispositionJobOrderNo}` }, { status: 404 });
             }
             const joIdInt = joInfo.id;
 
