@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import imageCompression from "browser-image-compression";
 import Image from "next/image";
 import React, { useEffect, useState } from "react";
-import { useForm, FieldErrors } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 
 import { Separator } from "@/components/ui/separator";
@@ -331,7 +331,7 @@ export default function AddAssetModal({
       );
 
       onLocalAppend({
-        id: result.data?.id || Date.now(),
+        id: result.data?.id || 0,
         item_name: values.item_name,
         item_type_name: values.item_type,
         classification_name: values.item_classification,
@@ -400,15 +400,18 @@ export default function AddAssetModal({
     toast.error("Please input all required fields.");
   };
 
-  const watchDepMethod = form.watch("depreciation_method");
-  const watchCost = form.watch("cost_per_item") || 0;
-  const watchAcqCost = form.watch("acquisition_cost") != null && form.watch("acquisition_cost")! > 0 ? form.watch("acquisition_cost")! : watchCost;
-  const watchResValue = form.watch("residual_value") || 0;
-  const watchUsefulMonths = form.watch("useful_life_months") || (form.watch("life_span") || 1) * 12;
-  const watchMaxCapacity = form.watch("maximum_unit_produced_capacity") || 0;
-  const watchProdUnitId = form.watch("production_unit_id");
-  const watchOpeningBookValue = form.watch("opening_book_value");
-  const watchOpeningUnits = form.watch("opening_production_units") || 0;
+  const watchDepMethod = useWatch({ control: form.control, name: "depreciation_method" });
+  const watchCost = useWatch({ control: form.control, name: "cost_per_item" }) || 0;
+  const rawAcqCost = useWatch({ control: form.control, name: "acquisition_cost" });
+  const watchAcqCost = rawAcqCost != null && rawAcqCost > 0 ? rawAcqCost : watchCost;
+  const watchResValue = useWatch({ control: form.control, name: "residual_value" }) || 0;
+  const rawUsefulMonths = useWatch({ control: form.control, name: "useful_life_months" });
+  const watchLifeSpan = useWatch({ control: form.control, name: "life_span" });
+  const watchUsefulMonths = rawUsefulMonths || (watchLifeSpan || 1) * 12;
+  const watchMaxCapacity = useWatch({ control: form.control, name: "maximum_unit_produced_capacity" }) || 0;
+  const watchProdUnitId = useWatch({ control: form.control, name: "production_unit_id" });
+  const watchOpeningBookValue = useWatch({ control: form.control, name: "opening_book_value" });
+  const watchOpeningUnits = useWatch({ control: form.control, name: "opening_production_units" }) || 0;
   const selectedUnitObj = units.find((u) => u.unit_id === Number(watchProdUnitId));
 
   const effectiveOpeningBookValue =

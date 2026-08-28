@@ -288,7 +288,7 @@ export async function GET(request: Request) {
         }
 
         // 9. Main Assets List
-        const [assetsRes, usersRes, deptRes, itemsRes, springDepreciationList] = await Promise.all([
+        const [assetsRes, usersRes, deptRes, springDepreciationList] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/assets_and_equipment?limit=-1&sort=-id&fields=*,item_id.id,item_id.item_name,item_id.item_type.id,item_id.item_type.type_name,item_id.item_classification.id,item_id.item_classification.classification_name,department.department_id,department.department_name`,
                 { headers, cache: "no-store" }
@@ -298,10 +298,6 @@ export async function GET(request: Request) {
                 cache: "no-store"
             }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/department?limit=-1&fields=department_id,department_name`, {
-                headers,
-                cache: "no-store"
-            }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/items?limit=-1&fields=id,item_name,item_type.id,item_type.type_name,item_classification.id,item_classification.classification_name`, {
                 headers,
                 cache: "no-store"
             }).catch(() => null),
@@ -349,16 +345,16 @@ export async function GET(request: Request) {
             }
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let itemsList: any[] = [];
-        if (itemsRes && itemsRes.ok) {
-            try {
-                const iJson = await itemsRes.json();
-                itemsList = iJson.data || [];
-            } catch {
-                itemsList = [];
-            }
-        }
+        // // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // let itemsList: any[] = [];
+        // if (itemsRes && itemsRes.ok) {
+        //     try {
+        //         const iJson = await itemsRes.json();
+        //         itemsList = iJson.data || [];
+        //     } catch {
+        //         itemsList = [];
+        //     }
+        // }
 
         const resolveUserName = (
             val: unknown,

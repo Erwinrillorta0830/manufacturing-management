@@ -185,10 +185,10 @@ export function calculateAssetFinancials(
         ? Number(rawYears) * 12
         : 12;
 
-    const isLegacy =
-      (asset.asset_origin || asset.assetOrigin) === "Existing" ||
-      (asset.opening_book_value != null && Number(asset.opening_book_value) < acqCost) ||
-      Number(asset.opening_accumulated_depreciation || asset.openingAccumulatedDepreciation || 0) > 0;
+    // const isLegacy =
+    //   (asset.asset_origin || asset.assetOrigin) === "Existing" ||
+    //   (asset.opening_book_value != null && Number(asset.opening_book_value) < acqCost) ||
+    //   Number(asset.opening_accumulated_depreciation || asset.openingAccumulatedDepreciation || 0) > 0;
 
     const explicitDepDate = parseDateTimeSafe(asset.depreciation_start_date || asset.depreciationStartDate);
     const acqDate = parseDateTimeSafe(asset.date_acquired || asset.dateAcquired);

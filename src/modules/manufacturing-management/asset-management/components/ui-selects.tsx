@@ -88,8 +88,7 @@ export function AssetSearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-trigger-width)] p-0 z-[100] pointer-events-auto"
-        style={{ width: "var(--radix-popover-trigger-width)" }}
+        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
         align="start"
         onWheel={(e) => e.stopPropagation()}
       >
@@ -145,6 +144,8 @@ export function AssetSearchableSelect({
     </Popover>
   );
 }
+
+export const AssetUomSelect = AssetSearchableSelect;
 
 // 2. Creatable & Searchable Select for Item Type, Classification, etc.
 export function AssetCreatableSelect({
@@ -207,8 +208,7 @@ export function AssetCreatableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-trigger-width)] p-0 z-[100] pointer-events-auto"
-        style={{ width: "var(--radix-popover-trigger-width)" }}
+        className="w-[--radix-popover-trigger-width] min-w-[200px] p-0 z-[100] pointer-events-auto"
         align="start"
         onWheel={(e) => e.stopPropagation()}
       >
