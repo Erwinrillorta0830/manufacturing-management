@@ -13,7 +13,10 @@ interface SalesOrderApprovalDetailPanelProps {
     orderDetails: SalesOrderDetail[];
     loadingDetails: boolean;
     updatingStatusId: number | null;
+    stockData: Record<number, number>;
     handleApprove: (orderId: number) => void;
+    handleSendToJO: (orderId: number) => void;
+    handleSendToInvoice: (orderId: number) => void;
     handleHold?: (orderId: number) => void;
     handleReject: (orderId: number) => void;
     handleCancel?: (orderId: number) => void;
@@ -25,7 +28,10 @@ export function SalesOrderApprovalDetailPanel({
     orderDetails,
     loadingDetails,
     updatingStatusId,
+    stockData,
     handleApprove,
+    handleSendToJO,
+    handleSendToInvoice,
     handleHold,
     handleReject,
     handleCancel
@@ -37,6 +43,10 @@ export function SalesOrderApprovalDetailPanel({
     const discount = Number(selectedOrder.discount_amount || 0);
     const netSum = Math.max(0, grossSum - discount);
     const isZeroNet = netSum <= 0;
+    const isOutOfStock = orderDetails.some(item => {
+        const pid = typeof item.product_id === 'object' ? item.product_id?.product_id : item.product_id;
+        return item.ordered_quantity > (stockData[Number(pid)] || 0);
+    });
 
     return (
         <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
@@ -161,6 +171,9 @@ export function SalesOrderApprovalDetailPanel({
                     <div className="space-y-3">
                         {orderDetails.map(item => {
                             const pId = item.product_id;
+                            const pidNumber = typeof pId === 'object' ? pId?.product_id : pId;
+                            const onHand = stockData[Number(pidNumber)] || 0;
+                            const isItemOutOfStock = item.ordered_quantity > onHand;
                             const name = pId?.product_name || `Product #${item.product_id}`;
                             const code = pId?.product_code || `CODE-${item.product_id}`;
                             const brand = pId?.brand || "N/A";
@@ -206,9 +219,14 @@ export function SalesOrderApprovalDetailPanel({
                                         <span className="text-[9.5px] text-muted-foreground font-bold uppercase tracking-wider">
                                             Quantity
                                         </span>
-                                        <span className="text-xs font-extrabold text-foreground font-mono">
-                                            {item.ordered_quantity} <span className="text-[10px] text-muted-foreground font-normal">{uom}</span>
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isItemOutOfStock ? 'bg-destructive/10 text-destructive' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                                                Stock: {onHand}
+                                            </span>
+                                            <span className="text-xs font-extrabold text-foreground font-mono">
+                                                {item.ordered_quantity} <span className="text-[10px] text-muted-foreground font-normal">{uom}</span>
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
                             );
@@ -258,19 +276,35 @@ export function SalesOrderApprovalDetailPanel({
 
             {/* Action buttons */}
             <div className="flex flex-col gap-2.5 pt-1">
-                <button
-                    disabled={updatingStatusId === selectedOrder.order_id || isZeroNet}
-                    onClick={() => handleApprove(selectedOrder.order_id)}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3.5 text-xs font-black text-white shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
-                    title={isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Approve & Release to Floor"}
-                >
-                    {updatingStatusId === selectedOrder.order_id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                        <ShieldCheck className="h-4 w-4 stroke-[3]" />
-                    )}
-                    Approve & Release to Floor
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        disabled={updatingStatusId === selectedOrder.order_id || isZeroNet}
+                        onClick={() => handleSendToJO(selectedOrder.order_id)}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 hover:bg-amber-500 py-3.5 text-xs font-black text-white shadow-md shadow-amber-500/10 hover:shadow-amber-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
+                        title={isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to JO"}
+                    >
+                        {updatingStatusId === selectedOrder.order_id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <ShieldCheck className="h-4 w-4 stroke-[3]" />
+                        )}
+                        Send to JO
+                    </button>
+
+                    <button
+                        disabled={updatingStatusId === selectedOrder.order_id || isZeroNet || isOutOfStock}
+                        onClick={() => handleSendToInvoice(selectedOrder.order_id)}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3.5 text-xs font-black text-white shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
+                        title={isOutOfStock ? "Cannot send to invoice: Insufficient stock" : (isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to Invoice")}
+                    >
+                        {updatingStatusId === selectedOrder.order_id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <ShieldCheck className="h-4 w-4 stroke-[3]" />
+                        )}
+                        Send to Invoice
+                    </button>
+                </div>
 
                 <div className="grid grid-cols-2 gap-2">
                     {handleHold && (

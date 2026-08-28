@@ -16,6 +16,7 @@ export function useSalesOrderApproval() {
     const [selectedOrder, setSelectedOrderState] = useState<SalesOrder | null>(null);
     const [orderDetails, setOrderDetails] = useState<SalesOrderDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
+    const [stockData, setStockData] = useState<Record<number, number>>({});
     
     const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null);
 
@@ -47,6 +48,7 @@ export function useSalesOrderApproval() {
 
         if (!order) {
             setOrderDetails([]);
+            setStockData({});
             setLoadingDetails(false);
         }
     };
@@ -121,6 +123,37 @@ export function useSalesOrderApproval() {
             const data = await fetchSalesOrderDetails(order.order_id, { signal: controller.signal });
             if (requestId !== detailRequestIdRef.current || selectedOrderIdRef.current !== order.order_id) return;
             setOrderDetails(data);
+            
+            try {
+                const productIds = Array.from(new Set(data.map(d => d.product_id?.product_id).filter(Boolean)));
+                if (productIds.length > 0) {
+                    const branchParam = order.branch_id ? `?branch=${order.branch_id}` : '';
+                    
+                    // Fetch all stocks for the branch in a single request to avoid dropped concurrent requests
+                    const stockRes = await fetch(`/api/manufacturing/product-onhand${branchParam}`, {
+                        signal: controller.signal
+                    });
+
+                    const newStockData: Record<number, number> = {};
+                    
+                    if (stockRes.ok) {
+                        const stockJson = await stockRes.json();
+                        if (Array.isArray(stockJson)) {
+                            for (const row of stockJson) {
+                                const pid = Number(row.productId || row.product_id);
+                                const qty = Number(row.onhandQuantity || row.onhand_quantity) || 0;
+                                if (!isNaN(pid) && productIds.includes(pid)) {
+                                    newStockData[pid] = (newStockData[pid] || 0) + qty;
+                                }
+                            }
+                        }
+                    }
+                    
+                    setStockData(newStockData);
+                }
+            } catch (e) {
+                console.error("Failed to fetch stock data", e);
+            }
         } catch (e: unknown) {
             if (!isAbortError(e) && requestId === detailRequestIdRef.current) {
                 toast.error(e instanceof Error ? e.message : "Failed to load order details");
@@ -143,6 +176,38 @@ export function useSalesOrderApproval() {
             }
         } catch (e: unknown) {
             toast.error(e instanceof Error ? e.message : "Approval failed");
+        } finally {
+            setUpdatingStatusId(null);
+        }
+    };
+
+    const handleSendToJO = async (orderId: number) => {
+        setUpdatingStatusId(orderId);
+        try {
+            await updateSalesOrderStatus(orderId, "In Production");
+            toast.success("Sales Order approved! Sent to production (JO).");
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
+            if (selectedOrder && selectedOrder.order_id === orderId) {
+                setSelectedOrder(null);
+            }
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Failed to send to JO");
+        } finally {
+            setUpdatingStatusId(null);
+        }
+    };
+
+    const handleSendToInvoice = async (orderId: number) => {
+        setUpdatingStatusId(orderId);
+        try {
+            await updateSalesOrderStatus(orderId, "For Invoicing");
+            toast.success("Sales Order approved! Sent to Invoicing.");
+            loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
+            if (selectedOrder && selectedOrder.order_id === orderId) {
+                setSelectedOrder(null);
+            }
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Failed to send to Invoice");
         } finally {
             setUpdatingStatusId(null);
         }
@@ -243,8 +308,11 @@ export function useSalesOrderApproval() {
         totalCount,
         totalPages,
         limit,
+        stockData,
         viewOrderDetails,
         handleApprove,
+        handleSendToJO,
+        handleSendToInvoice,
         handleHold,
         handleReject,
         handleCancel,
