@@ -13,10 +13,141 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Search, ShoppingCart, Loader2, Package, Trash2 } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Search, ShoppingCart, Loader2, Package, Trash2, Box, Layers, Archive, Filter } from 'lucide-react';
 import { EnrichedProduct } from '../../types/stock-transfer.types';
 import { QuantityStepper } from './QuantityStepper';
 import { getAssetUrl } from '@/lib/assets';
+
+export type ProductClassification = 'RM' | 'PKG' | 'FG';
+export type ProductTypeFilter = 'ALL' | ProductClassification;
+
+export const PRODUCT_CLASSIFICATION_CONFIG: Record<
+  ProductClassification,
+  {
+    label: string;
+    shortLabel: string;
+    badgeBg: string;
+    badgeText: string;
+    badgeBorder: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }
+> = {
+  RM: {
+    label: 'Raw Materials (RM)',
+    shortLabel: 'RM',
+    badgeBg: 'bg-emerald-500/10 dark:bg-emerald-950/30',
+    badgeText: 'text-emerald-700 dark:text-emerald-400',
+    badgeBorder: 'border-emerald-500/30 dark:border-emerald-700/40',
+    icon: Layers,
+  },
+  PKG: {
+    label: 'Packaging (PKG)',
+    shortLabel: 'PKG',
+    badgeBg: 'bg-amber-500/10 dark:bg-amber-950/30',
+    badgeText: 'text-amber-700 dark:text-amber-400',
+    badgeBorder: 'border-amber-500/30 dark:border-amber-700/40',
+    icon: Archive,
+  },
+  FG: {
+    label: 'Finished Goods (FG)',
+    shortLabel: 'FG',
+    badgeBg: 'bg-blue-500/10 dark:bg-blue-950/30',
+    badgeText: 'text-blue-700 dark:text-blue-400',
+    badgeBorder: 'border-blue-500/30 dark:border-blue-700/40',
+    icon: Box,
+  },
+};
+
+/**
+ * Robust classifier for determining product classification:
+ * RM (Raw Materials), PKG (Packaging), FG (Finished Goods)
+ */
+export function getProductClassification(product: EnrichedProduct): ProductClassification {
+  // 1. Directus product_type ID check
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pt = (product as any).product_type;
+  let typeId: number | null = null;
+  let typeName = '';
+
+  if (typeof pt === 'number') {
+    typeId = pt;
+  } else if (typeof pt === 'string' && !isNaN(Number(pt)) && Number(pt) > 0) {
+    typeId = Number(pt);
+  } else if (typeof pt === 'object' && pt !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ptObj = pt as Record<string, any>;
+    if (ptObj.id || ptObj.product_type_id || ptObj.type_id) {
+      typeId = Number(ptObj.id || ptObj.product_type_id || ptObj.type_id);
+    }
+    typeName = String(ptObj.name || ptObj.type_name || ptObj.description || '').toLowerCase();
+  } else if (typeof pt === 'string') {
+    typeName = pt.toLowerCase();
+  }
+
+  if (typeId === 389) return 'RM';
+  if (typeId === 390) return 'PKG';
+  if (typeId === 388) return 'FG';
+
+  if (typeName) {
+    if (typeName.includes('raw') || typeName.includes('ingredient') || typeName === 'rm' || typeName.includes('bulk')) return 'RM';
+    if (typeName.includes('packag') || typeName.includes('container') || typeName.includes('bottle') || typeName === 'pkg' || typeName.includes('wrapper') || typeName.includes('cap')) return 'PKG';
+    if (typeName.includes('finish') || typeName.includes('commercial') || typeName === 'fg') return 'FG';
+  }
+
+  // 2. Category name check
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cat = (product as any).category_name || (typeof product.product_category === 'object' && product.product_category !== null ? (product.product_category as { category_name?: string }).category_name : String(product.product_category || ''));
+  const catLower = String(cat || '').toLowerCase();
+  if (catLower) {
+    if (catLower.includes('raw') || catLower.includes('ingredient') || catLower.includes('bulk') || catLower.includes('chemical')) return 'RM';
+    if (catLower.includes('packag') || catLower.includes('bottle') || catLower.includes('cap') || catLower.includes('container') || catLower.includes('wrapping') || catLower.includes('label')) return 'PKG';
+    if (catLower.includes('finish') || catLower.includes('commercial')) return 'FG';
+  }
+
+  // 3. Product code prefix check
+  const codeLower = String(product.product_code || '').toLowerCase();
+  if (codeLower.startsWith('rm-') || codeLower.startsWith('rm_') || codeLower.startsWith('raw-')) return 'RM';
+  if (codeLower.startsWith('pkg-') || codeLower.startsWith('pkg_') || codeLower.startsWith('pack-') || codeLower.startsWith('pkg')) return 'PKG';
+  if (codeLower.startsWith('fg-') || codeLower.startsWith('fg_') || codeLower.startsWith('fin-')) return 'FG';
+
+  // 4. Product description / name keywords
+  const text = `${product.description || ''} ${product.product_name || ''}`.toLowerCase();
+  if (
+    text.includes('purified process water') ||
+    text.includes('purified water') ||
+    text.includes('raw material') ||
+    text.includes('ingredient') ||
+    text.includes('chemical') ||
+    text.includes('flavor') ||
+    text.includes('bulk liquid') ||
+    text.includes('bulk ')
+  ) {
+    return 'RM';
+  }
+  if (
+    text.includes('pet bottle') ||
+    text.includes('bottle') ||
+    text.includes('cap') ||
+    text.includes('packaging') ||
+    text.includes('wrapper') ||
+    text.includes('sheet') ||
+    text.includes('pouch') ||
+    text.includes('carton') ||
+    text.includes('label') ||
+    text.includes('seal')
+  ) {
+    return 'PKG';
+  }
+
+  return 'FG';
+}
 
 interface ProductSelectionModalProps {
   open: boolean;
@@ -32,16 +163,15 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
   const [products, setProducts] = useState<EnrichedProduct[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [productTypeFilter, setProductTypeFilter] = useState<ProductTypeFilter>('ALL');
 
   useEffect(() => {
     if (!open) return;
     const fetchCatalog = async () => {
       setLoading(true);
       try {
-        const query = search ? `&search=${encodeURIComponent(search)}` : '';
         const branchQuery = sourceBranch ? `&branch_id=${sourceBranch}` : '';
-        const res = await fetch(`/api/scm/warehouse-management/stock-transfer?action=products${query}${branchQuery}`);
+        const res = await fetch(`/api/scm/warehouse-management/stock-transfer?action=products${branchQuery}`);
         if (res.ok) {
           const data = await res.json();
           setProducts(data.data || []);
@@ -53,21 +183,74 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
       }
     };
 
-    const debounce = setTimeout(fetchCatalog, 300);
-    return () => clearTimeout(debounce);
-  }, [open, search, sourceBranch]);
+    fetchCatalog();
+  }, [open, sourceBranch]);
 
-  const categories = React.useMemo(() => {
-    const list = new Set<string>();
-    products.forEach((p) => {
-      if (typeof p.product_category === 'object' && p.product_category !== null) {
-        list.add((p.product_category as { category_name?: string }).category_name || 'Uncategorized');
-      } else if (p.product_category) {
-        list.add(String(p.product_category));
-      }
-    });
-    return Array.from(list);
+  useEffect(() => {
+    if (open) {
+      queueMicrotask(() => {
+        setSearch('');
+        setProductTypeFilter('ALL');
+      });
+    }
+  }, [open]);
+
+  // Pre-calculate classification for all products
+  const classifiedProducts = React.useMemo(() => {
+    return products.map((p) => ({
+      ...p,
+      _classification: getProductClassification(p),
+    }));
   }, [products]);
+
+  // Calculate counts per category
+  const categoryCounts = React.useMemo(() => {
+    const counts: Record<ProductTypeFilter, number> = {
+      ALL: classifiedProducts.length,
+      RM: 0,
+      PKG: 0,
+      FG: 0,
+    };
+    classifiedProducts.forEach((p) => {
+      counts[p._classification] = (counts[p._classification] || 0) + 1;
+    });
+    return counts;
+  }, [classifiedProducts]);
+
+  const filteredProducts = React.useMemo(() => {
+    let result = classifiedProducts;
+
+    // 1. Product Type Filter
+    if (productTypeFilter !== 'ALL') {
+      result = result.filter((p) => p._classification === productTypeFilter);
+    }
+
+    // 2. Client-side Search Filter (Instant without reload)
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      result = result.filter((p) => {
+        const name = (p.product_name || '').toLowerCase();
+        const desc = (p.description || '').toLowerCase();
+        const code = (p.product_code || '').toLowerCase();
+        const barcode = (p.barcode || '').toLowerCase();
+        const id = String(p.product_id || '');
+        const brand = typeof p.product_brand === 'object' && p.product_brand !== null
+          ? (p.product_brand as { brand_name?: string }).brand_name?.toLowerCase() || ''
+          : String(p.product_brand || '').toLowerCase();
+
+        return (
+          name.includes(q) ||
+          desc.includes(q) ||
+          code.includes(q) ||
+          barcode.includes(q) ||
+          id.includes(q) ||
+          brand.includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [classifiedProducts, productTypeFilter, search]);
 
   const handleSelect = (product: EnrichedProduct) => {
     onSelect(product);
@@ -94,36 +277,139 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
             )}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 pt-4">
-            <div className="relative flex-1">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-start gap-3 pt-4">
+            <div className="relative w-full sm:w-80 md:w-96 shrink-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
               <Input
                 placeholder="Search products by SKU, name, barcode..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 h-10 bg-background border-border shadow-none focus-visible:ring-1 focus-visible:ring-primary/20 text-sm"
+                className="pl-9 h-10 w-full bg-background border-border shadow-none focus-visible:ring-1 focus-visible:ring-primary/20 text-sm"
               />
             </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-hide">
+
+            {/* Product Type Filter Tabs (shown on wide screens) */}
+            <div className="hidden xl:flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
               <Button
                 size="sm"
-                variant={categoryFilter === 'ALL' ? 'default' : 'outline'}
-                onClick={() => setCategoryFilter('ALL')}
-                className="h-10 text-xs font-bold rounded-lg px-4 shadow-none"
+                variant={productTypeFilter === 'ALL' ? 'default' : 'outline'}
+                onClick={() => setProductTypeFilter('ALL')}
+                className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none shrink-0 transition-all ${
+                  productTypeFilter === 'ALL'
+                    ? 'bg-primary text-primary-foreground font-black'
+                    : 'bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                }`}
               >
-                All
+                ALL
+                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  productTypeFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                }`}>
+                  {categoryCounts.ALL}
+                </span>
               </Button>
-              {categories.map((cat) => (
-                <Button
-                  key={cat}
-                  size="sm"
-                  variant={categoryFilter === cat ? 'default' : 'outline'}
-                  onClick={() => setCategoryFilter(cat)}
-                  className="h-10 text-xs font-bold rounded-lg px-4 shadow-none whitespace-nowrap"
-                >
-                  {cat}
-                </Button>
-              ))}
+
+              <Button
+                size="sm"
+                variant={productTypeFilter === 'RM' ? 'default' : 'outline'}
+                onClick={() => setProductTypeFilter('RM')}
+                className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
+                  productTypeFilter === 'RM'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-black'
+                    : 'bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Raw Materials (RM)
+                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  productTypeFilter === 'RM' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                }`}>
+                  {categoryCounts.RM}
+                </span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant={productTypeFilter === 'PKG' ? 'default' : 'outline'}
+                onClick={() => setProductTypeFilter('PKG')}
+                className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
+                  productTypeFilter === 'PKG'
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white font-black'
+                    : 'bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Packaging (PKG)
+                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  productTypeFilter === 'PKG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                }`}>
+                  {categoryCounts.PKG}
+                </span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant={productTypeFilter === 'FG' ? 'default' : 'outline'}
+                onClick={() => setProductTypeFilter('FG')}
+                className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
+                  productTypeFilter === 'FG'
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white font-black'
+                    : 'bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Finished Goods (FG)
+                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  productTypeFilter === 'FG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                }`}>
+                  {categoryCounts.FG}
+                </span>
+              </Button>
+            </div>
+
+            {/* Product Type Dropdown Filter (shown when tabs do not fit) */}
+            <div className="flex xl:hidden items-center gap-2 min-w-[200px] justify-end flex-1">
+              <Select
+                value={productTypeFilter}
+                onValueChange={(val) => setProductTypeFilter(val as ProductTypeFilter)}
+              >
+                <SelectTrigger className="h-10 text-xs font-bold bg-background border-border rounded-lg min-w-[190px] w-full max-w-[260px]">
+                  <div className="flex items-center gap-2 truncate">
+                    <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <SelectValue placeholder="Classification" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent align="end" className="min-w-[240px]">
+                  <SelectItem value="ALL" className="text-xs font-semibold cursor-pointer">
+                    <div className="flex items-center justify-between w-full gap-4">
+                      <span>ALL</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                        {categoryCounts.ALL}
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="RM" className="text-xs font-semibold cursor-pointer">
+                    <div className="flex items-center justify-between w-full gap-4">
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">Raw Materials (RM)</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                        {categoryCounts.RM}
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="PKG" className="text-xs font-semibold cursor-pointer">
+                    <div className="flex items-center justify-between w-full gap-4">
+                      <span className="text-amber-700 dark:text-amber-400 font-bold">Packaging (PKG)</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                        {categoryCounts.PKG}
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="FG" className="text-xs font-semibold cursor-pointer">
+                    <div className="flex items-center justify-between w-full gap-4">
+                      <span className="text-blue-700 dark:text-blue-400 font-bold">Finished Goods (FG)</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-400">
+                        {categoryCounts.FG}
+                      </span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </DialogHeader>
@@ -137,18 +423,33 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                   <Loader2 className="w-8 h-8 animate-spin text-primary" />
                   <span className="text-xs font-bold tracking-wider uppercase">Loading Catalog...</span>
                 </div>
-              ) : products.length === 0 ? (
+              ) : filteredProducts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 text-center">
                   <Package className="w-12 h-12 text-muted-foreground/30 mb-2" />
                   <h4 className="font-bold text-base text-foreground">No Products Found</h4>
                   <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                    No items match your search criteria.
+                    {search
+                      ? `No items match "${search}" under classification "${productTypeFilter}".`
+                      : `No products found under classification "${productTypeFilter}".`}
                   </p>
+                  {productTypeFilter !== 'ALL' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setProductTypeFilter('ALL')}
+                      className="mt-4 text-xs font-bold"
+                    >
+                      Show All Products
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 pb-8">
-                  {products.map((product) => {
+                  {filteredProducts.map((product) => {
                     const imgUrl = getAssetUrl(product.product_image);
+                    const classification = product._classification;
+                    const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
+                    const ClassIcon = config.icon;
 
                     return (
                       <div 
@@ -159,17 +460,23 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                           {imgUrl ? (
                             <Image
                               src={imgUrl}
-                              alt={product.product_name}
+                              alt={product.description || product.product_name}
                               fill
                               unoptimized
                               className="object-cover group-hover:scale-105 transition-transform duration-500"
                             />
                           ) : (
                             <div className="text-2xl font-black text-muted-foreground/10 group-hover:scale-110 transition-transform duration-500 font-mono">
-                              {product.product_name?.substring(0, 2).toUpperCase()}
+                              {(product.description || product.product_name)?.substring(0, 2).toUpperCase()}
                             </div>
                           )}
-                          <div className="absolute top-2 left-2 z-10">
+                          <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 items-start">
+                            <span className={`inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border shadow-sm ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}>
+                              <ClassIcon className="w-2.5 h-2.5" />
+                              {config.shortLabel}
+                            </span>
+                          </div>
+                          <div className="absolute top-2 right-2 z-10">
                             <Badge variant="outline" className="bg-background/80 backdrop-blur-sm text-[8px] font-black tracking-widest uppercase border-border/50">
                               {typeof product.product_brand === 'object' && product.product_brand !== null 
                                 ? (product.product_brand as { brand_name?: string }).brand_name 
@@ -181,7 +488,7 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                         <div className="p-3 flex-1 flex flex-col gap-3">
                           <div className="space-y-1.5 flex-1">
                             <h3 className="font-bold text-xs line-clamp-2 leading-[1.3] text-foreground/90 font-sans group-hover:text-primary transition-colors">
-                              {product.product_name}
+                              {product.description || product.product_name}
                             </h3>
                             <div className="flex flex-wrap gap-2">
                                <div className="flex items-center gap-1 text-[9px] text-muted-foreground/60 font-mono">
@@ -201,7 +508,7 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                             <Button 
                               size="sm" 
                               variant="ghost" 
-                              className="h-7 text-[10px] font-black uppercase tracking-widest hov hover:bg-primary/10 hover:text-primary rounded-md"
+                              className="h-7 text-[10px] font-black uppercase tracking-widest hover:bg-primary/10 hover:text-primary rounded-md"
                               onClick={() => handleSelect(product)}
                             >
                               SELECT
@@ -256,7 +563,7 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                                 />
                               </div>
                             ) : null}
-                            <p className="text-[10px] font-bold line-clamp-2 leading-tight flex-1 text-foreground/80">{p.product_name}</p>
+                            <p className="text-[10px] font-bold line-clamp-2 leading-tight flex-1 text-foreground/80">{p.description || p.product_name}</p>
                           </div>
                           <Button
                             variant="ghost"

@@ -8,6 +8,7 @@ import type {
   ScannedItem,
   EnrichedProduct
 } from '../../types/stock-transfer.types';
+import type { StockAllocationPlan } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
 
 interface UseStockTransferRequestReturn {
@@ -24,6 +25,7 @@ interface UseStockTransferRequestReturn {
   scannedItems: ScannedItem[];
   handleAddProduct: (product: EnrichedProduct) => void;
   updateQty: (rfid: string, qty: number) => void;
+  updateAllocation: (rfid: string, plan: StockAllocationPlan) => void;
   removeItem: (rfid: string) => void;
   reset: () => void;
   confirmTransfer: () => Promise<void>;
@@ -115,7 +117,7 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     const newItem: ScannedItem = {
       rfid,
       productId,
-      productName: product.product_name,
+      productName: product.description || product.product_name,
       description: product.barcode || 'Manual Entry',
       brandName: extractedBrand,
       unit: extractedUnit,
@@ -178,6 +180,26 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     }
   }, [sourceBranch, targetBranch, leadDate, scannedItems]);
 
+  const updateAllocation = useCallback((rfid: string, plan: StockAllocationPlan) => {
+    setScannedItems((prev) =>
+      prev.map((item) => {
+        if (item.rfid !== rfid) return item;
+        const primary = plan.allocations[0];
+        return {
+          ...item,
+          batch_no: primary?.batch_no || null,
+          lot_id: primary?.lot_id ?? item.lot_id,
+          inventory_lot_id: primary?.inventory_lot_id ?? item.inventory_lot_id,
+          manufacturing_date: primary?.manufacturing_date ?? item.manufacturing_date,
+          expiry_date: primary?.expiry_date ?? item.expiry_date,
+          qa_status: primary?.qa_status ?? item.qa_status,
+          allocations: plan.allocations,
+          allocation_plan: plan,
+        };
+      })
+    );
+  }, []);
+
   return {
     stockTransfers,
     branches,
@@ -192,6 +214,7 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     scannedItems,
     handleAddProduct,
     updateQty,
+    updateAllocation,
     removeItem,
     reset,
     confirmTransfer,

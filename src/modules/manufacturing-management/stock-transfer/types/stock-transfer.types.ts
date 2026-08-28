@@ -66,13 +66,17 @@ export interface StockTransferRow {
   id: number;
   order_no: string;
   product_id: ProductRow | number;
-  source_branch: number | null;
-  target_branch: number | null;
+  source_branch_id?: BranchRow | number | null;
+  target_branch_id?: BranchRow | number | null;
+  source_branch?: number | null;
+  target_branch?: number | null;
+  unit_id?: { unit_id: number; unit_name: string } | number | null;
   lead_date: string | null;
   ordered_quantity: number;
   received_quantity: number;
   allocated_quantity?: number;
   picked_quantity?: number;
+  dispatched_quantity?: number;
   scanned_quantity?: number;
   amount: number;
   status: string;
@@ -124,6 +128,10 @@ export interface ScannedItem {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   qa_status?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  allocations?: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  allocation_plan?: any;
 }
 
 /** 
@@ -224,6 +232,7 @@ export interface EnrichedProduct extends ProductRow {
 export interface CreateTransferItem {
   rfid: string;
   productId: number;
+  unitId?: number;
   unitQty: number;
   unitPrice: number;
   totalAmount: number;
@@ -246,10 +255,14 @@ export interface UpdateTransferItem {
   status: string;
   allocated_quantity?: number;
   picked_quantity?: number;
+  dispatched_quantity?: number;
   scanned_quantity?: number;
+  received_quantity?: number;
   date_received?: string | null;
   destination_lot_id?: number | null;
   destination_batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
 }
 
 /** RFID tracking entry in the PATCH request body. */
@@ -280,16 +293,21 @@ export interface UpdateTransferPayload {
 /** Directus payload for batch-inserting a stock_transfer row. */
 export interface StockTransferInsertPayload {
   order_no: string;
-  source_branch: number | null;
-  target_branch: number | null;
-  lead_date: string | null;
+  source_branch_id: number;
+  target_branch_id: number;
+  source_branch?: number | null;
+  target_branch?: number | null;
+  unit_id: number;
+  lead_date?: string | null;
   product_id: number;
   ordered_quantity: number;
-  received_quantity: number;
+  allocated_quantity?: number;
   picked_quantity?: number;
+  dispatched_quantity?: number;
+  received_quantity: number;
   amount: number;
   status: string;
-  remarks: string;
+  remarks?: string | null;
   date_requested: string;
   date_encoded: string;
   encoder_id?: number | null;
@@ -308,8 +326,10 @@ export type StockTransferStatus =
   | "Picking"
   | "Picked"
   | "For Loading"
+  | "Dispatched"
   | "Received"
-  | "Rejected";
+  | "Rejected"
+  | "Cancelled";
 
 /** All valid RFID scan types. */
 export type RfidScanType = "DISPATCH" | "RECEIVE";
@@ -333,3 +353,30 @@ export interface CurrentUser {
   email: string;
   avatar?: string;
 }
+
+/** Row shape for mm_stock_transfer_details table */
+export interface MMStockTransferDetail {
+  id?: number;
+  stock_transfer_id: number;
+  inventory_lot_id: number;
+  target_inventory_lot_id?: number | null;
+  lot_id: number;
+  target_lot_id?: number | null;
+  product_id: number;
+  unit_id: number;
+  batch_no: string;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
+  inventory_condition: 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED';
+  unit_cost: number;
+  allocated_quantity: number;
+  picked_quantity: number;
+  dispatched_quantity: number;
+  received_quantity: number;
+  variance_quantity: number;
+  bay_id?: number | null;
+  date_encoded?: string;
+  updated_at?: string;
+  remarks?: string | null;
+}
+

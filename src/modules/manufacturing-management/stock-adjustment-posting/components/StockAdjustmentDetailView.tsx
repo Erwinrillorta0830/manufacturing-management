@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ChevronLeft,
   Printer,
@@ -15,7 +15,9 @@ import {
   Clock,
   UserCheck,
   Tag,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Layers,
+  Warehouse,
 } from "lucide-react";
 import { AttachmentViewerModal } from "./modals/AttachmentViewerModal";
 import jsPDF from "jspdf";
@@ -40,7 +42,7 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { format } from "date-fns";
+import { formatPhDateTime } from "../utils/date-utils";
 import { isPostedStatus } from "../utils/status-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAssetUrl } from "@/lib/assets";
@@ -169,7 +171,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       doc.text("Date Created:", margins.left, metaY + 6);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(15, 23, 42);
-      doc.text(data.created_at ? format(new Date(data.created_at), "yyyy-MM-dd h:mm a") : "-", margins.left + 30, metaY + 6);
+      doc.text(data.created_at ? formatPhDateTime(data.created_at, { formatType: "pdf" }) : "-", margins.left + 30, metaY + 6);
 
       // Right Column
       const rightColX = pageWidth / 2 + 10;
@@ -190,19 +192,52 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       doc.text(adjTypeFull, rightColX + 35, metaY + 6);
 
       // --- Product Table ---
-      const tableRows = data.items?.map((item) => {
+      const tableRows: (string | number)[][] = [];
+      data.items?.forEach((item) => {
         const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
-        const unitPrice = item.cost_per_unit || product.price_per_unit || 0;
-        const totalAmount = (item.quantity || 0) * unitPrice;
+        const unitPrice = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit || 0);
+        const itemQty = Number(item.quantity || 0);
+        const totalAmount = itemQty * unitPrice;
         
-        return [
+        tableRows.push([
           item.brand_name || "N/A",
-          `${product.product_name || "Unknown"}\n(${product.product_code || "N/A"})`,
-          item.quantity || 0,
+          `${product.description || product.product_name || "Unknown"}\n(${product.product_code || "N/A"})`,
+          itemQty,
           `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
           `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-        ];
-      }) || [];
+        ]);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
+        if (lotAllocations.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          lotAllocations.forEach((lg: any) => {
+            const lotName = lg.lot_name || `Lot #${lg.lot_id}`;
+            tableRows.push([
+              "",
+              `  [Lot: ${lotName}]`,
+              lg.allocated_quantity || "",
+              "",
+              ""
+            ]);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (lg.batches || []).forEach((b: any) => {
+              const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : unitPrice;
+              const bQty = Number(b.quantity || 0);
+              const bTotal = bQty * bCost;
+              const mfg = b.manufacturing_date ? ` Mfg: ${String(b.manufacturing_date).substring(0, 10)}` : "";
+              const exp = b.expiry_date ? ` Exp: ${String(b.expiry_date).substring(0, 10)}` : "";
+              tableRows.push([
+                "",
+                `    • Batch: ${b.batch_no || "—"}${mfg}${exp}`,
+                bQty,
+                `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              ]);
+            });
+          });
+        }
+      });
 
       // Calculate dynamic bottom margin based on Body End indicator
       const baseSize = config.paperSize === 'Custom' ? config.customSize : (PAPER_SIZES[config.paperSize] || PAPER_SIZES.A4);
@@ -374,7 +409,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                   <p className="text-white/60 text-[10px] uppercase font-bold tracking-widest">Date Created</p>
                   <div className="flex items-center gap-2 font-bold text-lg">
                     <Calendar className="h-4 w-4 text-white/80" />
-                    {data.created_at ? format(new Date(data.created_at), "MMM d, yyyy") : "-"}
+                    {data.created_at ? formatPhDateTime(data.created_at, { formatType: "dateOnly" }) : "-"}
                   </div>
                 </div>
 
@@ -430,8 +465,10 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                           const file = att.attachment;
                           if (!file) return null;
                           const fileId = typeof file === 'object' ? file.id : file;
-                          const isImage = typeof file === 'object' && file.type?.startsWith('image');
                           const filename = typeof file === 'object' ? file.filename_download : `Attachment ${idx + 1}`;
+                          const isImage = typeof file === 'object'
+                            ? Boolean(file.type?.startsWith('image') || (file.filename_download && /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(file.filename_download)))
+                            : true;
                           const sizeInMb = typeof file === 'object' && file.filesize 
                             ? (Number(file.filesize) / (1024 * 1024)).toFixed(2)
                             : null;
@@ -492,7 +529,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                         <p className="text-[10px] uppercase font-bold text-primary/70">Posted At</p>
                       </div>
                       <p className="font-bold text-primary/95">
-                        {data.postedAt ? format(new Date(data.postedAt), "MMM d, yyyy, hh:mm a") : "-"}
+                        {data.postedAt ? formatPhDateTime(data.postedAt) : "-"}
                       </p>
                     </div>
                     <div className="bg-primary/5 dark:bg-blue-900/10 p-4 rounded-xl border border-primary/20 dark:border-blue-800/20 flex flex-col gap-1 animate-in fade-in slide-in-from-left-2 duration-300">
@@ -530,10 +567,11 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
             <TableHeader className="bg-muted/30">
               <TableRow className="hover:bg-transparent border-border">
                 <TableHead className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">#</TableHead>
+                <TableHead className="w-28 text-xs font-bold text-muted-foreground uppercase tracking-wider">Brand</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Information</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Cost/Unit</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Unit</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Adj. Qty</TableHead>
-                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Cost/Unit</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Total Price</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">New Stock</TableHead>
               </TableRow>
@@ -541,26 +579,215 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
             <TableBody>
               {data.items?.map((item, idx) => {
                 const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
-                const qty = item.quantity || 0;
-                const cost = item.cost_per_unit || product.price_per_unit || 0;
+                const qty = Number(item.quantity) || 0;
+                const cost = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit) || 0;
                 const total = qty * cost;
-                const current = item.current_stock || 0;
+                const current = Number(item.current_stock) || 0;
+                const unitName = item.unit_name || product.unit_name || "pcs";
                 
                 // Color-coded Delta quantities
                 const isIncoming = data.type === 'IN';
                 const newStock = isIncoming ? current + qty : current - qty;
 
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
+
+                if (lotAllocations.length > 0) {
+                  let subBatchCounter = 1;
+                  return (
+                    <React.Fragment key={item.id || idx}>
+                      {/* Product Summary Row */}
+                      <TableRow className="border-border bg-muted/20 hover:bg-muted/30 transition-colors duration-150 font-semibold">
+                        <TableCell className="text-center text-muted-foreground font-bold">{idx + 1}</TableCell>
+                        <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1 py-1">
+                            <span className="font-bold text-foreground leading-tight">
+                              {product.description || product.product_name || "Unknown Product"}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              {product.product_code && (
+                                <span className="text-[10px] text-muted-foreground font-mono">({product.product_code})</span>
+                              )}
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                              >
+                                <Layers className="w-2.5 h-2.5 text-primary" />
+                                {lotAllocations.length} {lotAllocations.length === 1 ? "Lot" : "Lots"}
+                              </Badge>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-muted-foreground">
+                          ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-center font-bold text-primary">
+                          <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase">
+                            {unitName}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className={`font-black px-2.5 py-1 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
+                            {isIncoming ? `+${Number(qty).toLocaleString()}` : `-${Number(qty).toLocaleString()}`}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-bold text-primary">
+                          ₱{Number(total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-center font-bold text-foreground">
+                          {Number(newStock).toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Storage Lot & Batch Breakdown */}
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      {lotAllocations.map((lotGroup: any, lgIdx: number) => {
+                        const lotGroupTotal =
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          lotGroup.batches?.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0) ??
+                          lotGroup.allocated_quantity ??
+                          0;
+
+                        return (
+                          <React.Fragment key={`lot-${lgIdx}`}>
+                            {/* Storage Lot Sub-Header */}
+                            <TableRow className="bg-muted/40 border-b border-border/40 text-xs">
+                              <TableCell className="p-2 text-center border-r border-border/50 bg-muted/30"></TableCell>
+                              <TableCell colSpan={7} className="px-4 py-1.5 bg-muted/30">
+                                <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                                  <span className="flex items-center gap-1.5 text-primary">
+                                    <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
+                                    <span>{lotGroup.lot_name || `Lot #${lotGroup.lot_id}`}</span>
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground font-mono bg-background/80 px-2 py-0.5 rounded border border-border/50">
+                                    Lot Total: <span className="font-bold text-foreground">{Number(lotGroupTotal).toLocaleString()}</span> {unitName}
+                                  </span>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+
+                            {/* Discrete Batches in this Storage Lot */}
+                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                            {(lotGroup.batches || []).map((batch: any, bIdx: number) => {
+                              const bCount = subBatchCounter++;
+                              const batchCost = batch.unit_cost !== undefined ? Number(batch.unit_cost) : Number(cost);
+                              const batchQty = Number(batch.quantity || 0);
+                              const batchNetTotal = batchQty * batchCost;
+
+                              return (
+                                <TableRow
+                                  key={`batch-${bIdx}`}
+                                  className="bg-card hover:bg-muted/10 border-b border-border/30 text-xs transition-colors"
+                                >
+                                  <TableCell className="p-2 text-center text-muted-foreground/60 font-mono text-[10px] border-r border-border/50">
+                                    {idx + 1}.{bCount}
+                                  </TableCell>
+                                  <TableCell className="p-2 text-muted-foreground/40 text-xs">—</TableCell>
+                                  <TableCell className="p-2 min-w-[280px] pl-6">
+                                    <div className="flex flex-wrap items-center gap-2 font-mono">
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] py-0 h-4 px-1.5 font-bold bg-primary/10 text-primary border-primary/30 gap-1"
+                                      >
+                                        <Tag className="w-2.5 h-2.5 text-primary" />
+                                        {batch.batch_no || "—"}
+                                      </Badge>
+                                      {batch.manufacturing_date && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Mfg: {String(batch.manufacturing_date).substring(0, 10)}
+                                        </span>
+                                      )}
+                                      {batch.expiry_date && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Exp: {String(batch.expiry_date).substring(0, 10)}
+                                        </span>
+                                      )}
+                                      {batch.qa_status && (
+                                        <Badge
+                                          variant={batch.qa_status === "GOOD" ? "outline" : batch.qa_status === "DAMAGED" ? "destructive" : "secondary"}
+                                          className="text-[8px] py-0 h-3.5 px-1 uppercase"
+                                        >
+                                          {batch.qa_status}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right text-xs text-muted-foreground font-mono">
+                                    ₱{Number(batchCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+                                      {unitName}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <span className={`font-black px-2 py-0.5 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
+                                      {isIncoming ? `+${Number(batchQty).toLocaleString()}` : `-${Number(batchQty).toLocaleString()}`}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-right font-bold text-foreground/80">
+                                    ₱{Number(batchNetTotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-center text-muted-foreground/40 text-xs">—</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                }
+
                 return (
-                  <TableRow key={item.id} className="border-border hover:bg-muted/35 transition-colors duration-150">
+                  <TableRow key={item.id || idx} className="border-border hover:bg-muted/35 transition-colors duration-150">
                     <TableCell className="text-center text-muted-foreground/50 font-bold">{idx + 1}</TableCell>
+                    <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1.5 py-1">
-                        <span className="font-bold text-foreground leading-tight">{product.product_name || "Unknown Product"}</span>
-                        <div className="flex items-center gap-2">
+                        <span className="font-bold text-foreground leading-tight">{product.description || product.product_name || "Unknown Product"}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-muted-foreground font-mono">{product.product_code || "N/A"}</span>
-                          <span className="text-[10px] text-primary font-bold uppercase">{item.brand_name || "N/A"}</span>
+                          {item.batch_no ? (
+                            (() => {
+                              const batches = item.batch_no.split(',').map((s) => s.trim()).filter(Boolean);
+                              const label = batches.length > 1 ? `${batches.length} Batches` : batches[0];
+                              return (
+                                <Badge
+                                  variant="outline"
+                                  title={item.batch_no ? `Batches:\n${batches.join('\n')}` : undefined}
+                                  className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 border-border/60"
+                                >
+                                  <Layers className="w-2.5 h-2.5 text-primary" />
+                                  {label} {item.lot_name ? `(${item.lot_name})` : item.lot_id ? `(Lot #${item.lot_id})` : ''}
+                                </Badge>
+                              );
+                            })()
+                          ) : data.type === 'OUT' ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1"
+                            >
+                              <Layers className="w-2.5 h-2.5 text-emerald-600" />
+                              AUTO — FEFO
+                            </Badge>
+                          ) : null}
+                          {item.expiry_date && (
+                            <span className="text-[9px] text-muted-foreground/80 font-mono">
+                              Exp: {String(item.expiry_date).substring(0, 10)}
+                            </span>
+                          )}
+                          {item.qa_status && (
+                            <Badge
+                              variant={item.qa_status === "GOOD" ? "outline" : item.qa_status === "DAMAGED" ? "destructive" : "secondary"}
+                              className="text-[9px] py-0 h-3.5 px-1 font-mono"
+                            >
+                              {item.qa_status}
+                            </Badge>
+                          )}
                         </div>
-                        {/* Serial Pill Arrays: RFID Tags */}
+                        {/* RFID Tags */}
                         {item.rfid_tags && item.rfid_tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2 animate-in fade-in duration-300">
                             {item.rfid_tags.map((tag) => (
@@ -577,21 +804,21 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-center font-bold text-muted-foreground/80">{item.unit_name || product.unit_name || "pcs"}</TableCell>
+                    <TableCell className="text-right font-medium text-muted-foreground">
+                      ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-center font-bold text-muted-foreground/80">{unitName}</TableCell>
                     <TableCell className="text-center">
                       <span className={`font-black px-2.5 py-1 rounded-full text-xs ${isIncoming ? 'bg-success-bg text-success' : 'bg-destructive/10 text-destructive'}`}>
-                        {isIncoming ? `+${qty}` : `-${qty}`}
+                        {isIncoming ? `+${Number(qty).toLocaleString()}` : `-${Number(qty).toLocaleString()}`}
                       </span>
                     </TableCell>
-                    <TableCell className="text-right font-medium text-muted-foreground">₱{cost.toFixed(2)}</TableCell>
                     <TableCell className="text-right font-bold text-primary">
-                      ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ₱{Number(total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
                     {/* Live New Stock Preview */}
-                    <TableCell className="text-center">
-                      <span className="font-bold text-foreground">
-                        {newStock}
-                      </span>
+                    <TableCell className="text-center font-bold text-foreground">
+                      {Number(newStock).toLocaleString()}
                     </TableCell>
                   </TableRow>
                 );
@@ -603,14 +830,14 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
             <div className="flex items-center gap-12 w-full max-w-md justify-between">
               <span className="text-muted-foreground font-bold uppercase tracking-wider text-[11px]">Total Quantity:</span>
               <span className={`font-black text-lg ${data.type === 'IN' ? 'text-success' : 'text-destructive'}`}>
-                {data.type === 'OUT' ? '-' : '+'}{data.items?.reduce((acc, item) => acc + (item.quantity || 0), 0)} units
+                {data.type === 'OUT' ? '-' : '+'}{Number(data.items?.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0) || 0).toLocaleString()} units
               </span>
             </div>
             <div className="h-px bg-border w-full max-w-md" />
             <div className="flex items-center gap-12 w-full max-w-md justify-between">
               <span className="text-muted-foreground font-bold uppercase tracking-wider text-[11px]">Total Adjusted Amount:</span>
               <span className="text-2xl font-bold text-primary">
-                ₱{data.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ₱{Number(data.amount || data.items?.reduce((acc, item) => acc + ((Number(item.quantity) || 0) * (Number(item.cost_per_unit) || 0)), 0) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>

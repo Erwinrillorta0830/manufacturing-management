@@ -2,6 +2,8 @@ import { stockConversionRepo, DIRECTUS_API, DIRECTUS_TOKEN } from "./stock-conve
 import { normalizeProductName, generateConversionDocNo } from "./stock-conversion.helpers";
 import type { StockConversionProduct, StockConversionPayload } from "../types/stock-conversion.types";
 import { AppError } from "../utils/error-handler";
+import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
+import { getPhDbTimestamp } from "../utils/date-utils";
 
 interface DirectusProduct {
   id?: string | number;
@@ -77,7 +79,14 @@ export const stockConversionService = {
         });
         if (res.ok) {
           const json = await res.json();
-          const pIds = (json.data || []).map((d: { product_id: number }) => Number(d.product_id));
+          const pIds = (json.data || []).map((d: Record<string, unknown>) => {
+            if (typeof d.product_id === 'object' && d.product_id !== null) {
+              const obj = d.product_id as Record<string, unknown>;
+              return Number(obj.product_id || obj.id || 0);
+            }
+            return Number(d.product_id || 0);
+          }).filter((id: number) => !isNaN(id) && id > 0);
+
           if (pIds.length > 0) {
             filterProductIds = pIds;
           } else {
@@ -97,18 +106,23 @@ export const stockConversionService = {
           .filter(([, qty]) => (qty as unknown as number) > 0)
           .map(([id]) => Number(id));
 
+        console.log(`[StockConversionService] Convertible only: found ${stockProductIds.length} items with stock in branch ${branchId}`);
+
         if (stockProductIds.length > 0) {
+          const stockSet = new Set(stockProductIds);
           // INTERSECT: Only keep IDs that match BOTH filters (Supplier AND Stock)
           if (filterProductIds !== null) {
-            filterProductIds = filterProductIds.filter(id => stockProductIds.includes(id));
+            filterProductIds = filterProductIds.filter(id => stockSet.has(id));
           } else {
             filterProductIds = stockProductIds;
           }
 
           if (filterProductIds.length === 0) {
+            console.log(`[StockConversionService] No matching products after intersecting supplier and stock filters`);
             return { data: [], totalCount: 0, options: allOptions };
           }
         } else {
+          console.log(`[StockConversionService] No products with stock found for branch ${branchId}`);
           return { data: [], totalCount: 0, options: allOptions };
         }
       } catch (err: unknown) {
@@ -168,9 +182,9 @@ export const stockConversionService = {
 
     const t5 = Date.now();
     const [familyByParent, familyBySelf, familyByName] = await Promise.all([
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "parent_id", allPotentialParentIds, "product_id,product_name,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
-      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "parent_id", allPotentialParentIds, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
+      stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
     ]);
     console.log(`[Perf] Step 4.5 - familyEnrichment: ${Date.now() - t5}ms`);
     console.log(`[Perf] TOTAL so far: ${Date.now() - t0}ms`);
@@ -245,19 +259,23 @@ export const stockConversionService = {
       const categoryId = Number(typeof p.product_category === 'object' ? (p.product_category as DirectusLookup)?.category_id : p.product_category);
       const unitId = Number(typeof p.unit_of_measurement === 'object' ? (p.unit_of_measurement as DirectusLookup)?.unit_id : p.unit_of_measurement);
 
-      const availableUnits = group
+      const availableUnitsMap = new Map<number, { unitId: number; name: string; conversionFactor: number; targetProductId: number }>();
+      group
         .filter((v: DirectusProduct) => Number(typeof v.unit_of_measurement === 'object' ? (v.unit_of_measurement as DirectusLookup)?.unit_id : v.unit_of_measurement) !== unitId)
-        .map((v: DirectusProduct) => {
+        .forEach((v: DirectusProduct) => {
           const vUnitId = Number(typeof v.unit_of_measurement === 'object' ? (v.unit_of_measurement as DirectusLookup)?.unit_id : v.unit_of_measurement);
           const dbFactor = Number(v.unit_of_measurement_count) || 1;
           const targetUnitName = unitMap.get(vUnitId) || "Unknown";
-          return {
-            unitId: vUnitId,
-            name: targetUnitName,
-            conversionFactor: (targetUnitName.toLowerCase().includes("piece") || targetUnitName.toLowerCase() === "pcs") ? 1 : dbFactor,
-            targetProductId: Number(v.product_id)
-          };
+          if (!availableUnitsMap.has(vUnitId)) {
+            availableUnitsMap.set(vUnitId, {
+              unitId: vUnitId,
+              name: targetUnitName,
+              conversionFactor: (targetUnitName.toLowerCase().includes("piece") || targetUnitName.toLowerCase() === "pcs") ? 1 : dbFactor,
+              targetProductId: Number(v.product_id)
+            });
+          }
         });
+      const availableUnits = Array.from(availableUnitsMap.values());
 
       // Supplier Logic
       let finalSupplierName = "No Supplier";
@@ -300,7 +318,7 @@ export const stockConversionService = {
       const sourceFactor = (currentUnitName.toLowerCase().includes("piece") || currentUnitName.toLowerCase() === "pcs") ? 1 : dbFactor;
       
       const rawQuantity = inventory[pId] || 0;
-      const finalQuantity = Math.floor(rawQuantity / sourceFactor);
+      const finalQuantity = rawQuantity;
 
 
       return {
@@ -310,16 +328,16 @@ export const stockConversionService = {
         brand: brandMap.get(brandId) || "Unknown",
         category: catMap.get(categoryId) || "Unknown",
         productCode: p.product_code || "",
-        productName: p.product_name || "",
+        productName: p.description || p.product_name || "",
         productDescription: p.description || p.product_name || "",
-        family: `FAM-${parentId || pId}`,
+        family: groupKey,
         currentUnit: currentUnitName,
         currentUnitId: unitId,
         quantity: finalQuantity,
         pricePerUnit: Number(p.cost_per_unit || p.price_per_unit || 0),
         totalAmount: Number((finalQuantity * Number(p.cost_per_unit || p.price_per_unit || 0)).toFixed(2)),
         conversionFactor: sourceFactor,
-        inventoryLoaded: !!branchId,
+        inventoryLoaded: false,
         availableUnits,
       };
     });
@@ -330,10 +348,10 @@ export const stockConversionService = {
       finalResult = result.filter(p => p.quantity > 0 && (p.availableUnits?.length ?? 0) > 0);
     }
 
-    // 8. Sort by: 1. Product Name (Grouped), 2. Unit Size (Descending: Box > Tie > Piece)
+    // 8. Sort by: 1. Product Family (Grouped), 2. Unit Size (Descending: Box > Tie > Piece)
     finalResult.sort((a, b) => {
-      const nameCompare = a.productName.localeCompare(b.productName);
-      if (nameCompare !== 0) return nameCompare;
+      const familyCompare = (a.family || "").localeCompare(b.family || "");
+      if (familyCompare !== 0) return familyCompare;
       
       // Keep units in a logical order (larger units first)
       return (b.conversionFactor || 0) - (a.conversionFactor || 0);
@@ -359,7 +377,7 @@ export const stockConversionService = {
     };
   },
 
-  async executeConversion(payload: StockConversionPayload) {
+  async executeConversion(payload: StockConversionPayload, token?: string) {
     const docNo = generateConversionDocNo();
     const targetProductId = payload.targetProductId || payload.productId;
     const sourceFactor = Number(payload.sourceFactor || 1);
@@ -368,7 +386,13 @@ export const stockConversionService = {
     // 1. Validate the conversion math on the backend for integrity
     const totalBaseUnits = Number(payload.quantityToConvert) * sourceFactor;
     const expectedConvertedQty = Math.floor(totalBaseUnits / targetFactor);
-    
+    const remainderBaseUnits = totalBaseUnits % targetFactor;
+
+    if (remainderBaseUnits !== 0) {
+      const requiredMultiple = targetFactor / sourceFactor;
+      throw new Error(`Invalid conversion quantity: Converting ${payload.quantityToConvert} units leaves a remainder of ${remainderBaseUnits / sourceFactor} units. Conversion requires exact multiples of ${requiredMultiple} unit(s).`);
+    }
+
     if (payload.convertedQuantity > expectedConvertedQty) {
       throw new Error(`Invalid conversion: ${payload.quantityToConvert} units of source cannot produce ${payload.convertedQuantity} units of target (Expected max: ${expectedConvertedQty}).`);
     }
@@ -378,55 +402,369 @@ export const stockConversionService = {
     }
 
     // 2. FETCH LATEST INVENTORY - Final server-side check to prevent over-drawing
-    const inventory = await stockConversionRepo.fetchInventory(undefined, payload.branchId, `product_id=${payload.productId}`);
+    const inventory = await stockConversionRepo.fetchInventory(token, payload.branchId, `product_id=${payload.productId}`);
     const rawStock = inventory[payload.productId] || 0;
-    const availableSourceUnits = Math.floor(rawStock / sourceFactor);
+    const availableSourceUnits = rawStock;
 
     if (payload.quantityToConvert > availableSourceUnits) {
       throw new Error(`Insufficient stock: You requested to convert ${payload.quantityToConvert} units, but only ${availableSourceUnits} are available in branch ${payload.branchId}.`);
     }
 
-    const remarkStr = `Conversion: ${payload.quantityToConvert} source units to ${payload.convertedQuantity} target units`;
+    // 3. Target Lot Capacity and UOM Validation Safeguards
+    if (payload.targetLotId) {
+      try {
+        const lotRes = await fetch(
+          `${DIRECTUS_API}/items/mm_lots/${payload.targetLotId}?fields=lot_id,lot_name,unit_id,max_batch_capacity`,
+          { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
+        ).catch(() => null);
+        if (lotRes && lotRes.ok) {
+          const lotJson = await lotRes.json();
+          const targetLot = lotJson.data;
+          if (targetLot) {
+            const maxCap = Number(targetLot.max_batch_capacity || 0);
+            if (maxCap > 0 && payload.convertedQuantity > maxCap) {
+              throw new Error(`Target Lot Capacity Exceeded: Target storage rack "${targetLot.lot_name}" has a max capacity of ${maxCap}, but conversion output is ${payload.convertedQuantity}.`);
+            }
+          }
+        }
+      } catch (lotErr) {
+        if (lotErr instanceof Error && lotErr.message.includes("Capacity Exceeded")) {
+          throw lotErr;
+        }
+      }
+    }
+
+    // Resolve FEFO source batch allocation for batch genealogy
+    let sourceBatchDesc = payload.sourceBatchNo || "";
+    if (!sourceBatchDesc) {
+      try {
+        const fefoPlan = await allocateStock({
+          productId: payload.productId,
+          branchId: payload.branchId,
+          requestedQuantity: payload.quantityToConvert,
+        });
+        if (fefoPlan.allocations.length > 0) {
+          sourceBatchDesc = fefoPlan.allocations.map(a => `${a.batch_no} (qty: ${a.allocated_quantity})`).join(", ");
+        }
+      } catch (err) {
+        console.warn("[StockConversion] FEFO allocation lookup warning:", err);
+      }
+    }
+
+    // Resolve product descriptions for source and target
+    let sourceProdDesc = `Product #${payload.productId}`;
+    let targetProdDesc = `Product #${targetProductId}`;
+    try {
+      const prodRes = await fetch(
+        `${DIRECTUS_API}/items/products?filter={"product_id":{"_in":[${payload.productId},${targetProductId}]}}&fields=product_id,product_name,description&limit=2`,
+        { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
+      ).catch(() => null);
+      if (prodRes && prodRes.ok) {
+        const pJson = await prodRes.json();
+        const pList: DirectusProduct[] = pJson.data || [];
+        const sP = pList.find(p => Number(p.product_id || p.id) === payload.productId);
+        const tP = pList.find(p => Number(p.product_id || p.id) === targetProductId);
+        if (sP) sourceProdDesc = sP.description || sP.product_name || sourceProdDesc;
+        if (tP) targetProdDesc = tP.description || tP.product_name || targetProdDesc;
+      }
+    } catch (err) {
+      console.warn("[StockConversion] Product description lookup error:", err);
+    }
+
+    const remarkStr = `Conversion: ${payload.quantityToConvert} source units (${sourceProdDesc}) to ${payload.convertedQuantity} target units (${targetProdDesc})${sourceBatchDesc ? ` [Source FEFO: ${sourceBatchDesc}]` : ''}`;
     const totalAmount = Number((payload.quantityToConvert * payload.pricePerUnit).toFixed(2));
 
     try {
       // 1. Create a SINGLE header for the entire conversion transaction
-      const now = new Date().toISOString();
-      await stockConversionRepo.createStockAdjustmentHeader({
+      const nowPHT = getPhDbTimestamp();
+      const headerRes = await stockConversionRepo.createStockAdjustmentHeader({
         doc_no: docNo, 
         type: "OUT", 
         branch_id: payload.branchId, 
         created_by: payload.userId, 
+        updated_by: payload.userId,
         posted_by: payload.userId, 
         amount: totalAmount, 
         remarks: remarkStr,
         isPosted: true,
-        postedAt: now
+        postedAt: nowPHT,
+        posted_at: nowPHT,
+        created_at: nowPHT,
+        updated_at: nowPHT,
+        date_created: nowPHT,
+        date_updated: nowPHT,
       });
+      const headerId = headerRes?.data?.id || null;
 
-      // 2. Create the OUT movement (Source Product)
-      const outRes = await stockConversionRepo.createStockAdjustment({
-        doc_no: docNo, 
-        product_id: payload.productId, 
-        branch_id: payload.branchId, 
-        type: "OUT", 
-        quantity: payload.quantityToConvert, 
-        created_by: payload.userId, 
-        remarks: remarkStr
-      });
-      const outId = outRes.data?.id;
+      // 2. Create the OUT movement(s) (Source Product) with exact batch and lot tracking
+      let outId: number | undefined;
+      const validAllocations = (payload.sourceAllocations || []).filter(a => (a.allocated_quantity || 0) > 0);
 
-      // 3. Create the IN movement (Target Product)
-      const inRes = await stockConversionRepo.createStockAdjustment({
-        doc_no: docNo, 
-        product_id: targetProductId, 
-        branch_id: payload.branchId, 
-        type: "IN", 
-        quantity: payload.convertedQuantity, 
-        created_by: payload.userId, 
-        remarks: remarkStr
-      });
-      const inId = inRes.data?.id;
+      // Pre-resolve any missing source lot IDs if batch_no is available
+      const cleanAllocations = await Promise.all(
+        validAllocations.map(async (alloc) => {
+          let invLotId = alloc.inventory_lot_id;
+          let lotId = alloc.lot_id;
+          let mfgDate = alloc.manufacturing_date;
+          let expDate = alloc.expiry_date;
+
+          if ((!invLotId || !lotId || !expDate) && alloc.batch_no) {
+            try {
+              const res = await fetch(
+                `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(alloc.batch_no)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date,expiration_date`,
+                { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
+              ).catch(() => null);
+              if (res && res.ok) {
+                const j = await res.json();
+                if (j.data && j.data.length > 0) {
+                  const bRow = j.data[0];
+                  invLotId = invLotId || Number(bRow.inventory_lot_id || bRow.id);
+                  lotId = lotId || (typeof bRow.lot_id === 'object' && bRow.lot_id ? Number(bRow.lot_id.id || bRow.lot_id.lot_id) : Number(bRow.lot_id || 0));
+                  mfgDate = mfgDate || bRow.manufacturing_date || null;
+                  expDate = expDate || bRow.expiry_date || bRow.expiration_date || null;
+                }
+              }
+            } catch {
+              // Ignore lookup failure
+            }
+          }
+
+          return {
+            ...alloc,
+            inventory_lot_id: invLotId,
+            lot_id: lotId,
+            manufacturing_date: mfgDate,
+            expiry_date: expDate,
+          };
+        })
+      );
+
+      if (cleanAllocations.length > 0) {
+        for (const alloc of cleanAllocations) {
+          const outRes = await stockConversionRepo.createStockAdjustment({
+            doc_no: docNo, 
+            stock_adjustment_id: headerId,
+            product_id: payload.productId, 
+            branch_id: payload.branchId, 
+            type: "OUT", 
+            quantity: Number(alloc.allocated_quantity || 0), 
+            unit_id: payload.sourceUnitId || 1,
+            unit_cost: alloc.unit_cost ?? (payload.pricePerUnit || 0),
+            inventory_condition: (alloc.qa_status as 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED') || "GOOD",
+            source_type: "STOCK_CONVERSION",
+            inventory_lot_id: alloc.inventory_lot_id ? Number(alloc.inventory_lot_id) : null,
+            lot_id: alloc.lot_id ? Number(alloc.lot_id) : null,
+            batch_no: alloc.batch_no || null,
+            manufacturing_date: alloc.manufacturing_date || null,
+            expiry_date: alloc.expiry_date || null,
+            created_by: payload.userId, 
+            updated_by: payload.userId, 
+            created_at: nowPHT,
+            updated_at: nowPHT,
+            date_created: nowPHT,
+            date_updated: nowPHT,
+            remarks: remarkStr
+          });
+          if (!outId) outId = outRes.data?.id;
+        }
+      } else {
+        // Fallback for single batch or non-split allocation
+        let srcInvLotId = payload.sourceInventoryLotId;
+        let srcLotId = payload.sourceLotId;
+        let srcMfgDate = payload.sourceManufacturingDate;
+        let srcExpDate = payload.sourceExpiryDate;
+
+        if ((!srcInvLotId || !srcLotId) && payload.sourceBatchNo) {
+          try {
+            const res = await fetch(
+              `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(payload.sourceBatchNo)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date,expiration_date`,
+              { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
+            ).catch(() => null);
+            if (res && res.ok) {
+              const j = await res.json();
+              if (j.data && j.data.length > 0) {
+                const bRow = j.data[0];
+                srcInvLotId = srcInvLotId || Number(bRow.inventory_lot_id || bRow.id);
+                srcLotId = srcLotId || (typeof bRow.lot_id === 'object' && bRow.lot_id ? Number(bRow.lot_id.id || bRow.lot_id.lot_id) : Number(bRow.lot_id || 0));
+                srcMfgDate = srcMfgDate || bRow.manufacturing_date || null;
+                srcExpDate = srcExpDate || bRow.expiry_date || bRow.expiration_date || null;
+              }
+            }
+          } catch {
+            // Ignore lookup failure
+          }
+        }
+
+        const outRes = await stockConversionRepo.createStockAdjustment({
+          doc_no: docNo, 
+          stock_adjustment_id: headerId,
+          product_id: payload.productId, 
+          branch_id: payload.branchId, 
+          type: "OUT", 
+          quantity: payload.quantityToConvert, 
+          unit_id: payload.sourceUnitId || 1,
+          unit_cost: payload.pricePerUnit || 0,
+          inventory_condition: "GOOD",
+          source_type: "STOCK_CONVERSION",
+          inventory_lot_id: srcInvLotId ? Number(srcInvLotId) : null,
+          lot_id: srcLotId ? Number(srcLotId) : null,
+          batch_no: payload.sourceBatchNo || null,
+          manufacturing_date: srcMfgDate || null,
+          expiry_date: srcExpDate || null,
+          created_by: payload.userId, 
+          updated_by: payload.userId, 
+          created_at: nowPHT,
+          updated_at: nowPHT,
+          date_created: nowPHT,
+          date_updated: nowPHT,
+          remarks: remarkStr
+        });
+        outId = outRes.data?.id;
+      }
+
+      // 3. Process Target Batches and IN Adjustments (Multi-Lot & Multi-Batch Support)
+      const inRatio = (payload.convertedQuantity && payload.quantityToConvert) ? (payload.convertedQuantity / payload.quantityToConvert) : 1;
+      const targetUnitCost = inRatio > 0 ? (payload.pricePerUnit / inRatio) : payload.pricePerUnit;
+
+      const targetBatchesToCreate: Array<{
+        lotId: number;
+        batchNo: string;
+        quantity: number;
+        manufacturingDate: string | null;
+        expiryDate: string | null;
+        qaStatus: string;
+        unitCost: number;
+      }> = [];
+
+      if (payload.targetAllocations && payload.targetAllocations.length > 0) {
+        payload.targetAllocations.forEach((g) => {
+          (g.batches || []).forEach((b) => {
+            if (Number(b.quantity || 0) > 0 && b.batch_no && String(b.batch_no).trim()) {
+              targetBatchesToCreate.push({
+                lotId: Number(g.lot_id),
+                batchNo: String(b.batch_no).trim(),
+                quantity: Number(b.quantity || 0),
+                manufacturingDate: b.manufacturing_date || payload.targetManufacturingDate || null,
+                expiryDate: b.expiry_date || payload.targetExpiryDate || null,
+                qaStatus: b.qa_status || payload.targetQaStatus || "GOOD",
+                unitCost: Number(b.unit_cost ?? targetUnitCost),
+              });
+            }
+          });
+        });
+      } else if (payload.targetLotId && payload.targetBatchNo && payload.targetBatchNo.trim()) {
+        targetBatchesToCreate.push({
+          lotId: Number(payload.targetLotId),
+          batchNo: String(payload.targetBatchNo).trim(),
+          quantity: Number(payload.convertedQuantity || 0),
+          manufacturingDate: payload.targetManufacturingDate || null,
+          expiryDate: payload.targetExpiryDate || null,
+          qaStatus: payload.targetQaStatus || "GOOD",
+          unitCost: targetUnitCost,
+        });
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}),
+      };
+
+      for (const tBatch of targetBatchesToCreate) {
+        let targetInventoryLotId: number | null = null;
+        try {
+          // Check if batch already exists in this lot
+          const checkRes = await fetch(
+            `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"lot_id":{"_eq":${tBatch.lotId}}},{"product_id":{"_eq":${targetProductId}}},{"batch_no":{"_eq":"${encodeURIComponent(tBatch.batchNo)}"}}],"_or":[{"branch_id":{"_eq":${payload.branchId}}},{"branch_id":{"_null":true}}]}&limit=1&fields=id,inventory_lot_id`,
+            { headers, cache: "no-store" }
+          ).catch(() => null);
+
+          if (checkRes && checkRes.ok) {
+            const checkJson = await checkRes.json();
+            if (checkJson.data && checkJson.data.length > 0) {
+              const found = checkJson.data[0];
+              targetInventoryLotId = Number(found.inventory_lot_id || found.id);
+            }
+          }
+
+          if (!targetInventoryLotId) {
+            const batchPayload = {
+              lot_id: tBatch.lotId,
+              branch_id: payload.branchId,
+              product_id: targetProductId,
+              batch_no: tBatch.batchNo,
+              manufacturing_date: tBatch.manufacturingDate,
+              expiry_date: tBatch.expiryDate,
+              expiration_date: tBatch.expiryDate,
+              unit_cost: Number(tBatch.unitCost || 0),
+              initial_quantity: Number(tBatch.quantity || 0),
+              current_quantity: Number(tBatch.quantity || 0),
+              available_quantity: Number(tBatch.quantity || 0),
+              qa_status: tBatch.qaStatus || "GOOD",
+              status: "ACTIVE",
+              source_type: "STOCK_CONVERSION",
+              source_reference: docNo,
+              remarks: `Converted from ${sourceProdDesc} (${sourceBatchDesc || payload.sourceBatchNo || "Batch N/A"})`,
+              created_by: payload.userId || null,
+              updated_by: payload.userId || null,
+              created_at: nowPHT,
+              updated_at: nowPHT,
+              date_created: nowPHT,
+              date_updated: nowPHT,
+            };
+
+            let createRes = await fetch(`${DIRECTUS_API}/items/mm_inventory_lots`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify(batchPayload),
+            }).catch(() => null);
+
+            if (!createRes || !createRes.ok) {
+              createRes = await fetch(`${DIRECTUS_API}/items/inventory_lots`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(batchPayload),
+              }).catch(() => null);
+            }
+
+            if (createRes && createRes.ok) {
+              const createJson = await createRes.json();
+              const createdId = createJson.data?.inventory_lot_id || createJson.data?.id;
+              targetInventoryLotId = Number(createdId);
+              console.log(`[StockConversion] Created new target inventory lot: ${tBatch.batchNo} (ID: ${createdId})`);
+            } else {
+              console.warn(`[StockConversion] Failed to create target inventory lot:`, await createRes?.text());
+            }
+          }
+        } catch (err) {
+          console.error("[StockConversion] Error syncing target batch:", err);
+        }
+
+        // 4. Create the IN movement for this batch
+        await stockConversionRepo.createStockAdjustment({
+          doc_no: docNo, 
+          stock_adjustment_id: headerId,
+          product_id: targetProductId, 
+          branch_id: payload.branchId, 
+          type: "IN", 
+          quantity: tBatch.quantity, 
+          unit_id: payload.targetUnitId || 1,
+          unit_cost: tBatch.unitCost,
+          inventory_condition: (tBatch.qaStatus as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+          source_type: "STOCK_CONVERSION",
+          lot_id: tBatch.lotId,
+          batch_no: tBatch.batchNo,
+          inventory_lot_id: targetInventoryLotId || null,
+          manufacturing_date: tBatch.manufacturingDate,
+          expiry_date: tBatch.expiryDate,
+          created_by: payload.userId, 
+          updated_by: payload.userId, 
+          created_at: nowPHT,
+          updated_at: nowPHT,
+          date_created: nowPHT,
+          date_updated: nowPHT,
+          remarks: remarkStr
+        });
+      }
 
       // Handle RFIDs for Traceability - Ensure no duplicates and absolute uniqueness
       const rfidEntries: { rfid_tag: string; stock_adjustment_id: number; created_by: number }[] = [];

@@ -1,11 +1,12 @@
 import { directusFetch, getDirectusBase } from "../utils/directus";
+import { getPhDbTimestamp } from "../utils/date-utils";
 import {
   StockAdjustmentManualHeader,
   StockAdjustmentManualDetail,
   StockAdjustmentManualItem,
   StockAdjustmentManualProduct,
 } from "../types/stock-adjustment-manual.schema";
-import { createInventoryLot } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { fetchProductOnhand } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
 interface RawItem {
   id?: number;
@@ -20,11 +21,12 @@ interface RawItem {
     price_per_unit?: number;
     product_brand?: { brand_name: string };
     product_category?: { category_name: string };
-    unit_of_measurement?: { unit_name: string; order: number };
+    unit_id?: number;
+    unit_of_measurement?: { unit_id?: number; unit_name: string; order: number };
     barcode?: string;
     description?: string;
   };
-  unit_id?: { unit_name: string };
+  unit_id?: number | { unit_id?: number; id?: number; unit_name?: string } | null;
   cost_per_unit?: number;
   brand_name?: string;
   unit_name?: string;
@@ -32,16 +34,19 @@ interface RawItem {
   rfid_count?: number;
   inferred_supplier_id?: number;
   current_stock?: number;
+  lot_id?: { lot_id?: number; lot_name?: string } | number | null;
+  lot_name?: string | null;
+  inventory_lot_id?: number | null;
+  batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  inventory_condition?: string | null;
+  qa_status?: string | null;
 }
 
 interface PPSData {
   product_id: number | { id: number };
   supplier_id: number | { id: number };
-}
-
-interface InventoryItem {
-  product_id: number;
-  running_inventory?: number;
 }
 
 interface RfidStatusItem {
@@ -51,6 +56,106 @@ interface RfidStatusItem {
 }
 
 const DIRECTUS_URL = getDirectusBase();
+
+async function syncInventoryLotBatch(params: {
+  lot_id?: number | null;
+  product_id: number;
+  batch_no?: string | null;
+  branch_id?: number | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  unit_cost?: number;
+  inventory_condition?: string;
+  qa_status?: string;
+  doc_no: string;
+  userId?: number | null;
+}): Promise<number | null> {
+  if (!params.batch_no || String(params.batch_no).trim() === "") {
+    return null;
+  }
+  const cleanBatchNo = String(params.batch_no).trim();
+  const lotId = params.lot_id ? Number(params.lot_id) : null;
+  const productId = Number(params.product_id);
+  const branchId = Number(params.branch_id || 0);
+
+  try {
+    const filterAnd: Record<string, unknown>[] = [
+      { product_id: { _eq: productId } },
+      { batch_no: { _eq: cleanBatchNo } },
+    ];
+    if (lotId) {
+      filterAnd.push({ lot_id: { _eq: lotId } });
+    }
+
+    const existingRes = await directusFetch<{ data: Array<{ id: number; inventory_lot_id?: number }> }>(
+      `${DIRECTUS_URL}/items/mm_inventory_lots?filter={"_and":${JSON.stringify(filterAnd)},"_or":[{"branch_id":{"_eq":${branchId}}},{"branch_id":{"_null":true}}]}&limit=1&fields=id,inventory_lot_id`
+    ).catch(() => ({ data: [] }));
+
+    if (existingRes.data && existingRes.data.length > 0) {
+      const found = existingRes.data[0];
+      return found.inventory_lot_id || found.id;
+    }
+
+    // Resolve fallback lot_id if none provided
+    let effectiveLotId = lotId;
+    if (!effectiveLotId && branchId) {
+      const lotRes = await directusFetch<{ data: Array<{ id: number; lot_id?: number }> }>(
+        `${DIRECTUS_URL}/items/mm_lots?filter={"branch_id":{"_eq":${branchId}}}&limit=1&fields=id,lot_id`
+      ).catch(() => ({ data: [] }));
+      if (lotRes.data && lotRes.data.length > 0) {
+        effectiveLotId = lotRes.data[0].lot_id || lotRes.data[0].id;
+      }
+    }
+    if (!effectiveLotId) effectiveLotId = 1;
+
+    const expDate = params.expiry_date || null;
+    const mfgDate = params.manufacturing_date || null;
+    const batchPayload = {
+      lot_id: effectiveLotId,
+      branch_id: branchId,
+      product_id: productId,
+      batch_no: cleanBatchNo,
+      manufacturing_date: mfgDate,
+      expiry_date: expDate,
+      expiration_date: expDate,
+      unit_cost: Number(params.unit_cost || 0),
+      qa_status: params.inventory_condition || params.qa_status || "GOOD",
+      status: "ACTIVE",
+      source_type: "STOCK_ADJUSTMENT",
+      source_reference: params.doc_no,
+      remarks: `Created from Stock Adjustment IN - ${params.doc_no}`,
+      created_by: params.userId || null,
+      updated_by: params.userId || null,
+    };
+
+    const createRes = await directusFetch<{ data: { id: number; inventory_lot_id?: number } }>(
+      `${DIRECTUS_URL}/items/mm_inventory_lots`,
+      {
+        method: "POST",
+        body: JSON.stringify(batchPayload),
+      }
+    ).catch(async () => {
+      return directusFetch<{ data: { id: number; inventory_lot_id?: number } }>(
+        `${DIRECTUS_URL}/items/inventory_lots`,
+        {
+          method: "POST",
+          body: JSON.stringify(batchPayload),
+        }
+      ).catch((err) => {
+        console.error("Failed to create inventory lot in directus:", err);
+        return null;
+      });
+    });
+
+    if (createRes?.data) {
+      return createRes.data.inventory_lot_id || createRes.data.id;
+    }
+  } catch (err) {
+    console.error("Error in syncInventoryLotBatch:", err);
+  }
+
+  return null;
+}
 const SPRING_API_URL = process.env.SPRING_API_BASE_URL;
 
 /**
@@ -86,7 +191,7 @@ export const stockAdjustmentManualService = {
       query += `&filter=${encodeURIComponent(JSON.stringify(filters))}`;
     }
 
-    const res = await directusFetch<{ data: StockAdjustmentManualHeader[] }>(`${DIRECTUS_URL}/items/stock_adjustment_header?${query}`);
+    const res = await directusFetch<{ data: StockAdjustmentManualHeader[] }>(`${DIRECTUS_URL}/items/mm_stock_adjustment_header?${query}`);
     const headers = res.data;
 
     if (headers.length === 0) return [];
@@ -109,7 +214,7 @@ export const stockAdjustmentManualService = {
 
     const docNos = parsedHeaders.map(h => h.doc_no);
     const itemsRes = await directusFetch<{ data: RawItem[] }>(
-      `${DIRECTUS_URL}/items/stock_adjustment?filter={"doc_no":{"_in":${JSON.stringify(docNos)}}}&fields=doc_no,quantity,product_id.product_id,product_id.price_per_unit,product_id.cost_per_unit,unit_id.unit_name&limit=-1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_in":${JSON.stringify(docNos)}}}&fields=doc_no,quantity,product_id.product_id,product_id.price_per_unit,product_id.cost_per_unit,unit_id.unit_name&limit=-1`
     );
     const allItems = itemsRes.data || [];
 
@@ -214,21 +319,36 @@ export const stockAdjustmentManualService = {
    */
   async fetchById(id: number): Promise<StockAdjustmentManualDetail> {
     const headerRes = await directusFetch<{ data: StockAdjustmentManualHeader }>(
-      `${DIRECTUS_URL}/items/stock_adjustment_header/${id}?fields=*,branch_id.id,branch_id.branch_name,supplier_id.id,supplier_id.supplier_name,created_by.user_fname,created_by.user_lname,posted_by.user_fname,posted_by.user_lname`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}?fields=*,branch_id.id,branch_id.branch_name,supplier_id.id,supplier_id.supplier_name,created_by.user_fname,created_by.user_lname,posted_by.user_fname,posted_by.user_lname`
     );
     const header = headerRes.data;
 
     const itemsRes = await directusFetch<{ data: RawItem[] }>(
-      `${DIRECTUS_URL}/items/stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=*,product_id.product_id,product_id.product_name,product_id.product_code,product_id.cost_per_unit,product_id.price_per_unit,product_id.unit_of_measurement.unit_name,product_id.unit_of_measurement.order,product_id.product_brand.brand_name,product_id.product_category.category_name,product_id.barcode,product_id.description,unit_id.unit_name&limit=-1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id,doc_no,product_id,inventory_lot_id,lot_id,batch_no,manufacturing_date,expiry_date,branch_id,type,created_at,quantity,unit_cost,inventory_condition,source_type,created_by,updated_by,updated_at,remarks,unit_id,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.cost_per_unit,product_id.price_per_unit,product_id.unit_of_measurement,product_id.unit_of_measurement.unit_id,product_id.unit_of_measurement.unit_name,product_id.unit_of_measurement.order,product_id.product_brand.brand_name,product_id.product_category.category_name,product_id.barcode,product_id.description,unit_id.unit_id,unit_id.unit_name&limit=-1`
     );
     const items = (itemsRes.data || []).map((item: RawItem) => {
       const cost = item.cost_per_unit || item.product_id?.cost_per_unit || item.product_id?.price_per_unit || 0;
+      const lotId = (item.lot_id && typeof item.lot_id === 'object') ? item.lot_id.lot_id : (typeof item.lot_id === 'number' ? item.lot_id : undefined);
+      const lotName = (item.lot_id && typeof item.lot_id === 'object') ? item.lot_id.lot_name : (item.lot_name || undefined);
+      const resolvedUnitId = (item.unit_id && typeof item.unit_id === 'object')
+        ? (item.unit_id as { unit_id?: number; id?: number }).unit_id || (item.unit_id as { unit_id?: number; id?: number }).id
+        : (item.unit_id ? Number(item.unit_id) : (item.product_id?.unit_of_measurement?.unit_id || (typeof item.product_id?.unit_of_measurement === 'number' ? item.product_id.unit_of_measurement : undefined)));
+
       return {
         ...item,
-        product_name: item.product_id?.product_name,
+        lot_id: lotId,
+        lot_name: lotName,
+        inventory_lot_id: item.inventory_lot_id ? Number(item.inventory_lot_id) : undefined,
+        batch_no: item.batch_no || undefined,
+        manufacturing_date: item.manufacturing_date || undefined,
+        expiry_date: item.expiry_date || undefined,
+        inventory_condition: item.inventory_condition || undefined,
+        qa_status: (item.inventory_condition as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+        product_name: item.product_id?.description || item.product_id?.product_name || "Unknown Product",
         product_code: item.product_id?.product_code,
         cost_per_unit: cost,
-        unit_name: item.unit_id?.unit_name || item.product_id?.unit_of_measurement?.unit_name || item.unit_name || "pcs",
+        unit_id: resolvedUnitId ? Number(resolvedUnitId) : undefined,
+        unit_name: (typeof item.unit_id === 'object' && item.unit_id !== null ? item.unit_id.unit_name : undefined) || item.product_id?.unit_of_measurement?.unit_name || item.unit_name || "pcs",
         brand_name: item.product_id?.product_brand?.brand_name || item.brand_name || "N/A",
         category_name: item.product_id?.product_category?.category_name || "N/A"
       };
@@ -318,13 +438,13 @@ export const stockAdjustmentManualService = {
     let attachments: any[] = [];
     try {
       const docItemIdsRes = await directusFetch<{ data: { id: number }[] }>(
-        `${DIRECTUS_URL}/items/stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id&limit=-1`
+        `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id&limit=-1`
       );
       const docItemIds = (docItemIdsRes.data || []).map((i) => i.id);
       if (docItemIds.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const attachmentsRes = await directusFetch<{ data: any[] }>(
-          `${DIRECTUS_URL}/items/stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(docItemIds)}}}&limit=-1`
+          `${DIRECTUS_URL}/items/mm_stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(docItemIds)}}}&limit=-1`
         );
         attachments = attachmentsRes.data || [];
 
@@ -351,10 +471,73 @@ export const stockAdjustmentManualService = {
       console.warn("Failed to fetch stock adjustment attachments:", err);
     }
 
+    // Group discrete mm_stock_adjustment rows by product_id so multi-lot/batch lines are cleanly assembled
+    const productGroupMap = new Map<number, StockAdjustmentManualItem>();
+    items.forEach((item: RawItem) => {
+      const pId = Number(typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id?.product_id || item.product_id?.id) : item.product_id);
+      const itemQty = Number(item.quantity || 0);
+
+      const batchObj = {
+        inventory_lot_id: item.inventory_lot_id ? Number(item.inventory_lot_id) : undefined,
+        batch_no: String(item.batch_no || '').trim(),
+        manufacturing_date: item.manufacturing_date || null,
+        expiry_date: item.expiry_date || null,
+        quantity: itemQty,
+        unit_cost: item.cost_per_unit,
+        qa_status: (item.inventory_condition as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+      };
+
+      const lotIdNum = item.lot_id ? Number(item.lot_id) : 1;
+      const lotNameStr = item.lot_name || `Lot #${lotIdNum}`;
+
+      const existing = productGroupMap.get(pId);
+      if (!existing) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const lotGroup: any = {
+          lot_id: lotIdNum,
+          lot_name: lotNameStr,
+          max_batch_capacity: 10,
+          unit_id: item.unit_id ? Number(item.unit_id) : null,
+          unit_name: item.unit_name,
+          allocated_quantity: itemQty,
+          batches: item.batch_no ? [batchObj] : [],
+        };
+
+        productGroupMap.set(pId, {
+          ...item,
+          quantity: itemQty,
+          lot_allocations: item.batch_no ? [lotGroup] : [],
+        } as unknown as StockAdjustmentManualItem);
+      } else {
+        existing.quantity = (Number(existing.quantity) || 0) + itemQty;
+        if (!existing.lot_allocations) existing.lot_allocations = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let existingLotGroup = existing.lot_allocations.find((lg: any) => Number(lg.lot_id) === lotIdNum);
+        if (!existingLotGroup) {
+          existingLotGroup = {
+            lot_id: lotIdNum,
+            lot_name: lotNameStr,
+            max_batch_capacity: 10,
+            unit_id: item.unit_id ? Number(item.unit_id) : null,
+            unit_name: item.unit_name,
+            allocated_quantity: 0,
+            batches: [],
+          };
+          existing.lot_allocations.push(existingLotGroup);
+        }
+        existingLotGroup.allocated_quantity = (existingLotGroup.allocated_quantity || 0) + itemQty;
+        if (item.batch_no) {
+          existingLotGroup.batches.push(batchObj);
+        }
+      }
+    });
+
+    const assembledItems = Array.from(productGroupMap.values());
+
     return {
       ...header,
       remarks: cleanedRemarks,
-      items,
+      items: assembledItems.length > 0 ? assembledItems : items,
       amount: totalAmount > 0 ? totalAmount : (Number(header.amount) || 0),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       supplier_id: resolvedSupplier as any,
@@ -362,21 +545,12 @@ export const stockAdjustmentManualService = {
     } as unknown as StockAdjustmentManualDetail;
   },
 
-  async fetchProductInventory(productId: number, branchId: number, token: string): Promise<number> {
+  async fetchProductInventory(productId: number, branchId: number, _token?: string): Promise<number> {
+    void _token;
     try {
-      const url = `${SPRING_API_URL}/api/view-running-inventory/all?branch_id=${branchId}`;
-      
-      const res = await fetch(url, {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      if (!res.ok) return 0;
-
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        const item = data.find((item: InventoryItem) => item.product_id === productId);
-        return item ? (item.running_inventory || 0) : 0;
+      const list = await fetchProductOnhand({ branchId, productId });
+      if (list.length > 0) {
+        return Number(list[0].onhandQuantity || 0);
       }
       return 0;
     } catch (error) {
@@ -385,22 +559,14 @@ export const stockAdjustmentManualService = {
     }
   },
 
-  async fetchBranchInventory(branchId: number, token: string): Promise<{ product_id: number; running_inventory: number }[]> {
+  async fetchBranchInventory(branchId: number, _token?: string): Promise<{ product_id: number; running_inventory: number }[]> {
+    void _token;
     try {
-      const url = `${SPRING_API_URL}/api/view-running-inventory/all?branch_id=${branchId}`;
-      const res = await fetch(url, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (!res.ok) return [];
-
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data.map((item: InventoryItem) => ({
-          product_id: Number(item.product_id),
-          running_inventory: Number(item.running_inventory || 0),
-        }));
-      }
-      return [];
+      const list = await fetchProductOnhand({ branchId });
+      return list.map((item) => ({
+        product_id: Number(item.productId),
+        running_inventory: Number(item.onhandQuantity || 0),
+      }));
     } catch (error) {
       console.error("Failed to fetch branch inventory:", error);
       return [];
@@ -465,7 +631,6 @@ export const stockAdjustmentManualService = {
 
       // 2. Check Directus Historical Records (Cross-Module)
       const collections = [
-        { name: "stock_adjustment_rfid", label: "Stock Adjustment" },
         { name: "rts_item_rfid", label: "Return to Supplier" },
         { name: "sales_return_rfid", label: "Sales Return" }
       ];
@@ -505,14 +670,36 @@ export const stockAdjustmentManualService = {
     let finalRemarks = String(header.remarks || "").trim();
     // Clean any existing supplier / source tags to be safe
     finalRemarks = finalRemarks.replace(/\s*\[SUPPLIER_ID:\s*(\d+)\]/g, "").trim();
-    finalRemarks = finalRemarks.replace(/\s*\[SOURCE:\s*[A-Z]+\]/g, "").trim();
     if (header.supplier_id) {
       finalRemarks = `${finalRemarks}\n[SUPPLIER_ID: ${header.supplier_id}]`.trim();
     }
-    // Stamp source type so the summary can label this record as Manual
-    finalRemarks = `${finalRemarks}\n[SOURCE: MANUAL]`.trim();
 
-    const headerRes = await directusFetch<{ data: { id: number } }>(`${DIRECTUS_URL}/items/stock_adjustment_header`, {
+    // 0. Resolve missing unit_ids from products table
+    const missingUnitProductIds = items
+      .filter((i) => !i.unit_id)
+      .map((i) => Number(i.product_id))
+      .filter((id) => !isNaN(id) && id > 0);
+
+    const productUnitMap = new Map<number, number>();
+    if (missingUnitProductIds.length > 0) {
+      try {
+        const prodRes = await directusFetch<{ data: Array<{ product_id: number; unit_of_measurement?: number | { unit_id?: number; id?: number } }> }>(
+          `${DIRECTUS_URL}/items/products?filter={"product_id":{"_in":${JSON.stringify(missingUnitProductIds)}}}&fields=product_id,unit_of_measurement,unit_of_measurement.unit_id&limit=-1`
+        );
+        (prodRes.data || []).forEach((p) => {
+          const uId = typeof p.unit_of_measurement === 'object' && p.unit_of_measurement !== null
+            ? (p.unit_of_measurement.unit_id || p.unit_of_measurement.id)
+            : p.unit_of_measurement;
+          if (uId) productUnitMap.set(Number(p.product_id), Number(uId));
+        });
+      } catch (e) {
+        console.warn("Failed to fetch fallback unit_ids for products:", e);
+      }
+    }
+
+    const nowPHT = getPhDbTimestamp();
+
+    const headerRes = await directusFetch<{ data: { id: number } }>(`${DIRECTUS_URL}/items/mm_stock_adjustment_header`, {
       method: "POST",
       body: JSON.stringify({
         doc_no: header.doc_no,
@@ -522,35 +709,121 @@ export const stockAdjustmentManualService = {
         remarks: finalRemarks,
         amount: header.amount || items.reduce((acc: number, item: StockAdjustmentManualItem) => acc + (item.quantity * (item.cost_per_unit || 0)), 0),
         isPosted: 0,
-        created_by: payload.userId,
+        created_by: payload.userId || null,
+        updated_by: payload.userId || null,
+        created_at: nowPHT,
+        updated_at: nowPHT,
+        date_created: nowPHT,
+        date_updated: nowPHT,
       }),
     });
     const headerId = headerRes.data.id;
 
-    const itemsPayload = items.map((item: StockAdjustmentManualItem) => {
-      let itemRemarks = item.remarks || "";
-      if (item.batch_no) {
-        itemRemarks = `${itemRemarks} [BATCH:${item.batch_no}]`.trim();
+    // Explode multi-lot & multi-batch allocations into 1 discrete row per lot-batch in mm_stock_adjustment
+    const explodedItems: StockAdjustmentManualItem[] = [];
+    for (const item of items) {
+      if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+        for (const group of item.lot_allocations) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const b of (group.batches || []) as any[]) {
+            const bQty = Number(b.quantity || 0);
+            if (bQty > 0) {
+              explodedItems.push({
+                ...item,
+                lot_id: group.lot_id ? Number(group.lot_id) : item.lot_id,
+                lot_name: group.lot_name || item.lot_name,
+                inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : undefined,
+                batch_no: String(b.batch_no || item.batch_no || "").trim(),
+                quantity: bQty,
+                manufacturing_date: b.manufacturing_date || item.manufacturing_date,
+                expiry_date: b.expiry_date || item.expiry_date,
+                cost_per_unit: b.unit_cost !== undefined ? Number(b.unit_cost) : item.cost_per_unit,
+                qa_status: (b.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || item.qa_status,
+                allocations: undefined,
+                allocation_plan: undefined,
+                lot_allocations: undefined,
+              });
+            }
+          }
+        }
+      } else if (Array.isArray(item.allocations) && item.allocations.length > 0) {
+        for (const alloc of item.allocations) {
+          const allocQty = Number(alloc.allocated_quantity || alloc.quantity || 0);
+          if (allocQty > 0) {
+            explodedItems.push({
+              ...item,
+              lot_id: alloc.lot_id ? Number(alloc.lot_id) : item.lot_id,
+              lot_name: alloc.lot_name || item.lot_name,
+              inventory_lot_id: alloc.inventory_lot_id ? Number(alloc.inventory_lot_id) : undefined,
+              batch_no: String(alloc.batch_no || item.batch_no || "").trim(),
+              quantity: allocQty,
+              manufacturing_date: alloc.manufacturing_date || item.manufacturing_date,
+              expiry_date: alloc.expiry_date || item.expiry_date,
+              cost_per_unit: alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : item.cost_per_unit,
+              qa_status: (alloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || item.qa_status,
+              allocations: undefined,
+              allocation_plan: undefined,
+              lot_allocations: undefined,
+            });
+          }
+        }
+      } else {
+        explodedItems.push(item);
       }
-      return {
-        doc_no: header.doc_no,
-        stock_adjustment_id: headerId,
-        product_id: Number(item.product_id),
-        branch_id: Number(header.branch_id),
-        type: header.type,
-        quantity: Number(item.quantity),
-        remarks: itemRemarks,
-        unit_id: item.unit_id ? Number(item.unit_id) : null,
-        lot_id: item.lot_id ? Number(item.lot_id) : null,
-        inventory_lot_id: item.inventory_lot_id ? Number(item.inventory_lot_id) : null,
-        batch_no: item.batch_no || null,
-        created_by: payload.userId,
-      };
-    });
+    }
+
+    const itemsPayload = await Promise.all(
+      explodedItems.map(async (item: StockAdjustmentManualItem) => {
+        const itemRemarks = item.remarks || "";
+ 
+        const resolvedUnitId = item.unit_id ? Number(item.unit_id) : (productUnitMap.get(Number(item.product_id)) || null);
+        
+        let resolvedInventoryLotId = item.inventory_lot_id ? Number(item.inventory_lot_id) : null;
+        if (!resolvedInventoryLotId && item.batch_no) {
+          resolvedInventoryLotId = await syncInventoryLotBatch({
+            lot_id: item.lot_id,
+            product_id: Number(item.product_id),
+            batch_no: item.batch_no,
+            branch_id: Number(header.branch_id),
+            manufacturing_date: item.manufacturing_date,
+            expiry_date: item.expiry_date,
+            unit_cost: item.cost_per_unit != null ? Number(item.cost_per_unit) : undefined,
+            inventory_condition: item.qa_status,
+            doc_no: String(header.doc_no || ""),
+            userId: payload.userId,
+          });
+        }
+
+        return {
+          doc_no: header.doc_no,
+          stock_adjustment_id: headerId,
+          product_id: Number(item.product_id),
+          branch_id: Number(header.branch_id),
+          type: header.type,
+          quantity: Number(item.quantity),
+          unit_cost: item.cost_per_unit ? Number(item.cost_per_unit) : 0,
+          inventory_condition: item.qa_status || "GOOD",
+          source_type: "MANUAL",
+          remarks: itemRemarks || "Stock Adjustment",
+          unit_id: resolvedUnitId ? Number(resolvedUnitId) : null,
+          lot_id: item.lot_id ? Number(item.lot_id) : null,
+          inventory_lot_id: resolvedInventoryLotId || null,
+          batch_no: item.batch_no || null,
+          manufacturing_date: item.manufacturing_date || null,
+          expiry_date: item.expiry_date || null,
+          created_by: payload.userId || null,
+          updated_by: payload.userId || null,
+          created_at: nowPHT,
+          updated_at: nowPHT,
+          date_created: nowPHT,
+          date_updated: nowPHT,
+        };
+      })
+    );
 
     // Save items and capture the returned IDs so we can link attachments to the
     // first item's id (the FK on stock_adjustment_attachment references stock_adjustment.id).
-    const newItemsRes = await directusFetch<{ data: Array<{ id: number }> | { id: number } }>(`${DIRECTUS_URL}/items/stock_adjustment`, {
+    const newItemsRes = await directusFetch<{ data: Array<{ id: number }> | { id: number } }>(`${DIRECTUS_URL}/items/mm_stock_adjustment?fields=id`, {
       method: "POST",
       body: JSON.stringify(itemsPayload),
     });
@@ -566,9 +839,14 @@ export const stockAdjustmentManualService = {
           stock_adjustment_id: firstItemId,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attachment: typeof att.attachment === 'object' ? (att.attachment as any).id : att.attachment,
-          created_by: payload.userId
+          created_by: payload.userId || null,
+          updated_by: payload.userId || null,
+          updated_at: nowPHT,
+          created_at: nowPHT,
+          date_updated: nowPHT,
+          date_created: nowPHT,
         }));
-        await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_attachment`, {
+        await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_attachment`, {
           method: "POST",
           body: JSON.stringify(atts),
         }).catch(err => console.error("Failed to save attachments:", err));
@@ -586,12 +864,12 @@ export const stockAdjustmentManualService = {
   async update(id: number, payload: { header: Record<string, unknown>; items: StockAdjustmentManualItem[]; userId?: number }) {
     let finalRemarks = String(payload.header.remarks || "").trim();
     finalRemarks = finalRemarks.replace(/\s*\[SUPPLIER_ID:\s*(\d+)\]/g, "").trim();
-    finalRemarks = finalRemarks.replace(/\s*\[SOURCE:\s*[A-Z]+\]/g, "").trim();
+   
     if (payload.header.supplier_id) {
       finalRemarks = `${finalRemarks}\n[SUPPLIER_ID: ${payload.header.supplier_id}]`.trim();
     }
-    // Preserve the MANUAL source marker on updates
-    finalRemarks = `${finalRemarks}\n[SOURCE: MANUAL]`.trim();
+
+    const nowPHT = getPhDbTimestamp();
 
     const headerPayload = {
       doc_no: payload.header.doc_no,
@@ -600,16 +878,19 @@ export const stockAdjustmentManualService = {
       remarks: finalRemarks,
       supplier_id: payload.header.supplier_id ? Number(payload.header.supplier_id) : null,
       amount: Number(payload.header.amount),
+      updated_by: payload.userId || null,
+      updated_at: nowPHT,
+      date_updated: nowPHT,
     };
 
-    await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_header/${id}`, {
+    await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}`, {
       method: "PATCH",
       body: JSON.stringify(headerPayload),
     });
 
     // 1. Fetch existing item IDs so we can delete their attachments first (FK cascade)
     const existingItemsRes = await directusFetch<{ data: { id: number }[] }>(
-      `${DIRECTUS_URL}/items/stock_adjustment?filter={"doc_no":{"_eq":"${payload.header.doc_no}"}}&fields=id&limit=-1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${payload.header.doc_no}"}}&fields=id&limit=-1`
     );
     const itemIds = existingItemsRes.data.map((i: { id: number }) => i.id);
 
@@ -617,11 +898,11 @@ export const stockAdjustmentManualService = {
     if (itemIds.length > 0) {
       try {
         const existingAttRes = await directusFetch<{ data: { id: number }[] }>(
-          `${DIRECTUS_URL}/items/stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(itemIds)}}}&fields=id&limit=-1`
+          `${DIRECTUS_URL}/items/mm_stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(itemIds)}}}&fields=id&limit=-1`
         );
         const attIds = existingAttRes.data.map(a => a.id);
         if (attIds.length > 0) {
-          await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_attachment`, {
+          await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_attachment`, {
             method: "DELETE",
             body: JSON.stringify(attIds),
           });
@@ -633,35 +914,138 @@ export const stockAdjustmentManualService = {
 
     // 3. Delete old items
     if (itemIds.length > 0) {
-      await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment`, {
+      await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment`, {
         method: "DELETE",
         body: JSON.stringify(itemIds),
       });
     }
 
-    // 4. Re-create items
-    const itemsPayload = payload.items.map((item: StockAdjustmentManualItem) => {
-      let itemRemarks = item.remarks || "";
-      if (item.batch_no) {
-        itemRemarks = `${itemRemarks} [BATCH:${item.batch_no}]`.trim();
-      }
-      return {
-        doc_no: payload.header.doc_no,
-        stock_adjustment_id: id,
-        product_id: Number(item.product_id),
-        branch_id: Number(payload.header.branch_id),
-        type: payload.header.type,
-        quantity: Number(item.quantity),
-        remarks: itemRemarks,
-        unit_id: item.unit_id ? Number(item.unit_id) : null,
-        lot_id: item.lot_id ? Number(item.lot_id) : null,
-        inventory_lot_id: item.inventory_lot_id ? Number(item.inventory_lot_id) : null,
-        batch_no: item.batch_no || null,
-        created_by: payload.userId,
-      };
-    });
+    // 3.5. Resolve missing unit_ids from products table
+    const missingUnitProductIds = payload.items
+      .filter((i) => !i.unit_id)
+      .map((i) => Number(i.product_id))
+      .filter((id) => !isNaN(id) && id > 0);
 
-    const newItemsRes = await directusFetch<{ data: Array<{ id: number }> | { id: number } }>(`${DIRECTUS_URL}/items/stock_adjustment`, {
+    const productUnitMap = new Map<number, number>();
+    if (missingUnitProductIds.length > 0) {
+      try {
+        const prodRes = await directusFetch<{ data: Array<{ product_id: number; unit_of_measurement?: number | { unit_id?: number; id?: number } }> }>(
+          `${DIRECTUS_URL}/items/products?filter={"product_id":{"_in":${JSON.stringify(missingUnitProductIds)}}}&fields=product_id,unit_of_measurement,unit_of_measurement.unit_id&limit=-1`
+        );
+        (prodRes.data || []).forEach((p) => {
+          const uId = typeof p.unit_of_measurement === 'object' && p.unit_of_measurement !== null
+            ? (p.unit_of_measurement.unit_id || p.unit_of_measurement.id)
+            : p.unit_of_measurement;
+          if (uId) productUnitMap.set(Number(p.product_id), Number(uId));
+        });
+      } catch (e) {
+        console.warn("Failed to fetch fallback unit_ids for products:", e);
+      }
+    }
+
+    // 4. Re-create items (exploding multi-lot and multi-batch allocations into 1 discrete row per lot-batch)
+    const explodedItems: StockAdjustmentManualItem[] = [];
+    for (const item of payload.items) {
+      if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+        for (const group of item.lot_allocations) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const b of (group.batches || []) as any[]) {
+            const bQty = Number(b.quantity || 0);
+            if (bQty > 0) {
+              explodedItems.push({
+                ...item,
+                lot_id: group.lot_id ? Number(group.lot_id) : item.lot_id,
+                lot_name: group.lot_name || item.lot_name,
+                inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : undefined,
+                batch_no: String(b.batch_no || item.batch_no || "").trim(),
+                quantity: bQty,
+                manufacturing_date: b.manufacturing_date || item.manufacturing_date,
+                expiry_date: b.expiry_date || item.expiry_date,
+                cost_per_unit: b.unit_cost !== undefined ? Number(b.unit_cost) : item.cost_per_unit,
+                qa_status: (b.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || item.qa_status,
+                allocations: undefined,
+                allocation_plan: undefined,
+                lot_allocations: undefined,
+              });
+            }
+          }
+        }
+      } else if (Array.isArray(item.allocations) && item.allocations.length > 0) {
+        for (const alloc of item.allocations) {
+          const allocQty = Number(alloc.allocated_quantity || alloc.quantity || 0);
+          if (allocQty > 0) {
+            explodedItems.push({
+              ...item,
+              lot_id: alloc.lot_id ? Number(alloc.lot_id) : item.lot_id,
+              lot_name: alloc.lot_name || item.lot_name,
+              inventory_lot_id: alloc.inventory_lot_id ? Number(alloc.inventory_lot_id) : undefined,
+              batch_no: String(alloc.batch_no || item.batch_no || "").trim(),
+              quantity: allocQty,
+              manufacturing_date: alloc.manufacturing_date || item.manufacturing_date,
+              expiry_date: alloc.expiry_date || item.expiry_date,
+              cost_per_unit: alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : item.cost_per_unit,
+              qa_status: (alloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || item.qa_status,
+              allocations: undefined,
+              allocation_plan: undefined,
+              lot_allocations: undefined,
+            });
+          }
+        }
+      } else {
+        explodedItems.push(item);
+      }
+    }
+
+    const itemsPayload = await Promise.all(
+      explodedItems.map(async (item: StockAdjustmentManualItem) => {
+        const itemRemarks = item.remarks || "";
+       
+        const resolvedUnitId = item.unit_id ? Number(item.unit_id) : (productUnitMap.get(Number(item.product_id)) || null);
+        
+        let resolvedInventoryLotId = item.inventory_lot_id ? Number(item.inventory_lot_id) : null;
+        if (!resolvedInventoryLotId && item.batch_no) {
+          resolvedInventoryLotId = await syncInventoryLotBatch({
+            lot_id: item.lot_id,
+            product_id: Number(item.product_id),
+            batch_no: item.batch_no,
+            branch_id: Number(payload.header.branch_id),
+            manufacturing_date: item.manufacturing_date,
+            expiry_date: item.expiry_date,
+            unit_cost: item.cost_per_unit != null ? Number(item.cost_per_unit) : undefined,
+            inventory_condition: item.qa_status,
+            doc_no: String(payload.header.doc_no || ""),
+            userId: payload.userId,
+          });
+        }
+
+        return {
+          doc_no: payload.header.doc_no,
+          stock_adjustment_id: id,
+          product_id: Number(item.product_id),
+          branch_id: Number(payload.header.branch_id),
+          type: payload.header.type,
+          quantity: Number(item.quantity),
+          unit_cost: item.cost_per_unit ? Number(item.cost_per_unit) : 0,
+          inventory_condition: item.qa_status || "GOOD",
+          source_type: "MANUAL",
+          remarks: itemRemarks || "Stock Adjustment",
+          unit_id: resolvedUnitId ? Number(resolvedUnitId) : null,
+          lot_id: item.lot_id ? Number(item.lot_id) : null,
+          inventory_lot_id: resolvedInventoryLotId || null,
+          batch_no: item.batch_no || null,
+          manufacturing_date: item.manufacturing_date || null,
+          expiry_date: item.expiry_date || null,
+          created_by: payload.userId || null,
+          updated_by: payload.userId || null,
+          created_at: nowPHT,
+          updated_at: nowPHT,
+          date_created: nowPHT,
+          date_updated: nowPHT,
+        };
+      })
+    );
+
+    const newItemsRes = await directusFetch<{ data: Array<{ id: number }> | { id: number } }>(`${DIRECTUS_URL}/items/mm_stock_adjustment?fields=id`, {
       method: "POST",
       body: JSON.stringify(itemsPayload),
     });
@@ -677,9 +1061,14 @@ export const stockAdjustmentManualService = {
           stock_adjustment_id: firstItemId,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attachment: typeof att.attachment === 'object' ? (att.attachment as any).id : att.attachment,
-          created_by: payload.userId
+          created_by: payload.userId || null,
+          updated_by: payload.userId || null,
+          updated_at: nowPHT,
+          created_at: nowPHT,
+          date_updated: nowPHT,
+          date_created: nowPHT,
         }));
-        await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_attachment`, {
+        await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_attachment`, {
           method: "POST",
           body: JSON.stringify(atts),
         }).catch(err => console.error("Failed to update attachments:", err));
@@ -693,93 +1082,151 @@ export const stockAdjustmentManualService = {
 
   /**
    * Post (finalize) a Stock Adjustment
+   * NOTE: Stock Adjustment does NOT create mm_inventory_lots rows.
+   * Posting generates an IN or OUT movement in the inventory ledger.
    */
   async postStockAdjustment(id: number, userId?: number) {
-    const res = await directusFetch<{ data: unknown }>(`${DIRECTUS_URL}/items/stock_adjustment_header/${id}`, {
+    const nowPHT = getPhDbTimestamp();
+
+    const res = await directusFetch<{ data: unknown }>(`${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}`, {
       method: "PATCH",
       body: JSON.stringify({
         isPosted: 1,
-        posted_by: userId,
-        postedAt: new Date().toISOString()
+        posted_by: userId || null,
+        updated_by: userId || null,
+        postedAt: nowPHT,
+        posted_at: nowPHT,
+        updated_at: nowPHT,
+        date_updated: nowPHT,
       }),
     });
 
-    // Sync IN items to mm_inventory_lots upon post
     try {
-      const headerRes = await directusFetch<{ data: { doc_no: string; branch_id: number; type: string } }>(
-        `${DIRECTUS_URL}/items/stock_adjustment_header/${id}?fields=doc_no,branch_id,type`
+      const headerRes = await directusFetch<{ data: { doc_no: string; branch_id?: number; type?: string } }>(
+        `${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}?fields=doc_no,branch_id,type`
       );
-      if (headerRes.data && headerRes.data.type === "IN") {
-        const itemsRes = await directusFetch<{ data: StockAdjustmentManualItem[] }>(
-          `${DIRECTUS_URL}/items/stock_adjustment?filter={"stock_adjustment_id":{"_eq":${id}}}&fields=*&limit=-1`
+      const header = headerRes.data;
+      if (header?.doc_no) {
+        const itemsRes = await directusFetch<{
+          data: Array<{
+            id: number;
+            product_id: number;
+            inventory_lot_id?: number | null;
+            lot_id?: number | null;
+            batch_no?: string | null;
+            manufacturing_date?: string | null;
+            expiry_date?: string | null;
+            branch_id?: number | null;
+            type?: string | null;
+            unit_cost?: number;
+            inventory_condition?: string;
+            created_by?: number | null;
+          }>;
+        }>(
+          `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${header.doc_no}"}}&fields=id,product_id,inventory_lot_id,lot_id,batch_no,manufacturing_date,expiry_date,branch_id,type,unit_cost,inventory_condition,created_by&limit=-1`
         );
-        for (const item of itemsRes.data || []) {
-          if (item.lot_id && item.batch_no) {
-            await createInventoryLot({
-              lot_id: Number(item.lot_id),
-              branch_id: Number(headerRes.data.branch_id),
+
+        const items = itemsRes.data || [];
+        for (const item of items) {
+          if (item.batch_no) {
+            const batchId = await syncInventoryLotBatch({
+              lot_id: item.lot_id,
               product_id: Number(item.product_id),
               batch_no: item.batch_no,
-              manufacturing_date: item.manufacturing_date || null,
-              expiry_date: item.expiry_date || null,
-              unit_cost: item.cost_per_unit || 0,
-              qa_status: item.qa_status || "GOOD",
-              status: "ACTIVE",
-              source_type: "STOCK_ADJUSTMENT_MANUAL",
-              source_reference: String(headerRes.data.doc_no),
-              remarks: `Manual Stock In (${item.quantity} ${item.unit_name || 'units'})`,
-              created_by: userId,
-            }).catch(err => console.warn("[StockAdjustmentManual] Warning creating inventory lot:", err));
+              branch_id: item.branch_id || header.branch_id || null,
+              manufacturing_date: item.manufacturing_date,
+              expiry_date: item.expiry_date,
+              unit_cost: item.unit_cost != null ? Number(item.unit_cost) : undefined,
+              inventory_condition: item.inventory_condition,
+              doc_no: header.doc_no,
+              userId: userId || item.created_by,
+            });
+
+            if (batchId && item.inventory_lot_id !== batchId) {
+              await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment/${item.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                  inventory_lot_id: batchId,
+                  updated_by: userId || null,
+                  updated_at: nowPHT,
+                  date_updated: nowPHT,
+                }),
+              }).catch((e) => console.warn("Failed to patch item inventory_lot_id:", e));
+            }
           }
+        }
+
+        if (items.length > 0) {
+          const itemIds = items.map((i) => i.id);
+          await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              keys: itemIds,
+              data: {
+                ...(userId ? { updated_by: userId } : {}),
+                updated_at: nowPHT,
+                date_updated: nowPHT,
+              }
+            })
+          }).catch(e => console.warn("Failed to patch item updated_by on post:", e));
         }
       }
     } catch (err) {
-      console.warn("[StockAdjustmentManual] Warning during post inventory lot sync:", err);
+      console.warn("Error syncing inventory batches on post:", err);
     }
 
     return res;
   },
 
   /**
-   * Delete a draft Stock Adjustment
+   * Soft-delete a draft Stock Adjustment (marks is_delete = 1, sets deleted_at, deleted_by)
    */
-  async deleteStockAdjustment(id: number) {
-    const headerRes = await directusFetch<{ data: { doc_no: string, id: number } }>(`${DIRECTUS_URL}/items/stock_adjustment_header/${id}?fields=doc_no,id`);
-    const docNo = headerRes.data.doc_no;
+  async deleteStockAdjustment(id: number, userId?: number) {
+    const headerRes = await directusFetch<{ data: { doc_no: string, id: number } }>(`${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}?fields=doc_no,id`);
+    const docNo = headerRes.data?.doc_no;
 
-    const itemsRes = await directusFetch<{ data: { id: number }[] }>(
-      `${DIRECTUS_URL}/items/stock_adjustment?filter={"doc_no":{"_eq":"${docNo}"}}&fields=id&limit=-1`
-    );
-    const itemIds = itemsRes.data.map((i: { id: number }) => i.id);
+    if (docNo) {
+      const itemsRes = await directusFetch<{ data: { id: number }[] }>(
+        `${DIRECTUS_URL}/items/mm_stock_adjustment?filter={"doc_no":{"_eq":"${docNo}"}}&fields=id&limit=-1`
+      );
+      const itemIds = itemsRes.data.map((i: { id: number }) => i.id);
 
-    // Delete attachments using item IDs (FK references stock_adjustment.id)
-    if (itemIds.length > 0) {
-      try {
-        const attRes = await directusFetch<{ data: { id: number }[] }>(
-          `${DIRECTUS_URL}/items/stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(itemIds)}}}&fields=id&limit=-1`
-        );
-        const attIds = attRes.data.map(a => a.id);
-        if (attIds.length > 0) {
-          await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_attachment`, {
-            method: "DELETE",
-            body: JSON.stringify(attIds),
-          });
+      // Clean up attachments and items for draft
+      if (itemIds.length > 0) {
+        try {
+          const attRes = await directusFetch<{ data: { id: number }[] }>(
+            `${DIRECTUS_URL}/items/mm_stock_adjustment_attachment?filter={"stock_adjustment_id":{"_in":${JSON.stringify(itemIds)}}}&fields=id&limit=-1`
+          );
+          const attIds = attRes.data.map(a => a.id);
+          if (attIds.length > 0) {
+            await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_attachment`, {
+              method: "DELETE",
+              body: JSON.stringify(attIds),
+            }).catch(() => {});
+          }
+        } catch {
+          // ignore
         }
-      } catch (err) {
-        console.warn("Failed to delete attachments during stock adjustment deletion:", err);
+
+        await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment`, {
+          method: "DELETE",
+          body: JSON.stringify(itemIds),
+        }).catch(() => {});
       }
     }
 
-    // Delete items
-    if (itemIds.length > 0) {
-      await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment`, {
-        method: "DELETE",
-        body: JSON.stringify(itemIds),
-      });
-    }
-
-    await directusFetch(`${DIRECTUS_URL}/items/stock_adjustment_header/${id}`, {
-      method: "DELETE",
+    const nowPHT = getPhDbTimestamp();
+    await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment_header/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        is_delete: 1,
+        deleted_at: nowPHT,
+        deletedAt: nowPHT,
+        deleted_by: userId || null,
+        updated_by: userId || null,
+        updated_at: nowPHT,
+        date_updated: nowPHT,
+      }),
     });
   },
 
@@ -795,7 +1242,7 @@ export const stockAdjustmentManualService = {
    * Fetch approved products (SKUs) for the dropdown
    */
   async fetchProducts(params?: { search?: string }) {
-    let query = `fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name&limit=100&sort=product_name`;
+    let query = `fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name,product_category.category_name,product_type,product_type.*,parent_id&limit=100&sort=product_name`;
 
     const filters: Record<string, unknown> = {
       isActive: { _eq: 1 }
@@ -804,6 +1251,7 @@ export const stockAdjustmentManualService = {
     if (params?.search) {
       filters._or = [
         { product_name: { _icontains: params.search } },
+        { description: { _icontains: params.search } },
         { product_code: { _icontains: params.search } },
         { barcode: { _icontains: params.search } }
       ];
@@ -816,15 +1264,22 @@ export const stockAdjustmentManualService = {
 
     return products.map((item: unknown) => {
       const p = item as Record<string, unknown>;
-      const uom = p['unit_of_measurement'] as Record<string, unknown> | undefined;
+      const uom = p['unit_of_measurement'] as Record<string, unknown> | number | undefined;
+      const uomObj = typeof uom === 'object' && uom !== null ? uom : undefined;
       const brand = p['product_brand'] as Record<string, unknown> | undefined;
+      const cat = p['product_category'] as Record<string, unknown> | undefined;
+      const resolvedUnitId = uomObj ? (uomObj['unit_id'] || uomObj['id']) : (typeof uom === 'number' ? uom : null);
 
       return {
         ...p,
         id: p['product_id'],
-        unit_name: uom?.['unit_name'] || p['unit_name'] || "pcs",
-        unit_id: uom?.['unit_id'] || p['unit_id'] || null,
-        brand_name: brand?.['brand_name'] || p['brand_name'] || "N/A"
+        product_name: (p['description'] as string) || (p['product_name'] as string) || "",
+        unit_name: (uomObj?.['unit_name'] as string) || (p['unit_name'] as string) || "pcs",
+        unit_id: resolvedUnitId ? Number(resolvedUnitId) : null,
+        brand_name: brand?.['brand_name'] || p['brand_name'] || "N/A",
+        product_type: p['product_type'],
+        product_category: p['product_category'],
+        category_name: cat?.['category_name'] || (typeof p['product_category'] === 'string' ? p['product_category'] : undefined),
       };
     }) as unknown as StockAdjustmentManualProduct[];
   },
@@ -882,27 +1337,35 @@ export const stockAdjustmentManualService = {
       (filters._and as unknown[]).push({
         _or: [
           { product_name: { _icontains: search } },
+          { description: { _icontains: search } },
           { product_code: { _icontains: search } },
           { barcode: { _icontains: search } },
         ],
       });
     }
 
-    const query = `fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name&limit=500&sort=product_name&filter=${JSON.stringify(filters)}`;
+    const query = `fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name,product_category.category_name,product_type,product_type.*,parent_id&limit=500&sort=product_name&filter=${JSON.stringify(filters)}`;
     const res = await directusFetch<{ data: unknown[] }>(`${DIRECTUS_URL}/items/products?${query}`);
     const products = res.data || [];
 
     return products.map((item: unknown) => {
       const p = item as Record<string, unknown>;
-      const uom = p['unit_of_measurement'] as Record<string, unknown> | undefined;
+      const uom = p['unit_of_measurement'] as Record<string, unknown> | number | undefined;
+      const uomObj = typeof uom === 'object' && uom !== null ? uom : undefined;
       const brand = p['product_brand'] as Record<string, unknown> | undefined;
+      const cat = p['product_category'] as Record<string, unknown> | undefined;
+      const resolvedUnitId = uomObj ? (uomObj['unit_id'] || uomObj['id']) : (typeof uom === 'number' ? uom : null);
 
       return {
         ...p,
         id: p['product_id'],
-        unit_name: uom?.['unit_name'] || p['unit_name'] || "pcs",
-        unit_id: uom?.['unit_id'] || p['unit_id'] || null,
+        product_name: (p['description'] as string) || (p['product_name'] as string) || "",
+        unit_name: (uomObj?.['unit_name'] as string) || (p['unit_name'] as string) || "pcs",
+        unit_id: resolvedUnitId ? Number(resolvedUnitId) : null,
         brand_name: brand?.['brand_name'] || p['brand_name'] || "N/A",
+        product_type: p['product_type'],
+        product_category: p['product_category'],
+        category_name: cat?.['category_name'] || (typeof p['product_category'] === 'string' ? p['product_category'] : undefined),
       };
     }) as unknown as StockAdjustmentManualProduct[];
   },
@@ -916,7 +1379,7 @@ export const stockAdjustmentManualService = {
     const searchPrefix = `${prefix}-${year}-`;
 
     const res = await directusFetch<{ data: Array<{ doc_no: string }> }>(
-      `${DIRECTUS_URL}/items/stock_adjustment_header?filter[doc_no][_starts_with]=${searchPrefix}&fields=doc_no&sort=-doc_no&limit=1`
+      `${DIRECTUS_URL}/items/mm_stock_adjustment_header?filter[doc_no][_starts_with]=${searchPrefix}&fields=doc_no&sort=-doc_no&limit=1`
     );
 
     const latest = res.data?.[0]?.doc_no;
@@ -941,17 +1404,19 @@ export const stockAdjustmentManualService = {
   async fetchProductById(productId: number): Promise<StockAdjustmentManualProduct | null> {
     try {
       const res = await directusFetch<{ data: Record<string, unknown> }>(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name`
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_name,product_code,price_per_unit,cost_per_unit,barcode,description,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.order,product_brand.brand_name`
       );
       if (!res.data) return null;
       const p = res.data;
-      const uom = p['unit_of_measurement'] as Record<string, unknown> | undefined;
+      const uom = p['unit_of_measurement'] as Record<string, unknown> | number | undefined;
+      const uomObj = typeof uom === 'object' && uom !== null ? uom : undefined;
       const brand = p['product_brand'] as Record<string, unknown> | undefined;
+      const resolvedUnitId = uomObj ? (uomObj['unit_id'] || uomObj['id']) : (typeof uom === 'number' ? uom : undefined);
       return {
         ...p,
         id: Number(p['product_id']),
-        unit_name: (uom?.['unit_name'] as string) || (p['unit_name'] as string) || "pcs",
-        unit_id: (uom?.['unit_id'] as number) || (p['unit_id'] as number) || undefined,
+        unit_name: (uomObj?.['unit_name'] as string) || (p['unit_name'] as string) || "pcs",
+        unit_id: resolvedUnitId ? Number(resolvedUnitId) : undefined,
         brand_name: (brand?.['brand_name'] as string) || (p['brand_name'] as string) || "N/A",
       } as unknown as StockAdjustmentManualProduct;
     } catch {

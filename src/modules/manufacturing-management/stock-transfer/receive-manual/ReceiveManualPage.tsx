@@ -9,6 +9,7 @@ import { OrderGroupItem, UnitOfMeasurement, CurrentUser } from '../types/stock-t
 import { cn } from '@/lib/utils';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -31,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Popover,
   PopoverContent,
@@ -50,6 +52,12 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
     getBranchName,
     receivedQtys,
     updateReceivedQty,
+    destinationLotIds,
+    updateDestinationLot,
+    destinationBatchNos,
+    updateDestinationBatchNo,
+    targetLots,
+    loadingLots,
     selectedFiles,
     isUploading,
     addSelectedFiles,
@@ -268,9 +276,12 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                   <TableHeader>
                     <TableRow className="border-b border-border bg-muted/20">
                       <TableHead className="text-[10px] uppercase font-bold py-4">Product</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Unit</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Expected</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center w-[150px] print:hidden">Verified</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Unit</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Expected</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center w-[130px] print:hidden">Verified</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold w-[130px] print:hidden">Source Branch</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold w-[150px] print:hidden">Target Lot</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold w-[150px] print:hidden">Target Batch No</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -324,6 +335,33 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                                 size="sm"
                               />
                           </TableCell>
+                          <TableCell className="print:hidden py-2">
+                            <Badge variant="outline" className="font-semibold text-[10px] px-2 py-0.5 max-w-[130px] truncate border-border/70 bg-muted/40 text-foreground">
+                              {getBranchName(selectedGroup.sourceBranch)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="print:hidden py-2">
+                            <SearchableSelect
+                              options={targetLots.map((l) => ({
+                                value: String(l.lot_id),
+                                label: l.lot_name || `Lot #${l.lot_id}`,
+                              }))}
+                              value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
+                              onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
+                              placeholder={loadingLots ? "Loading..." : "Select Lot"}
+                              searchPlaceholder="Search lots..."
+                              disabled={loadingLots}
+                              triggerClassName="h-8 text-xs font-semibold w-[150px] border-border bg-background"
+                            />
+                          </TableCell>
+                          <TableCell className="print:hidden py-2">
+                            <Input
+                              value={destinationBatchNos[item.id] ?? item.batch_no ?? `TRF-${selectedGroup.orderNo}-${item.id}`}
+                              onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
+                              className="h-8 text-xs font-mono w-[140px] border-border bg-background"
+                              placeholder="Batch No"
+                            />
+                          </TableCell>
                           <TableCell className="text-right text-xs font-semibold font-mono text-foreground">
                             ₱{((currentQty || 0) * Number(product?.cost_per_unit || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                           </TableCell>
@@ -333,7 +371,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                   </TableBody>
                   <TableFooter className="bg-muted/10">
                     <TableRow>
-                      <TableCell colSpan={4} className="text-right text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Total Verification Value</TableCell>
+                      <TableCell colSpan={7} className="text-right text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Total Verification Value</TableCell>
                       <TableCell className="text-right text-sm font-bold text-foreground font-mono">
                          ₱{selectedGroup.items.reduce((sum: number, item: OrderGroupItem) => {
                           const rqty = receivedQtys[item.id] ?? 0;

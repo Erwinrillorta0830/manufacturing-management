@@ -76,7 +76,12 @@ export const StockAdjustmentItemSchema = z.object({
   batch_no: z.string().nullable().optional(),
   manufacturing_date: z.string().nullable().optional(),
   expiry_date: z.string().nullable().optional(),
+  inventory_condition: z.string().nullable().optional(),
   qa_status: z.enum(["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"]).optional(),
+  allocations: z.array(z.any()).optional(),
+  allocation_plan: z.any().optional(),
+  lot_allocations: z.array(z.any()).optional(),
+  updated_by: z.any().optional(),
 });
 export type StockAdjustmentItem = z.infer<typeof StockAdjustmentItemSchema>;
 
@@ -113,18 +118,32 @@ export type StockAdjustmentDetail = z.infer<typeof StockAdjustmentDetailSchema>;
 /**
  * Form values for Stock Adjustment Creation/Edit
  */
-export const StockAdjustmentFormSchema = z.object({
-  doc_no: z.string().min(1, "Document number is required"),
-  branch_id: z.number().min(1, "Branch is required"),
-  supplier_id: z.number().min(1, "Supplier is required"),
-  type: StockAdjustmentTypeSchema,
-  remarks: z.string().optional(),
-  items: z.array(StockAdjustmentItemSchema).min(1, "At least one item is required"),
-  isPosted: z.boolean(),
-  postedAt: z.string().optional(),
-  posted_by: z.any().optional(),
-  stock_adjustment_attachment: z.array(z.any()).optional(),
-});
+export const StockAdjustmentFormSchema = z
+  .object({
+    doc_no: z.string().min(1, "Document number is required"),
+    branch_id: z.number().min(1, "Branch is required"),
+    supplier_id: z.number().min(1, "Supplier is required"),
+    type: StockAdjustmentTypeSchema,
+    remarks: z.string().optional(),
+    items: z.array(StockAdjustmentItemSchema).min(1, "At least one item is required"),
+    isPosted: z.boolean(),
+    postedAt: z.string().optional(),
+    posted_by: z.any().optional(),
+    stock_adjustment_attachment: z.array(z.any()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.items && Array.isArray(data.items)) {
+      data.items.forEach((item, index) => {
+        if (!item.lot_id || !item.batch_no || String(item.batch_no).trim() === "") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Please assign Lot & Batch details for item #${index + 1} (${item.product_name || "Product"}).`,
+            path: ["items", index, "batch_no"],
+          });
+        }
+      });
+    }
+  });
 export type StockAdjustmentFormValues = z.infer<typeof StockAdjustmentFormSchema>;
 
 /**
@@ -137,6 +156,9 @@ export const StockAdjustmentListResponseSchema = z.object({
     filter_count: z.number().optional(),
   }).optional(),
 });
+
+export type ProductClassification = "RM" | "PKG" | "FG";
+export type ProductTypeFilter = "ALL" | "RM" | "PKG" | "FG";
 
 /**
  * Product Data Schema for UI dropdowns and selections
@@ -163,8 +185,13 @@ export const StockAdjustmentProductSchema = z.object({
     count: z.number().optional(),
   }).optional(),
   index: z.number().optional(),
+  product_type: z.any().optional(),
+  product_category: z.any().optional(),
+  category_name: z.string().optional(),
+  parent_id: z.any().optional(),
 });
 export type StockAdjustmentProduct = z.infer<typeof StockAdjustmentProductSchema>;
+
 
 /**
  * Branch/Supplier types for selections

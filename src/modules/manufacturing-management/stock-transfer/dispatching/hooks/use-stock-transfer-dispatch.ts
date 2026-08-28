@@ -206,7 +206,13 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
                String(inv.branchId ?? inv.branch_id) === String(sourceBranch)
             );
             
-            const availableCount = inventoryList.reduce((acc: number, inv: Record<string, string | number>) => acc + Number(inv.runningInventory ?? inv.running_inventory ?? 0), 0);
+            const availableCount = inventoryList.reduce((acc: number, inv: Record<string, string | number>) => {
+              const qIn = Number(inv.quantityIn || inv.quantity_in || 0);
+              const qOut = Number(inv.quantityOut || inv.quantity_out || 0);
+              const net = qIn - qOut;
+              const fallback = Number(inv.runningInventory ?? inv.running_inventory ?? inv.onhandQuantity ?? 0);
+              return acc + (net || fallback);
+            }, 0);
             const unitCount = Number(product?.unit_of_measurement_count || 1) || 1;
             return { pid: pid as number, available: Math.max(0, Math.floor(availableCount / unitCount)) };
           }

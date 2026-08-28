@@ -18,7 +18,7 @@ export function StockAdjustmentRegistrationModule({
         id={null}
         onCancel={undefined}
         onSuccess={() => {
-          router.push("/scm/inventory-management/stock-adjustment-summary");
+          router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
         }}
         mode="creation"
         userFullName={userFullName}

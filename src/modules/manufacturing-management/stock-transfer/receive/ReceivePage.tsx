@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { ScanHistorySidebar } from '../shared/components/ScanHistorySidebar';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -24,6 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 export default function StockTransferReceiveView({ currentUser }: { currentUser: CurrentUser }) {
   const {
@@ -39,10 +41,16 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
     isThrottled,
     clearHistory,
     updateManualQty,
+    destinationLotIds,
+    updateDestinationLot,
+    destinationBatchNos,
+    updateDestinationBatchNo,
+    targetLots,
+    loadingLots,
   } = useStockTransferReceive({ currentUser });
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const itemsPerPage = 10;
   const [showPrintPreview, setShowPrintPreview] = useState(false);
 
   // Reset page when group changes
@@ -188,9 +196,12 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                 <TableHeader>
                   <TableRow className="border-b border-border bg-muted/40 hover:bg-muted/40">
                     <TableHead className="text-[10px] uppercase font-bold py-4 px-6">Product Details</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Unit</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Expected</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[150px]">Verified</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Unit</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Expected</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[130px]">Verified</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold w-[130px] print:hidden">Source Branch</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold w-[140px] print:hidden">Target Lot</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold w-[140px] print:hidden">Target Batch No</TableHead>
                     <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6 print:hidden w-[100px]">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -270,6 +281,33 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                               </span>
                             </div>
                           )}
+                        </TableCell>
+                        <TableCell className="print:hidden py-2">
+                          <Badge variant="outline" className="font-semibold text-[10px] px-2 py-0.5 max-w-[130px] truncate border-border/70 bg-muted/40 text-foreground">
+                            {getBranchName(selectedGroup.sourceBranch)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="print:hidden py-2">
+                          <SearchableSelect
+                            options={targetLots.map((l) => ({
+                              value: String(l.lot_id),
+                              label: l.lot_name || `Lot #${l.lot_id}`,
+                            }))}
+                            value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
+                            onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
+                            placeholder={loadingLots ? "Loading..." : "Select Lot"}
+                            searchPlaceholder="Search lots..."
+                            disabled={loadingLots}
+                            triggerClassName="h-8 text-xs font-semibold w-[140px] border-border bg-background"
+                          />
+                        </TableCell>
+                        <TableCell className="print:hidden py-2">
+                          <Input
+                            value={destinationBatchNos[item.id] ?? item.batch_no ?? `TRF-${selectedGroup.orderNo}-${item.id}`}
+                            onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
+                            className="h-8 text-xs font-mono w-[130px] border-border bg-background"
+                            placeholder="Batch No"
+                          />
                         </TableCell>
                         <TableCell className="text-right px-6 print:hidden">
                           {complete ? (

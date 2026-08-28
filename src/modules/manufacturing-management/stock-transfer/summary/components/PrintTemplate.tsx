@@ -3,7 +3,8 @@
 import React from 'react';
 import { SummaryOrderGroup } from '../hooks/use-stock-transfer-summary';
 import { CompanyData, ProductRow } from '../../types/stock-transfer.types';
-import { calculateUnitPrice } from '../../services/stock-transfer.helpers';
+import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
+import { formatPhDateTime } from '../../utils/date-utils';
 
 interface PrintTemplateProps {
   group: SummaryOrderGroup;
@@ -22,21 +23,6 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
   getUnitName,
   salesmanName,
 }, ref) => {
-  const formatDate = (dateString: string | null | undefined) => {
-    if (!dateString) return '—';
-    try {
-      return new Intl.DateTimeFormat('en-PH', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-        timeZone: 'Asia/Manila',
-      }).format(new Date(dateString));
-    } catch {
-      return dateString;
-    }
-  };
-
-
   return (
     <div 
       ref={ref}
@@ -107,7 +93,7 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
         </div>
         <div style={{ padding: '8px', borderRight: '1px solid #ccc' }}>
           <label style={{ fontSize: '9px', color: '#666', fontWeight: 'bold', display: 'block', textTransform: 'uppercase' }}>Date Requested</label>
-          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{formatDate(group.dateRequested)}</span>
+          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{formatPhDateTime(group.dateRequested, { formatType: 'dateOnly' })}</span>
         </div>
         <div style={{ padding: '8px' }}>
           <label style={{ fontSize: '9px', color: '#666', fontWeight: 'bold', display: 'block', textTransform: 'uppercase' }}>Status</label>
@@ -142,9 +128,9 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
                  <td style={{ padding: '8px', fontSize: '11px' }}>{brand}</td>
                  <td style={{ padding: '8px', fontSize: '11px' }}>{product?.product_name || `ID: ${item.product_id}`}</td>
                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center' }}>{unit}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center' }}>{item.ordered_quantity}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#d97706', fontWeight: 'bold' }}>{item.allocated_quantity ?? '—'}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#059669', fontWeight: 'bold' }}>{item.received_quantity ?? '—'}</td>
+                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center' }}>{formatQuantity(item.ordered_quantity)}</td>
+                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#d97706', fontWeight: 'bold' }}>{formatQuantity(item.allocated_quantity)}</td>
+                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#059669', fontWeight: 'bold' }}>{formatQuantity(item.received_quantity)}</td>
                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'right', fontWeight: 'bold' }}>
                    PHP {rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                  </td>
@@ -166,14 +152,14 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
               {sig.value}
             </div>
             <div style={{ fontSize: '9px', fontWeight: 'bold', marginTop: '5px' }}>{sig.label}</div>
-            <div style={{ fontSize: '8px', color: '#666', marginTop: '2px' }}>Date: {formatDate(sig.date as string)}</div>
+            <div style={{ fontSize: '8px', color: '#666', marginTop: '2px' }}>Date: {sig.date ? formatPhDateTime(sig.date, { formatType: 'dateOnly' }) : '—'}</div>
           </div>
         ))}
       </div>
 
       {/* Footer */}
       <div style={{ position: 'absolute', bottom: '10mm', left: '15mm', right: '15mm', borderTop: '1px solid #eee', paddingTop: '5mm', textAlign: 'center', fontSize: '9px', color: '#999' }}>
-        Printed: {new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} · VOS Web Supply Chain Management System
+        Printed: {new Date().toLocaleString('en-PH')} · VOS Web Supply Chain Management System
       </div>
     </div>
   );

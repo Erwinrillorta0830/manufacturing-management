@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stockConversionService, stockConversionRepo } from "@/modules/manufacturing-management/stock-conversion/services";
+import { stockConversionService } from "@/modules/manufacturing-management/stock-conversion/services";
 import { stockConversionPayloadSchema } from "@/modules/manufacturing-management/stock-conversion/types";
 import { AppError } from "@/modules/manufacturing-management/stock-conversion/utils/error-handler";
 
@@ -10,17 +10,7 @@ export async function GET(req: NextRequest) {
   try {
     const springToken = req.cookies.get('springboot_token')?.value || req.cookies.get('vos_access_token')?.value;
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type");
     const branchId = searchParams.get("branchId") ? Number(searchParams.get("branchId")) : undefined;
-    
-    // 1. Inventory Fetch
-    if (type === "inventory") {
-        const queryParams = searchParams.toString().replace(/type=inventory&?/, "").replace(/branchId=\d+&?/, "");
-        const data = await stockConversionRepo.fetchInventory(springToken, branchId, queryParams || undefined);
-        return NextResponse.json({ data }, {
-          headers: { "Cache-Control": "no-store, max-age=0" }
-        });
-    }
 
     // 2. Product List Fetch
     const page = Number(searchParams.get("page") || 1);
@@ -55,6 +45,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const springToken = req.cookies.get('springboot_token')?.value || req.cookies.get('vos_access_token')?.value;
     const body = await req.json();
 
     // Validate payload with Zod schema before processing
@@ -67,7 +58,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const data = await stockConversionService.executeConversion(parsed.data);
+    const data = await stockConversionService.executeConversion(parsed.data, springToken);
     return NextResponse.json(data);
   } catch (error: unknown) {
     if (error instanceof AppError) {

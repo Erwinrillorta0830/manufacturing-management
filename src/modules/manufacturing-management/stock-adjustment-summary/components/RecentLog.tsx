@@ -5,7 +5,7 @@ import { useStockAdjustmentSummary } from "../hooks/useStockAdjustmentSummary";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { format } from "date-fns";
+import { formatPhDateTime } from "../../stock-adjustment-registration/utils/date-utils";
 import {
   ArrowUpCircle,
   ArrowDownCircle,
@@ -14,10 +14,13 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Eye,
-  Wifi,
+ 
   ClipboardList,
-  Hash
+  Layers
+
 } from "lucide-react";
+
+// import { formatDateLong } from "@/lib/utils";
 import { StockAdjustmentDetailModal } from "./StockAdjustmentDetailModal";
 import { stockAdjustmentSummaryService } from "../services/stock-adjustment-summary-service";
 
@@ -96,25 +99,21 @@ export function RecentLog() {
                           >
                             {isPosted ? "Posted" : "Unposted"}
                           </Badge>
-                          {/* Source-type badge */}
+                          {/* Source-type badge: LOT / BATCH or MANUAL */}
                           {(() => {
                             const src = (item as unknown as { source_type?: string }).source_type;
-                            if (src === "RFID") return (
-                              <Badge variant="secondary" className="bg-violet-500/10 text-violet-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2 py-0.5 border-none shadow-none flex items-center gap-1">
-                                <Wifi className="h-2.5 w-2.5" />
-                                RFID
-                              </Badge>
-                            );
-                            if (src === "MANUAL") return (
-                              <Badge variant="secondary" className="bg-orange-500/10 text-orange-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2 py-0.5 border-none shadow-none flex items-center gap-1">
-                                <ClipboardList className="h-2.5 w-2.5" />
-                                Manual
-                              </Badge>
-                            );
+                            if (src === "MANUAL" || item.remarks?.includes("MANUAL")) {
+                              return (
+                                <Badge variant="secondary" className="bg-orange-500/10 text-orange-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2.5 py-0.5 border-none shadow-none flex items-center gap-1">
+                                  <ClipboardList className="h-2.5 w-2.5" />
+                                  Manual
+                                </Badge>
+                              );
+                            }
                             return (
-                              <Badge variant="secondary" className="bg-cyan-500/10 text-cyan-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2 py-0.5 border-none shadow-none flex items-center gap-1">
-                                <Hash className="h-2.5 w-2.5" />
-                                Serial
+                              <Badge variant="secondary" className="bg-blue-500/10 text-blue-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2.5 py-0.5 border-none shadow-none flex items-center gap-1">
+                                <Layers className="h-2.5 w-2.5" />
+                                # Lot / Batch
                               </Badge>
                             );
                           })()}
@@ -149,7 +148,7 @@ export function RecentLog() {
                           <div className="flex flex-col">
                             <span className="text-[10px] uppercase font-bold text-muted-foreground/60 mb-0.5">Created At</span>
                             <span className="font-medium text-foreground/80">
-                              {item.created_at ? format(new Date(item.created_at), "MMM d, yyyy, hh:mm a") : "-"}
+                              {item.created_at ? formatPhDateTime(item.created_at, { formatType: "short" }) : "-"}
                             </span>
                           </div>
 
@@ -174,7 +173,7 @@ export function RecentLog() {
                               <div className="flex flex-col">
                                 <span className="text-[10px] uppercase font-bold text-primary">Posted At</span>
                                 <span className="font-bold text-primary/80">
-                                  {item.postedAt ? format(new Date(item.postedAt), "MMM d, yyyy, hh:mm a") : "-"}
+                                  {item.postedAt ? formatPhDateTime(item.postedAt, { formatType: "short" }) : "-"}
                                 </span>
                               </div>
                               <div className="flex flex-col">
@@ -197,7 +196,7 @@ export function RecentLog() {
                       <div className="text-right pr-6 mr-6 border-r border-border min-w-[120px]">
                         <span className="text-[10px] uppercase font-bold text-muted-foreground/60 block mb-0.5">Total Amount</span>
                         <span className="text-base font-bold text-primary">
-                          ₱{item.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
+                          ₱{Number(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
 
@@ -215,13 +214,21 @@ export function RecentLog() {
                     </div>
                   </div>
                   
-                  {/* Remarks Strip */}
-                  {item.remarks && (
-                    <div className="px-4 py-2 bg-muted/20 border-t border-border/50 flex items-center gap-2 relative z-10">
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Remarks:</span>
-                      <span className="text-xs text-muted-foreground italic truncate max-w-2xl">{item.remarks}</span>
-                    </div>
-                  )}
+                  {/* Clean Remarks Strip */}
+                  {(() => {
+                    const cleaned = (item.remarks || "")
+                      .replace(/\s*\[SOURCE:\s*[A-Z]+\]/gi, "")
+                      .replace(/\s*\[SUPPLIER_ID:\s*\d+\]/gi, "")
+                      .replace(/\s*\[BATCH:[^\]]+\]/gi, "")
+                      .trim();
+                    if (!cleaned) return null;
+                    return (
+                      <div className="px-4 py-2 bg-muted/20 border-t border-border/50 flex items-center gap-2 relative z-10">
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Remarks:</span>
+                        <span className="text-xs text-muted-foreground italic truncate max-w-2xl">{cleaned}</span>
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             );

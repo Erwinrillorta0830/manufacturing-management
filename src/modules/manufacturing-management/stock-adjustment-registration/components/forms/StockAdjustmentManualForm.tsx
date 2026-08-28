@@ -30,7 +30,7 @@ import {
   type LotBatchSelectionResult,
 } from "@/modules/manufacturing-management/shared/components/LotBatchSelectionModal";
 import { StockAllocationModal } from "@/modules/manufacturing-management/shared/components/StockAllocationModal";
-import type { StockAllocationPlan } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
+import type { StockAllocationPlan, BatchAllocationResult, LotAllocationGroup } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import {
   StockAdjustmentManualFormSchema,
   StockAdjustmentManualFormValues,
@@ -38,6 +38,7 @@ import {
 } from "../../types/stock-adjustment-manual.schema";
 import { useStockAdjustmentManualForm } from "../../hooks/useStockAdjustmentManualForm";
 import { isPostedStatus } from "../../utils/status-utils";
+import { formatPhDateTime, getPhCurrentTimestamp } from "../../utils/date-utils";
 import { decodeJwtPayload } from "../../utils/auth-utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Combobox,
@@ -113,6 +113,7 @@ const ProductTableRow = React.memo(function ProductTableRow({
   const lotName = useWatch({ control, name: `items.${index}.lot_name` });
   const batchNo = useWatch({ control, name: `items.${index}.batch_no` });
   const qaStatus = useWatch({ control, name: `items.${index}.qa_status` });
+  const lotAllocations = useWatch({ control, name: `items.${index}.lot_allocations` }) as { lot_id: number; lot_name: string; batches: { batch_no: string; quantity: number }[] }[] | undefined;
 
   const { errors } = useFormState({ control });
   const rowError = Array.isArray(errors.items)
@@ -127,6 +128,53 @@ const ProductTableRow = React.memo(function ProductTableRow({
     setValue(`items.${index}.quantity`, newQty, { shouldValidate: true });
   };
 
+  const batches = useMemo(() => {
+    if (lotAllocations && lotAllocations.length > 0) {
+      const bList: string[] = [];
+      lotAllocations.forEach((g) => {
+        (g.batches || []).forEach((b) => {
+          if (b.batch_no) bList.push(b.batch_no);
+        });
+      });
+      if (bList.length > 0) return bList;
+    }
+    if (!batchNo) return [];
+    return String(batchNo)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [batchNo, lotAllocations]);
+
+  const lotBatchDisplayInfo = useMemo(() => {
+    if (lotAllocations && lotAllocations.length > 0) {
+      const totalLots = lotAllocations.length;
+      const totalBatches = lotAllocations.reduce((sum, g) => sum + (g.batches?.length || 0), 0);
+      if (totalLots > 1) {
+        return `${totalLots} Lots (${totalBatches} Batches)`;
+      }
+      const singleLot = lotAllocations[0];
+      if (singleLot.batches && singleLot.batches.length > 1) {
+        return `${singleLot.lot_name || `Lot #${singleLot.lot_id}`}: ${singleLot.batches.length} Batches`;
+      }
+      if (singleLot.batches && singleLot.batches.length === 1) {
+        return `${singleLot.batches[0].batch_no || 'Batch'} (${singleLot.lot_name || `Lot #${singleLot.lot_id}`})`;
+      }
+    }
+    if (batches.length > 1) {
+      return `${batches.length} Batches (${lotName || `Lot #${lotId || "—"}`})`;
+    }
+    if (batches.length === 1) {
+      return `${batches[0]} (${lotName || `Lot #${lotId || "—"}`})`;
+    }
+    return "";
+  }, [lotAllocations, batches, lotName, lotId]);
+
+  const batchLabel = useMemo(() => {
+    if (batches.length === 0) return "";
+    if (batches.length === 1) return `(${batches[0]})`;
+    return `(${batches.length} Batches)`;
+  }, [batches]);
+
   return (
     <tr className="border-b border-border/50 hover:bg-muted/10 transition-colors bg-card">
       <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">{index + 1}</td>
@@ -136,23 +184,26 @@ const ProductTableRow = React.memo(function ProductTableRow({
       <td className="p-3 min-w-[250px]">
         <div className="flex flex-col">
           <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] text-muted-foreground font-mono">{product_code || "N/A"}</span>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            {product_code && (
+              <span className="text-[10px] text-muted-foreground font-mono">{product_code}</span>
+            )}
             {type === "OUT" ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <Badge
                   variant="outline"
                   onClick={() => onOpenLotBatch?.(index)}
-                  className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20"
+                  title={batches.length > 0 ? `Allocated Batches:\n${batches.join("\n")}` : "Automatic FEFO Allocation"}
+                  className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20 transition-colors"
                 >
                   <Layers className="w-2.5 h-2.5 text-emerald-600" />
-                  AUTO — FEFO {batchNo ? `(${batchNo})` : ''}
+                  AUTO — FEFO {batchLabel}
                 </Badge>
                 {!isReadOnly && (
                   <button
                     type="button"
                     onClick={() => onOpenLotBatch?.(index)}
-                    className="text-[10px] text-primary hover:underline font-semibold"
+                    className="text-[10px] text-primary hover:underline font-semibold cursor-pointer"
                   >
                     [View Allocation]
                   </button>
@@ -160,25 +211,32 @@ const ProductTableRow = React.memo(function ProductTableRow({
               </div>
             ) : (
               <>
-                {batchNo ? (
+                {lotBatchDisplayInfo ? (
                   <Badge
                     variant="outline"
                     className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 cursor-pointer hover:border-primary/50"
                     onClick={() => onOpenLotBatch?.(index)}
+                    title={batches.length > 0 ? `Allocations:\n${batches.join("\n")}` : undefined}
                   >
                     <Layers className="w-2.5 h-2.5 text-primary" />
-                    {batchNo} ({lotName || `Lot #${lotId || '—'}`})
+                    {lotBatchDisplayInfo}
                   </Badge>
                 ) : (
                   !isReadOnly && (
                     <button
                       type="button"
                       onClick={() => onOpenLotBatch?.(index)}
-                      className="text-[10px] text-primary/80 hover:text-primary underline flex items-center gap-0.5"
+                      className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 rounded px-1.5 py-0.5 flex items-center gap-1 transition-colors cursor-pointer"
                     >
-                      <Layers className="w-2.5 h-2.5" /> + Lot/Batch
+                      <Layers className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                      * Assign Lot & Batch
                     </button>
                   )
+                )}
+                {rowError?.batch_no && (
+                  <span className="text-[10px] text-red-500 font-bold ml-1">
+                    {rowError.batch_no.message}
+                  </span>
                 )}
                 {qaStatus && (
                   <Badge
@@ -223,11 +281,21 @@ const ProductTableRow = React.memo(function ProductTableRow({
             </button>
             <input
               type="number"
-              value={quantity === 0 ? "" : quantity}
+              value={quantity === 0 || quantity === undefined ? "" : quantity}
               onChange={(e) => {
-                let val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 1) val = 1;
-                setValue(`items.${index}.quantity`, val, { shouldValidate: true });
+                const raw = e.target.value;
+                if (raw === "") {
+                  setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
+                  return;
+                }
+                const val = parseInt(raw, 10);
+                setValue(`items.${index}.quantity`, isNaN(val) ? 0 : Math.max(0, val), { shouldValidate: true });
+              }}
+              onBlur={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (isNaN(val) || val < 1) {
+                  setValue(`items.${index}.quantity`, 1, { shouldValidate: true });
+                }
               }}
               className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               min={1}
@@ -381,6 +449,10 @@ export function StockAdjustmentManualForm({
       form.setValue(`items.${activeLotBatchIndex}.manufacturing_date`, result.manufacturing_date);
       form.setValue(`items.${activeLotBatchIndex}.expiry_date`, result.expiry_date);
       form.setValue(`items.${activeLotBatchIndex}.qa_status`, result.qa_status);
+      form.setValue(`items.${activeLotBatchIndex}.lot_allocations`, result.lot_allocations);
+      if (result.total_quantity && result.total_quantity > 0) {
+        form.setValue(`items.${activeLotBatchIndex}.quantity`, result.total_quantity, { shouldValidate: true });
+      }
       if (result.unit_cost) {
         form.setValue(`items.${activeLotBatchIndex}.cost_per_unit`, result.unit_cost);
       }
@@ -398,9 +470,14 @@ export function StockAdjustmentManualForm({
         form.setValue(`items.${activeLotBatchIndex}.manufacturing_date`, primary.manufacturing_date);
         form.setValue(`items.${activeLotBatchIndex}.expiry_date`, primary.expiry_date);
         form.setValue(`items.${activeLotBatchIndex}.qa_status`, primary.qa_status);
+        form.setValue(`items.${activeLotBatchIndex}.allocations`, plan.allocations);
+        form.setValue(`items.${activeLotBatchIndex}.allocation_plan`, plan);
         if (primary.unit_cost) {
           form.setValue(`items.${activeLotBatchIndex}.cost_per_unit`, primary.unit_cost);
         }
+      } else {
+        form.setValue(`items.${activeLotBatchIndex}.allocations`, []);
+        form.setValue(`items.${activeLotBatchIndex}.allocation_plan`, undefined);
       }
     }
   };
@@ -509,8 +586,8 @@ export function StockAdjustmentManualForm({
     // --- Find Best Match Template ---
     const templates = await pdfTemplateService.fetchTemplates();
     const template = templates.find(t => t.name === "MEN2")
-                  || templates.find(t => t.name.toLowerCase().includes("men2"))
-                  || templates[0];
+      || templates.find(t => t.name.toLowerCase().includes("men2"))
+      || templates[0];
     const templateName = template?.name || "MEN2";
 
     const doc = await PdfEngine.generateWithFrame(templateName, companyData, (doc, startY, config) => {
@@ -550,8 +627,8 @@ export function StockAdjustmentManualForm({
       doc.text("Date Created:", margins.left, metaY + 6);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(15, 23, 42);
-      const dateStr = values.postedAt || new Date().toISOString();
-      doc.text(format(new Date(dateStr), "yyyy-MM-dd h:mm a"), margins.left + 30, metaY + 6);
+      const dateStr = values.postedAt || getPhCurrentTimestamp();
+      doc.text(formatPhDateTime(dateStr, { formatType: "pdf" }), margins.left + 30, metaY + 6);
 
       // Right Column
       const rightColX = pageWidth / 2 + 10;
@@ -755,8 +832,12 @@ export function StockAdjustmentManualForm({
                 (item.product_id as { id?: number; product_id?: number })?.product_id ||
                 item.product_id
               ),
+              unit_id: item.unit_id
+                ? (typeof item.unit_id === "object" ? (item.unit_id as { unit_id?: number; id?: number })?.unit_id || (item.unit_id as { unit_id?: number; id?: number })?.id : Number(item.unit_id))
+                : (item.product_id as { unit_id?: number; unit_of_measurement?: { unit_id?: number } })?.unit_of_measurement?.unit_id || (item.product_id as { unit_id?: number })?.unit_id || undefined,
               product_name:
-                (item.product_id as { product_name?: string })?.product_name ||
+                (item.product_id as { description?: string; product_name?: string })?.description ||
+                (item.product_id as { description?: string; product_name?: string })?.product_name ||
                 item.product_name ||
                 "Unknown Product",
               product_code:
@@ -855,7 +936,7 @@ export function StockAdjustmentManualForm({
           const current = JSON.parse(initialValuesRef.current || "{}");
           current.doc_no = nextDocNo;
           initialValuesRef.current = JSON.stringify(current);
-        } catch {}
+        } catch { }
       };
       updateDocNo();
     }
@@ -872,7 +953,7 @@ export function StockAdjustmentManualForm({
           const current = JSON.parse(initialValuesRef.current || "{}");
           current.doc_no = nextDocNo;
           initialValuesRef.current = JSON.stringify(current);
-        } catch {}
+        } catch { }
       };
       updateDocNo();
     }
@@ -899,6 +980,20 @@ export function StockAdjustmentManualForm({
       toast.error("Please fill in all required fields correctly before posting.");
       return;
     }
+
+    const currentValues = form.getValues();
+    const unassignedIdx = (currentValues.items || []).findIndex(
+      (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+    );
+    if (unassignedIdx !== -1) {
+      const item = currentValues.items[unassignedIdx];
+      toast.error(
+        `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}) before posting.`,
+        { duration: 5000 }
+      );
+      return;
+    }
+
     setShowPostConfirmation(true);
   };
 
@@ -937,14 +1032,28 @@ export function StockAdjustmentManualForm({
 
   const onInvalid = (errors: FieldErrors<StockAdjustmentManualFormValues>) => {
     console.warn("Validation failed errors:", errors);
-    const errorDetails = Object.entries(errors)
-      .map(([key, value]) => {
-        const msg = (value as { message?: string })?.message || "Invalid field value";
-        return `${key}: ${msg}`;
-      })
-      .join(", ");
+    const messages: string[] = [];
+
+    if (errors.branch_id?.message) {
+      messages.push(String(errors.branch_id.message));
+    }
+    if (errors.supplier_id?.message) {
+      messages.push(String(errors.supplier_id.message));
+    }
+    if (errors.stock_adjustment_attachment?.message) {
+      messages.push(String(errors.stock_adjustment_attachment.message));
+    }
+    if (Array.isArray(errors.items)) {
+      errors.items.forEach((itemErr) => {
+        if (itemErr?.batch_no?.message) {
+          messages.push(String(itemErr.batch_no.message));
+        }
+      });
+    }
+
+    const description = messages.filter(Boolean).join(", ");
     toast.error("Please fill in all required fields correctly.", {
-      description: errorDetails || undefined,
+      description: description || undefined,
       duration: 6000,
     });
   };
@@ -1001,7 +1110,7 @@ export function StockAdjustmentManualForm({
       } else if (typeof action === "string") {
         router.push(action);
       } else {
-        router.push("/scm/inventory-management/stock-adjustment-summary");
+        router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
       }
     }
   }, [isFormModified, router]);
@@ -1013,7 +1122,7 @@ export function StockAdjustmentManualForm({
     } else if (typeof pendingExitAction === "string") {
       router.push(pendingExitAction);
     } else {
-      router.push("/scm/inventory-management/stock-adjustment-summary");
+      router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
     }
     setPendingExitAction(null);
   }, [pendingExitAction, router]);
@@ -1022,6 +1131,18 @@ export function StockAdjustmentManualForm({
     setShowUnsavedChangesModal(false);
     await form.handleSubmit(
       async (values: StockAdjustmentManualFormValues) => {
+        const unassignedIdx = (values.items || []).findIndex(
+          (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+        );
+        if (unassignedIdx !== -1) {
+          const item = values.items[unassignedIdx];
+          toast.error(
+            `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
+            { duration: 5000 }
+          );
+          return;
+        }
+
         setLoading(true);
         try {
           if (id) {
@@ -1038,7 +1159,7 @@ export function StockAdjustmentManualForm({
           } else if (typeof pendingExitAction === "string") {
             router.push(pendingExitAction);
           } else {
-            router.push("/scm/inventory-management/stock-adjustment-summary");
+            router.push("/mm/inventory-warehousing/adjustments/stock-adjustment/stock-adjustment-summary");
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : "Failed to save adjustment";
@@ -1055,6 +1176,18 @@ export function StockAdjustmentManualForm({
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
     async (values: StockAdjustmentManualFormValues) => {
+      const unassignedIdx = (values.items || []).findIndex(
+        (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
+      );
+      if (unassignedIdx !== -1) {
+        const item = values.items[unassignedIdx];
+        toast.error(
+          `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
+          { duration: 5000 }
+        );
+        return;
+      }
+
       setLoading(true);
       try {
         if (id) {
@@ -1113,6 +1246,10 @@ export function StockAdjustmentManualForm({
   const watchedBranchIdForSelect = useWatch({ control: form.control, name: "branch_id" });
   const watchedSupplierIdForSelect = useWatch({ control: form.control, name: "supplier_id" });
   const watchedType = useWatch({ control: form.control, name: "type" });
+  const watchedDocNo = useWatch({ control: form.control, name: "doc_no" });
+  const watchedAttachments = useWatch({ control: form.control, name: "stock_adjustment_attachment" });
+  const watchedPostedAt = useWatch({ control: form.control, name: "postedAt" });
+  const watchedPostedBy = useWatch({ control: form.control, name: "posted_by" });
 
   const watchedItemsList = useWatch({ control: form.control, name: "items" });
 
@@ -1212,14 +1349,14 @@ export function StockAdjustmentManualForm({
             <div className="flex items-center gap-2 bg-primary/5 dark:bg-blue-900/10 px-3 py-1.5 rounded-lg border border-primary/30 dark:border-blue-800/30">
               <span className="text-[10px] uppercase font-black text-primary/70">Posted At:</span>
               <span className="text-xs font-bold text-primary/90 dark:text-blue-300">
-                {form.getValues().postedAt ? format(new Date(form.getValues().postedAt as string), "MMMM d, yyyy, hh:mm a") : "-"}
+                {watchedPostedAt ? formatPhDateTime(watchedPostedAt) : "-"}
               </span>
             </div>
             <div className="flex items-center gap-2 bg-primary/5 dark:bg-blue-900/10 px-3 py-1.5 rounded-lg border border-primary/30 dark:border-blue-800/30">
               <span className="text-[10px] uppercase font-black text-primary/70">Posted By:</span>
               <span className="text-xs font-bold text-primary/90 dark:text-blue-300">
                 {(() => {
-                  const postedBy = form.getValues("posted_by");
+                  const postedBy = watchedPostedBy || form.getValues("posted_by");
                   if (typeof postedBy === 'object' && postedBy !== null) {
                     const fname = postedBy.user_fname || "";
                     const lname = postedBy.user_lname || "";
@@ -1258,7 +1395,7 @@ export function StockAdjustmentManualForm({
                     onValueChange={(v: string | null) => {
                       if (v) onSelectId(Number(v));
                     }}
-                    inputValue={form.watch("doc_no") || ""}
+                    inputValue={watchedDocNo || ""}
                     onInputValueChange={() => { }}
                   >
                     <ComboboxInput
@@ -1583,7 +1720,7 @@ export function StockAdjustmentManualForm({
                           onRemove={(idx) => setDeletingIndex(idx)}
                           setValue={form.setValue}
                           onOpenLotBatch={handleOpenLotBatchModal}
-                          type={form.watch("type")}
+                          type={watchedType}
                           isReadOnly={isReadOnly}
                         />
                       ))
@@ -1676,7 +1813,7 @@ export function StockAdjustmentManualForm({
           </CardHeader>
           <CardContent className="p-6">
             <AttachmentUpload
-              value={form.watch("stock_adjustment_attachment") || []}
+              value={watchedAttachments || []}
               onChange={(atts) => form.setValue("stock_adjustment_attachment", atts, { shouldValidate: true })}
               disabled={isReadOnly}
             />
@@ -1704,7 +1841,7 @@ export function StockAdjustmentManualForm({
         />
 
         {/* For Stock OUT: Stock Allocation Modal (FEFO / Manual) */}
-        {form.watch("type") === "OUT" ? (
+        {watchedType === "OUT" ? (
           <StockAllocationModal
             open={lotBatchModalOpen}
             onOpenChange={setLotBatchModalOpen}
@@ -1713,6 +1850,30 @@ export function StockAdjustmentManualForm({
             productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : ''}
             requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
             uomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
+            initialAllocations={
+              activeLotBatchIndex !== null
+                ? (() => {
+                    const it = form.watch(`items.${activeLotBatchIndex}`);
+                    if (it?.allocations && (it.allocations as unknown[]).length > 0) {
+                      return it.allocations as BatchAllocationResult[];
+                    }
+                    if (it?.batch_no && (it.inventory_lot_id || it.lot_id)) {
+                      return [
+                        {
+                          inventory_lot_id: Number(it.inventory_lot_id) || 1,
+                          lot_id: Number(it.lot_id) || 1,
+                          batch_no: it.batch_no,
+                          allocated_quantity: Number(it.quantity) || 1,
+                          available_quantity: Number(it.current_stock || it.quantity) || 1,
+                          status: "ACTIVE",
+                          qa_status: it.qa_status || "GOOD",
+                        } as BatchAllocationResult,
+                      ];
+                    }
+                    return undefined;
+                  })()
+                : undefined
+            }
             onConfirm={handleApplyAllocation}
           />
         ) : (
@@ -1723,10 +1884,15 @@ export function StockAdjustmentManualForm({
             branchId={Number(watchedBranchId) || undefined}
             productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : undefined}
             productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : undefined}
+            productCode={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_code`) || '') : undefined}
+            productUomId={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.unit_id`) ? Number(form.watch(`items.${activeLotBatchIndex}.unit_id`)) : undefined) : undefined}
+            productUomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
             requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
-            mode="CREATE_OR_ASSIGN"
+            adjustmentType={watchedType || "IN"}
+            initialLotAllocations={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.lot_allocations`) as LotAllocationGroup[] | undefined) : undefined}
             initialValues={activeLotBatchIndex !== null ? {
               lot_id: form.watch(`items.${activeLotBatchIndex}.lot_id`) || undefined,
+              lot_name: form.watch(`items.${activeLotBatchIndex}.lot_name`) || undefined,
               inventory_lot_id: form.watch(`items.${activeLotBatchIndex}.inventory_lot_id`) || undefined,
               batch_no: form.watch(`items.${activeLotBatchIndex}.batch_no`) || '',
               manufacturing_date: form.watch(`items.${activeLotBatchIndex}.manufacturing_date`),

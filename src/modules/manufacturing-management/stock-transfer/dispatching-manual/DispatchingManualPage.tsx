@@ -161,20 +161,20 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
               </div>
 
               <div className="p-4 print:p-0">
-                <Table>
+                <Table className="w-full table-fixed">
                   <TableHeader>
                     <TableRow className="border-b border-border bg-muted/20">
-                      <TableHead className="text-[10px] uppercase font-bold">Product</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center">Allocated</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center">Available</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center print:hidden">Manual Qty</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-right">Amount</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold w-[36%]">Product</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center w-[14%]">Allocated</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center w-[14%]">Available</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center print:hidden w-[18%]">Manual Qty</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-right w-[18%]">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedItems.map((item: OrderGroupItem) => {
-                      const targetQty = Math.max(0, item.allocated_quantity ?? 0);
-                      const availableQty = Math.max(0, item.qtyAvailable ?? 0);
+                      const targetQty = Number(item.allocated_quantity || 0);
+                      const availableQty = Number(item.qtyAvailable || 0);
                       const maxAllowedQty = Math.min(targetQty, availableQty);
                       const currentQty = scannedQtys[item.id] ?? 0;
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? item.product_id : null;
@@ -183,7 +183,7 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
 
                       return (
                         <TableRow key={item.id} className="border-b border-border/50">
-                          <TableCell className="py-3">
+                          <TableCell className="py-3 w-[36%]">
                             <div className="flex items-center gap-3">
                               {productImage ? (
                                 <div className="h-9 w-9 rounded-lg bg-muted/40 border border-border/60 overflow-hidden shrink-0 relative">
@@ -205,15 +205,15 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm font-bold text-center">{targetQty}</TableCell>
-                          <TableCell className="text-xs text-center font-medium font-mono text-muted-foreground italic">
+                          <TableCell className="text-sm font-bold text-center w-[14%]">{targetQty}</TableCell>
+                          <TableCell className="text-xs text-center font-medium font-mono text-muted-foreground italic w-[14%]">
                             {fetchingAvailable ? (
                               <Loader2 className="w-3 h-3 animate-spin mx-auto text-primary" />
                             ) : (
                               availableQty
                             )}
                           </TableCell>
-                          <TableCell className="print:hidden text-center">
+                          <TableCell className="print:hidden text-center w-[18%]">
                             <QuantityStepper 
                               value={currentQty}
                               max={maxAllowedQty}
@@ -223,7 +223,7 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
                               size="sm"
                             />
                           </TableCell>
-                          <TableCell className="text-right text-xs font-semibold font-mono text-foreground">
+                          <TableCell className="text-right text-xs font-semibold font-mono text-foreground w-[18%]">
                             ₱{((currentQty || 0) * Number(product?.cost_per_unit || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                           </TableCell>
                         </TableRow>

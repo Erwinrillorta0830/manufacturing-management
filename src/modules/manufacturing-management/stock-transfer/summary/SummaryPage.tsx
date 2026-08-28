@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useStockTransferSummary, SortConfig } from './hooks/use-stock-transfer-summary';
 import { TransferDetailModal } from './components/TransferDetailModal';
+import { formatPhDateTime } from '../utils/date-utils';
 import { SearchableCombobox } from '../shared/components/searchable-combobox';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -352,9 +353,14 @@ export default function StockTransferSummaryView() {
                           </span>
                         </TableCell>
                         <TableCell className="text-center">
-                          <span className="text-[10px] font-medium text-muted-foreground">
-                            {new Date(group.dateRequested).toLocaleDateString('en-PH', { month: 'short', day: '2-digit', year: 'numeric', timeZone: 'Asia/Manila' })}
-                          </span>
+                          <div className="flex flex-col items-center">
+                            <span className="text-[10px] font-medium text-foreground">
+                              {formatPhDateTime(group.dateRequested, { formatType: 'dateOnly' })}
+                            </span>
+                            <span className="text-[9px] text-muted-foreground font-mono">
+                              {formatPhDateTime(group.dateRequested, { formatType: 'timeOnly' })}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge 

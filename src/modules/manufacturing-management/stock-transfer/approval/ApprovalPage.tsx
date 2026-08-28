@@ -290,7 +290,7 @@ export default function StockTransferApprovalView() {
                           <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{description}</TableCell>
                           <TableCell className="text-[10px] font-bold text-primary uppercase">{brandName}</TableCell>
                           <TableCell className="text-[10px] font-medium uppercase text-muted-foreground">{unitName}</TableCell>
-                          <TableCell className="text-sm text-center font-medium">{item.ordered_quantity}</TableCell>
+                          <TableCell className="text-sm text-center font-medium">{Number(item.ordered_quantity || 0)}</TableCell>
                           <TableCell className="text-sm text-center">
                             {fetchingAvailable ? (
                               <Loader2 className="w-3 h-3 animate-spin mx-auto text-primary" />

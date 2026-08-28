@@ -50,7 +50,7 @@ export function useStockConversionManual(branchId?: number) {
         return prev.map(p => {
           if (!fetchableIds.includes(p.productId)) return p;
           const rawQty = invMap[p.productId] ?? 0;
-          const finalQty = Math.floor(rawQty / (p.conversionFactor || 1));
+          const finalQty = rawQty;
           return {
             ...p,
             quantity: finalQty,
@@ -144,7 +144,9 @@ export function useStockConversionManual(branchId?: number) {
   };
 
   useEffect(() => {
-    refresh();
+    queueMicrotask(() => {
+      refresh();
+    });
   }, [refresh]);
 
   return {
