@@ -846,7 +846,6 @@ export function ProductTracingTable({
                     setSelectedMovement(m);
                     setIsDetailOpen(true);
                 }}
-                branches={branches}
                 products={products}
                 lots={lots}
             />

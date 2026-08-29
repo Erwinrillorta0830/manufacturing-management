@@ -71,7 +71,7 @@ export interface FormSiblingAllocation {
   quantity?: number | null;
   lot_id?: number | null;
   lot_name?: string | null;
-  lot_allocations?: LotAllocationGroup[] | unknown[];
+  lot_allocations?: LotAllocationGroup[];
   batch_no?: string | null;
   batches?: Array<{ quantity?: number | null; batch_no?: string | null; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: QAStatus | null }>;
 }
@@ -261,11 +261,11 @@ export function LotBatchSelectionModal({
         if (existingFormAllocations && existingFormAllocations.length > 0) {
           existingFormAllocations.forEach((sibling) => {
             if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
-              sibling.lot_allocations.forEach((grp: LotAllocationGroup | Record<string, unknown>) => {
+              sibling.lot_allocations.forEach((grp) => {
                 const sLotId = Number(grp.lot_id);
                 if (sLotId > 0) {
-                  const batches = (grp as { batches?: Array<{ quantity?: number | null }> }).batches || [];
-                  const grpQty = batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) || Number((grp as { allocated_quantity?: number }).allocated_quantity || 0);
+                  const batches = grp.batches || [];
+                  const grpQty = batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) || Number(grp.allocated_quantity || 0);
                   const grpBchCount = batches.length || 1;
                   if (grpQty > 0 || grpBchCount > 0) {
                     sQtyMap.set(sLotId, (sQtyMap.get(sLotId) || 0) + grpQty);
@@ -361,12 +361,12 @@ export function LotBatchSelectionModal({
 
               let allocatedToThisLot = 0;
               if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
-                sibling.lot_allocations.forEach((grp: LotAllocationGroup | Record<string, unknown>) => {
+                sibling.lot_allocations.forEach((grp) => {
                   if (Number(grp.lot_id) === lId) {
-                    const batches = (grp as { batches?: Array<{ quantity?: number | null }> }).batches || [];
+                    const batches = grp.batches || [];
                     allocatedToThisLot +=
                       batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) ||
-                      Number((grp as { allocated_quantity?: number }).allocated_quantity || 0);
+                      Number(grp.allocated_quantity || 0);
                   }
                 });
               } else if (Number(sibling.lot_id) === lId) {
