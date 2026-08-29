@@ -65,9 +65,24 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const prevPreviewUrlRef = useRef("");
     const printingDirectlyRef = useRef(false);
     const onCloseRef = useRef(onClose);
-    onCloseRef.current = onClose;
+    useEffect(() => {
+        onCloseRef.current = onClose;
+    }, [onClose]);
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
     const hasShortage = availability ? !availability.isFullyAvailable : false;
+
+    const downloadReceipt = async (invoice: PrintableInvoice) => {
+        const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
+        const blob = doc.output("blob");
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `${invoice.invoiceNo}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
     useEffect(() => {
         void fetchReceiptTypes().then((types) => {
@@ -79,7 +94,9 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     useEffect(() => {
         if (!invoiceTypeId) return;
         let cancelled = false;
-        setLoadingTemplate(true);
+        queueMicrotask(() => {
+            if (!cancelled) setLoadingTemplate(true);
+        });
         void fetchReceiptTemplate(invoiceTypeId).then(result => {
             if (!cancelled) setTemplate(normalizeReceiptTemplate(result));
         }).catch(() => {
@@ -93,8 +110,12 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     useEffect(() => {
         if (!printable) return;
         let cancelled = false;
-        setGeneratingPdf(true);
-        setPdfError("");
+        queueMicrotask(() => {
+            if (!cancelled) {
+                setGeneratingPdf(true);
+                setPdfError("");
+            }
+        });
         generateInvoiceReceiptPdf(printable).then((doc) => {
             if (cancelled) return;
             const blob = doc.output("blob");
@@ -158,19 +179,27 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     };
 
     useEffect(() => {
-        setLoadingAvailability(true);
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) setLoadingAvailability(true);
+        });
         void fetchSalesOrderAvailability(candidate.order_id)
             .then((result) => {
-                setAvailability(result);
+                if (!cancelled) setAvailability(result);
             })
             .catch((err) => {
-                setAvailability(null);
-                const msg = err instanceof Error ? err.message : "Failed to load live stock from Spring Boot service";
-                toast.error(msg, { duration: 6000 });
+                if (!cancelled) {
+                    setAvailability(null);
+                    const msg = err instanceof Error ? err.message : "Failed to load live stock from Spring Boot service";
+                    toast.error(msg, { duration: 6000 });
+                }
             })
             .finally(() => {
-                setLoadingAvailability(false);
+                if (!cancelled) setLoadingAvailability(false);
             });
+        return () => {
+            cancelled = true;
+        };
     }, [candidate.order_id]);
 
     const loadInvoicePrint = async (result: CreatedInvoiceResult) => {
@@ -199,19 +228,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         setPreviewingBeforeCreate(false);
         setCreatedResult(created);
         await loadInvoicePrint(created);
-    };
-
-    const downloadReceipt = async (invoice: PrintableInvoice) => {
-        const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
-        const blob = doc.output("blob");
-        const a = document.createElement("a");
-        const url = URL.createObjectURL(blob);
-        a.href = url;
-        a.download = `${invoice.invoiceNo}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
     };
 
     const print = async () => {
