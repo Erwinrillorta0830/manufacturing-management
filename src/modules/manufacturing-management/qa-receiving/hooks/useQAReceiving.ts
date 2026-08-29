@@ -114,6 +114,7 @@ export function useQAReceiving() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [supplierDocumentTypes, setSupplierDocumentTypes] = useState<SupplierDocumentType[]>([]);
     const [storageLotsByProductId, setStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
+    const [rejectedStorageLotsByProductId, setRejectedStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
     const storageLotBatchCache = useRef<Record<string, StorageLotBatch[]>>({});
     const storageLotBatchRequestCache = useRef<Record<string, Promise<StorageLotBatch[]>>>({});
     const [loadingShipments, setLoadingShipments] = useState(false);
@@ -216,6 +217,7 @@ export function useQAReceiving() {
         setSelectedShipment(null);
         setLineItems([]);
         setStorageLotsByProductId({});
+        setRejectedStorageLotsByProductId({});
         storageLotBatchCache.current = {};
         storageLotBatchRequestCache.current = {};
         setLoadingLines(false);
@@ -405,13 +407,15 @@ export function useQAReceiving() {
         }
     };
 
-    const loadStorageLotBatches = useCallback(async (productId: number, lotId: number): Promise<StorageLotBatch[]> => {
-        const cacheKey = `${productId}:${lotId}`;
+    const loadStorageLotBatches = useCallback(async (productId: number, lotId: number, lotBranchId?: number): Promise<StorageLotBatch[]> => {
+        const branchId = lotBranchId || Number(selectedBranchId);
+        if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new Error("A receiving branch is required before loading lot batches.");
+        const cacheKey = `${productId}:${branchId}:${lotId}`;
         const cached = storageLotBatchCache.current[cacheKey];
         if (cached) return cached;
         const pending = storageLotBatchRequestCache.current[cacheKey];
         if (pending) return pending;
-        const request = fetchStorageLotBatches(productId, lotId)
+        const request = fetchStorageLotBatches(productId, branchId, lotId)
             .then(batches => {
                 storageLotBatchCache.current[cacheKey] = batches;
                 return batches;
@@ -421,7 +425,7 @@ export function useQAReceiving() {
             });
         storageLotBatchRequestCache.current[cacheKey] = request;
         return request;
-    }, []);
+    }, [selectedBranchId]);
 
     const handleSelectShipment = async (shipment: Shipment, replacementContext: QuarantineDisposition | null = null) => {
         const isReplacement = Boolean(replacementContext);
@@ -457,6 +461,7 @@ export function useQAReceiving() {
         setPreviewError(null);
         setLoadingLines(true);
         setStorageLotsByProductId({});
+        setRejectedStorageLotsByProductId({});
         storageLotBatchCache.current = {};
         storageLotBatchRequestCache.current = {};
         try {
@@ -552,19 +557,30 @@ export function useQAReceiving() {
             setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
+            const selectedBranch = branches.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
+            const badStockBranchId = selectedBranch?.bad_stock_branch_id && typeof selectedBranch.bad_stock_branch_id === "object"
+                ? Number(selectedBranch.bad_stock_branch_id.id)
+                : Number(selectedBranch?.bad_stock_branch_id || 0);
             void Promise.all(productIds.map(async productId => {
                 try {
-                    const lots = await fetchStorageLots(productId, controller.signal);
-                    return [productId, lots] as const;
+                    const [acceptedLots, rejectedLots] = await Promise.all([
+                        fetchStorageLots(productId, Number(normalizedPurchaseOrderBranchId), controller.signal),
+                        badStockBranchId > 0
+                            ? fetchStorageLots(productId, badStockBranchId, controller.signal)
+                            : Promise.resolve([] as StorageLot[])
+                    ]);
+                    return [productId, acceptedLots, rejectedLots] as const;
                 } catch (error) {
                     if (controller.signal.aborted || (error as Error).name === "AbortError") return null;
                     console.error(error);
                     toast.error(`Failed to load compatible storage lots for product ${productId}.`);
-                    return [productId, [] as StorageLot[]] as const;
+                    return [productId, [] as StorageLot[], [] as StorageLot[]] as const;
                 }
             })).then(results => {
                 if (controller.signal.aborted) return;
-                setStorageLotsByProductId(Object.fromEntries(results.filter((result): result is readonly [number, StorageLot[]] => Boolean(result))));
+                const validResults = results.filter((result): result is readonly [number, StorageLot[], StorageLot[]] => Boolean(result));
+                setStorageLotsByProductId(Object.fromEntries(validResults.map(([id, lots]) => [id, lots])));
+                setRejectedStorageLotsByProductId(Object.fromEntries(validResults.map(([id, , lots]) => [id, lots])));
             });
             setQaSpecificationStates(Object.fromEntries(productIds.map(productId => [productId, {
                 status: "loading" as const,
@@ -1234,6 +1250,7 @@ export function useQAReceiving() {
         shipments,
         branches,
         storageLotsByProductId,
+        rejectedStorageLotsByProductId,
         loadStorageLotBatches,
         loadingShipments,
         loadingBranches,

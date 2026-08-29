@@ -42,16 +42,17 @@ export async function fetchSupplierDocumentTypes(signal?: AbortSignal): Promise<
     return data as SupplierDocumentType[];
 }
 
-export async function fetchStorageLots(productId: number, signal?: AbortSignal): Promise<StorageLot[]> {
-    const res = await fetch(`/api/manufacturing/qa-receiving?action=lots&productId=${encodeURIComponent(productId)}`, { signal });
+export async function fetchStorageLots(productId: number, branchId: number, signal?: AbortSignal): Promise<StorageLot[]> {
+    const res = await fetch(`/api/manufacturing/qa-receiving?action=lots&productId=${encodeURIComponent(productId)}&branchId=${encodeURIComponent(branchId)}`, { signal });
     if (!res.ok) throw new Error("Failed to load storage lots");
     return res.json();
 }
 
-export async function fetchStorageLotBatches(productId: number, lotId: number, signal?: AbortSignal): Promise<StorageLotBatch[]> {
+export async function fetchStorageLotBatches(productId: number, branchId: number, lotId: number, signal?: AbortSignal): Promise<StorageLotBatch[]> {
     const params = new URLSearchParams({
         action: "batches",
         productId: String(productId),
+        branchId: String(branchId),
         lotId: String(lotId)
     });
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
