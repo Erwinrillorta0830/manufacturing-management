@@ -14,7 +14,6 @@ interface SalesOrderApprovalDetailPanelProps {
     loadingDetails: boolean;
     updatingStatusId: number | null;
     stockData: Record<number, number>;
-    handleApprove: (orderId: number) => void;
     handleSendToJO: (orderId: number) => void;
     handleSendToInvoice: (orderId: number) => void;
     handleHold?: (orderId: number) => void;
@@ -29,7 +28,6 @@ export function SalesOrderApprovalDetailPanel({
     loadingDetails,
     updatingStatusId,
     stockData,
-    handleApprove,
     handleSendToJO,
     handleSendToInvoice,
     handleHold,

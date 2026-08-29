@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Plus, X } from "lucide-react";
-import { toast } from "sonner";
+import { X } from "lucide-react";
 import { Customer } from "../types";
 
 interface PriceType {
@@ -14,7 +13,6 @@ interface QuotationHeaderFormProps {
     customerSearchText: string;
     selectedCustomerId: string;
     customers: Customer[];
-    setCustomers?: React.Dispatch<React.SetStateAction<Customer[]>>;
     handleSearchCustomers: (search: string) => void;
     selectCustomer: (id: string, nameCode: string) => void;
     priceTypes: PriceType[];
@@ -34,7 +32,6 @@ export function QuotationHeaderForm({
     customerSearchText,
     selectedCustomerId,
     customers,
-    setCustomers,
     handleSearchCustomers,
     selectCustomer,
     priceTypes,

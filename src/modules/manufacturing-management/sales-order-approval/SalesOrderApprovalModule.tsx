@@ -108,7 +108,6 @@ export default function SalesOrderApprovalModule() {
                 loadingDetails={loadingDetails}
                 updatingStatusId={updatingStatusId}
                 stockData={stockData}
-                handleApprove={handleApprove}
                 handleSendToJO={handleSendToJO}
                 handleSendToInvoice={handleSendToInvoice}
                 handleHold={handleHold}

@@ -219,8 +219,10 @@ function decodeUserIdFromJwtCookie(req: NextRequest): number | null {
 }
 
 // Helper to normalize data for frontend consumption
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeMemoData(m: any) {
     if (!m) return m;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const isObj = (val: any) => val && typeof val === 'object';
     
     let created_at = m.created_at;
@@ -418,14 +420,14 @@ export async function GET(req: NextRequest) {
                     const memoIds = result.data.map(m => m.id);
                     const encoderIds = Array.from(new Set(result.data.map(m => typeof m.encoder_id === 'number' ? m.encoder_id : null).filter((id): id is number => id !== null && id > 0)));
                     let userMap = new Map();
-                    let collectionsMap = new Map<number, string[]>();
+                    const collectionsMap = new Map<number, string[]>();
 
                     try {
                         const [userRes, collectionsRes] = await Promise.all([
                             encoderIds.length > 0 ? directusFetch<DirectusListResponse<UserRow>>(
                                 `${DIRECTUS_URL}/items/user?fields=user_id,user_fname,user_lname&filter[user_id][_in]=${encoderIds.join(",")}`
                             ) : Promise.resolve({ data: [] }),
-                            directusFetch<DirectusListResponse<any>>(
+                            directusFetch<DirectusListResponse<{ memo_id: number; collection_id?: { docNo?: string } }>>(
                                 `${DIRECTUS_URL}/items/collection_memos?fields=memo_id,collection_id.docNo&filter[memo_id][_in]=${memoIds.join(",")}`
                             )
                         ]);
@@ -434,7 +436,7 @@ export async function GET(req: NextRequest) {
                             userMap = new Map(userRes.data.map(u => [u.user_id, u]));
                         }
                         if (collectionsRes.data) {
-                            collectionsRes.data.forEach((c: any) => {
+                            collectionsRes.data.forEach((c: { memo_id: number; collection_id?: { docNo?: string } }) => {
                                 if (!collectionsMap.has(c.memo_id)) collectionsMap.set(c.memo_id, []);
                                 if (c.collection_id && c.collection_id.docNo) {
                                     collectionsMap.get(c.memo_id)!.push(c.collection_id.docNo);

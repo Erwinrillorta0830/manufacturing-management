@@ -23,7 +23,6 @@ export default function QuotationModule() {
         isDetailModalOpen,
         setIsDetailModalOpen,
         customers,
-        setCustomers,
         selectedCustomerId,
         customerSearchText,
         quoteNumber,
@@ -59,7 +58,6 @@ export default function QuotationModule() {
         addEmptyRow,
         updateRow,
         handleRowProductSelect,
-        registerNewProject,
         allProjects,
         startCreateQuoteForProject,
         selectedProjectId
@@ -126,7 +124,6 @@ export default function QuotationModule() {
                         customerSearchText={customerSearchText}
                         selectedCustomerId={selectedCustomerId}
                         customers={customers}
-                        setCustomers={setCustomers}
                         handleSearchCustomers={handleSearchCustomers}
                         selectCustomer={selectCustomer}
                         priceTypes={priceTypes}

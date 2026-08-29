@@ -57,7 +57,6 @@ export default function PriceChangeRequestsView({
         productTypesLoading,
         productTypesError,
         sessionExpired: productTypesSessionExpired,
-        loadProductTypes,
         handleUnauthorized: handleProductTypesUnauthorized,
     } = usePCRProductTypes();
 
