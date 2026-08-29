@@ -383,7 +383,7 @@ export function QuotationList({
             {/* Modal: Project SKU Pricing Revision History (Excel Grid Format) */}
             {historyModalOpen && (
                 <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-auto max-h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                         {/* Header */}
                         <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                             <div>

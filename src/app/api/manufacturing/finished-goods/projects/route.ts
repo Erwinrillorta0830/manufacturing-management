@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 
 export async function GET() {
     try {
@@ -23,11 +24,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing project_name or customer_code" }, { status: 400 });
         }
 
+        const userId = await getUserIdFromToken().catch(() => null);
+        const serverTime = await getISOStringInConfiguredTimezone();
+
         const payload = {
             project_name: project_name.trim().toUpperCase(),
             customer_code: customer_code.trim(),
-            created_by: 1, // Default user id
-            created_at: new Date().toISOString()
+            created_by: userId,
+            created_at: serverTime.substring(0, 19).replace('T', ' ')
         };
 
         const res = await fetch(`${DIRECTUS_URL}/items/projects`, {

@@ -152,7 +152,7 @@ export function QuotationDetailModal({
 
     return (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-[90vh] max-h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-auto max-h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                     <div>
@@ -285,7 +285,7 @@ export function QuotationDetailModal({
                                         <thead className="bg-muted/20 text-muted-foreground font-bold">
                                             <tr>
                                                 <th className="p-2.5 uppercase">Product / Node Name</th>
-                                                <th className="p-2.5 uppercase">Qty</th>
+                                                <th className="p-2.5 uppercase text-left">Version</th>
                                                 <th className="p-2.5 uppercase">UOM</th>
                                                 <th className="p-2.5 uppercase text-right">Unit Cost (₱)</th>
                                                 <th className="p-2.5 uppercase text-right">Ext Cost (₱)</th>
@@ -298,7 +298,7 @@ export function QuotationDetailModal({
                                                 return (
                                                     <tr key={item.id} className="hover:bg-muted/10">
                                                         <td className="p-2.5 font-medium text-foreground">{item.node_name}</td>
-                                                        <td className="p-2.5 text-right font-medium">{item.quantity}</td>
+                                                        <td className="p-2.5 text-left font-medium text-muted-foreground">{item.version_name || "N/A"}</td>
                                                         <td className="p-2.5 text-muted-foreground">{item.uom}</td>
                                                         <td className="p-2.5 text-right font-semibold text-muted-foreground">{formatCurrency(unitCost)}</td>
                                                         <td className="p-2.5 text-right font-bold text-primary">{formatCurrency(totalCost)}</td>

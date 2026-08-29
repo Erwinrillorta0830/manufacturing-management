@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { 
     fetchQuotations, 
     saveQuotation 
@@ -43,6 +44,12 @@ export async function POST(request: Request) {
         if (invalidSnapshot) {
             return NextResponse.json({ error: "Each quotation snapshot must contain valid product, BOM version, node, quantity, UOM, and cost values" }, { status: 400 });
         }
+
+        const userId = await getUserIdFromToken().catch(() => null);
+        const serverTime = await getISOStringInConfiguredTimezone();
+
+        header.created_by = userId;
+        header.created_at = serverTime.substring(0, 19).replace('T', ' ');
 
         const result = await saveQuotation(header, snapshots);
         return NextResponse.json(result);

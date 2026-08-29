@@ -501,8 +501,9 @@ export function useQuotation() {
 
         // Customer-Driven Price Type Auto-Fill
         const customer = customers.find(c => c.id.toString() === id);
-        if (customer && customer.price_type_id) {
-            handlePriceTypeChange(String(customer.price_type_id));
+        const autoPriceTypeId = customer?.price_type_id || customer?.default_price_type_id;
+        if (autoPriceTypeId) {
+            handlePriceTypeChange(String(autoPriceTypeId));
         }
     };
 
@@ -581,6 +582,8 @@ export function useQuotation() {
                 quote_number: quoteNumber.trim(),
                 customer_id: parseInt(selectedCustomerId),
                 project_id: resolvedProjectId,
+                price_type_id: selectedPriceTypeId ? parseInt(selectedPriceTypeId) : null,
+                frozen_price_type_name: selectedPriceTypeId ? priceTypes.find(pt => String(pt.price_type_id) === selectedPriceTypeId)?.price_type_name || null : null,
                 total_selling_price: totalSelling,
                 total_simulated_cost: totalCost,
                 forex_rate_used: 61.39,

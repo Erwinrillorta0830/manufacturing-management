@@ -224,7 +224,7 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                             </div>
                             <div className="h-8 w-px bg-border"></div>
                             <div>
-                                <span className="text-xs text-muted-foreground block uppercase font-bold tracking-wider">Batch Size</span>
+                                <span className="text-xs text-muted-foreground block uppercase font-bold tracking-wider">Base Quantity / UOM</span>
                                 <span className="font-semibold text-foreground text-base">
                                     {item.base_quantity} {item.uom || "pcs"}
                                 </span>

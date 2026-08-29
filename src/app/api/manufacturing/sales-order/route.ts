@@ -993,6 +993,17 @@ export async function POST(request: Request) {
             if (!quoteUpdateRes.ok) {
                 throw new Error(`quotation update returned ${quoteUpdateRes.status}`);
             }
+
+            if (quote.project_id) {
+                const projectUpdateRes = await fetch(`${DIRECTUS_URL}/items/projects/${quote.project_id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ status: "Executed", modified_by: encoderId })
+                });
+                if (!projectUpdateRes.ok) {
+                    console.warn(`Failed to mark project ${quote.project_id} as Executed. Status: ${projectUpdateRes.status}`);
+                }
+            }
         } catch (error) {
             const cleanupFailures: string[] = [];
             try {
