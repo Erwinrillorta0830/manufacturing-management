@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { createDirectus, staticToken, rest, readItems } = require('@directus/sdk');
 const fs = require('fs');
 const path = require('path');
