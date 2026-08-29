@@ -7,7 +7,16 @@ const money = (value: number) => new Intl.NumberFormat("en-PH", { minimumFractio
 
 function formatDate(dateStr: string) {
     try {
-        return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
+        if (!dateStr) return "";
+        const parts = String(dateStr).split("T")[0].split("-");
+        if (parts.length === 3) {
+            const year = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const day = parseInt(parts[2], 10);
+            const d = new Date(year, month, day);
+            return d.toLocaleDateString("en-US", { timeZone: "Asia/Manila", month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
+        }
+        return new Date(dateStr).toLocaleDateString("en-US", { timeZone: "Asia/Manila", month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
     } catch {
         return dateStr;
     }
@@ -199,21 +208,25 @@ function generateTableReceipt(invoice: PrintableInvoice): jsPDF {
     doc.line(135, y - 4, 195, y - 4);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.text(`Sales Order: ${invoice.orderNo}`, 15, 250);
+doc.text(`Sales Order: ${invoice.orderNo}`, 15, 250);
     doc.text(`Status: ${invoice.transactionStatus}`, 195, 250, { align: "right" });
     return doc;
 }
 
-async function imageDataUrl(fileId: string) {
-    const response = await fetch(receiptBackgroundUrl(fileId), { cache: "no-store" });
-    if (!response.ok) throw new Error("Unable to load receipt background image");
-    const blob = await response.blob();
-    return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Unable to read receipt background image"));
-        reader.readAsDataURL(blob);
-    });
+async function imageDataUrl(fileId: string): Promise<string | null> {
+    try {
+        const response = await fetch(receiptBackgroundUrl(fileId), { cache: "no-store" });
+        if (!response.ok) return null;
+        const blob = await response.blob();
+        return await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => resolve("");
+            reader.readAsDataURL(blob);
+        });
+    } catch {
+        return null;
+    }
 }
 
 async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTemplate, includeBackground: boolean): Promise<jsPDF> {
@@ -227,7 +240,14 @@ async function generateOfficialReceipt(invoice: PrintableInvoice, template: ORTe
     doc.setFontSize(11);
 
     if (includeBackground && template.backgroundImage) {
-        doc.addImage(await imageDataUrl(template.backgroundImage), 0, 0, width, height);
+        try {
+            const bgData = await imageDataUrl(template.backgroundImage);
+            if (bgData) {
+                doc.addImage(bgData, 0, 0, width, height);
+            }
+        } catch {
+            // background skipped if missing
+        }
     }
 
     const fieldValues: Record<string, string> = {

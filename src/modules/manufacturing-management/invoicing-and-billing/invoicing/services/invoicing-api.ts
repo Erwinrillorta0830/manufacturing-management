@@ -1,4 +1,16 @@
-import { CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, InvoicingFilters, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
+import {
+    CreateInvoicePayload,
+    CreatedInvoiceResult,
+    InvoicingCandidate,
+    InvoicingFilters,
+    ORTemplate,
+    PrintableInvoice,
+    ReceiptType,
+    SalesOrderAvailability,
+    Branch,
+} from "../types";
+
+const BASE = "/api/manufacturing/invoicing-and-billing/invoicing";
 
 async function responseJson(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));
@@ -15,31 +27,31 @@ export async function fetchInvoicingCandidates(filters?: Partial<InvoicingFilter
     if (filters?.dateTo) params.set("dateTo", filters.dateTo);
     const qs = params.toString();
     const body = await responseJson(
-        await fetch(`/api/manufacturing/invoicing/candidates${qs ? `?${qs}` : ""}`, { cache: "no-store" }),
+        await fetch(`${BASE}/candidates${qs ? `?${qs}` : ""}`, { cache: "no-store" }),
         "Failed to load invoicing candidates"
     );
     return body.data || [];
 }
 
 export async function createInvoice(payload: CreateInvoicePayload): Promise<CreatedInvoiceResult> {
-    return responseJson(await fetch("/api/manufacturing/invoicing", {
+    return responseJson(await fetch(BASE, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
     }), "Failed to create invoice");
 }
 
 export async function fetchReceiptTypes(): Promise<ReceiptType[]> {
-    return responseJson(await fetch("/api/manufacturing/invoicing/receipt-types", { cache: "no-store" }), "Failed to load receipt types");
+    return responseJson(await fetch(`${BASE}/receipt-types`, { cache: "no-store" }), "Failed to load receipt types");
 }
 
 export async function fetchPrintableInvoice(invoiceId: number): Promise<PrintableInvoice> {
-    return responseJson(await fetch(`/api/manufacturing/invoicing/${invoiceId}/print-data`, { cache: "no-store" }), "Failed to load printable invoice");
+    return responseJson(await fetch(`${BASE}/${invoiceId}/print-data`, { cache: "no-store" }), "Failed to load printable invoice");
 }
 
 export async function fetchSalesOrderAvailability(salesOrderId: number): Promise<SalesOrderAvailability> {
     return responseJson(
-        await fetch(`/api/manufacturing/invoicing/availability?salesOrderId=${salesOrderId}`, { cache: "no-store" }),
+        await fetch(`${BASE}/availability?salesOrderId=${salesOrderId}`, { cache: "no-store" }),
         "Failed to calculate stock availability"
     );
 }
@@ -50,16 +62,16 @@ export async function archiveInvoiceDocument(invoiceId: number, file: Blob, invo
     form.set("invoiceNo", invoiceNo);
     form.set("width", String(width));
     form.set("height", String(height));
-    await responseJson(await fetch(`/api/manufacturing/invoicing/${invoiceId}/document`, { method: "POST", body: form }), "Failed to archive invoice PDF");
+    await responseJson(await fetch(`${BASE}/${invoiceId}/document`, { method: "POST", body: form }), "Failed to archive invoice PDF");
 }
 
 export async function fetchReceiptTemplate(receiptTypeId: number): Promise<ORTemplate | null> {
-    const body = await responseJson(await fetch(`/api/manufacturing/invoicing/templates/${receiptTypeId}`, { cache: "no-store" }), "Failed to load receipt template");
+    const body = await responseJson(await fetch(`${BASE}/templates/${receiptTypeId}`, { cache: "no-store" }), "Failed to load receipt template");
     return body.templateConfig || null;
 }
 
 export async function saveReceiptTemplate(receiptTypeId: number, templateConfig: ORTemplate): Promise<ORTemplate> {
-    const body = await responseJson(await fetch(`/api/manufacturing/invoicing/templates/${receiptTypeId}`, {
+    const body = await responseJson(await fetch(`${BASE}/templates/${receiptTypeId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ templateConfig }),
@@ -70,10 +82,27 @@ export async function saveReceiptTemplate(receiptTypeId: number, templateConfig:
 export async function uploadReceiptBackground(file: File): Promise<string> {
     const form = new FormData();
     form.set("file", file);
-    const body = await responseJson(await fetch("/api/manufacturing/invoicing/template-background", { method: "POST", body: form }), "Failed to upload receipt background");
+    const body = await responseJson(await fetch(`${BASE}/template-background`, { method: "POST", body: form }), "Failed to upload receipt background");
     return body.id;
 }
 
 export function receiptBackgroundUrl(fileId: string) {
-    return `/api/manufacturing/invoicing/template-background?id=${encodeURIComponent(fileId)}`;
+    return `${BASE}/template-background?id=${encodeURIComponent(fileId)}`;
+}
+
+export async function fetchBranches(): Promise<Branch[]> {
+    try {
+        const res = await fetch("/api/manufacturing/sales-orders/branches", { cache: "no-store" });
+        if (res.ok) {
+            const data = await res.json();
+            return (data.data || data || []).map((b: Record<string, unknown>) => ({
+                id: Number(b.id || b.branch_id),
+                branchName: String(b.branch_name || b.branchName || `Branch #${b.id}`),
+                branchCode: String(b.branch_code || b.branchCode || ""),
+            }));
+        }
+    } catch {
+        // ignore
+    }
+    return [];
 }

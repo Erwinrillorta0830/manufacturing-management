@@ -7,27 +7,33 @@ import { ORTemplate, PrintableInvoice } from "../types";
 
 const money = (value: number) => new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
+function safeUpper(val: unknown): string {
+    if (val == null) return "";
+    return String(val).toUpperCase();
+}
+
 function date(value: string) {
+    if (!value) return "";
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("en-US", { timeZone: "Asia/Manila", month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
 }
 
 export function ReceiptPreview({ invoice, template, scale = 1, showBackground = true }: { invoice: PrintableInvoice; template: ORTemplate; scale?: number; showBackground?: boolean }) {
     const values: Record<string, string> = {
-        customer_name: invoice.customerName.toUpperCase(),
-        date: date(invoice.invoiceDate),
-        store_name: invoice.storeName.toUpperCase(),
-        payment_name: invoice.paymentTermName.toUpperCase(),
-        customer_tin: invoice.customerTin || "N/A",
-        address: invoice.customerAddress.toUpperCase(),
-        vatable_sales: money(invoice.totals.net - invoice.totals.vat),
-        vat_amount: money(invoice.totals.vat),
-        gross_total: money(invoice.totals.gross),
-        discount_total: money(invoice.totals.discount),
-        net_total: money(invoice.totals.net),
-        po_no: `PO NO. : ${invoice.poNo || "N/A"}`,
-        salesman: `SALESMAN : ${invoice.salesmanName}`,
-        total_amount_due: money(invoice.totals.net),
+        customer_name: safeUpper(invoice?.customerName),
+        date: date(invoice?.invoiceDate || ""),
+        store_name: safeUpper(invoice?.storeName || invoice?.customerName),
+        payment_name: safeUpper(invoice?.paymentTermName),
+        customer_tin: invoice?.customerTin || "N/A",
+        address: safeUpper(invoice?.customerAddress),
+        vatable_sales: money((invoice?.totals?.net || 0) - (invoice?.totals?.vat || 0)),
+        vat_amount: money(invoice?.totals?.vat || 0),
+        gross_total: money(invoice?.totals?.gross || 0),
+        discount_total: money(invoice?.totals?.discount || 0),
+        net_total: money(invoice?.totals?.net || 0),
+        po_no: `PO NO. : ${invoice?.poNo || "N/A"}`,
+        salesman: `SALESMAN : ${invoice?.salesmanName || "N/A"}`,
+        total_amount_due: money(invoice?.totals?.net || 0),
         zero_rated: "0.00",
         exempt: "0.00",
         withholding_tax: "0.00",

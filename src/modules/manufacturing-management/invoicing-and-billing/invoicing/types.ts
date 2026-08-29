@@ -16,7 +16,7 @@ export interface InvoicingCandidate {
 
 export interface InvoicingLine {
     detail_id: number;
-    product_id: number | { product_id: number; product_name: string; product_code: string; uom?: string };
+    product_id: number | { product_id: number; product_name: string; product_code: string; description?: string; uom?: string };
     ordered_quantity: number;
     unit_price: number;
     net_amount: number;
@@ -43,7 +43,8 @@ export interface CreatedInvoiceResult {
     invoiceId: number;
     invoiceNo: string;
     transactionStatus: "Prepared";
-    reservationCount: number;
+    itemCount?: number;
+    reservationCount?: number;
 }
 
 export interface PrintableInvoiceLine {
@@ -136,23 +137,41 @@ export interface InvoicingFilters {
     dateTo: string;
 }
 
-export interface AvailabilityLine {
-    detailId: number;
+export interface BatchItem {
+    inventoryLotId?: number;
+    lotId: number;
+    lotName?: string | null;
+    batchNo: string;
+    inventoryCondition: string;
+    manufacturingDate?: string | null;
+    expirationDate?: string | null;
+    onhandQuantity: number;
+}
+
+export interface LineAvailability {
     productId: number;
     productName: string;
     productCode: string;
-    versionId: number;
-    versionName: string;
-    required: number;
-    onHand: number;
-    reserved: number;
-    available: number;
-    shortage: number;
+    unitId?: number;
+    requiredQuantity: number;
+    onhandQuantity: number;
+    isAvailable: boolean;
+    batches: BatchItem[];
 }
 
 export interface SalesOrderAvailability {
-    lines: AvailabilityLine[];
-    overallStockStatus: "Available" | "Partial" | "Unavailable";
+    salesOrderId: number;
+    branchId: number;
+    isFullyAvailable: boolean;
+    lines: LineAvailability[];
 }
 
 export type StockStatus = "Available" | "Partial" | "Unavailable";
+
+export interface Branch {
+    id: number;
+    branchName?: string;
+    branch_name?: string;
+    branchCode?: string;
+    branch_code?: string;
+}

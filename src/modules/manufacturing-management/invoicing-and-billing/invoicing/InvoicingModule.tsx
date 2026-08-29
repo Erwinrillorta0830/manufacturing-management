@@ -5,8 +5,8 @@ import { ArrowRight, Building2, Calendar, ChevronDown, ChevronRight, FileCheck2,
 import CreateInvoiceModal from "./components/CreateInvoiceModal";
 import { useInvoicing } from "./hooks/useInvoicing";
 import { InvoicingCandidate } from "./types";
-import { fetchBranches } from "../invoice-consolidation/services/invoice-consolidation-api";
-import type { Branch } from "../invoice-consolidation/types";
+import { fetchBranches } from "./services/invoicing-api";
+import type { Branch } from "./types";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 function formatCurrency(amount: number) {

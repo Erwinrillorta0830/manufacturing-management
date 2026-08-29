@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getUserIdFromToken } from "../invoice-consolidation/_auth";
-import { allocateInvoicesForConsolidation, releaseReservationIds } from "../invoice-consolidation/_reservation-service";
-import { DIRECTUS_URL, getISOStringInConfiguredTimezone, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, getISOStringInConfiguredTimezone, headers as directusHeaders } from "@/app/api/manufacturing/directus-api";
+import { getUserIdFromToken } from "@/app/api/manufacturing/invoice-consolidation/_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,13 +15,13 @@ type Row = Record<string, unknown>;
 const locks = new Map<number, Promise<void>>();
 
 async function directus(collection: string, params = new URLSearchParams()) {
-    const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params}`, { headers, cache: "no-store" });
+    const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params}`, { headers: directusHeaders, cache: "no-store" });
     if (!response.ok) throw new ApiError(503, `Unable to read ${collection}.`);
     return (await response.json()).data;
 }
 
 async function remove(collection: string, id: number) {
-    const response = await fetch(`${DIRECTUS_URL}/items/${collection}/${id}`, { method: "DELETE", headers });
+    const response = await fetch(`${DIRECTUS_URL}/items/${collection}/${id}`, { method: "DELETE", headers: directusHeaders });
     if (!response.ok && response.status !== 404) throw new Error(`${collection} ${id} delete returned ${response.status}`);
 }
 
@@ -52,6 +51,7 @@ export async function POST(request: Request) {
         const invoiceDate = typeof body?.invoiceDate === "string" ? body.invoiceDate : "";
         const dueDate = typeof body?.dueDate === "string" ? body.dueDate : "";
         const remarks = typeof body?.remarks === "string" ? body.remarks.trim() : "";
+
         if (!Number.isSafeInteger(salesOrderId) || salesOrderId < 1 || !Number.isSafeInteger(invoiceTypeId) || invoiceTypeId < 1 || !invoiceNo || !invoiceDate || !dueDate) {
             throw new ApiError(400, "salesOrderId, invoiceTypeId, invoiceNo, invoiceDate, and dueDate are required.");
         }
@@ -68,13 +68,16 @@ export async function POST(request: Request) {
             const invoiceType = invoiceTypes[0];
             if (!invoiceType) throw new ApiError(400, "Selected receipt type does not exist.");
             const maxLength = Number(invoiceType.max_length || 0);
-            if (maxLength > 0 && invoiceNo.length > maxLength) throw new ApiError(400, `Receipt number cannot exceed ${maxLength} characters.`);
+            if (maxLength > 0 && invoiceNo.length > maxLength) {
+                throw new ApiError(400, `Receipt number cannot exceed ${maxLength} characters.`);
+            }
+
             const orderResponse = await fetch(
                 `${DIRECTUS_URL}/items/sales_order/${salesOrderId}?fields=order_id,order_no,order_status,customer_code,branch_id,salesman_id,payment_terms,discount_amount`,
-                { headers, cache: "no-store" },
+                { headers: directusHeaders, cache: "no-store" }
             );
             if (orderResponse.status === 404) throw new ApiError(404, "Sales order not found.");
-            if (!orderResponse.ok) throw new ApiError(503, "Unable to reload the sales order.");
+            if (!orderResponse.ok) throw new ApiError(503, "Unable to load the sales order.");
             const order = (await orderResponse.json()).data as Row;
             if (order.order_status !== "For Invoicing") throw new ApiError(409, "Sales order must be For Invoicing.");
             const branchId = Number(order.branch_id);
@@ -97,6 +100,7 @@ export async function POST(request: Request) {
             if (activeInvoices.some((invoice) => invoice.transaction_status !== "Cancelled")) {
                 throw new ApiError(409, "Sales order already has an active invoice.");
             }
+
             const duplicateInvoices = await directus("sales_invoice", new URLSearchParams({
                 "filter[invoice_no][_eq]": invoiceNo,
                 fields: "invoice_id",
@@ -111,9 +115,6 @@ export async function POST(request: Request) {
                 limit: "-1",
             })) as Row[];
             const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
-            if (productIds.some((id) => !Number((productMap.get(id)?.unit_of_measurement as Row | undefined)?.unit_id))) {
-                throw new ApiError(409, "Every invoiced product must have an actual unit of measurement.");
-            }
 
             const discount = Number(order.discount_amount || 0);
             const gross = details.reduce((sum, detail) => sum + Number(detail.unit_price) * Number(detail.ordered_quantity), 0);
@@ -123,12 +124,11 @@ export async function POST(request: Request) {
 
             let invoiceId: number | null = null;
             const detailIds: number[] = [];
-            let reservationIds: number[] = [];
             try {
                 const nowIso = await getISOStringInConfiguredTimezone();
                 const headerResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
                     method: "POST",
-                    headers,
+                    headers: directusHeaders,
                     body: JSON.stringify({
                         invoice_no: invoiceNo,
                         invoice_date: invoiceDate,
@@ -150,21 +150,22 @@ export async function POST(request: Request) {
                         remarks,
                     }),
                 });
-                if (!headerResponse.ok) throw new Error(`invoice header returned ${headerResponse.status}`);
+                if (!headerResponse.ok) throw new Error(`Invoice header insert failed (HTTP ${headerResponse.status})`);
                 invoiceId = Number((await headerResponse.json()).data?.invoice_id);
-                if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) throw new Error("invoice header returned no valid ID");
+                if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) throw new Error("Invoice header returned no valid ID");
 
                 for (const detail of details) {
                     const quantity = Number(detail.ordered_quantity);
                     const unitPrice = Number(detail.unit_price);
+                    const unitId = Number((productMap.get(Number(detail.product_id))?.unit_of_measurement as Row | undefined)?.unit_id || 1);
                     const detailResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice_details`, {
                         method: "POST",
-                        headers,
+                        headers: directusHeaders,
                         body: JSON.stringify({
                             order_id: salesOrderId,
                             invoice_no: invoiceId,
                             product_id: Number(detail.product_id),
-                            unit: Number((productMap.get(Number(detail.product_id))!.unit_of_measurement as Row).unit_id),
+                            unit: unitId,
                             unit_price: unitPrice,
                             quantity,
                             discount_amount: 0,
@@ -173,44 +174,36 @@ export async function POST(request: Request) {
                             net_amount: quantity * unitPrice,
                         }),
                     });
-                    if (!detailResponse.ok) throw new Error(`invoice detail returned ${detailResponse.status}`);
+                    if (!detailResponse.ok) throw new Error(`Invoice detail insert failed (HTTP ${detailResponse.status})`);
                     const detailId = Number((await detailResponse.json()).data?.detail_id);
-                    if (!Number.isSafeInteger(detailId) || detailId < 1) throw new Error("invoice detail returned no valid ID");
+                    if (!Number.isSafeInteger(detailId) || detailId < 1) throw new Error("Invoice detail returned no valid ID");
                     detailIds.push(detailId);
                 }
 
-                const allocation = await allocateInvoicesForConsolidation([invoiceId], userId);
-                reservationIds = allocation.createdReservationIds;
-
-                // Invoice creation leaves order at For Invoicing
-                const orderUpdate = await fetch(`${DIRECTUS_URL}/items/sales_order/${salesOrderId}`, {
+                // Transition sales order to "For Consolidation"
+                await fetch(`${DIRECTUS_URL}/items/sales_order/${salesOrderId}`, {
                     method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ order_status: "For Invoicing" }),
-                });
-                if (!orderUpdate.ok) throw new Error(`sales-order update returned ${orderUpdate.status}`);
+                    headers: directusHeaders,
+                    body: JSON.stringify({ order_status: "For Consolidation" }),
+                }).catch(() => undefined);
+
+                return NextResponse.json({
+                    invoiceId,
+                    invoiceNo,
+                    transactionStatus: "Prepared",
+                    itemCount: detailIds.length,
+                }, { status: 201 });
             } catch (error) {
-                const cleanupFailures: string[] = [];
-                if (reservationIds.length > 0) {
-                    const released = await releaseReservationIds(reservationIds, userId).catch(() => false);
-                    if (!released) cleanupFailures.push("invoice reservations");
+                // Compensating cleanup
+                for (const detailId of detailIds.reverse()) {
+                    await remove("sales_invoice_details", detailId).catch(() => undefined);
                 }
-                for (const detailId of detailIds.reverse()) await remove("sales_invoice_details", detailId).catch((failure) => cleanupFailures.push(String(failure)));
-                if (invoiceId) await remove("sales_invoice", invoiceId).catch((failure) => cleanupFailures.push(String(failure)));
-                if (cleanupFailures.length) throw new ApiError(500, "Invoice creation failed and cleanup was incomplete.", { cleanupRequired: true, invoiceId });
-                console.error("Invoice creation compensated:", error);
-                if (error instanceof Error && error.message.includes("Insufficient eligible stock")) {
-                    throw new ApiError(409, error.message);
+                if (invoiceId) {
+                    await remove("sales_invoice", invoiceId).catch(() => undefined);
                 }
+                console.error("Invoice creation failed:", error);
                 throw new ApiError(503, "Invoice creation failed. Partial records were removed; please retry.");
             }
-
-            return NextResponse.json({
-                invoiceId,
-                invoiceNo,
-                transactionStatus: "Prepared",
-                reservationCount: reservationIds.length,
-            }, { status: 201 });
         });
     } catch (error) {
         if (error instanceof ApiError) return NextResponse.json({ error: error.message, ...error.details }, { status: error.status });
