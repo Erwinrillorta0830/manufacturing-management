@@ -7,15 +7,7 @@ import {
     RotateCcw,
     Search,
     X,
-    SlidersHorizontal,
-    ChevronDown,
-    Building2,
-    Layers,
-    Package,
-    Boxes,
-    Tag,
-    Clock,
-    Sparkles
+    SlidersHorizontal
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";

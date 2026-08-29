@@ -25,10 +25,7 @@ import {
     ArrowDownRight,
     Copy,
     Check,
-    Layers,
-    ListFilter,
-    Calendar,
-    AlertCircle
+    Layers
 } from "lucide-react";
 import { toast } from "sonner";
 import { MovementDetailModal } from "./MovementDetailModal";
@@ -43,6 +40,21 @@ import {
     LotLookup
 } from "../types";
 import { UserLookup } from "../providers/fetchProvider";
+
+function SortIcon({
+    columnKey,
+    currentKey,
+    currentDirection
+}: {
+    columnKey: string;
+    currentKey: string | null;
+    currentDirection: "asc" | "desc" | null;
+}) {
+    if (currentKey !== columnKey) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
+    return currentDirection === "asc"
+        ? <ChevronUp className="ml-1 h-3 w-3 text-primary font-bold" />
+        : <ChevronDown className="ml-1 h-3 w-3 text-primary font-bold" />;
+}
 
 type ViewMode = "flat" | "by-doc" | "by-batch";
 
@@ -97,13 +109,6 @@ export function ProductTracingTable({
             }
             return { key, direction: "asc" };
         });
-    };
-
-    const SortIcon = ({ columnKey }: { columnKey: string }) => {
-        if (sortConfig.key !== columnKey) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
-        return sortConfig.direction === "asc"
-            ? <ChevronUp className="ml-1 h-3 w-3 text-primary font-bold" />
-            : <ChevronDown className="ml-1 h-3 w-3 text-primary font-bold" />;
     };
 
     const copyToClipboard = async (text: string, id: string) => {
@@ -408,7 +413,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center">
                                             Date / Time
-                                            <SortIcon columnKey="transactionDate" />
+                                            <SortIcon columnKey="transactionDate" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -418,7 +423,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center">
                                             Reference No
-                                            <SortIcon columnKey="referenceNo" />
+                                            <SortIcon columnKey="referenceNo" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -428,7 +433,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-center">
                                             Type / Module
-                                            <SortIcon columnKey="transactionType" />
+                                            <SortIcon columnKey="transactionType" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -438,7 +443,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center">
                                             Product & Item
-                                            <SortIcon columnKey="productName" />
+                                            <SortIcon columnKey="productName" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -448,7 +453,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center">
                                             Batch & Condition
-                                            <SortIcon columnKey="batchNo" />
+                                            <SortIcon columnKey="batchNo" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -462,7 +467,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-end">
                                             Qty In
-                                            <SortIcon columnKey="quantityIn" />
+                                            <SortIcon columnKey="quantityIn" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -472,7 +477,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-end">
                                             Qty Out
-                                            <SortIcon columnKey="quantityOut" />
+                                            <SortIcon columnKey="quantityOut" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -482,7 +487,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-end">
                                             Run. Balance
-                                            <SortIcon columnKey="runningBalance" />
+                                            <SortIcon columnKey="runningBalance" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -492,7 +497,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-end">
                                             Unit Cost
-                                            <SortIcon columnKey="unitCost" />
+                                            <SortIcon columnKey="unitCost" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -502,7 +507,7 @@ export function ProductTracingTable({
                                     >
                                         <div className="flex items-center justify-end">
                                             Diff Cost
-                                            <SortIcon columnKey="differenceCost" />
+                                            <SortIcon columnKey="differenceCost" currentKey={sortConfig.key} currentDirection={sortConfig.direction} />
                                         </div>
                                     </TableHead>
 
@@ -622,6 +627,7 @@ export function ProductTracingTable({
                                                             isGood ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
                                                             isExpired ? "bg-destructive/10 text-destructive border-destructive/20" :
                                                             isDamaged ? "bg-amber-500/10 text-amber-600 border-amber-500/20" :
+                                                            isQuarantined ? "bg-yellow-500/10 text-yellow-700 border-yellow-500/20" :
                                                             "bg-yellow-500/10 text-yellow-700 border-yellow-500/20"
                                                         )}>
                                                             {row.inventoryCondition || "GOOD"}

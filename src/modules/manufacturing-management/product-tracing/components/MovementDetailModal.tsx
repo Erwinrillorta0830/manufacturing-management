@@ -28,10 +28,7 @@ import {
     Copy,
     Building,
     Check,
-    Code,
-    UserCheck,
-    Tag,
-    Boxes
+    Code
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -65,12 +62,12 @@ export function MovementDetailModal({
         if (!movement?.branchId) return "All Branches";
         const found = branches.find(b => b.id === Number(movement.branchId));
         return found ? (found.branchName || found.branch_name || `Branch #${found.id}`) : "Main Plant Warehouse";
-    }, [movement?.branchId, branches]);
+    }, [movement, branches]);
 
     const resolvedProduct = React.useMemo(() => {
         if (!movement?.productId) return null;
         return products.find(p => p.productId === Number(movement.productId));
-    }, [movement?.productId, products]);
+    }, [movement, products]);
 
     const resolvedProductName = resolvedProduct?.description || resolvedProduct?.productName || movement?.productName || "Finished Product";
     const resolvedProductCode = movement?.productCode || resolvedProduct?.productCode || "SKU-N/A";
@@ -81,19 +78,19 @@ export function MovementDetailModal({
         if (!movement?.productTypeId) return "Finished Goods";
         const found = productTypes.find(pt => Number(pt.id) === Number(movement.productTypeId));
         return found ? (found.name || found.type_name) : "Finished Goods";
-    }, [movement?.productTypeName, movement?.productTypeId, productTypes]);
+    }, [movement, productTypes]);
 
     const resolvedLotName = React.useMemo(() => {
         if (!movement?.lotId) return "Standard Storage Lot";
         const found = lots.find(l => l.lotId === Number(movement.lotId));
         return found ? found.lotName : `Lot #${movement.lotId}`;
-    }, [movement?.lotId, lots]);
+    }, [movement, lots]);
 
     const resolvedAuthorName = React.useMemo(() => {
         if (!movement?.postedBy) return "Authorized System User";
         const found = users.find(u => u.id === Number(movement.postedBy));
         return found ? found.name : `Authorized Encoder (User #${movement.postedBy})`;
-    }, [movement?.postedBy, users]);
+    }, [movement, users]);
 
     const copyToClipboard = React.useCallback(async (text: string, label: string) => {
         if (!text) return;
@@ -334,6 +331,7 @@ export function MovementDetailModal({
                                             isGood ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" :
                                             isExpired ? "bg-destructive/10 text-destructive border-destructive/30" :
                                             isDamaged ? "bg-amber-500/10 text-amber-600 border-amber-500/30" :
+                                            isQuarantined ? "bg-yellow-500/10 text-yellow-700 border-yellow-500/30" :
                                             "bg-yellow-500/10 text-yellow-700 border-yellow-500/30"
                                         )}>
                                             {movement.inventoryCondition || "GOOD"}

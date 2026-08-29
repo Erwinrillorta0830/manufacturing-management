@@ -8,11 +8,7 @@ import {
     ArrowDownRight,
     ArrowUpRight,
     Scale,
-    ShieldCheck,
-    AlertTriangle,
-    Boxes,
-    Layers,
-    TrendingUp
+    ShieldCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 

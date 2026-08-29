@@ -1,7 +1,6 @@
 import { directusFetch, getDirectusBase } from "@/app/api/arf/traceability-compliance/directus";
 import {
     MMInventoryMovement,
-    ProductTracingFiltersType,
     MovementSummaryStats
 } from "./types";
 import {

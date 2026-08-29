@@ -13,21 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
     MMInventoryMovement,
-    BranchLookup,
-    ProductTypeLookup,
     ProductLookup,
     LotLookup
 } from "../types";
 import {
-    ArrowUpRight,
-    ArrowDownRight,
-    Package,
     Layers,
-    Calendar,
-    Eye,
-    TrendingUp,
-    Scale,
-    Boxes
+    Eye
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +37,6 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     onSelectMovement: (movement: MMInventoryMovement) => void;
-    branches?: BranchLookup[];
     products?: ProductLookup[];
     lots?: LotLookup[];
 }
@@ -56,7 +46,6 @@ export function BatchMovementsModal({
     isOpen,
     onClose,
     onSelectMovement,
-    branches = [],
     products = [],
     lots = []
 }: Props) {
@@ -101,6 +90,7 @@ export function BatchMovementsModal({
                                         isGood ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
                                         isExpired ? "bg-destructive/10 text-destructive border-destructive/20" :
                                         isDamaged ? "bg-amber-500/10 text-amber-600 border-amber-500/20" :
+                                        isQuarantined ? "bg-yellow-500/10 text-yellow-700 border-yellow-500/20" :
                                         "bg-yellow-500/10 text-yellow-700 border-yellow-500/20"
                                     )}>
                                         {main.inventoryCondition || "GOOD"}

@@ -15,9 +15,7 @@ interface Props {
 
 export const PhysicalInventorySummary: React.FC<Props> = ({
     movements,
-    baseUnitName = "Units",
     costPerUnit = null,
-    beginningBaseBalance = 0
 }) => {
     const phMovements = movements.filter(m =>
         m.transactionType === "PHYSICAL_INVENTORY" ||
