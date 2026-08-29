@@ -37,6 +37,7 @@ import {
     ReceivingTicketError
 } from "../_receiving-ticket";
 import { LOT_CAPACITY_EPSILON, readLotCapacityAudit } from "../_lot-capacity";
+import { movementLegacyLotId, movementMmLotId } from "../_mm-lot-compat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,8 +84,8 @@ async function inventoryRowsForMovements(shipmentId: number, movementRows: Recor
     if (movementRows.length === 0) return [];
 
     const storageLotIds = [...new Set(movementRows
-        .map(row => relationId(row.lot_id, "lot_id"))
-        .filter(id => Number.isSafeInteger(id) && id > 0))];
+        .map(row => movementLegacyLotId(row))
+        .filter((id): id is number => id !== null && Number.isSafeInteger(id) && id > 0))];
 
     if (storageLotIds.length === 0) return [];
 
@@ -106,7 +107,7 @@ async function movementRowsForCommit(
 ) {
     if (expectedMovementCount === 0) return [];
 
-    const movementFields = "movement_id,product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity";
+    const movementFields = "movement_id,product_id,mm_lot_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,manufacturing_date,expiry_date,version_id,is_capacity_override,capacity_available_before_receipt,capacity_override_quantity";
     const sourceIdParams = new URLSearchParams({
         "filter[source_document_id][_in]": receivingIds.join(","),
         fields: movementFields,
@@ -169,7 +170,7 @@ async function persistedResult(
     const receiptNumbers = input.lines.map(line => receiptNumberForLine(receivingTicketNumber, line.lineId));
     const receiptParams = new URLSearchParams({
         "filter[receipt_no][_in]": receiptNumbers.join(","),
-        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
+        fields: "purchase_order_product_id,purchase_order_id,receipt_no,product_id,branch_id,mm_lot_id,lot_id,batch_no,received_quantity,quantity_rejected,is_over_received,over_delivery_quantity,unit_price,final_landed_unit_cost,qa_status,expiry_date,received_date,is_replacement,quarantine_disposition_id,receipt_type",
         limit: "-1"
     });
     const [headerRows, receivingRows] = await Promise.all([
@@ -330,7 +331,7 @@ async function persistedResult(
                 const branchId = relationId(row.branch_id, "id");
                 return (route.passed ? branchId === input.destinationBranchId : branchId !== input.destinationBranchId)
                     && Number(row.quantity) === route.quantity
-                    && relationId(row.lot_id, "lot_id") === route.storageLotId
+                    && (movementMmLotId(row) || movementLegacyLotId(row)) === route.storageLotId
                     && String(row.batch_no || "").trim().toLowerCase() === route.batchNumber.trim().toLowerCase()
                     && String(row.source_document_no || "") === receiptNo;
             });
@@ -353,9 +354,14 @@ async function persistedResult(
             }
             const branchId = relationId(movement.branch_id, "id");
             const productId = relationId(movement.product_id, "product_id");
-            const storageLotId = relationId(movement.lot_id, "lot_id");
+            const mmLotId = movementMmLotId(movement);
+            const legacyLotId = movementLegacyLotId(movement);
+            const storageLotId = mmLotId || legacyLotId;
+            if (!storageLotId || !legacyLotId) {
+                throw new CommitError(409, `${route.kind} movement for line ${line.lineId} is missing its lot references. Reconciliation is required.`);
+            }
             const inventoryMatches = inventoryRows.filter(row =>
-                relationId(row.lot_id || row.id, "lot_id") === storageLotId
+                relationId(row.lot_id || row.id, "lot_id") === legacyLotId
             );
             if (inventoryMatches.length !== 1) {
                 throw new CommitError(409, `${route.kind} inventory lot for line ${line.lineId} could not be correlated uniquely.`);
@@ -368,6 +374,8 @@ async function persistedResult(
                 inventoryLotId: Number(inventoryMatches[0].lot_id || inventoryMatches[0].id),
                 productId,
                 storageLotId,
+                mmLotId,
+                legacyLotId,
                 branchId,
                 transactionTypeId: relationId(movement.transaction_type_id, "transaction_type_id"),
                 sourceDocumentNo: receiptNo,
@@ -417,7 +425,9 @@ async function persistedResult(
             productId: relationId(receiving.product_id, "product_id"),
             receiptNumber: String(receiving.receipt_no),
             branchId: relationId(receiving.branch_id, "id"),
-            storageLotId: relationId(receiving.lot_id, "lot_id"),
+            storageLotId: relationId(receiving.mm_lot_id, "lot_id") || relationId(receiving.lot_id, "lot_id"),
+            mmLotId: relationId(receiving.mm_lot_id, "lot_id") || null,
+            legacyLotId: relationId(receiving.lot_id, "lot_id") || null,
             batchNumber: String(receiving.batch_no || primaryAllocation?.batchNumber || ""),
             receivedQuantity: Number(receiving.received_quantity || 0),
             rejectedQuantity: Number(receiving.quantity_rejected || 0),
