@@ -72,7 +72,7 @@ export function MovementDetailModal({
         return products.find(p => p.productId === Number(movement.productId));
     }, [movement?.productId, products]);
 
-    const resolvedProductName = movement?.productName || resolvedProduct?.productName || "Finished Product";
+    const resolvedProductName = resolvedProduct?.description || resolvedProduct?.productName || movement?.productName || "Finished Product";
     const resolvedProductCode = movement?.productCode || resolvedProduct?.productCode || "SKU-N/A";
     const resolvedUnitName = resolvedProduct?.unitName || (movement?.unitId === 1 ? "Pieces (PCS)" : "Standard Units");
 

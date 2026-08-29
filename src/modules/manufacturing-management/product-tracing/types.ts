@@ -83,6 +83,7 @@ export interface ProductTypeLookup {
 export interface ProductLookup {
     productId: number;
     productName: string;
+    description?: string;
     productCode?: string;
     skuCode?: string;
     productTypeId?: number;

@@ -592,17 +592,23 @@ export function ProductTracingTable({
 
                                                 {/* Product */}
                                                 <TableCell className="py-3.5">
-                                                    <div className="flex flex-col max-w-[260px]">
-                                                        <span className="text-xs font-bold text-foreground truncate" title={row.productName}>
-                                                            {row.productName || "Unknown Product"}
-                                                        </span>
-                                                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
-                                                            {row.productCode && <span className="font-mono">{row.productCode}</span>}
-                                                            {row.productTypeName && (
-                                                                <span className="opacity-70">• {row.productTypeName}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
+                                                    {(() => {
+                                                        const pInfo = products.find(p => p.productId === Number(row.productId));
+                                                        const displayName = pInfo?.description || pInfo?.productName || row.productName || "Unknown Product";
+                                                        return (
+                                                            <div className="flex flex-col max-w-[260px]">
+                                                                <span className="text-xs font-bold text-foreground truncate" title={displayName}>
+                                                                    {displayName}
+                                                                </span>
+                                                                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                                                                    {row.productCode && <span className="font-mono">{row.productCode}</span>}
+                                                                    {row.productTypeName && (
+                                                                        <span className="opacity-70">• {row.productTypeName}</span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </TableCell>
 
                                                 {/* Batch & Condition */}
@@ -734,7 +740,11 @@ export function ProductTracingTable({
                                         }}
                                     >
                                         <div className="flex items-center gap-3">
-                                            <span className="font-bold text-foreground">{m.productName}</span>
+                                            {(() => {
+                                                const pInfo = products.find(p => p.productId === Number(m.productId));
+                                                const displayName = pInfo?.description || pInfo?.productName || m.productName || "Product";
+                                                return <span className="font-bold text-foreground">{displayName}</span>;
+                                            })()}
                                             <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
                                                 Batch: {m.batchNo || "N/A"}
                                             </Badge>
@@ -756,60 +766,65 @@ export function ProductTracingTable({
             {/* Grouped by Batch View */}
             {viewMode === "by-batch" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                    {groupedByBatch.map((group, bIdx) => (
-                        <Card
-                            key={group.key + bIdx}
-                            className="rounded-2xl border shadow-sm bg-card p-4 space-y-3 cursor-pointer hover:border-primary/50 hover:shadow-md hover:bg-muted/10 transition-all active:scale-[0.99] group select-none"
-                            onClick={() => {
-                                setSelectedBatch(group);
-                                setIsBatchModalOpen(true);
-                            }}
-                        >
-                            <div className="flex items-start justify-between">
-                                <div className="space-y-0.5">
-                                    <h4 className="text-xs font-black text-foreground group-hover:text-primary transition-colors">
-                                        {group.main.productName}
-                                    </h4>
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-mono text-[11px] font-black text-primary">
-                                            Batch #{group.main.batchNo || "NO-BATCH"}
-                                        </span>
-                                        <span className="text-[10px] text-muted-foreground">
-                                            • {group.items.length} transaction{group.items.length > 1 ? "s" : ""}
-                                        </span>
+                    {groupedByBatch.map((group, bIdx) => {
+                        const pInfo = products.find(p => p.productId === Number(group.main.productId));
+                        const displayName = pInfo?.description || pInfo?.productName || group.main.productName || "Product";
+
+                        return (
+                            <Card
+                                key={group.key + bIdx}
+                                className="rounded-2xl border shadow-sm bg-card p-4 space-y-3 cursor-pointer hover:border-primary/50 hover:shadow-md hover:bg-muted/10 transition-all active:scale-[0.99] group select-none"
+                                onClick={() => {
+                                    setSelectedBatch(group);
+                                    setIsBatchModalOpen(true);
+                                }}
+                            >
+                                <div className="flex items-start justify-between">
+                                    <div className="space-y-0.5">
+                                        <h4 className="text-xs font-black text-foreground group-hover:text-primary transition-colors">
+                                            {displayName}
+                                        </h4>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-mono text-[11px] font-black text-primary">
+                                                Batch #{group.main.batchNo || "NO-BATCH"}
+                                            </span>
+                                            <span className="text-[10px] text-muted-foreground">
+                                                • {group.items.length} transaction{group.items.length > 1 ? "s" : ""}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <Badge className={cn(
+                                            "text-[9px] font-bold uppercase",
+                                            group.main.inventoryCondition === "GOOD" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-destructive/10 text-destructive"
+                                        )}>
+                                            {group.main.inventoryCondition || "GOOD"}
+                                        </Badge>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                    <Badge className={cn(
-                                        "text-[9px] font-bold uppercase",
-                                        group.main.inventoryCondition === "GOOD" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-destructive/10 text-destructive"
-                                    )}>
-                                        {group.main.inventoryCondition || "GOOD"}
-                                    </Badge>
-                                </div>
-                            </div>
 
-                            <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-muted/30 text-xs border">
-                                <div>
-                                    <span className="text-[10px] font-bold text-muted-foreground block">Inflow</span>
-                                    <span className="font-black text-emerald-600">+{group.totalIn.toLocaleString()}</span>
+                                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-muted/30 text-xs border">
+                                    <div>
+                                        <span className="text-[10px] font-bold text-muted-foreground block">Inflow</span>
+                                        <span className="font-black text-emerald-600">+{group.totalIn.toLocaleString()}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] font-bold text-muted-foreground block">Outflow</span>
+                                        <span className="font-black text-rose-600">-{group.totalOut.toLocaleString()}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] font-bold text-muted-foreground block">Net Bal</span>
+                                        <span className="font-black text-foreground">{group.balance.toLocaleString()}</span>
+                                    </div>
                                 </div>
-                                <div>
-                                    <span className="text-[10px] font-bold text-muted-foreground block">Outflow</span>
-                                    <span className="font-black text-rose-600">-{group.totalOut.toLocaleString()}</span>
-                                </div>
-                                <div>
-                                    <span className="text-[10px] font-bold text-muted-foreground block">Net Bal</span>
-                                    <span className="font-black text-foreground">{group.balance.toLocaleString()}</span>
-                                </div>
-                            </div>
 
-                            <div className="flex items-center justify-between text-[10px] text-muted-foreground/70 group-hover:text-primary transition-colors pt-0.5 font-bold">
-                                <span>Click to inspect batch ledger</span>
-                                <span>View {group.items.length} records →</span>
-                            </div>
-                        </Card>
-                    ))}
+                                <div className="flex items-center justify-between text-[10px] text-muted-foreground/70 group-hover:text-primary transition-colors pt-0.5 font-bold">
+                                    <span>Click to inspect batch ledger</span>
+                                    <span>View {group.items.length} records →</span>
+                                </div>
+                            </Card>
+                        );
+                    })}
                 </div>
             )}
 

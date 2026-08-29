@@ -40,6 +40,7 @@ export async function GET() {
             return {
                 productId,
                 productName,
+                description: desc || pName || productName,
                 skuCode,
                 unitCost,
                 cost_per_unit: unitCost,

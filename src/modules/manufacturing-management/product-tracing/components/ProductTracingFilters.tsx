@@ -120,7 +120,7 @@ export function ProductTracingFilters({
         { value: null as unknown as number, label: "All Products" },
         ...products.map(p => ({
             value: p.productId,
-            label: p.productName,
+            label: p.description || p.productName,
             description: p.productCode ? `SKU: ${p.productCode}` : undefined
         }))
     ], [products]);

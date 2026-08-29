@@ -71,15 +71,19 @@ export async function fetchProducts(): Promise<ProductLookup[]> {
             return [];
         }
         const data = await res.json();
-        return (data || []).map((p: Record<string, unknown>) => ({
-            productId: Number(p.productId || p.product_id || p.id),
-            productName: String(p.productName || p.product_name || p.description || `Product #${p.productId || p.product_id || p.id}`),
-            productCode: p.productCode ? String(p.productCode) : (p.skuCode ? String(p.skuCode) : undefined),
-            skuCode: p.skuCode ? String(p.skuCode) : undefined,
-            productTypeId: p.productTypeId ? Number(p.productTypeId) : undefined,
-            unitName: p.unitName ? String(p.unitName) : (p.unit_name ? String(p.unit_name) : (p.unit_shortcut ? String(p.unit_shortcut) : undefined)),
-            costPerUnit: p.unitCost ? Number(p.unitCost) : (p.cost_per_unit ? Number(p.cost_per_unit) : null)
-        }));
+        return (data || []).map((p: Record<string, unknown>) => {
+            const desc = String(p.description || p.productName || p.product_name || `Product #${p.productId || p.product_id || p.id}`).trim();
+            return {
+                productId: Number(p.productId || p.product_id || p.id),
+                productName: desc,
+                description: (p.description as string)?.trim() || desc,
+                productCode: p.productCode ? String(p.productCode) : (p.skuCode ? String(p.skuCode) : undefined),
+                skuCode: p.skuCode ? String(p.skuCode) : undefined,
+                productTypeId: p.productTypeId ? Number(p.productTypeId) : undefined,
+                unitName: p.unitName ? String(p.unitName) : (p.unit_name ? String(p.unit_name) : (p.unit_shortcut ? String(p.unit_shortcut) : undefined)),
+                costPerUnit: p.unitCost ? Number(p.unitCost) : (p.cost_per_unit ? Number(p.cost_per_unit) : null)
+            };
+        });
     } catch (err) {
         console.error("[ProductTracing] Error fetching products lookup:", err);
         return [];

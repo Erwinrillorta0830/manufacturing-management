@@ -69,7 +69,7 @@ export function BatchMovementsModal({
     const isQuarantined = main.inventoryCondition?.toUpperCase() === "QUARANTINED";
 
     const resolvedProduct = products.find(p => p.productId === Number(main.productId));
-    const resolvedProductName = main.productName || resolvedProduct?.productName || "Finished Product";
+    const resolvedProductName = resolvedProduct?.description || resolvedProduct?.productName || main.productName || "Finished Product";
     const resolvedProductCode = main.productCode || resolvedProduct?.productCode || "SKU-N/A";
     const resolvedUnitName = resolvedProduct?.unitName || (main.unitId === 1 ? "Pieces (PCS)" : "Units");
 
