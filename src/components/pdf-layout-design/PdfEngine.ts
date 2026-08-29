@@ -29,7 +29,7 @@ export const PdfEngine = {
             // Render all elements from the template
             for (const el of elements) {
                 if (!el.visible) continue;
-                renderElement(doc, el, data);
+                await renderElement(doc, el, data);
                 
                 const elementBottom = el.y + el.height;
                 if (elementBottom > lowestY) lowestY = elementBottom;

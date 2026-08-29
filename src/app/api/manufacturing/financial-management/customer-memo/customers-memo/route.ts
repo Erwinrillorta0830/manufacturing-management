@@ -49,6 +49,7 @@ type CustomersMemoRow = {
     id: number;
     memo_number: string;
     encoder_id: number | { user_fname: string; user_lname: string };
+    collection_references?: string[];
 };
 
 type UserRow = {
@@ -217,6 +218,30 @@ function decodeUserIdFromJwtCookie(req: NextRequest): number | null {
     }
 }
 
+// Helper to normalize data for frontend consumption
+function normalizeMemoData(m: any) {
+    if (!m) return m;
+    const isObj = (val: any) => val && typeof val === 'object';
+    
+    let created_at = m.created_at;
+    if (created_at) {
+        if (!created_at.includes('T') && !created_at.includes('Z')) {
+            created_at = created_at.replace(' ', 'T') + 'Z';
+        } else if (created_at.includes('T') && !created_at.endsWith('Z')) {
+            created_at = created_at + 'Z';
+        }
+    }
+
+    return {
+        ...m,
+        created_at,
+        supplier_id: isObj(m.supplier_id) ? m.supplier_id : { id: 0, supplier_name: "Unknown Supplier" },
+        customer_id: isObj(m.customer_id) ? m.customer_id : { id: 0, customer_name: "Unknown Customer" },
+        salesman_id: isObj(m.salesman_id) ? m.salesman_id : { id: 0, salesman_code: "N/A", salesman_name: "Unknown Salesman" },
+        chart_of_account: isObj(m.chart_of_account) ? m.chart_of_account : { coa_id: 0, account_title: "Unknown Account" }
+    };
+}
+
 export async function GET(req: NextRequest) {
     const DIRECTUS_URL = getDirectusBase();
     const { searchParams } = new URL(req.url);
@@ -247,7 +272,7 @@ export async function GET(req: NextRequest) {
 
             case "chart-of-accounts": {
                 const result = await directusFetch<DirectusListResponse<ChartOfAccountRow>>(
-                    `${DIRECTUS_URL}/items/chart_of_accounts?fields=coa_id,gl_code,account_title,balance_type&filter[account_type][_gte]=6&filter[account_type][_lte]=11&limit=-1&sort=account_title`
+                    `${DIRECTUS_URL}/items/chart_of_accounts?fields=coa_id,gl_code,account_title,balance_type&filter[account_type][account_name][_in]=Cost of Sales,Cost of Service,General and Administrative Expenses,Finance Cost,Other Income&limit=-1&sort=account_title`
                 );
                 return NextResponse.json(result);
             }
@@ -388,25 +413,46 @@ export async function GET(req: NextRequest) {
                     `${DIRECTUS_URL}/items/customers_memo?fields=${fields}${filterStr}&limit=-1&sort=-created_at`
                 );
 
-                // Enrich with Encoder Names (since encoder_id is likely an integer, not a relation)
+                // Enrich with Encoder Names and Collection References
                 if (result.data && result.data.length > 0) {
+                    const memoIds = result.data.map(m => m.id);
                     const encoderIds = Array.from(new Set(result.data.map(m => typeof m.encoder_id === 'number' ? m.encoder_id : null).filter((id): id is number => id !== null && id > 0)));
-                    if (encoderIds.length > 0) {
-                        try {
-                            const userRes = await directusFetch<DirectusListResponse<UserRow>>(
+                    let userMap = new Map();
+                    let collectionsMap = new Map<number, string[]>();
+
+                    try {
+                        const [userRes, collectionsRes] = await Promise.all([
+                            encoderIds.length > 0 ? directusFetch<DirectusListResponse<UserRow>>(
                                 `${DIRECTUS_URL}/items/user?fields=user_id,user_fname,user_lname&filter[user_id][_in]=${encoderIds.join(",")}`
-                            );
-                            if (userRes.data) {
-                                const userMap = new Map(userRes.data.map(u => [u.user_id, u]));
-                                result.data = result.data.map(m => ({
-                                    ...m,
-                                    encoder_id: typeof m.encoder_id === 'number' ? userMap.get(m.encoder_id) || m.encoder_id : m.encoder_id
-                                }));
-                            }
-                        } catch (e) {
-                            console.warn("[Customers Memo API] Encoder enrichment failed:", e);
+                            ) : Promise.resolve({ data: [] }),
+                            directusFetch<DirectusListResponse<any>>(
+                                `${DIRECTUS_URL}/items/collection_memos?fields=memo_id,collection_id.docNo&filter[memo_id][_in]=${memoIds.join(",")}`
+                            )
+                        ]);
+
+                        if (userRes.data) {
+                            userMap = new Map(userRes.data.map(u => [u.user_id, u]));
                         }
+                        if (collectionsRes.data) {
+                            collectionsRes.data.forEach((c: any) => {
+                                if (!collectionsMap.has(c.memo_id)) collectionsMap.set(c.memo_id, []);
+                                if (c.collection_id && c.collection_id.docNo) {
+                                    collectionsMap.get(c.memo_id)!.push(c.collection_id.docNo);
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        console.warn("[Customers Memo API] Enrichment failed:", e);
                     }
+
+                    result.data = result.data.map(m => {
+                        const mEnriched = {
+                            ...m,
+                            encoder_id: typeof m.encoder_id === 'number' ? userMap.get(m.encoder_id) || m.encoder_id : m.encoder_id,
+                            collection_references: collectionsMap.get(m.id) || []
+                        };
+                        return normalizeMemoData(mEnriched);
+                    });
                 }
 
                 return NextResponse.json(result);
@@ -430,7 +476,7 @@ export async function GET(req: NextRequest) {
                     `${DIRECTUS_URL}/items/customers_memo/${id}?fields=${headerFields}`
                 );
 
-                const header = headerRes.data;
+                let header = headerRes.data;
 
                 // Enrich Header with Encoder Name manually
                 if (header && typeof header.encoder_id === 'number') {
@@ -446,6 +492,8 @@ export async function GET(req: NextRequest) {
                     }
                 }
                 
+                header = normalizeMemoData(header);
+                
                 // Fetch linked collections (only fields exposed in Directus)
                 const collectionFields = [
                     "amount",
@@ -458,8 +506,14 @@ export async function GET(req: NextRequest) {
                         `${DIRECTUS_URL}/items/collection_memos?filter[memo_id][_eq]=${id}&fields=${collectionFields}`
                     );
                     collectionsData = collections.data || [];
+                    
+                    if (header) {
+                        header.collection_references = collectionsData
+                            .map(c => c.collection_id?.docNo)
+                            .filter(Boolean);
+                    }
                 } catch (e) {
-                    console.warn("[Customers Memo API] Collections fetch failed:", e);
+                    console.warn("[Customers Memo API] Collection fetch failed:", e);
                 }
 
                 // Fetch applied invoices from customer_memo_invoices

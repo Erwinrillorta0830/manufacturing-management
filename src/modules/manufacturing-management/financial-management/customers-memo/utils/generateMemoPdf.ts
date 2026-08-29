@@ -76,22 +76,8 @@ export async function generateMemoPdf(details: DetailedMemo, options: MemoPdfOpt
         y = await PdfEngine.applyTemplate(doc, selectedTemplate.name, company as PdfData);
         y += 5; // Add some gap after template
     } else {
-        // Standard Fallback Header
-        doc.setFontSize(18);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(26, 26, 46); // Navy
-        doc.text(company?.company_name?.toUpperCase() || "COMPANY NAME", finalMargins.left, y + 8);
-        
-        doc.setFontSize(9);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(100);
-        const addr = [company?.company_address, company?.company_city, company?.company_province].filter(Boolean).join(", ");
-        doc.text(addr, finalMargins.left, y + 13);
-        
-        doc.setDrawColor(26, 26, 46);
-        doc.setLineWidth(0.8);
-        doc.line(finalMargins.left, y + 16, doc.internal.pageSize.getWidth() - finalMargins.right, y + 16);
-        y += 22;
+        // Standard Fallback Header Removed
+        y += 10;
     }
 
     // --- Document Title & Meta ---
