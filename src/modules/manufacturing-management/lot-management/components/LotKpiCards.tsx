@@ -20,8 +20,8 @@ export default function LotKpiCards({ metrics }: LotKpiCardsProps) {
                         <h3 className="text-2xl font-black text-foreground mt-1">
                             {metrics.totalLots.toLocaleString()}
                         </h3>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Active storage locations
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate" title={metrics.selectedProductName ? `Racks holding ${metrics.selectedProductName}` : "Active storage locations"}>
+                            {metrics.selectedProductName ? `Racks holding ${metrics.selectedProductName}` : "Active storage locations"}
                         </p>
                     </div>
                     <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0 border border-primary/20">
@@ -33,19 +33,47 @@ export default function LotKpiCards({ metrics }: LotKpiCardsProps) {
             {/* FEFO Next Priority Batches */}
             <Card className="relative overflow-hidden border border-amber-500/30 bg-gradient-to-br from-card via-card to-amber-500/10 shadow-xs hover:shadow-md transition-shadow">
                 <CardContent className="p-4 flex items-center justify-between">
-                    <div>
+                    <div className="min-w-0 flex-1 pr-2">
                         <div className="flex items-center gap-1">
                             <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
                                 FEFO Next (#1)
                             </p>
                             <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
                         </div>
-                        <h3 className="text-2xl font-black text-foreground mt-1">
+                        <h3 className="text-2xl font-black text-foreground mt-1 truncate">
                             {metrics.fefoNextCount.toLocaleString()}
                         </h3>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Priority #1 batches for pick
-                        </p>
+                        {(() => {
+                            const isProductFiltered = !!metrics.selectedProductName;
+                            const fefoBatchList = metrics.fefoNextBatchNumbers && metrics.fefoNextBatchNumbers.length > 0
+                                ? metrics.fefoNextBatchNumbers
+                                : (metrics.fefoNextBatches?.map((b) => b.batchNumber) || []);
+                            const topBatchNo = fefoBatchList[0];
+
+                            if (isProductFiltered) {
+                                if (topBatchNo) {
+                                    return (
+                                        <p
+                                            className="text-[10px] text-muted-foreground mt-0.5 truncate"
+                                            title={`Priority #1 ${topBatchNo} for pick`}
+                                        >
+                                            Priority #1 <span className="font-mono font-bold text-foreground">{topBatchNo}</span> for pick
+                                        </p>
+                                    );
+                                }
+                                return (
+                                    <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                        No Priority #1 batch for pick
+                                    </p>
+                                );
+                            }
+
+                            return (
+                                <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                    Priority #1 batches for pick
+                                </p>
+                            );
+                        })()}
                     </div>
                     <div className="h-10 w-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0 border border-amber-500/30 shadow-xs">
                         <ShieldCheck className="h-5 w-5 text-amber-500" />

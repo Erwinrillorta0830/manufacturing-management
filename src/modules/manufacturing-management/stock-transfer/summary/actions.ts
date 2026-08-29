@@ -52,6 +52,16 @@ export interface SummaryAttachment {
   date_created?: string | null;
 }
 
+interface RawAttachmentRow {
+  id?: number | string;
+  stock_transfer_id?: number | string;
+  directus_file_id?: string | { id?: string } | null;
+  created_by?: number | string | null;
+  created_at?: string | null;
+  date_created?: string | null;
+  [key: string]: unknown;
+}
+
 /**
  * Server action to fetch attachments for the summary module.
  */
@@ -59,9 +69,9 @@ export async function getSummaryAttachments(transferIds: number[]): Promise<Summ
   if (!transferIds || transferIds.length === 0) return [];
   try {
     // 1. Fetch rows from mm_stock_transfer_attachment
-    let rows: Record<string, any>[] = [];
+    let rows: RawAttachmentRow[] = [];
     try {
-      const res = await fetchItems<Record<string, any>>("items/mm_stock_transfer_attachment", {
+      const res = await fetchItems<RawAttachmentRow>("items/mm_stock_transfer_attachment", {
         "filter[stock_transfer_id][_in]": transferIds.join(","),
         fields: "id,stock_transfer_id,directus_file_id,created_by,created_at",
         limit: -1,
@@ -70,7 +80,7 @@ export async function getSummaryAttachments(transferIds: number[]): Promise<Summ
     } catch (fetchErr) {
       // Fallback query in case of field restrictions
       console.warn('[Summary Action] Direct field query fallback:', fetchErr);
-      const fallbackRes = await fetchItems<Record<string, any>>("items/mm_stock_transfer_attachment", {
+      const fallbackRes = await fetchItems<RawAttachmentRow>("items/mm_stock_transfer_attachment", {
         "filter[stock_transfer_id][_in]": transferIds.join(","),
         limit: -1,
       });
@@ -111,7 +121,7 @@ export async function getSummaryAttachments(transferIds: number[]): Promise<Summ
     }
 
     // 4. Map rows to SummaryAttachment
-    return rows.map((r: Record<string, any>) => {
+    return rows.map((r: RawAttachmentRow) => {
       const fileId = typeof r.directus_file_id === "object" && r.directus_file_id !== null
         ? String(r.directus_file_id.id || "")
         : String(r.directus_file_id || "");

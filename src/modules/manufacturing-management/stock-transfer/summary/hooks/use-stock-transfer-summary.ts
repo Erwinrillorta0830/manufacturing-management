@@ -77,8 +77,11 @@ export function useStockTransferSummary() {
 
   // Fetch attachments when transfers are loaded
   useEffect(() => {
+    let isMounted = true;
     if (!base.stockTransfers || base.stockTransfers.length === 0) {
-      setAttachments([]);
+      queueMicrotask(() => {
+        if (isMounted) setAttachments([]);
+      });
       return;
     }
     const transferIds = base.stockTransfers
@@ -86,8 +89,18 @@ export function useStockTransferSummary() {
       .filter((id): id is number => typeof id === 'number' && id > 0);
 
     if (transferIds.length > 0) {
-      getSummaryAttachments(transferIds).then(setAttachments);
+      getSummaryAttachments(transferIds).then((data) => {
+        if (isMounted) setAttachments(data);
+      });
+    } else {
+      queueMicrotask(() => {
+        if (isMounted) setAttachments([]);
+      });
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [base.stockTransfers]);
 
   const getUserName = useCallback((id: number | null | undefined) => {
@@ -363,7 +376,7 @@ export function useStockTransferSummary() {
     }
 
     return result;
-  }, [base, filters]); // Include 'base' as dependency
+  }, [base, filters, attachmentsByTransferId]);
 
   const toggleSort = (key: string) => {
     setFilters((prev) => {

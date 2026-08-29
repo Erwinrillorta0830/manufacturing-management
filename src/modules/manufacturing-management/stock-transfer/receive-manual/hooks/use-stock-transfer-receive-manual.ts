@@ -245,7 +245,7 @@ export function useStockTransferReceiveManual() {
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup?.targetBranch]);
+  }, [selectedGroup?.targetBranch, selectedGroup?.items]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);
@@ -276,7 +276,7 @@ export function useStockTransferReceiveManual() {
           }
 
           const lotIsBad = isBadStockLot(lot);
-          const hasBadBatches = (g.batches || []).some((b: any) => b.qa_status && b.qa_status !== 'GOOD');
+          const hasBadBatches = (g.batches || []).some((b: { qa_status?: string | null }) => b.qa_status && b.qa_status !== 'GOOD');
           if (hasBadBatches && !lotIsBad) {
             const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
             toast.error("Bad Stock Storage Lot Conflict", {

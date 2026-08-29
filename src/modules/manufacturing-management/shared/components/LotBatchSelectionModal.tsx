@@ -43,8 +43,6 @@ import {
   fetchBatchOnhand,
   resolveProductClassification,
   isBadStockLot,
-  isLotCompatibleForAllocation,
-  checkLotProductTypeCompatibility,
 } from '../services/lot-tracking.service';
 import { SearchableSelect } from './SearchableSelect';
 
@@ -67,13 +65,13 @@ export interface FormSiblingAllocation {
   product_id?: number | null;
   product_name?: string | null;
   product_code?: string | null;
-  product_type?: any;
-  product_category?: any;
+  product_type?: unknown;
+  product_category?: unknown;
   category_name?: string | null;
   quantity?: number | null;
   lot_id?: number | null;
   lot_name?: string | null;
-  lot_allocations?: LotAllocationGroup[] | any[];
+  lot_allocations?: LotAllocationGroup[] | unknown[];
   batch_no?: string | null;
   batches?: Array<{ quantity?: number | null; batch_no?: string | null; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: QAStatus | null }>;
 }
@@ -87,8 +85,8 @@ interface LotBatchSelectionModalProps {
   productCode?: string;
   productUomId?: number | null;
   productUomName?: string;
-  productType?: any;
-  productCategory?: any;
+  productType?: unknown;
+  productCategory?: unknown;
   categoryName?: string;
   requestedQuantity?: number;
   adjustmentType?: 'IN' | 'OUT';
@@ -263,11 +261,12 @@ export function LotBatchSelectionModal({
         if (existingFormAllocations && existingFormAllocations.length > 0) {
           existingFormAllocations.forEach((sibling) => {
             if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
-              sibling.lot_allocations.forEach((grp: any) => {
+              sibling.lot_allocations.forEach((grp: LotAllocationGroup | Record<string, unknown>) => {
                 const sLotId = Number(grp.lot_id);
                 if (sLotId > 0) {
-                  const grpQty = (grp.batches || []).reduce((sum: number, b: any) => sum + Number(b?.quantity || 0), 0) || Number(grp.allocated_quantity || 0);
-                  const grpBchCount = (grp.batches || []).length || 1;
+                  const batches = (grp as { batches?: Array<{ quantity?: number | null }> }).batches || [];
+                  const grpQty = batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) || Number((grp as { allocated_quantity?: number }).allocated_quantity || 0);
+                  const grpBchCount = batches.length || 1;
                   if (grpQty > 0 || grpBchCount > 0) {
                     sQtyMap.set(sLotId, (sQtyMap.get(sLotId) || 0) + grpQty);
                     bCountMap.set(sLotId, (bCountMap.get(sLotId) || 0) + grpBchCount);
@@ -306,7 +305,7 @@ export function LotBatchSelectionModal({
               draftQty: number;
               name?: string | null;
               code?: string | null;
-              type?: any;
+              type?: unknown;
               cat?: string | null;
             }
           >();
@@ -362,11 +361,12 @@ export function LotBatchSelectionModal({
 
               let allocatedToThisLot = 0;
               if (sibling.lot_allocations && sibling.lot_allocations.length > 0) {
-                sibling.lot_allocations.forEach((grp: any) => {
+                sibling.lot_allocations.forEach((grp: LotAllocationGroup | Record<string, unknown>) => {
                   if (Number(grp.lot_id) === lId) {
+                    const batches = (grp as { batches?: Array<{ quantity?: number | null }> }).batches || [];
                     allocatedToThisLot +=
-                      (grp.batches || []).reduce((sum: number, b: any) => sum + Number(b?.quantity || 0), 0) ||
-                      Number(grp.allocated_quantity || 0);
+                      batches.reduce((sum: number, b) => sum + Number(b?.quantity || 0), 0) ||
+                      Number((grp as { allocated_quantity?: number }).allocated_quantity || 0);
                   }
                 });
               } else if (Number(sibling.lot_id) === lId) {
@@ -406,7 +406,7 @@ export function LotBatchSelectionModal({
               product_id: number;
               product_name?: string;
               product_code?: string;
-              product_type?: any;
+              product_type?: unknown;
               category_name?: string;
               classification: ProductClassification;
               classification_label: string;
@@ -603,7 +603,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -914,7 +914,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, requestedQuantity, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, productName, currentItemClassification]);
+  }, [lotGroups, totalAllocated, requestedQuantity, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots]);
 
   const isValid = validationErrors.length === 0;
 
@@ -1065,7 +1065,6 @@ export function LotBatchSelectionModal({
                 const currentStockPct = maxCap > 0 ? Math.min(100, Math.round((currentStockQty / maxCap) * 100)) : 0;
                 const allocatingPct = maxCap > 0 ? Math.min(100, Math.round((groupQtyTotal / maxCap) * 100)) : 0;
                 const projectedUtilizationPct = maxCap > 0 ? Math.min(100, Math.round((projectedTotalStock / maxCap) * 100)) : 0;
-                const overage = projectedTotalStock - maxCap;
 
                 return (
                   <div

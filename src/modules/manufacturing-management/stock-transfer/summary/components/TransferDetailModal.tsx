@@ -32,11 +32,9 @@ import {
   Download, 
   Eye, 
   FileText, 
-  Image as ImageIcon,
-  ExternalLink,
-  X
+  Image as ImageIcon
 } from 'lucide-react';
-import type { OrderGroup, OrderGroupItem, ProductRow, BranchRow } from '../../types/stock-transfer.types';
+import type { OrderGroupItem, ProductRow, BranchRow } from '../../types/stock-transfer.types';
 import type { SummaryOrderGroup, SummaryAttachmentItem } from '../hooks/use-stock-transfer-summary';
 import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
 import { formatPhDateTime } from '../../utils/date-utils';

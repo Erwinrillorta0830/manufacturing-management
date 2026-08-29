@@ -3,16 +3,15 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PackageOpen, Printer, Loader2, ChevronLeft, ChevronRight, Hand, Paperclip, X, AlertTriangle, Layers, Plus, Sparkles } from 'lucide-react';
+import { PackageOpen, Printer, Loader2, ChevronLeft, ChevronRight, Hand, Paperclip, X, AlertTriangle, Layers } from 'lucide-react';
 import { useStockTransferReceiveManual } from './hooks/use-stock-transfer-receive-manual';
-import { OrderGroupItem, UnitOfMeasurement, CurrentUser, ProductRow } from '../types/stock-transfer.types';
+import { OrderGroupItem, UnitOfMeasurement, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
 import { getAssetUrl } from '@/lib/assets';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
 import { checkLotProductTypeCompatibility, isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import { LotBatchSelectionModal, LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
-import { LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -791,19 +790,19 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
           }
           productType={
             typeof activeItem.product_id === "object" && activeItem.product_id !== null
-              ? (activeItem.product_id as any).product_type
+              ? (activeItem.product_id as { product_type?: unknown }).product_type
               : undefined
           }
           productCategory={
             typeof activeItem.product_id === "object" && activeItem.product_id !== null
-              ? (activeItem.product_id as any).product_category
+              ? (activeItem.product_id as { product_category?: unknown }).product_category
               : undefined
           }
           categoryName={
             typeof activeItem.product_id === "object" && activeItem.product_id !== null
-              ? typeof (activeItem.product_id as any).product_category === "object"
-                ? (activeItem.product_id as any).product_category?.category_name
-                : String((activeItem.product_id as any).product_category || "")
+              ? typeof (activeItem.product_id as { product_category?: unknown }).product_category === "object"
+                ? (activeItem.product_id as { product_category?: { category_name?: string } }).product_category?.category_name
+                : String((activeItem.product_id as { product_category?: unknown }).product_category || "")
               : undefined
           }
           requestedQuantity={

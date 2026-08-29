@@ -12,7 +12,7 @@ import {
   checkLotProductTypeCompatibility,
   isBadStockLot,
 } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
-import type { MMLot, MMInventoryLot, LotStoredProductSummary, ProductClassification } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
+import type { MMLot, MMInventoryLot } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
 import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser } from '../../types/stock-transfer.types';
 
@@ -291,7 +291,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup?.targetBranch]);
+  }, [selectedGroup?.targetBranch, selectedGroup?.items]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);

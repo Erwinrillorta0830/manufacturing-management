@@ -173,6 +173,9 @@ export interface LotKpiMetrics {
     quarantinedOrExpiring: number;
     fefoNextCount: number;
     activeQuantity: number;
+    fefoNextBatches?: Batch[];
+    fefoNextBatchNumbers?: string[];
+    selectedProductName?: string;
 }
 
 export interface Branch {

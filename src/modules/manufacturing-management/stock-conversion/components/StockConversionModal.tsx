@@ -45,7 +45,6 @@ import {
   LotAllocationGroup,
   BatchRowAllocation,
   QAStatus,
-  LotStoredProductSummary,
   ProductClassification,
 } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import {
@@ -775,6 +774,7 @@ export function StockConversionModal({
     targetUnit,
     lotStoredSummaryMap,
     targetClassification,
+    lots,
   ]);
 
   const isValid = validationErrors.length === 0;

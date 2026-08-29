@@ -1,6 +1,6 @@
 "use client";
 
-import  { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { LayoutGrid, Warehouse, Layers, Plus, RefreshCw, ArrowLeftRight } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
@@ -19,6 +19,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 
 export default function LotManagementModule() {
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
     const {
         lots,
         filteredLots,
@@ -118,6 +123,30 @@ export default function LotManagementModule() {
         loadMovements();
     };
 
+    const displayedLotsForTable = useMemo(() => {
+        if (selectedProductId === "ALL") return filteredLots;
+        const relevantLotIds = new Set(
+            batches
+                .filter((b) => Number(b.productId) === Number(selectedProductId))
+                .map((b) => b.lotId)
+        );
+        return filteredLots.filter((l) => relevantLotIds.has(l.lotId));
+    }, [filteredLots, batches, selectedProductId]);
+
+    if (!mounted) {
+        return (
+            <div className="space-y-5">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                    {[1, 2, 3, 4].map((i) => (
+                        <div key={i} className="h-24 rounded-xl border border-border bg-card animate-pulse" />
+                    ))}
+                </div>
+                <div className="h-12 rounded-xl border border-border bg-card animate-pulse" />
+                <div className="h-96 rounded-xl border border-border bg-card animate-pulse" />
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-5">
             {/* Top KPI Metrics Overview */}
@@ -143,21 +172,21 @@ export default function LotManagementModule() {
                             className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
                         >
                             <Warehouse className="h-4 w-4 text-primary" />
-                            Storage Racks ({lots.length})
+                            Storage Racks ({displayedLotsForTable.length})
                         </TabsTrigger>
                         <TabsTrigger
                             value="batch-table"
                             className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
                         >
                             <Layers className="h-4 w-4 text-primary" />
-                            Registered Batches ({batches.length})
+                            Registered Batches ({filteredBatches.length})
                         </TabsTrigger>
                         <TabsTrigger
                             value="movement-history"
                             className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
                         >
                             <ArrowLeftRight className="h-4 w-4 text-primary" />
-                            Movement History ({movements.length})
+                            Movement History ({filteredMovements.length})
                         </TabsTrigger>
                     </TabsList>
 
@@ -211,7 +240,7 @@ export default function LotManagementModule() {
                 {/* Tab 2: Storage Lots Table */}
                 <TabsContent value="storage-lots" className="mt-0 outline-none">
                     <LotTable
-                        filteredLots={filteredLots}
+                        filteredLots={displayedLotsForTable}
                         loading={loadingLots}
                         searchQuery={lotSearchQuery}
                         onSearchChange={setLotSearchQuery}

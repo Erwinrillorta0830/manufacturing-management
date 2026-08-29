@@ -45,8 +45,8 @@ export interface MMInventoryLot {
   lot_name?: string;
   product_name?: string;
   product_code?: string;
-  product_type?: any;
-  product_category?: any;
+  product_type?: unknown;
+  product_category?: unknown;
   category_name?: string;
   unit_name?: string;
   available_quantity?: number;

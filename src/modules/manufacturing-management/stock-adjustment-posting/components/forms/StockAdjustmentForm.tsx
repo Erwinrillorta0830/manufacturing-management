@@ -547,8 +547,8 @@ export function StockAdjustmentForm({
                 item.unit_name ||
                 (item.product_id as { unit_name?: string })?.unit_name ||
                 "pcs",
-              product_type: (item.product_id as { product_type?: any })?.product_type || item.product_type,
-              product_category: (item.product_id as { product_category?: any })?.product_category || item.product_category,
+              product_type: (item.product_id as { product_type?: unknown })?.product_type || item.product_type,
+              product_category: (item.product_id as { product_category?: unknown })?.product_category || item.product_category,
               category_name:
                 (item.product_id as { product_category?: { category_name?: string } })?.product_category?.category_name ||
                 (item.product_id as { category_name?: string })?.category_name ||
