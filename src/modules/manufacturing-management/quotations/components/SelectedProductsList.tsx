@@ -45,7 +45,7 @@ export function SelectedProductsList({
             if (versionsMap[parentId] !== undefined || loadingVersions[parentId]) return;
 
             setLoadingVersions(prev => ({ ...prev, [parentId]: true }));
-            fetch(`/api/manufacturing/finished-goods/versions?productId=${parentId}`)
+            fetch(`/api/manufacturing/finished-goods/versions?productId=${parentId}&status=Active`)
                 .then(res => res.ok ? res.json() : [])
                 .then(data => {
                     const sorted = [...data].sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
