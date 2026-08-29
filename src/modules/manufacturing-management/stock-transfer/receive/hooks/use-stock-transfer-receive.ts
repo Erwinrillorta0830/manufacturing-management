@@ -3,8 +3,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useStockTransferBase } from '../../shared/hooks/use-stock-transfer-base';
 import { stockTransferLifecycleService } from '../../services/stock-transfer.lifecycle';
-import { fetchLotsByBranch } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
-import type { MMLot } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
+import {
+  fetchLotsByBranch,
+  fetchBatchOnhand,
+  fetchInventoryLots,
+  resolveProductClassification,
+  buildLotStoredProductSummaryMap,
+  checkLotProductTypeCompatibility,
+  isBadStockLot,
+} from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import type { MMLot, MMInventoryLot } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
 import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser } from '../../types/stock-transfer.types';
 
@@ -27,6 +35,9 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     : 'scm_receive_manual_v1';
 
   const [targetLots, setTargetLots] = useState<MMLot[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [rawBranchOnhand, setRawBranchOnhand] = useState<any[]>([]);
+  const [rawBranchInvLots, setRawBranchInvLots] = useState<MMInventoryLot[]>([]);
   const [loadingLots, setLoadingLots] = useState(false);
   const [destinationLotIds, setDestinationLotIds] = useState<Record<number, number>>({});
   const [destinationBatchNos, setDestinationBatchNos] = useState<Record<number, string>>({});
@@ -174,32 +185,95 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     setDestinationBatchNos(prev => ({ ...prev, [itemId]: batchNo }));
   }, []);
 
-  // Load destination branch lots when selected order group changes
+  // Active table draft allocations
+  const activeTableDraftAllocations = useMemo(() => {
+    if (!selectedGroup?.items) return [];
+    return selectedGroup.items.map((item) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
+      const assignedLotId = destinationLotIds[item.id];
+      return {
+        lot_id: Number(assignedLotId || 0),
+        product_id: Number(product.product_id || item.product_id || 0),
+        product_name: product.product_name,
+        product_code: product.product_code,
+        product_type: product.product_type,
+        category_name: product.product_category,
+        allocated_quantity: item.receivedQty || item.ordered_quantity || 0,
+      };
+    });
+  }, [selectedGroup, destinationLotIds]);
+
+  // Map of Stored Products & Classifications per Lot in Destination Branch
+  const lotStoredSummaryMap = useMemo(() => {
+    return buildLotStoredProductSummaryMap(rawBranchOnhand, targetLots, activeTableDraftAllocations, rawBranchInvLots);
+  }, [rawBranchOnhand, targetLots, activeTableDraftAllocations, rawBranchInvLots]);
+
+  const getItemClassification = useCallback((item: OrderGroupItem) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
+    return resolveProductClassification(
+      product.product_type,
+      product.product_category,
+      product.product_code,
+      product.product_name
+    );
+  }, []);
+
+  const getLotCompatibility = useCallback((item: OrderGroupItem, lotId: number) => {
+    const targetClass = getItemClassification(item);
+    const stored = lotStoredSummaryMap.get(Number(lotId));
+    return checkLotProductTypeCompatibility(stored, targetClass);
+  }, [getItemClassification, lotStoredSummaryMap]);
+
+  // Load destination branch lots & batch onhand when selected order group changes
   useEffect(() => {
     let isMounted = true;
 
     if (!selectedGroup?.targetBranch) {
       queueMicrotask(() => {
-        if (isMounted) setTargetLots([]);
+        if (isMounted) {
+          setTargetLots([]);
+          setRawBranchOnhand([]);
+          setRawBranchInvLots([]);
+        }
       });
       return;
     }
+
+    const destBranchId = Number(selectedGroup.targetBranch);
 
     queueMicrotask(() => {
       if (isMounted) setLoadingLots(true);
     });
 
-    fetchLotsByBranch(Number(selectedGroup.targetBranch))
-      .then(lots => {
+    Promise.all([
+      fetchLotsByBranch(destBranchId),
+      fetchBatchOnhand({ branchId: destBranchId }),
+      fetchInventoryLots({ branchId: destBranchId }),
+    ])
+      .then(([lots, onhand, invLots]) => {
         if (isMounted) {
-          const activeLots = (lots || []).filter(l => l.status === 'ACTIVE' || !l.status);
+          setRawBranchOnhand(onhand || []);
+          setRawBranchInvLots(invLots || []);
+          const activeLots = (lots || []).filter((l: MMLot) => Number(l.branch_id) === destBranchId && (l.status === 'ACTIVE' || !l.status));
           setTargetLots(activeLots);
           if (activeLots.length > 0) {
+            const tempMap = buildLotStoredProductSummaryMap(onhand || [], activeLots, undefined, invLots || []);
             setDestinationLotIds(prev => {
               const updated = { ...prev };
               selectedGroup.items.forEach(item => {
-                if (!updated[item.id]) {
-                  updated[item.id] = activeLots[0].lot_id;
+                const currentLotId = updated[item.id];
+                const isValid = activeLots.some((l: MMLot) => l.lot_id === currentLotId);
+                if (!currentLotId || !isValid) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const p = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
+                  const itemClass = resolveProductClassification(p.product_type, p.product_category, p.product_code, p.product_name);
+                  const matchedLot = activeLots.find((l: MMLot) => {
+                    const stored = tempMap.get(Number(l.lot_id));
+                    return checkLotProductTypeCompatibility(stored, itemClass).isCompatible;
+                  }) || activeLots[0];
+                  updated[item.id] = matchedLot.lot_id;
                 }
               });
               return updated;
@@ -217,11 +291,46 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup]);
+  }, [selectedGroup?.targetBranch, selectedGroup?.items]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);
     if (!group) return;
+
+    // Validate product type compatibility for all destination lots
+    for (const item of group.items) {
+      const assignedLotId = destinationLotIds[item.id];
+      if (assignedLotId) {
+        const lot = targetLots.find(l => Number(l.lot_id) === Number(assignedLotId));
+        const compat = getLotCompatibility(item, assignedLotId);
+        if (compat.isTypeMismatch) {
+          const itemClass = getItemClassification(item);
+          const stored = lotStoredSummaryMap.get(Number(assignedLotId));
+          const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+          toast.error("Destination Storage Lot Conflict", {
+            description: `Storage lot "${lot?.lot_name || `Lot #${assignedLotId}`}" currently stores ${stored?.is_draft_allocation ? "items in current form draft" : "warehouse stock"} of type "${stored?.primary_classification_label || "Other"}", which is incompatible with "${prodName}" (${itemClass.label}). Please choose a matching or empty storage lot.`
+          });
+          return;
+        }
+
+        const lotIsBad = isBadStockLot(lot);
+        const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD');
+        if (itemIsBad && !lotIsBad) {
+          const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+          toast.error("Bad Stock Storage Lot Conflict", {
+            description: `Item "${prodName}" is bad/damaged stock (${item.qa_status || item.inventory_condition}) and cannot be placed into standard storage lot "${lot?.lot_name}". Bad stock must be placed into a Bad Stock or Quarantine lot.`
+          });
+          return;
+        }
+        if (!itemIsBad && lotIsBad) {
+          const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+          toast.error("Storage Lot Conflict", {
+            description: `Item "${prodName}" is GOOD stock and cannot be placed into Bad Stock / Quarantine storage lot "${lot?.lot_name}".`
+          });
+          return;
+        }
+      }
+    }
 
     base.setProcessing(true);
     try {
@@ -466,6 +575,9 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     updateDestinationBatchNo,
     targetLots,
     loadingLots,
+    lotStoredSummaryMap,
+    getItemClassification,
+    getLotCompatibility,
     recentScans: (base.selectedOrderNo ? receivedItemsState[base.selectedOrderNo] : []) || [],
     isThrottled,
     clearHistory: () => {

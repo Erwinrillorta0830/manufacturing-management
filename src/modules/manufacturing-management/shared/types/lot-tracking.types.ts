@@ -15,8 +15,12 @@ export interface MMLot {
   updated_by?: number | null;
   // UI helpers
   branch_name?: string;
+  branch_code?: string;
   unit_name?: string;
   current_stock_quantity?: number;
+  is_bad_stock?: boolean;
+  branch_is_bad_stock?: boolean;
+  is_quarantine?: boolean;
 }
 
 export interface MMInventoryLot {
@@ -41,8 +45,41 @@ export interface MMInventoryLot {
   lot_name?: string;
   product_name?: string;
   product_code?: string;
+  product_type?: unknown;
+  product_category?: unknown;
+  category_name?: string;
   unit_name?: string;
   available_quantity?: number;
+}
+
+export type ProductClassification = 'RM' | 'PKG' | 'FG' | 'OTHER';
+
+export interface LotStoredProductSummary {
+  lot_id: number;
+  lot_name: string;
+  total_stored_quantity: number;
+  warehouse_stock_quantity?: number;
+  draft_allocated_quantity?: number;
+  is_draft_allocation?: boolean;
+  active_batch_count: number;
+  stored_products: Array<{
+    product_id: number;
+    product_name?: string;
+    product_code?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    product_type?: any;
+    category_name?: string;
+    classification: ProductClassification;
+    classification_label: string;
+    onhand_quantity: number;
+    warehouse_quantity?: number;
+    draft_quantity?: number;
+    is_draft?: boolean;
+  }>;
+  primary_classification?: ProductClassification;
+  primary_classification_label?: string;
+  is_empty: boolean;
+  is_bad_stock?: boolean;
 }
 
 export interface CreateInventoryLotPayload {

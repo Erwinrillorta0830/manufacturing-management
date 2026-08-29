@@ -9,6 +9,7 @@ import type {
   EnrichedProduct
 } from '../../types/stock-transfer.types';
 import type { StockAllocationPlan } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
+import { allocateStock } from '@/modules/manufacturing-management/shared/services/stock-allocation.engine';
 import { toast } from 'sonner';
 
 interface UseStockTransferRequestReturn {
@@ -32,6 +33,46 @@ interface UseStockTransferRequestReturn {
   isTransferConfirmed: boolean;
   orderNo: string;
   status: string;
+}
+
+/**
+ * Automatically allocates live FEFO batches for a given scanned item.
+ */
+async function autoAllocateItem(
+  item: ScannedItem,
+  branchId: string,
+  qty: number
+): Promise<ScannedItem> {
+  const total = parseFloat((item.unitPrice * qty).toFixed(2));
+  if (!branchId || Number(branchId) <= 0) {
+    return { ...item, unitQty: qty, totalAmount: total };
+  }
+  try {
+    const plan = await allocateStock({
+      productId: item.productId,
+      branchId: Number(branchId),
+      requestedQuantity: qty,
+    });
+    if (plan.allocations && plan.allocations.length > 0) {
+      const primary = plan.allocations[0];
+      return {
+        ...item,
+        unitQty: qty,
+        totalAmount: total,
+        batch_no: primary.batch_no || null,
+        lot_id: primary.lot_id ?? item.lot_id,
+        inventory_lot_id: primary.inventory_lot_id ?? item.inventory_lot_id,
+        manufacturing_date: primary.manufacturing_date ?? item.manufacturing_date,
+        expiry_date: primary.expiry_date ?? item.expiry_date,
+        qa_status: primary.qa_status ?? item.qa_status,
+        allocations: plan.allocations,
+        allocation_plan: plan,
+      };
+    }
+  } catch (err) {
+    console.warn('[useStockTransferRequest] Auto-FEFO allocation warning:', err);
+  }
+  return { ...item, unitQty: qty, totalAmount: total };
 }
 
 /**
@@ -75,6 +116,22 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     };
   }, []);
 
+  const handleSetSourceBranch = useCallback((newBranch: string) => {
+    setSourceBranch(newBranch);
+    if (!newBranch || Number(newBranch) <= 0) return;
+
+    // Automatically re-run FEFO allocation for all existing items against the new branch
+    setScannedItems((prev) => {
+      if (prev.length === 0) return prev;
+      Promise.all(
+        prev.map((item) => autoAllocateItem(item, newBranch, item.unitQty || 1))
+      ).then((updated) => {
+        setScannedItems(updated);
+      });
+      return prev;
+    });
+  }, []);
+
   const updateQty = useCallback((rfid: string, qty: number) => {
     setScannedItems((prev) =>
       prev.map((item) => {
@@ -83,7 +140,21 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
         return { ...item, unitQty: qty, totalAmount: total };
       })
     );
-  }, []);
+
+    if (sourceBranch && Number(sourceBranch) > 0) {
+      setScannedItems((prev) => {
+        const targetItem = prev.find((it) => it.rfid === rfid);
+        if (targetItem) {
+          autoAllocateItem(targetItem, sourceBranch, qty).then((allocatedItem) => {
+            setScannedItems((current) =>
+              current.map((it) => (it.rfid === rfid ? allocatedItem : it))
+            );
+          });
+        }
+        return prev;
+      });
+    }
+  }, [sourceBranch]);
 
   const handleAddProduct = useCallback((product: EnrichedProduct) => {
     const productId = product.product_id;
@@ -95,8 +166,8 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
       return;
     }
 
-    // Generate a pseudo-RFID for manually added items
-    const rfid = `MNL-${productId}-${Date.now().toString().slice(-4)}`;
+    // Generate a unique row key for the added item
+    const rfid = `item-${productId}-${Date.now().toString().slice(-4)}`;
     
     let extractedUnit = 'unit';
     let unitId = 0;
@@ -118,7 +189,7 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
       rfid,
       productId,
       productName: product.description || product.product_name,
-      description: product.barcode || 'Manual Entry',
+      description: product.barcode || product.product_code || '',
       brandName: extractedBrand,
       unit: extractedUnit,
       unitId,
@@ -130,7 +201,16 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     };
     
     setScannedItems((prev) => [newItem, ...prev]);
-  }, [scannedItems, updateQty]);
+
+    // Automatically trigger FEFO allocation in background
+    if (sourceBranch && Number(sourceBranch) > 0) {
+      autoAllocateItem(newItem, sourceBranch, 1).then((allocatedItem) => {
+        setScannedItems((prev) =>
+          prev.map((it) => (it.rfid === rfid ? allocatedItem : it))
+        );
+      });
+    }
+  }, [scannedItems, updateQty, sourceBranch]);
 
   const removeItem = useCallback((rfid: string) => {
     setScannedItems((prev) => prev.filter((item) => item.rfid !== rfid));
@@ -149,11 +229,20 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
   const confirmTransfer = useCallback(async () => {
     setConfirming(true);
     try {
+      // Ensure all items have FEFO allocations populated before submitting
+      const itemsToSubmit = await Promise.all(
+        scannedItems.map(async (item) => {
+          if (item.allocations && item.allocations.length > 0) return item;
+          if (!sourceBranch || Number(sourceBranch) <= 0) return item;
+          return await autoAllocateItem(item, sourceBranch, item.unitQty || 1);
+        })
+      );
+
       const res = await stockTransferLifecycleService.submitTransferRequest({ 
         sourceBranch, 
         targetBranch, 
         leadDate, 
-        scannedItems 
+        scannedItems: itemsToSubmit,
       });
 
       setIsTransferConfirmed(true);
@@ -206,7 +295,7 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
     loading,
     confirming,
     sourceBranch,
-    setSourceBranch,
+    setSourceBranch: handleSetSourceBranch,
     targetBranch,
     setTargetBranch,
     leadDate,

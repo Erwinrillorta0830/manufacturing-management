@@ -39,11 +39,14 @@ export const ScannedItemSchema = z.object({
   source_lot_id: z.number().nullable().optional(),
   source_inventory_lot_id: z.number().nullable().optional(),
   batch_no: z.string().nullable().optional(),
+  manufacturing_date: z.string().nullable().optional(),
+  expiry_date: z.string().nullable().optional(),
   allocations: z.array(z.object({
     inventory_lot_id: z.number(),
     lot_id: z.number(),
     batch_no: z.string(),
     allocated_quantity: z.number(),
+    manufacturing_date: z.string().nullable().optional(),
     expiry_date: z.string().nullable().optional(),
   })).optional(),
 });
@@ -91,6 +94,8 @@ export const UpdateItemSchema = z.object({
   destination_batch_no: z.string().nullable().optional(),
   manufacturing_date: z.string().nullable().optional(),
   expiration_date: z.string().nullable().optional(),
+  lot_allocations: z.array(z.any()).optional(),
+  remarks: z.string().nullable().optional(),
 });
 export type UpdateItemValue = z.infer<typeof UpdateItemSchema>;
 
@@ -109,6 +114,8 @@ export const UpdateStockTransferSchema = z.object({
   ids: z.array(z.number()).optional(),
   /** Status for legacy format. */
   status: z.string().optional(),
+  /** Optional transaction remarks / deposit notes. */
+  remarks: z.string().nullable().optional(),
   /** RFID tags to insert into tracking table. */
   rfids: z.array(RfidTrackingSchema).optional(),
   /** Type of scan: DISPATCH or RECEIVE. */

@@ -46,13 +46,17 @@ export async function GET(request: Request) {
     try {
         const fields = "*";
         const timestamp = Date.now();
-        const [usersRes, unitsRes] = await Promise.all([
+        const [usersRes, unitsRes, branchesRes] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ).catch(() => null),
             fetch(
                 `${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut,sku_code&_t=${timestamp}`,
+                { headers, cache: "no-store" }
+            ).catch(() => null),
+            fetch(
+                `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ).catch(() => null)
         ]);
@@ -87,6 +91,16 @@ export async function GET(request: Request) {
                 unitsList = unitsJson.data || [];
             } catch (err) {
                 console.error("Error parsing units in GET lots:", err);
+            }
+        }
+
+        let branchesList: { id: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null }[] = [];
+        if (branchesRes && branchesRes.ok) {
+            try {
+                const bJson = await branchesRes.json();
+                branchesList = bJson.data || [];
+            } catch (err) {
+                console.error("Error parsing branches in GET lots:", err);
             }
         }
 
@@ -147,10 +161,21 @@ export async function GET(request: Request) {
                 ? Number((rawBranch as { id?: number; branch_id?: number }).id || (rawBranch as { id?: number; branch_id?: number }).branch_id || 0)
                 : Number(rawBranch || 0);
 
+            const matchedBranch = branchesList.find((b) => Number(b.id) === Number(branchIdNum));
+            const isBadStockBranch = matchedBranch
+                ? Number(matchedBranch.isBadStock) === 1 || matchedBranch.isBadStock === true || matchedBranch.isBadStock === "1"
+                : false;
+            const branchName = matchedBranch?.branch_name || (typeof row.branch_id === "object" && row.branch_id ? (row.branch_id as { branch_name?: string }).branch_name : "") || "";
+            const branchCode = matchedBranch?.branch_code || (typeof row.branch_id === "object" && row.branch_id ? (row.branch_id as { branch_code?: string }).branch_code : "") || "";
+
             return {
                 lotId: Number(row.lot_id),
                 lotName: String(row.lot_name || ""),
                 branchId: branchIdNum,
+                branchName,
+                branchCode,
+                isBadStock: isBadStockBranch || Boolean(row.is_bad_stock),
+                branchIsBadStock: isBadStockBranch,
                 uomId,
                 uomName,
                 uomShortcut,

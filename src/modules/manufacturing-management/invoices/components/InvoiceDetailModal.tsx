@@ -3,8 +3,8 @@
 import React, { useState, useMemo } from "react";
 import { Invoice, InvoiceLineItem, PrinterAlignmentSettings } from "../types";
 import { X, Printer, Loader2 } from "lucide-react";
-import { fetchPrintableInvoice } from "../../invoicing/services/invoicing-api";
-import { generateInvoiceReceiptPdf } from "../../invoicing/utils/generateInvoiceReceiptPdf";
+import { fetchPrintableInvoice } from "../../invoicing-and-billing/invoicing/services/invoicing-api";
+import { generateInvoiceReceiptPdf } from "../../invoicing-and-billing/invoicing/utils/generateInvoiceReceiptPdf";
 
 interface PaymentHistoryItem {
     amount: number;

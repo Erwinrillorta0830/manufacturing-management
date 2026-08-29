@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStockTransferBase } from '../../hooks/use-stock-transfer-base';
 import type { OrderGroup, OrderGroupItem, ProductRow, StockTransferRow } from '../../types/stock-transfer.types';
-import { getSummaryUsers, getSummaryUnits, UnitRow } from '../actions';
+import { getSummaryUsers, getSummaryUnits, getSummaryAttachments, UnitRow, SummaryAttachment } from '../actions';
 
 export interface SortConfig {
   key: string;
@@ -27,7 +27,19 @@ export interface SummaryStockTransferRow extends StockTransferRow {
   dispatched_at?: string | null;
 }
 
-/** Extended OrderGroup for Summary specifically, including audit trail. */
+export interface SummaryAttachmentItem {
+  id: number;
+  stockTransferId: number;
+  fileId: string;
+  fileName: string;
+  fileSize?: number;
+  fileType?: string;
+  url: string;
+  uploadedBy?: number | null;
+  uploadedAt?: string | null;
+}
+
+/** Extended OrderGroup for Summary specifically, including audit trail and attachments. */
 export interface SummaryOrderGroup extends OrderGroup {
   dateApproved?: string | null;
   dateDispatched?: string | null;
@@ -36,6 +48,7 @@ export interface SummaryOrderGroup extends OrderGroup {
   approverId?: number | null;
   dispatcherId?: number | null;
   receiverId?: number | null;
+  attachments?: SummaryAttachmentItem[];
 }
 
 export interface SummaryFilters {
@@ -54,12 +67,41 @@ export function useStockTransferSummary() {
   
   const [users, setUsers] = useState<UserRow[]>([]);
   const [units, setUnits] = useState<UnitRow[]>([]);
+  const [attachments, setAttachments] = useState<SummaryAttachment[]>([]);
   
   // Fetch data via Server Actions
   useEffect(() => {
     getSummaryUsers().then(setUsers);
     getSummaryUnits().then(setUnits);
   }, []);
+
+  // Fetch attachments when transfers are loaded
+  useEffect(() => {
+    let isMounted = true;
+    if (!base.stockTransfers || base.stockTransfers.length === 0) {
+      queueMicrotask(() => {
+        if (isMounted) setAttachments([]);
+      });
+      return;
+    }
+    const transferIds = base.stockTransfers
+      .map((st) => st.id)
+      .filter((id): id is number => typeof id === 'number' && id > 0);
+
+    if (transferIds.length > 0) {
+      getSummaryAttachments(transferIds).then((data) => {
+        if (isMounted) setAttachments(data);
+      });
+    } else {
+      queueMicrotask(() => {
+        if (isMounted) setAttachments([]);
+      });
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [base.stockTransfers]);
 
   const getUserName = useCallback((id: number | null | undefined) => {
     if (!id) return 'System';
@@ -149,8 +191,20 @@ export function useStockTransferSummary() {
       }));
     }
   };
+
+  // Map of transferId -> SummaryAttachment[]
+  const attachmentsByTransferId = useMemo(() => {
+    const map = new Map<number, SummaryAttachment[]>();
+    attachments.forEach((att) => {
+      const list = map.get(att.stock_transfer_id) || [];
+      list.push(att);
+      map.set(att.stock_transfer_id, list);
+    });
+    return map;
+  }, [attachments]);
+
   const filteredGroups = useMemo(() => {
-    // 1. Group transfers locally to capture audit trail fields (since shared helper doesn't)
+    // 1. Group transfers locally to capture audit trail fields & attachments
     const localGroups: Record<string, SummaryOrderGroup> = {};
     
     base.stockTransfers.forEach((st: SummaryStockTransferRow) => {
@@ -179,7 +233,29 @@ export function useStockTransferSummary() {
           items: [],
           totalAmount: 0,
           status: st.status,
+          attachments: [],
         };
+      }
+
+      // Attachments for this item
+      if (st.id && attachmentsByTransferId.has(st.id)) {
+        const itemAtts = attachmentsByTransferId.get(st.id)!;
+        itemAtts.forEach((att) => {
+          const exists = localGroups[st.order_no].attachments?.some((a) => a.fileId === att.file_id);
+          if (!exists) {
+            localGroups[st.order_no].attachments?.push({
+              id: att.id,
+              stockTransferId: att.stock_transfer_id,
+              fileId: att.file_id,
+              fileName: att.file_name,
+              fileSize: att.file_size,
+              fileType: att.file_type,
+              url: `/api/assets/${encodeURIComponent(att.file_id)}`,
+              uploadedBy: att.created_by,
+              uploadedAt: att.date_created,
+            });
+          }
+        });
       }
       
       const product = typeof st.product_id === 'object' && st.product_id !== null ? (st.product_id as ProductRow) : null;
@@ -300,7 +376,7 @@ export function useStockTransferSummary() {
     }
 
     return result;
-  }, [base, filters]); // Include 'base' as dependency
+  }, [base, filters, attachmentsByTransferId]);
 
   const toggleSort = (key: string) => {
     setFilters((prev) => {

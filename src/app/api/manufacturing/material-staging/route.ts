@@ -120,7 +120,7 @@ export async function GET(request: Request) {
             productMap.set(Number(p.product_id), {
                 product_id: Number(p.product_id),
                 product_name: p.product_name || `Product #${p.product_id}`,
-                product_code: p.product_code || `PRD-${p.product_id}`,
+                product_code: p.product_code || `ITEM-${p.product_id}`,
                 uom: p.unit_of_measurement?.unit_shortcut || "units"
             });
         });
@@ -565,7 +565,7 @@ export async function GET(request: Request) {
                 parent_job_order_id: jo.parent_job_order_id ? Number(jo.parent_job_order_id) : null,
                 product_id: Number(jo.product_id),
                 product_name: joProduct?.product_name || `Product #${jo.product_id}`,
-                product_code: joProduct?.product_code || `PRD-${jo.product_id}`,
+                product_code: joProduct?.product_code || `ITEM-${jo.product_id}`,
                 version_id: jo.version_id ? Number(jo.version_id) : null,
                 target_quantity: Number(jo.target_quantity || 0),
                 completed_quantity: Number(jo.completed_quantity || 0),

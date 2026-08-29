@@ -355,6 +355,7 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
 
     const filteredBatches = useMemo(() => {
         const rawFiltered = batches.filter((b) => {
+            const matchesProduct = selectedProductId === "ALL" || Number(b.productId) === Number(selectedProductId);
             const matchesLot = selectedLotFilter === "ALL" || b.lotId === selectedLotFilter;
             const matchesStatus = statusFilter === "ALL" || b.status === statusFilter || b.qaStatus === statusFilter;
             const query = batchSearchQuery.toLowerCase().trim();
@@ -366,7 +367,7 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
                 b.itemCode.toLowerCase().includes(query) ||
                 b.remarks.toLowerCase().includes(query);
 
-            return matchesLot && matchesStatus && matchesSearch;
+            return matchesProduct && matchesLot && matchesStatus && matchesSearch;
         });
 
         // Sort by FEFO Priority order (#1 FEFO NEXT items at the top)
@@ -376,22 +377,32 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
     }, [batches, selectedLotFilter, statusFilter, batchSearchQuery, selectedProductId]);
 
     const kpiMetrics: LotKpiMetrics = useMemo(() => {
+        const isAllProducts = selectedProductId === "ALL";
+        const targetProductBatches = isAllProducts
+            ? batches
+            : batches.filter((b) => Number(b.productId) === Number(selectedProductId));
+
         const fefoMap = getFefoPriorityMap(batches, selectedProductId);
-        const totalLots = lots.length;
-        const totalBatches = batches.length;
+        const relevantLotIds = new Set(targetProductBatches.map((b) => b.lotId));
+        const totalLots = isAllProducts
+            ? lots.length
+            : lots.filter((l) => relevantLotIds.has(l.lotId)).length;
+        const totalBatches = targetProductBatches.length;
 
         let totalQuantity = 0;
         let activeQuantity = 0;
         let fefoNextCount = 0;
         let quarantinedOrExpiring = 0;
+        const fefoNextBatches: Batch[] = [];
 
-        batches.forEach((b) => {
+        targetProductBatches.forEach((b) => {
             const qty = Number(b.quantity || 0);
             totalQuantity += qty;
 
             const fefoInfo = fefoMap.get(b.batchId);
             if (fefoInfo?.isFefoNext) {
                 fefoNextCount++;
+                fefoNextBatches.push(b);
             }
 
             const evalRes = evaluateBatchEligibility(b);
@@ -402,15 +413,29 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
             }
         });
 
+        fefoNextBatches.sort((a, b) => {
+            const expA = a.expirationDate ? new Date(a.expirationDate).getTime() : Infinity;
+            const expB = b.expirationDate ? new Date(b.expirationDate).getTime() : Infinity;
+            return expA - expB;
+        });
+
+        const selectedProd = !isAllProducts
+            ? products.find((p) => Number(p.productId) === Number(selectedProductId))
+            : undefined;
+        const selectedProductName = selectedProd?.productName || (selectedProd ? `Product #${selectedProd.productId}` : undefined);
+
         return {
             totalLots,
             totalBatches,
             totalQuantity,
             quarantinedOrExpiring,
             fefoNextCount,
-            activeQuantity
+            activeQuantity,
+            fefoNextBatches,
+            fefoNextBatchNumbers: fefoNextBatches.map((b) => b.batchNumber),
+            selectedProductName
         };
-    }, [lots, batches, selectedProductId]);
+    }, [lots, batches, products, selectedProductId]);
 
     return {
         batches,

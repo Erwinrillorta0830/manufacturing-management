@@ -178,7 +178,7 @@ export default function StockTransferDispatchManualView({ currentUser }: { curre
                       const maxAllowedQty = Math.min(targetQty, availableQty);
                       const currentQty = scannedQtys[item.id] ?? 0;
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? item.product_id : null;
-                      const productName = product?.product_name || `PRD-${item.product_id}`;
+                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
                       const productImage = getAssetUrl(product?.product_image);
 
                       return (

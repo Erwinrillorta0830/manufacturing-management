@@ -891,6 +891,12 @@ export function StockAdjustmentManualForm({
                 item.unit_name ||
                 (item.product_id as { unit_name?: string })?.unit_name ||
                 "pcs",
+              product_type: (item.product_id as { product_type?: unknown })?.product_type || item.product_type,
+              product_category: (item.product_id as { product_category?: unknown })?.product_category || item.product_category,
+              category_name:
+                (item.product_id as { product_category?: { category_name?: string } })?.product_category?.category_name ||
+                (item.product_id as { category_name?: string })?.category_name ||
+                item.category_name,
               unit_order: (item.product_id as { unit_of_measurement?: { order: number } })?.unit_of_measurement?.order || 1,
               db_id: item.id,
             })),

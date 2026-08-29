@@ -140,6 +140,22 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
         </tbody>
       </table>
 
+      {/* Attachments Section if present */}
+      {group.attachments && group.attachments.length > 0 && (
+        <div style={{ marginBottom: '8mm', border: '1px dashed #ccc', padding: '8px', borderRadius: '4px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '4px' }}>
+            Attached Documents ({group.attachments.length}):
+          </div>
+          <div style={{ fontSize: '9px', color: '#444', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {group.attachments.map((att, i) => (
+              <span key={i}>
+                • {att.fileName}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Signature Section */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginTop: '10mm' }}>
         {[

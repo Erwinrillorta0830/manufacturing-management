@@ -117,11 +117,6 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lotAllocations = useWatch({ control, name: `items.${index}.lot_allocations` as any });
 
-  // const { errors } = useFormState({ control });
-  // const rowError = Array.isArray(errors.items)
-  //   ? (errors.items[index] as FieldErrors<StockAdjustmentItem>)
-  //   : undefined;
-
   const totalCost = Number(quantity || 0) * Number(costPerUnit || 0);
 
   // If multi-lot or multi-batch allocations exist, render the full-width aligned table rows
@@ -130,9 +125,17 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
     return (
       <>
         {/* Main Product Summary Row */}
-        <tr className="border-b border-border/50 bg-muted/20 hover:bg-muted/30 transition-colors font-semibold">
+        <tr
+          className={`border-b border-border/70 bg-muted/40 hover:bg-muted/50 transition-colors font-semibold ${
+            index > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+          }`}
+        >
           <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">
-            {index + 1}
+            <div className="flex items-center justify-center">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+                {index + 1}
+              </span>
+            </div>
           </td>
           <td className="p-3">
             <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
@@ -156,7 +159,7 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
             </span>
           </td>
           <td className="p-3 w-40 text-center">
-            <span className="text-xs font-bold px-3 py-1 bg-muted/80 rounded-md border border-border/60 inline-block text-center min-w-10">
+            <span className="text-xs font-bold px-3 py-1 bg-background rounded-md border border-border/60 inline-block text-center min-w-10 shadow-2xs">
               {quantity}
             </span>
           </td>
@@ -176,9 +179,9 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
           return (
             <React.Fragment key={`lot-${lgIdx}`}>
               {/* Storage Lot Sub-Header */}
-              <tr className="bg-muted/40 border-b border-border/40 text-xs">
-                <td className="p-2 text-center border-r border-border/50 bg-muted/30"></td>
-                <td colSpan={6} className="px-4 py-1.5 bg-muted/30">
+              <tr className="bg-muted/20 border-b border-border/40 text-xs">
+                <td className="p-2 text-center border-r border-border/50 bg-muted/20"></td>
+                <td colSpan={6} className="px-4 py-1.5 bg-muted/20">
                   <div className="flex items-center justify-between text-xs font-bold text-foreground">
                     <span className="flex items-center gap-1.5 text-primary">
                       <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -240,10 +243,10 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
                             <Badge
                               variant={
                                 batch.qa_status === "GOOD"
-                                  ? "outline"
-                                  : batch.qa_status === "DAMAGED"
-                                  ? "destructive"
-                                  : "secondary"
+                                   ? "outline"
+                                   : batch.qa_status === "DAMAGED"
+                                   ? "destructive"
+                                   : "secondary"
                               }
                               className="text-[8px] py-0 h-3.5 px-1 uppercase"
                             >
@@ -282,6 +285,54 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
       </>
     );
   }
+
+  // Fallback for items without structured multi-lot allocations
+  return (
+    <tr
+      className={`border-b border-border/60 bg-muted/40 hover:bg-muted/50 transition-colors font-semibold ${
+        index > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+      }`}
+    >
+      <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">
+        <div className="flex items-center justify-center">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+            {index + 1}
+          </span>
+        </div>
+      </td>
+      <td className="p-3">
+        <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
+      </td>
+      <td className="p-3 min-w-[280px]">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-foreground leading-tight">{product_name || "—"}</span>
+          {product_code && (
+            <span className="text-[10px] text-muted-foreground font-mono">({product_code})</span>
+          )}
+        </div>
+      </td>
+      <td className="p-3">
+        <span className="text-xs font-bold text-foreground">
+          ₱{Number(costPerUnit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      </td>
+      <td className="p-3">
+        <span className="text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded uppercase shrink-0">
+          {unitName || "-"}
+        </span>
+      </td>
+      <td className="p-3 w-40 text-center">
+        <span className="text-xs font-bold px-3 py-1 bg-background rounded-md border border-border/60 inline-block text-center min-w-10 shadow-2xs">
+          {quantity}
+        </span>
+      </td>
+      <td className="p-3">
+        <span className="text-xs font-bold text-primary dark:text-primary/70">
+          ₱{Number(totalCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      </td>
+    </tr>
+  );
 });
 
 // ——————————————————————————————————————————————————————————————————————————————
@@ -496,6 +547,12 @@ export function StockAdjustmentForm({
                 item.unit_name ||
                 (item.product_id as { unit_name?: string })?.unit_name ||
                 "pcs",
+              product_type: (item.product_id as { product_type?: unknown })?.product_type || item.product_type,
+              product_category: (item.product_id as { product_category?: unknown })?.product_category || item.product_category,
+              category_name:
+                (item.product_id as { product_category?: { category_name?: string } })?.product_category?.category_name ||
+                (item.product_id as { category_name?: string })?.category_name ||
+                item.category_name,
               unit_order: (item.product_id as { unit_of_measurement?: { order: number } })?.unit_of_measurement?.order || 1,
               rfid_tags: item.rfid_tags || [],
               rfid_count: item.rfid_count || 0,

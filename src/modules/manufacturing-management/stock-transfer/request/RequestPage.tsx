@@ -143,7 +143,7 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
 
             <div className="space-y-1.5 min-w-0">
               <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Manual Selection
+                Products
               </label>
               <Button 
                 variant="outline" 
@@ -151,7 +151,7 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
                 onClick={() => setShowProductModal(true)}
               >
                 <ShoppingBag className="w-4 h-4 text-primary" />
-                Browse Products
+                Add Products
               </Button>
             </div>
           </div>

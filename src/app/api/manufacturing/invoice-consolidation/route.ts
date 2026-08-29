@@ -3,6 +3,7 @@ import { DIRECTUS_URL, headers as directusHeaders } from "../directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import {
     allocateInvoicesForConsolidation,
+    allocateInvoicesWithCustomAllocations,
     releaseReservationIds,
 } from "./_reservation-service";
 import { getUserIdFromToken } from "./_auth";
@@ -244,7 +245,7 @@ export async function POST(req: NextRequest) {
         if (authError) return authError;
 
         const body = await req.json();
-        const { branchId, invoiceIds } = body;
+        const { branchId, invoiceIds, customAllocations } = body;
 
         if (!branchId || !invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
             return NextResponse.json({ message: "branchId and invoiceIds are required" }, { status: 400 });
@@ -352,8 +353,13 @@ export async function POST(req: NextRequest) {
 
         if (hasShortage) {
             try {
-                const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);
-                createdReservationIds = allocation.createdReservationIds;
+                if (Array.isArray(customAllocations) && customAllocations.length > 0) {
+                    const allocation = await allocateInvoicesWithCustomAllocations(allocationOrder, customAllocations, userId!);
+                    createdReservationIds = allocation.createdReservationIds;
+                } else {
+                    const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);
+                    createdReservationIds = allocation.createdReservationIds;
+                }
             } catch (error) {
                 const message = error instanceof Error ? error.message : "Failed to reserve invoice stock";
                 return NextResponse.json({ message }, { status: 422 });
