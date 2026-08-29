@@ -94,9 +94,6 @@ export default function QuotationModule() {
                      loadQuotes={loadQuotes}
                      viewQuoteDetails={viewQuoteDetails}
                      allProjects={allProjects}
-                     customers={customers}
-                     handleSearchCustomers={handleSearchCustomers}
-                     registerNewProject={registerNewProject}
                      startCreateQuoteForProject={startCreateQuoteForProject}
                 />
             ) : (

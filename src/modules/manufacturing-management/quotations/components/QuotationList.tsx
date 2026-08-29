@@ -24,10 +24,6 @@ interface QuotationListProps {
     loadQuotes: () => void;
     viewQuoteDetails: (quote: QuotationHeader) => void;
     allProjects: ProjectPortfolioItem[];
-    customers: Customer[];
-    handleSearchCustomers: (search: string) => void;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    registerNewProject: (name: string, customerId: number, customerName: string) => Promise<any>;
     startCreateQuoteForProject: (projName: string, customerId: number, projectId?: number) => void;
 }
 
@@ -37,9 +33,6 @@ export function QuotationList({
     loadQuotes,
     viewQuoteDetails,
     allProjects,
-    customers,
-    handleSearchCustomers,
-    registerNewProject,
     startCreateQuoteForProject
 }: QuotationListProps) {
     const [subTab, setSubTab] = useState<"all" | "active" | "approved" | "rejected">("all");
@@ -47,45 +40,7 @@ export function QuotationList({
     const [listPage, setListPage] = useState(1);
     const [listItemsPerPage, setListItemsPerPage] = useState(10);
 
-    // Project selector modal states
-    const [projectSelectorOpen, setProjectSelectorOpen] = useState(false);
-    const [selectorTab, setSelectorTab] = useState<"select" | "register">("select");
-    const [projectSearch, setProjectSearch] = useState("");
-    const [projectDisplayLimit, setProjectDisplayLimit] = useState(10);
 
-    const [newProjName, setNewProjName] = useState("");
-    const [newProjCustSearch, setNewProjCustSearch] = useState("");
-    const [selectedCustId, setSelectedCustId] = useState<number | null>(null);
-    const [selectedCustName, setSelectedCustName] = useState("");
-    const [custSearchFocused, setCustSearchFocused] = useState(false);
-    const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-    const [formErrors, setFormErrors] = useState<{ name?: string; cust?: string }>({});
-    const custSearchContainerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (custSearchFocused && custSearchContainerRef.current) {
-            const rect = custSearchContainerRef.current.getBoundingClientRect();
-            setDropdownStyle({
-                position: 'fixed',
-                top: rect.bottom + 4,
-                left: rect.left,
-                width: rect.width,
-                zIndex: 9999
-            });
-        }
-    }, [custSearchFocused, newProjCustSearch, customers]);
-
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (custSearchContainerRef.current && !custSearchContainerRef.current.contains(event.target as Node)) {
-                setCustSearchFocused(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, []);
 
     React.useEffect(() => {
         setListPage(1);
@@ -173,14 +128,6 @@ export function QuotationList({
         return filtered;
     }, [allProjectsList, subTab, listSearchQuery]);
 
-    const filteredSelectorProjects = React.useMemo(() => {
-        if (!projectSearch.trim()) return allProjects;
-        const query = projectSearch.toLowerCase().trim();
-        return allProjects.filter(p =>
-            p.projectName.toLowerCase().includes(query) ||
-            p.customerName.toLowerCase().includes(query)
-        );
-    }, [allProjects, projectSearch]);
 
     // Paginated slice
     const paginatedProjects = React.useMemo(() => {
@@ -269,7 +216,7 @@ export function QuotationList({
                 </div>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => setProjectSelectorOpen(true)}
+                        onClick={() => startCreateQuoteForProject("", 0)}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-md cursor-pointer"
                     >
                         <Plus className="h-4 w-4" /> Create Customer Quote
@@ -560,257 +507,7 @@ export function QuotationList({
                 </div>
             )}
 
-            {/* Modal: Select or Register Project Portfolio first */}
-            {projectSelectorOpen && (
-                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-                        {/* Header */}
-                        <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
-                            <div>
-                                <h3 className="text-base font-bold text-foreground">Select Project Portfolio</h3>
-                                <p className="text-xs text-muted-foreground">Select a registered project or register a new one to start creating quotes.</p>
-                            </div>
-                            <button
-                                onClick={() => setProjectSelectorOpen(false)}
-                                className="text-muted-foreground hover:text-foreground text-sm font-semibold p-1 hover:bg-muted rounded-lg transition-colors cursor-pointer"
-                            >
-                                <X className="h-5 w-5" />
-                            </button>
-                        </div>
 
-                        {/* Tabs: Select Existing vs Register New */}
-                        <div className="flex border-b text-xs font-bold bg-muted/5">
-                            <button
-                                onClick={() => setSelectorTab("select")}
-                                className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "select"
-                                    ? "border-primary text-primary bg-background"
-                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
-                                    }`}
-                            >
-                                Choose Existing Project ({filteredSelectorProjects.length})
-                            </button>
-                            <button
-                                onClick={() => setSelectorTab("register")}
-                                className={`flex-1 py-3 text-center border-b-2 transition-all ${selectorTab === "register"
-                                    ? "border-primary text-primary bg-background"
-                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
-                                    }`}
-                            >
-                                ＋ Register New Project
-                            </button>
-                        </div>
-
-                        <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
-                            {selectorTab === "select" ? (
-                                <div className="space-y-4">
-                                    <div className="space-y-3">
-                                        <div className="sticky top-0 bg-card z-10 pb-2 flex items-center justify-between gap-3 pt-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase block whitespace-nowrap">Select Portfolio</label>
-                                            <input
-                                                type="text"
-                                                placeholder="Search by project or customer..."
-                                                value={projectSearch}
-                                                onChange={e => {
-                                                    setProjectSearch(e.target.value);
-                                                    setProjectDisplayLimit(10);
-                                                }}
-                                                className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-semibold"
-                                            />
-                                        </div>
-                                        {filteredSelectorProjects.length === 0 ? (
-                                            <div className="text-center py-8">
-                                                <Folder className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
-                                                <p className="text-xs text-muted-foreground font-semibold">
-                                                    {projectSearch.trim() ? "No projects found matching your search." : "No registered projects yet."}
-                                                </p>
-                                                {!projectSearch.trim() && (
-                                                    <button
-                                                        onClick={() => setSelectorTab("register")}
-                                                        className="mt-3 text-xs text-primary font-bold hover:underline"
-                                                    >
-                                                        Register a new project now
-                                                    </button>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                                                {filteredSelectorProjects.slice(0, projectDisplayLimit).map(proj => (
-                                                    <button
-                                                        key={proj.projectName}
-                                                        onClick={() => {
-                                                            startCreateQuoteForProject(proj.projectName, proj.customerId, proj.projectId);
-                                                            setProjectSelectorOpen(false);
-                                                        }}
-                                                        className="w-full text-left p-3 border rounded-lg hover:border-primary hover:bg-primary/5 transition-all flex items-center justify-between group cursor-pointer"
-                                                    >
-                                                        <div>
-                                                            <span className="text-xs font-bold text-foreground block group-hover:text-primary transition-colors">{proj.projectName}</span>
-                                                            <span className="text-[10px] text-muted-foreground block mt-0.5">{proj.customerName}</span>
-                                                        </div>
-                                                        <div className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground bg-muted/40 px-2 py-0.5 rounded-full">
-                                                            <Clock className="h-3 w-3" /> {proj.quoteCount} quote(s)
-                                                        </div>
-                                                    </button>
-                                                ))}
-                                                {filteredSelectorProjects.length > projectDisplayLimit && (
-                                                    <button
-                                                        onClick={() => setProjectDisplayLimit(prev => prev + 10)}
-                                                        className="w-full py-2 mt-2 text-xs font-bold text-primary hover:bg-primary/5 rounded-lg border border-transparent hover:border-primary/20 transition-all cursor-pointer"
-                                                    >
-                                                        Load More
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    {/* New Project Name */}
-                                    <div>
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
-                                            Project Portfolio Name <span className="text-destructive">*</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={newProjName}
-                                            onChange={e => {
-                                                setNewProjName(e.target.value);
-                                                setFormErrors(prev => ({ ...prev, name: undefined }));
-                                            }}
-                                            placeholder="e.g. PROJECT VERTEX PH-2"
-                                            aria-invalid={Boolean(formErrors.name)}
-                                            className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-bold aria-invalid:border-destructive"
-                                        />
-                                        {formErrors.name && <p className="text-xs text-destructive mt-1">{formErrors.name}</p>}
-                                    </div>
-
-                                    {/* Customer Selection */}
-                                    <div className="relative mt-2" ref={custSearchContainerRef}>
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
-                                            Customer / Client <span className="text-destructive">*</span>
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                placeholder="Type to search customers..."
-                                                value={newProjCustSearch}
-                                                aria-invalid={Boolean(formErrors.cust)}
-                                                onFocus={() => {
-                                                    setCustSearchFocused(true);
-                                                    if (customers.length === 0) handleSearchCustomers("");
-                                                }}
-                                                onChange={e => {
-                                                    setCustSearchFocused(true);
-                                                    handleSearchCustomers(e.target.value);
-                                                    setNewProjCustSearch(e.target.value);
-                                                    setFormErrors(prev => ({ ...prev, cust: undefined }));
-                                                }}
-                                                className="w-full rounded border border-slate-200 dark:border-slate-800 bg-background pl-3 pr-8 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary font-semibold aria-invalid:border-destructive"
-                                            />
-                                            {selectedCustId && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setSelectedCustId(null);
-                                                        setSelectedCustName("");
-                                                        setNewProjCustSearch("");
-                                                    }}
-                                                    className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-                                                >
-                                                    <X className="h-3.5 w-3.5" />
-                                                </button>
-                                            )}
-
-                                            {custSearchFocused && !selectedCustId && (
-                                                <div
-                                                    className="fixed border bg-card rounded-md shadow-lg divide-y overflow-hidden flex flex-col z-[60]"
-                                                    style={dropdownStyle}
-                                                >
-                                                    <div className="overflow-y-auto max-h-[160px]">
-                                                        {customers.slice(0, 10).map(c => (
-                                                            <button
-                                                                key={c.id}
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    setSelectedCustId(Number(c.id));
-                                                                    setSelectedCustName(c.customer_name);
-                                                                    setNewProjCustSearch(`${c.customer_name} (${c.customer_code})`);
-                                                                    setCustSearchFocused(false);
-                                                                    setFormErrors(prev => ({ ...prev, cust: undefined }));
-                                                                }}
-                                                                className="w-full text-left px-3 py-3 text-xs hover:bg-muted transition-colors font-semibold text-foreground block cursor-pointer"
-                                                            >
-                                                                {c.customer_name} ({c.customer_code})
-                                                            </button>
-                                                        ))}
-                                                        {customers.length === 0 && (
-                                                            <div className="px-3 py-2 text-xs text-muted-foreground text-center">
-                                                                No customers found.
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Action button */}
-                                    <button
-                                        type="button"
-                                        onClick={async () => {
-                                            let valid = true;
-                                            const errors: { name?: string; cust?: string } = {};
-                                            const normalizedName = newProjName.trim();
-
-                                            if (!normalizedName) {
-                                                errors.name = "Project name is required";
-                                                valid = false;
-                                            } else {
-                                                // Uniqueness check
-                                                const isDuplicate = allProjects.some(
-                                                    p => p.projectName.toLowerCase() === normalizedName.toLowerCase()
-                                                );
-                                                if (isDuplicate) {
-                                                    errors.name = "A project with this name already exists.";
-                                                    valid = false;
-                                                }
-                                            }
-
-                                            if (!selectedCustId) {
-                                                errors.cust = "Customer selection is required";
-                                                valid = false;
-                                            }
-
-                                            setFormErrors(errors);
-                                            if (!valid) return;
-
-                                            try {
-                                                const newProj = await registerNewProject(normalizedName, selectedCustId!, selectedCustName);
-                                                if (newProj && newProj.id) {
-                                                    startCreateQuoteForProject(newProj.project_name, selectedCustId!, newProj.id);
-                                                    setProjectSelectorOpen(false);
-                                                    // Reset inputs
-                                                    setNewProjName("");
-                                                    setSelectedCustId(null);
-                                                    setSelectedCustName("");
-                                                    setNewProjCustSearch("");
-                                                }
-                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                            } catch (e: any) {
-                                                toast.error(e.message || "Failed to register project");
-                                            }
-                                        }}
-                                        className="w-full rounded-lg bg-primary py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-md mt-2 cursor-pointer text-center"
-                                    >
-                                        Register Portfolio & Create Quote
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
         </>
     );
 }

@@ -184,7 +184,7 @@ export function useQuotation() {
         setSelectedProductsList([]);
         setRemarks("");
         setProjectName(projName);
-        setSelectedCustomerId(String(customerId));
+        setSelectedCustomerId(customerId === 0 ? "" : String(customerId));
         setSelectedPriceTypeId("");
         setShowValidationErrors(false);
 
@@ -208,7 +208,7 @@ export function useQuotation() {
                 handlePriceTypeChange(String(matchedCust.price_type_id));
             }
         } else {
-            setCustomerSearchText(`Customer ID: ${customerId}`);
+            setCustomerSearchText(customerId === 0 ? "" : `Customer ID: ${customerId}`);
         }
 
         // Generate QT-YYYYMMDD-HHMMSS
@@ -567,10 +567,20 @@ export function useQuotation() {
             const datePHT = new Date(dateUTC.getTime() + (8 * 60 * 60 * 1000));
             const quoteDateStr = datePHT.toISOString().replace(/Z$/, "");
 
+            let resolvedProjectId = selectedProjectId;
+            if (!resolvedProjectId && projectName.trim()) {
+                const matchedCust = customers.find(c => String(c.id) === selectedCustomerId);
+                const customerName = matchedCust ? matchedCust.customer_name : "";
+                const newProj = await registerNewProject(projectName.trim(), parseInt(selectedCustomerId), customerName);
+                if (newProj && newProj.id) {
+                    resolvedProjectId = newProj.id;
+                }
+            }
+
             const header = {
                 quote_number: quoteNumber.trim(),
                 customer_id: parseInt(selectedCustomerId),
-                project_id: selectedProjectId,
+                project_id: resolvedProjectId,
                 total_selling_price: totalSelling,
                 total_simulated_cost: totalCost,
                 forex_rate_used: 61.39,

@@ -143,6 +143,7 @@ export function QuotationDetailModal({
         : snapshots;
     
     const isHistoryView = displayQuote.id !== selectedQuote.id;
+    const hasNoQuote = !selectedQuote.id || selectedQuote.id === 0;
 
     const simulatedCost = Number(displayQuote.total_simulated_cost || 0);
     const sellingPrice = Number(displayQuote.total_selling_price || 0);
@@ -197,9 +198,10 @@ export function QuotationDetailModal({
                                     Reject Project
                                 </button>
                                 <button
-                                    disabled={rejecting || routing}
+                                    disabled={rejecting || routing || hasNoQuote}
+                                    title={hasNoQuote ? "This project has no saved quotation yet. Create and save a quote first." : undefined}
                                     onClick={handleApproveAndRoute}
-                                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 animate-pulse"
+                                    className={`bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 ${!hasNoQuote && !routing && !rejecting ? 'animate-pulse' : ''}`}
                                 >
                                     {routing ? (
                                         <>
