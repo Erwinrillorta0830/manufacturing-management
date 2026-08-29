@@ -15,8 +15,12 @@ export interface MMLot {
   updated_by?: number | null;
   // UI helpers
   branch_name?: string;
+  branch_code?: string;
   unit_name?: string;
   current_stock_quantity?: number;
+  is_bad_stock?: boolean;
+  branch_is_bad_stock?: boolean;
+  is_quarantine?: boolean;
 }
 
 export interface MMInventoryLot {
@@ -75,6 +79,7 @@ export interface LotStoredProductSummary {
   primary_classification?: ProductClassification;
   primary_classification_label?: string;
   is_empty: boolean;
+  is_bad_stock?: boolean;
 }
 
 export interface CreateInventoryLotPayload {

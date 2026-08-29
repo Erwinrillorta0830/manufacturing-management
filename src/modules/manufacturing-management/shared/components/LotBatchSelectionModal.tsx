@@ -37,7 +37,15 @@ import {
   BatchRowAllocation,
   LotStoredProductSummary,
 } from '../types/lot-tracking.types';
-import { fetchLotsByBranch, fetchInventoryLots, fetchBatchOnhand, resolveProductClassification } from '../services/lot-tracking.service';
+import {
+  fetchLotsByBranch,
+  fetchInventoryLots,
+  fetchBatchOnhand,
+  resolveProductClassification,
+  isBadStockLot,
+  isLotCompatibleForAllocation,
+  checkLotProductTypeCompatibility,
+} from '../services/lot-tracking.service';
 import { SearchableSelect } from './SearchableSelect';
 
 export type ProductClassification = 'RM' | 'PKG' | 'FG' | 'OTHER';
@@ -526,16 +534,27 @@ export function LotBatchSelectionModal({
         }
 
         // 3. Fresh clean initialization for new product:
-        // Find first active lot that matches UOM AND is product type compatible (empty or matching type)
+        // Prioritize finding an active, UOM-matching, and product-type compatible lot (matching bad stock preference)
         const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
+        const preferBad = initialValues?.qa_status && initialValues.qa_status !== 'GOOD';
 
         const compatibleLot = (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          const lotIsBad = isBadStockLot(l);
+          if (preferBad && !lotIsBad) return false;
+          if (!preferBad && lotIsBad) return false;
           const stored = storedMap.get(Number(l.lot_id));
           if (!stored || stored.is_empty) return true;
           if (targetClass.code === 'OTHER') return true;
           return stored.primary_classification === targetClass.code;
+        }) || (lotsData || []).find((l) => {
+          if (l.status && l.status !== 'ACTIVE') return false;
+          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          const lotIsBad = isBadStockLot(l);
+          if (preferBad && !lotIsBad) return false;
+          if (!preferBad && lotIsBad) return false;
+          return true;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
           if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
@@ -544,6 +563,10 @@ export function LotBatchSelectionModal({
 
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
+          const isLotBad = isBadStockLot(compatibleLot);
+          const defaultQA: QAStatus = isLotBad
+            ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'DAMAGED')
+            : 'GOOD';
           setLotGroups([
             {
               lot_id: lId,
@@ -560,7 +583,7 @@ export function LotBatchSelectionModal({
                   manufacturing_date: '',
                   expiry_date: '',
                   quantity: requestedQuantity,
-                  qa_status: 'GOOD',
+                  qa_status: defaultQA,
                 },
               ],
             },
@@ -597,12 +620,17 @@ export function LotBatchSelectionModal({
   const handleAddLotGroup = () => {
     const usedLotIds = new Set(lotGroups.map((g) => Number(g.lot_id)));
 
-    // Prioritize selecting an active, UOM-matching, and product-type compatible lot
+    // Prioritize selecting an active, UOM-matching, and product-type compatible lot (and matching bad stock state)
+    const currentIsBad = lotGroups.some((g) => (g.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD'));
+
     const nextLot =
       lots.find((l) => {
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
         if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        const lotIsBad = isBadStockLot(l);
+        if (currentIsBad && !lotIsBad) return false;
+        if (!currentIsBad && lotIsBad) return false;
         const comp = checkLotCompatibility(Number(l.lot_id));
         return comp.isCompatible;
       }) ||
@@ -610,6 +638,9 @@ export function LotBatchSelectionModal({
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
         if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        const lotIsBad = isBadStockLot(l);
+        if (currentIsBad && !lotIsBad) return false;
+        if (!currentIsBad && lotIsBad) return false;
         return true;
       }) ||
       lots.find((l) => !usedLotIds.has(Number(l.lot_id))) ||
@@ -619,6 +650,8 @@ export function LotBatchSelectionModal({
 
     const remainingQty = Math.max(1, quantityDifference);
     const lId = Number(nextLot.lot_id);
+    const isNextLotBad = isBadStockLot(nextLot);
+    const defaultQA: QAStatus = isNextLotBad ? 'DAMAGED' : 'GOOD';
 
     const newGroup: LotAllocationGroup = {
       lot_id: lId,
@@ -635,7 +668,7 @@ export function LotBatchSelectionModal({
           manufacturing_date: '',
           expiry_date: '',
           quantity: remainingQty,
-          qa_status: 'GOOD',
+          qa_status: defaultQA,
         },
       ],
     };
@@ -654,9 +687,21 @@ export function LotBatchSelectionModal({
     const matchedLot = lots.find((l) => Number(l.lot_id) === newLotId);
     if (!matchedLot) return;
 
+    const newLotIsBad = isBadStockLot(matchedLot);
+
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
+          const updatedBatches = (g.batches || []).map((b) => {
+            if (newLotIsBad && b.qa_status === 'GOOD') {
+              return { ...b, qa_status: 'DAMAGED' as QAStatus };
+            }
+            if (!newLotIsBad && b.qa_status !== 'GOOD') {
+              return { ...b, qa_status: 'GOOD' as QAStatus };
+            }
+            return b;
+          });
+
           return {
             ...g,
             lot_id: newLotId,
@@ -666,6 +711,7 @@ export function LotBatchSelectionModal({
             unit_name: matchedLot.unit_name ?? null,
             active_batch_count: lotBatchCountMap.get(newLotId) || 0,
             current_stock_quantity: lotStockQtyMap.get(newLotId) || 0,
+            batches: updatedBatches,
           };
         }
         return g;
@@ -678,12 +724,16 @@ export function LotBatchSelectionModal({
     setLotGroups(
       lotGroups.map((g, i) => {
         if (i === groupIndex) {
+          const groupLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+          const isLotBad = isBadStockLot(groupLot);
+          const defaultQA: QAStatus = isLotBad ? 'DAMAGED' : 'GOOD';
+
           const newBatch: BatchRowAllocation = {
             batch_no: '',
             manufacturing_date: '',
             expiry_date: '',
             quantity: 1,
-            qa_status: 'GOOD',
+            qa_status: defaultQA,
           };
           return {
             ...g,
@@ -796,6 +846,23 @@ export function LotBatchSelectionModal({
           }, but product is ${productUomName}.`
         );
       }
+
+      // 3.5 Bad Stock vs Standard Storage Lot Check
+      const lotObj = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+      const lotIsBad = isBadStockLot(lotObj);
+
+      (g.batches || []).forEach((b, bIdx) => {
+        const batchIsBad = b.qa_status && b.qa_status !== 'GOOD';
+        if (batchIsBad && !lotIsBad) {
+          errors.push(
+            `Lot #${gIdx + 1} (${g.lot_name}), Batch #${bIdx + 1} (${b.batch_no || 'Unassigned'}): Bad stock (${b.qa_status}) shouldn't be allocated here! Standard storage lots cannot store damaged/quarantine stock. Please allocate to a Bad Stock or Quarantine lot.`
+          );
+        } else if (!batchIsBad && lotIsBad) {
+          errors.push(
+            `Lot #${gIdx + 1} (${g.lot_name}), Batch #${bIdx + 1} (${b.batch_no || 'Unassigned'}): GOOD stock shouldn't be allocated here! Bad Stock / Quarantine storage lots only accept damaged or quarantined stock.`
+          );
+        }
+      });
 
       // 4. Current Quantity vs Allocating Quantity vs Max Capacity Check
       const currentStockQty = g.current_stock_quantity || 0;
@@ -986,6 +1053,11 @@ export function LotBatchSelectionModal({
                 const projectedTotalStock = currentStockQty + groupQtyTotal;
                 const maxCap = group.max_batch_capacity || 0;
 
+                const isGroupBadStock = isBadStockLot(groupLot);
+                const hasBadStockConflict = isGroupBadStock
+                  ? (group.batches || []).some((b) => b.qa_status === 'GOOD')
+                  : (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
+
                 const availableSpace = Math.max(0, maxCap - currentStockQty);
                 const isCapacityExceeded = maxCap > 0 && projectedTotalStock > maxCap;
                 const isNearCapacity = maxCap > 0 && projectedTotalStock >= maxCap * 0.8 && !isCapacityExceeded;
@@ -998,15 +1070,17 @@ export function LotBatchSelectionModal({
                 return (
                   <div
                     key={`lot-group-${gIdx}`}
-                    className={`bg-card rounded-2xl border transition-all shadow-sm ${!isTypeMatch
-                      ? 'border-red-500 dark:border-red-800 ring-1 ring-red-500/20'
-                      : !isUomMatch
-                        ? 'border-rose-400 dark:border-rose-800'
-                        : isCapacityExceeded
-                          ? 'border-red-500 dark:border-red-700 ring-1 ring-red-500/20'
-                          : isNearCapacity
-                            ? 'border-amber-400 dark:border-amber-700'
-                            : 'border-border'
+                    className={`bg-card rounded-2xl border transition-all shadow-sm ${hasBadStockConflict
+                      ? 'border-red-600 dark:border-red-700 ring-2 ring-red-500/30'
+                      : !isTypeMatch
+                        ? 'border-red-500 dark:border-red-800 ring-1 ring-red-500/20'
+                        : !isUomMatch
+                          ? 'border-rose-400 dark:border-rose-800'
+                          : isCapacityExceeded
+                            ? 'border-red-500 dark:border-red-700 ring-1 ring-red-500/20'
+                            : isNearCapacity
+                              ? 'border-amber-400 dark:border-amber-700'
+                              : 'border-border'
                       }`}
                   >
                     {/* LOT HEADER & CONTROLS */}
@@ -1017,39 +1091,64 @@ export function LotBatchSelectionModal({
                             #{gIdx + 1}
                           </span>
                           <div className="w-80">
-                            <SearchableSelect
-                              options={lots.map((l) => {
-                                const isMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                            {(() => {
+                              const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
+                              const compatibleLots = lots.filter((l) => {
+                                if (l.status && l.status !== 'ACTIVE') return false;
+                                const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                                if (!isUomMatch) return false;
                                 const lComp = checkLotCompatibility(Number(l.lot_id));
-                                const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                if (!lComp.isCompatible) return false;
+                                const lotIsBad = isBadStockLot(l);
+                                if (groupIsBad && !lotIsBad) return false;
+                                if (!groupIsBad && lotIsBad) return false;
+                                return true;
+                              });
 
-                                let statusTag = '';
-                                if (!isMatch) {
-                                  statusTag = ' [UOM Mismatch]';
-                                } else if (!lComp.isCompatible) {
-                                  statusTag = lStored?.is_draft_allocation
-                                    ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
-                                    : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
-                                } else if (lStored && !lStored.is_empty) {
-                                  statusTag = lStored.is_draft_allocation
-                                    ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
-                                    : ` [Compatible: ${lStored.primary_classification_label}]`;
-                                } else {
-                                  statusTag = ' [Empty Lot]';
-                                }
+                              // Always include currently selected lot so it remains selectable if already set
+                              const optionsLots = lots.filter(
+                                (l) => Number(l.lot_id) === Number(group.lot_id) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
+                              );
 
-                                return {
-                                  value: String(l.lot_id),
-                                  label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
-                                };
-                              })}
-                              value={String(group.lot_id)}
-                              onValueChange={(val) => handleChangeLot(gIdx, val)}
-                              placeholder="Select Storage Lot / Bay..."
-                              searchPlaceholder="Search lot name..."
-                              emptyMessage="No storage lots found."
-                              className="h-9 text-xs font-bold"
-                            />
+                              return (
+                                <SearchableSelect
+                                  options={optionsLots.map((l) => {
+                                    const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                                    const lComp = checkLotCompatibility(Number(l.lot_id));
+                                    const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                    const lotIsBad = isBadStockLot(l);
+
+                                    let statusTag = '';
+                                    if (!isUomMatch) {
+                                      statusTag = ' [UOM Mismatch]';
+                                    } else if (!lComp.isCompatible) {
+                                      statusTag = lStored?.is_draft_allocation
+                                        ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
+                                        : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
+                                    } else if (lotIsBad) {
+                                      statusTag = ' [Bad Stock / Quarantine]';
+                                    } else if (lStored && !lStored.is_empty) {
+                                      statusTag = lStored.is_draft_allocation
+                                        ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
+                                        : ` [Compatible: ${lStored.primary_classification_label}]`;
+                                    } else {
+                                      statusTag = ' [Empty Lot]';
+                                    }
+
+                                    return {
+                                      value: String(l.lot_id),
+                                      label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
+                                    };
+                                  })}
+                                  value={String(group.lot_id)}
+                                  onValueChange={(val) => handleChangeLot(gIdx, val)}
+                                  placeholder="Select Storage Lot / Bay..."
+                                  searchPlaceholder="Search lot name..."
+                                  emptyMessage="No compatible storage lots found for this UOM and product type."
+                                  className="h-9 text-xs font-bold"
+                                />
+                              );
+                            })()}
                           </div>
                         </div>
 
@@ -1087,6 +1186,25 @@ export function LotBatchSelectionModal({
                                 : `Type Mismatch: Stores ${groupComp.storedLabel}`}
                             </Badge>
                           )}
+
+                          {/* BAD STOCK STATUS BADGE */}
+                          {isGroupBadStock ? (
+                            <Badge variant="outline" className={`text-[10px] font-bold flex items-center gap-1 ${
+                              hasBadStockConflict
+                                ? 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/40 animate-pulse'
+                                : 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40'
+                            }`}>
+                              <AlertTriangle className="w-3 h-3" />
+                              {hasBadStockConflict
+                                ? "Bad Stock Lot: GOOD stock shouldn't be allocated here"
+                                : "Bad Stock Lot (Damaged / Quarantined / Expired)"}
+                            </Badge>
+                          ) : hasBadStockConflict ? (
+                            <Badge variant="destructive" className="text-[10px] flex items-center gap-1 font-bold animate-pulse shadow-sm">
+                              <AlertTriangle className="w-3 h-3" />
+                              Standard Lot: Bad stock shouldn&apos;t be allocated here
+                            </Badge>
+                          ) : null}
 
                           <Badge
                             variant={isCapacityExceeded ? 'destructive' : 'secondary'}
@@ -1436,7 +1554,7 @@ export function LotBatchSelectionModal({
                               </div>
 
                               {/* QA Status */}
-                              <div className="w-36 shrink-0">
+                              <div className="w-44 shrink-0">
                                 <Label className="text-[10px] font-bold text-muted-foreground uppercase mb-1 block">
                                   QA Status *
                                 </Label>
@@ -1444,32 +1562,50 @@ export function LotBatchSelectionModal({
                                   value={batch.qa_status}
                                   onValueChange={(val) => handleUpdateBatchField(gIdx, bIdx, 'qa_status', val as QAStatus)}
                                 >
-                                  <SelectTrigger className="h-9 text-xs">
+                                  <SelectTrigger
+                                    className={`h-9 text-xs font-semibold ${
+                                      (!isGroupBadStock && batch.qa_status !== 'GOOD') || (isGroupBadStock && batch.qa_status === 'GOOD')
+                                        ? 'border-destructive ring-1 ring-destructive/40 text-destructive bg-destructive/5'
+                                        : ''
+                                    }`}
+                                  >
                                     <SelectValue placeholder="Status" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="GOOD" className="text-xs">
-                                      <span className="flex items-center gap-1.5">
+                                      <span className="flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
                                         <span className="w-2 h-2 rounded-full bg-emerald-500" /> GOOD
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="DAMAGED" className="text-xs">
-                                      <span className="flex items-center gap-1.5">
+                                      <span className="flex items-center gap-1.5 font-bold text-rose-600 dark:text-rose-400">
                                         <span className="w-2 h-2 rounded-full bg-rose-500" /> DAMAGED
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="QUARANTINED" className="text-xs">
-                                      <span className="flex items-center gap-1.5">
+                                      <span className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
                                         <span className="w-2 h-2 rounded-full bg-amber-500" /> QUARANTINED
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="EXPIRED" className="text-xs">
-                                      <span className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full bg-red-600" /> EXPIRED
+                                      <span className="flex items-center gap-1.5 font-bold text-purple-600 dark:text-purple-400">
+                                        <span className="w-2 h-2 rounded-full bg-purple-500" /> EXPIRED
                                       </span>
                                     </SelectItem>
                                   </SelectContent>
                                 </Select>
+                                {!isGroupBadStock && batch.qa_status !== 'GOOD' && (
+                                  <span className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-1 leading-tight">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    Bad stock shouldn&apos;t be allocated here
+                                  </span>
+                                )}
+                                {isGroupBadStock && batch.qa_status === 'GOOD' && (
+                                  <span className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-1 leading-tight">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    Good stock shouldn&apos;t be allocated here
+                                  </span>
+                                )}
                               </div>
 
                               {/* Remove Batch Split */}

@@ -56,6 +56,7 @@ import {
   resolveProductClassification,
   buildLotStoredProductSummaryMap,
   checkLotProductTypeCompatibility,
+  isBadStockLot,
 } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { allocateStockSync } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
 import { SearchableSelect } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
@@ -713,6 +714,23 @@ export function StockConversionModal({
             errs.push(`Lot #${gIdx + 1} (${group.lot_name}): Allocating ${groupQty.toLocaleString()} ${targetUnit?.name} exceeds capacity! Current stock: ${currentStock.toLocaleString()} ${targetUnit?.name}, Max capacity: ${maxCap.toLocaleString()} ${targetUnit?.name}. Only ${availableSpace.toLocaleString()} ${targetUnit?.name} space remains (exceeded by ${overage.toLocaleString()} ${targetUnit?.name}).`);
           }
         }
+
+        // Bad Stock vs Standard Storage Rack Check
+        const lotObj = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
+        const lotIsBad = isBadStockLot(lotObj);
+
+        (group.batches || []).forEach((b, bIdx) => {
+          const batchIsBad = b.qa_status && b.qa_status !== "GOOD";
+          if (batchIsBad && !lotIsBad) {
+            errs.push(
+              `Lot #${gIdx + 1} (${group.lot_name}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate bad/damaged stock (${b.qa_status}) into standard storage rack. Bad stock must be placed in a Bad Stock / Quarantine rack or branch.`
+            );
+          } else if (!batchIsBad && lotIsBad) {
+            errs.push(
+              `Lot #${gIdx + 1} (${group.lot_name}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate GOOD stock into a Bad Stock / Quarantine storage rack. Only DAMAGED, QUARANTINED, or EXPIRED stock can be allocated here.`
+            );
+          }
+        });
 
         // Per-Batch Row Validations
         if (!group.batches || group.batches.length === 0) {
@@ -1402,11 +1420,18 @@ export function StockConversionModal({
                   const typeCompat = checkLotProductTypeCompatibility(lotStored, targetClassification);
                   const isTypeConflict = typeCompat.isTypeMismatch;
 
+                  const isGroupBadStock = isBadStockLot(groupLot);
+                  const hasBadStockConflict = isGroupBadStock
+                    ? (group.batches || []).some((b) => b.qa_status === "GOOD")
+                    : (group.batches || []).some((b) => b.qa_status && b.qa_status !== "GOOD");
+
                   return (
                     <div
                       key={`target-lot-group-${gIdx}`}
                       className={`bg-card rounded-xl border transition-all shadow-sm ${
-                        isTypeConflict
+                        hasBadStockConflict
+                          ? "border-destructive dark:border-destructive/80 ring-2 ring-destructive/40"
+                          : isTypeConflict
                           ? "border-destructive dark:border-destructive/80 ring-1 ring-destructive/30"
                           : isUomMismatch
                           ? "border-amber-400 dark:border-amber-700"
@@ -1423,64 +1448,91 @@ export function StockConversionModal({
                               #{gIdx + 1}
                             </span>
                             <div className="w-72 sm:w-80">
-                              <SearchableSelect
-                                options={lots.map((lot) => {
+                              {(() => {
+                                const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== "GOOD");
+                                const compatibleLots = lots.filter((lot) => {
+                                  if (lot.status && lot.status !== "ACTIVE") return false;
                                   const lUomId = lot.unit_id ? Number(lot.unit_id) : null;
-                                  const lStock = Number(lot.current_stock_quantity || 0);
-                                  const lCap = Number(lot.max_batch_capacity || 0);
-                                  const isMism = Boolean(
-                                    lUomId &&
-                                      targetUnit &&
-                                      Number(targetUnit.unitId) !== lUomId
-                                  );
-                                  const isF = lCap > 0 && lStock >= lCap;
+                                  const isUomMatch = !lUomId || (targetUnit && Number(targetUnit.unitId) === lUomId);
+                                  if (!isUomMatch) return false;
                                   const stored = lotStoredSummaryMap.get(Number(lot.lot_id));
                                   const tCompat = checkLotProductTypeCompatibility(stored, targetClassification);
-                                  const isTConflict = tCompat.isTypeMismatch;
-                                  const isDraft = stored?.is_draft_allocation;
-                                  const typeSourceLabel = isDraft ? "Form Draft" : "Warehouse";
+                                  if (!tCompat.isCompatible) return false;
+                                  const lotIsBad = isBadStockLot(lot);
+                                  if (groupIsBad && !lotIsBad) return false;
+                                  if (!groupIsBad && lotIsBad) return false;
+                                  return true;
+                                });
 
-                                  let badgeText: string | undefined;
-                                  let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+                                const optionsLots = lots.filter(
+                                  (l) => Number(l.lot_id) === Number(group.lot_id) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
+                                );
 
-                                  if (isTConflict && stored) {
-                                    badgeText = `Type Mismatch: ${typeSourceLabel} (${stored.primary_classification_label})`;
-                                    badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                  } else if (isMism) {
-                                    badgeText = `Unit Mismatch (${lot.unit_name || `UOM #${lUomId}`})`;
-                                    badgeClass = "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 font-bold";
-                                  } else if (isF) {
-                                    badgeText = `Full (${lStock}/${lCap})`;
-                                    badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                  } else if (stored && !stored.is_empty && stored.primary_classification === targetClassification.code) {
-                                    badgeText = `Type: Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                    badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                  } else if (stored?.is_empty) {
-                                    badgeText = "Empty Lot";
-                                    badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                  } else if (lCap > 0) {
-                                    badgeText = `Stock: ${lStock}/${lCap} (${Math.round((lStock / lCap) * 100)}%)`;
-                                  }
+                                return (
+                                  <SearchableSelect
+                                    options={optionsLots.map((lot) => {
+                                      const lUomId = lot.unit_id ? Number(lot.unit_id) : null;
+                                      const lStock = Number(lot.current_stock_quantity || 0);
+                                      const lCap = Number(lot.max_batch_capacity || 0);
+                                      const isMism = Boolean(
+                                        lUomId &&
+                                          targetUnit &&
+                                          Number(targetUnit.unitId) !== lUomId
+                                      );
+                                      const isF = lCap > 0 && lStock >= lCap;
+                                      const stored = lotStoredSummaryMap.get(Number(lot.lot_id));
+                                      const tCompat = checkLotProductTypeCompatibility(stored, targetClassification);
+                                      const isTConflict = tCompat.isTypeMismatch;
+                                      const isDraft = stored?.is_draft_allocation;
+                                      const typeSourceLabel = isDraft ? "Form Draft" : "Warehouse";
+                                      const lotIsBad = isBadStockLot(lot);
 
-                                  const prefix = isTConflict ? "🚫 " : isMism ? "⚠️ " : isF ? "🚫 " : "";
-                                  const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                  const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+                                      let badgeText: string | undefined;
+                                      let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
 
-                                  return {
-                                    value: String(lot.lot_id),
-                                    label: `${prefix}${lot.lot_name}${capStr}`,
-                                    subLabel: `Current Stock: ${lStock.toLocaleString()} ${lot.unit_name || targetUnit?.name || "units"}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                    badge: badgeText,
-                                    badgeClassName: badgeClass,
-                                  };
-                                })}
-                                value={String(group.lot_id)}
-                                onValueChange={(val) => handleChangeLot(gIdx, val)}
-                                placeholder="Select Storage Rack / Lot..."
-                                searchPlaceholder="Search lot name..."
-                                emptyMessage="No storage lots found."
-                                className="h-8 text-xs font-bold"
-                              />
+                                      if (isTConflict && stored) {
+                                        badgeText = `Type Mismatch: ${typeSourceLabel} (${stored.primary_classification_label})`;
+                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                      } else if (isMism) {
+                                        badgeText = `Unit Mismatch (${lot.unit_name || `UOM #${lUomId}`})`;
+                                        badgeClass = "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 font-bold";
+                                      } else if (isF) {
+                                        badgeText = `Full (${lStock}/${lCap})`;
+                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                      } else if (lotIsBad) {
+                                        badgeText = "Bad Stock / Quarantine";
+                                        badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
+                                      } else if (stored && !stored.is_empty && stored.primary_classification === targetClassification.code) {
+                                        badgeText = `Type: Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                        badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                      } else if (stored?.is_empty) {
+                                        badgeText = "Empty Lot";
+                                        badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                      } else if (lCap > 0) {
+                                        badgeText = `Stock: ${lStock}/${lCap} (${Math.round((lStock / lCap) * 100)}%)`;
+                                      }
+
+                                      const prefix = isTConflict ? "🚫 " : isMism ? "⚠️ " : isF ? "🚫 " : "";
+                                      const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                      const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+
+                                      return {
+                                        value: String(lot.lot_id),
+                                        label: `${prefix}${lot.lot_name}${capStr}`,
+                                        subLabel: `Current Stock: ${lStock.toLocaleString()} ${lot.unit_name || targetUnit?.name || "units"}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                        badge: badgeText,
+                                        badgeClassName: badgeClass,
+                                      };
+                                    })}
+                                    value={String(group.lot_id)}
+                                    onValueChange={(val) => handleChangeLot(gIdx, val)}
+                                    placeholder="Select Storage Rack / Lot..."
+                                    searchPlaceholder="Search lot name..."
+                                    emptyMessage="No compatible storage lots found for this UOM and product type."
+                                    className="h-8 text-xs font-bold"
+                                  />
+                                );
+                              })()}
                             </div>
                           </div>
 
@@ -1498,6 +1550,25 @@ export function StockConversionModal({
                             ) : lotStored?.is_empty ? (
                               <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30">
                                 Type: Unassigned (Empty Lot)
+                              </Badge>
+                            ) : null}
+
+                            {/* Bad Stock Status Badge */}
+                            {isGroupBadStock ? (
+                              <Badge variant="outline" className={`text-[9px] font-bold flex items-center gap-1 ${
+                                hasBadStockConflict
+                                  ? "bg-destructive/15 text-destructive border-destructive/40 animate-pulse"
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40"
+                              }`}>
+                                <AlertTriangle className="w-3 h-3" />
+                                {hasBadStockConflict
+                                  ? "Bad Stock Rack: GOOD stock shouldn't be allocated here"
+                                  : "Bad Stock Rack (Damaged / Quarantined / Expired)"}
+                              </Badge>
+                            ) : hasBadStockConflict ? (
+                              <Badge variant="destructive" className="text-[9px] flex items-center gap-1 font-bold animate-pulse shadow-sm">
+                                <AlertTriangle className="w-3 h-3" />
+                                Standard Rack: Bad stock shouldn&apos;t be allocated here
                               </Badge>
                             ) : null}
 
@@ -1842,38 +1913,54 @@ export function StockConversionModal({
                               </div>
 
                               {/* QA Status */}
-                              <div className="w-28 shrink-0 space-y-1">
+                              <div className="w-36 shrink-0 space-y-1">
                                 <Label className="text-[10px] font-bold text-muted-foreground uppercase block">QA Status *</Label>
                                 <Select
                                   value={batch.qa_status || "GOOD"}
                                   onValueChange={(val) => handleBatchChange(gIdx, bIdx, "qa_status", val as QAStatus)}
                                 >
-                                  <SelectTrigger className="h-8 text-xs font-semibold">
+                                  <SelectTrigger className={`h-8 text-xs font-semibold ${
+                                    (!isGroupBadStock && batch.qa_status && batch.qa_status !== 'GOOD') || (isGroupBadStock && batch.qa_status === 'GOOD')
+                                      ? 'border-destructive ring-1 ring-destructive/40 text-destructive bg-destructive/5'
+                                      : ''
+                                  }`}>
                                     <SelectValue placeholder="Status" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="GOOD" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-medium">
+                                      <span className="flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
                                         <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> GOOD
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="DAMAGED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-medium">
+                                      <span className="flex items-center gap-1.5 font-bold text-rose-600 dark:text-rose-400">
                                         <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> DAMAGED
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="QUARANTINED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-medium">
+                                      <span className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
                                         <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> QUARANTINED
                                       </span>
                                     </SelectItem>
                                     <SelectItem value="EXPIRED" className="text-xs">
-                                      <span className="flex items-center gap-1.5 font-medium">
-                                        <span className="w-2 h-2 rounded-full bg-slate-500 inline-block" /> EXPIRED
+                                      <span className="flex items-center gap-1.5 font-bold text-purple-600 dark:text-purple-400">
+                                        <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" /> EXPIRED
                                       </span>
                                     </SelectItem>
                                   </SelectContent>
                                 </Select>
+                                {!isGroupBadStock && batch.qa_status && batch.qa_status !== 'GOOD' && (
+                                  <span className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-0.5 leading-tight">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    Bad stock shouldn&apos;t be allocated here
+                                  </span>
+                                )}
+                                {isGroupBadStock && batch.qa_status === 'GOOD' && (
+                                  <span className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-0.5 leading-tight">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    Good stock shouldn&apos;t be allocated here
+                                  </span>
+                                )}
                               </div>
 
                               {/* Remove Button */}

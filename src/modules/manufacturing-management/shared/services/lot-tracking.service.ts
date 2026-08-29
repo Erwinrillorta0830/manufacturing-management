@@ -48,6 +48,9 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
           ? Number((rawBranch as { id?: number; branch_id?: number }).id || (rawBranch as { id?: number; branch_id?: number }).branch_id || 0)
           : Number(rawBranch || 0);
 
+        const isBad = Boolean(r.is_bad_stock || r.isBadStock || r.branch_is_bad_stock || r.branchIsBadStock);
+        const branchIsBad = Boolean(r.branch_is_bad_stock || r.branchIsBadStock);
+
         return {
           lot_id: Number(r.lot_id || r.lotId || r.id),
           lot_name: String(r.lot_name || r.lotName || `Lot #${r.lot_id || r.lotId || r.id}`),
@@ -58,6 +61,9 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
           status: (r.status as 'ACTIVE' | 'CLOSED' | 'INACTIVE') || 'ACTIVE',
           unit_name: (r.unit_name || r.uomName) as string | undefined,
           branch_name: (r.branch_name || r.branchName) as string | undefined,
+          branch_code: (r.branch_code || r.branchCode) as string | undefined,
+          is_bad_stock: isBad,
+          branch_is_bad_stock: branchIsBad,
         };
       });
 
@@ -74,13 +80,13 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
     }
     const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
     
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name${queryStr}`, {
+    let res = await fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
       headers: getHeaders(token),
       cache: "no-store",
     });
 
     if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name${queryStr}`, {
+      res = await fetch(`${DIRECTUS_URL}/items/lots?limit=-1&fields=*,unit_id.unit_name,branch_id.branch_name,branch_id.branch_code,branch_id.isBadStock${queryStr}`, {
         headers: getHeaders(token),
         cache: "no-store",
       });
@@ -93,17 +99,27 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
 
     const data = await res.json();
     const rows = data.data || [];
-    return rows.map((r: Record<string, unknown>) => ({
-      lot_id: Number(r.lot_id || r.id),
-      lot_name: String(r.lot_name || `Lot #${r.lot_id || r.id}`),
-      branch_id: Number(typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as { id?: number }).id : r.branch_id || branchId || 0),
-      unit_id: r.unit_id ? Number(typeof r.unit_id === "object" ? (r.unit_id as { unit_id?: number; id?: number }).unit_id || (r.unit_id as { unit_id?: number; id?: number }).id : r.unit_id) : null,
-      max_batch_capacity: Number(r.max_batch_capacity || 10),
-      description: (r.description as string) || null,
-      status: (r.status as 'ACTIVE' | 'CLOSED' | 'INACTIVE') || 'ACTIVE',
-      unit_name: typeof r.unit_id === "object" && r.unit_id !== null ? (r.unit_id as { unit_name?: string }).unit_name : undefined,
-      branch_name: typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as { branch_name?: string }).branch_name : undefined,
-    }));
+    return rows.map((r: Record<string, unknown>) => {
+      const bObj = typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as { id?: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string }) : null;
+      const bId = bObj ? Number(bObj.id || 0) : Number(r.branch_id || branchId || 0);
+      const isBadBranch = bObj ? (Number(bObj.isBadStock) === 1 || bObj.isBadStock === true || bObj.isBadStock === "1") : false;
+      const isBad = isBadBranch || Boolean(r.is_bad_stock);
+
+      return {
+        lot_id: Number(r.lot_id || r.id),
+        lot_name: String(r.lot_name || `Lot #${r.lot_id || r.id}`),
+        branch_id: bId,
+        unit_id: r.unit_id ? Number(typeof r.unit_id === "object" ? (r.unit_id as { unit_id?: number; id?: number }).unit_id || (r.unit_id as { unit_id?: number; id?: number }).id : r.unit_id) : null,
+        max_batch_capacity: Number(r.max_batch_capacity || 10),
+        description: (r.description as string) || null,
+        status: (r.status as 'ACTIVE' | 'CLOSED' | 'INACTIVE') || 'ACTIVE',
+        unit_name: typeof r.unit_id === "object" && r.unit_id !== null ? (r.unit_id as { unit_name?: string }).unit_name : undefined,
+        branch_name: bObj?.branch_name || (typeof r.branch_name === "string" ? r.branch_name : undefined),
+        branch_code: bObj?.branch_code || (typeof r.branch_code === "string" ? r.branch_code : undefined),
+        is_bad_stock: isBad,
+        branch_is_bad_stock: isBadBranch,
+      };
+    });
   } catch (err) {
     console.error("[LotTracking] Error fetching lots:", err);
     return [];
@@ -1190,6 +1206,133 @@ export function checkLotProductTypeCompatibility(
   }
 
   return { isCompatible: true, isTypeMismatch: false };
+}
+
+/**
+ * Detects if a lot or its parent branch is designated for Bad Stock, Quarantine, or Damaged goods.
+ */
+export function isBadStockLot(
+  lot?: MMLot,
+  branch?: { isBadStock?: number | boolean | string | null; branch_name?: string } | number | boolean
+): boolean {
+  if (!lot && !branch) return false;
+
+  // 1. Check lot object flags
+  if (lot?.is_bad_stock === true || lot?.branch_is_bad_stock === true || lot?.is_quarantine === true) return true;
+
+  // 2. Check branch object or boolean
+  if (typeof branch === "boolean") return branch;
+  if (typeof branch === "number") return branch === 1;
+  if (typeof branch === "object" && branch !== null) {
+    if (branch.isBadStock === 1 || branch.isBadStock === true || branch.isBadStock === "1") return true;
+    const bName = String(branch.branch_name || "").toLowerCase();
+    if (
+      bName.includes("bad branch") ||
+      bName.includes("bad stock") ||
+      bName.includes("bad order") ||
+      bName.includes("quarantine") ||
+      bName.includes("damaged") ||
+      bName.includes("holding") ||
+      bName.includes("reject") ||
+      bName.includes("bo ") ||
+      bName.includes("(bo)") ||
+      bName.includes("[bo]")
+    ) {
+      return true;
+    }
+  }
+
+  // 3. Check lot name/description keywords
+  const lotText = `${lot?.lot_name || ""} ${lot?.description || ""}`.toLowerCase();
+  if (
+    lotText.includes("bad stock") ||
+    lotText.includes("bad order") ||
+    lotText.includes("quarantine") ||
+    lotText.includes("damaged") ||
+    lotText.includes("holding") ||
+    lotText.includes("reject") ||
+    lotText.includes("bo ") ||
+    lotText.includes("(bo)") ||
+    lotText.includes("[bo]") ||
+    lotText.includes("bad-") ||
+    lotText.includes("-bad") ||
+    lotText.includes("bad_") ||
+    lotText.includes("_bad") ||
+    lotText.includes("gonbad")
+  ) {
+    return true;
+  }
+
+  // 4. Check lot branch_name if available
+  const lotBranchName = String(lot?.branch_name || "").toLowerCase();
+  if (
+    lotBranchName.includes("bad branch") ||
+    lotBranchName.includes("bad stock") ||
+    lotBranchName.includes("bad order") ||
+    lotBranchName.includes("quarantine") ||
+    lotBranchName.includes("damaged") ||
+    lotBranchName.includes("holding") ||
+    lotBranchName.includes("reject")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a lot is compatible for product allocation (evaluating status, UOM, product classification, and bad stock status).
+ */
+export function isLotCompatibleForAllocation(
+  lot: MMLot,
+  params: {
+    uomId?: number | null;
+    productClass?: { code: ProductClassification; label: string };
+    qaStatus?: QAStatus | string;
+    storedSummary?: LotStoredProductSummary;
+    branchIsBadStock?: boolean;
+  }
+): { isCompatible: boolean; reason?: string } {
+  // 1. Status check: must not be closed/inactive
+  if (lot.status && lot.status !== "ACTIVE") {
+    return { isCompatible: false, reason: `Lot is ${lot.status}` };
+  }
+
+  // 2. UOM check: if lot specifies a unit, must match product UOM
+  if (lot.unit_id && params.uomId && Number(lot.unit_id) !== Number(params.uomId)) {
+    return {
+      isCompatible: false,
+      reason: `UOM mismatch (Lot requires ${lot.unit_name || `#${lot.unit_id}`})`,
+    };
+  }
+
+  // 3. Product type compatibility check
+  if (params.productClass) {
+    const typeCompat = checkLotProductTypeCompatibility(params.storedSummary, params.productClass);
+    if (!typeCompat.isCompatible) {
+      return { isCompatible: false, reason: typeCompat.mismatchReason || "Product type mismatch" };
+    }
+  }
+
+  // 4. Bad stock vs Normal stock check
+  const lotIsBad = isBadStockLot(lot, params.branchIsBadStock);
+  const batchIsBad = params.qaStatus && params.qaStatus !== "GOOD";
+
+  if (batchIsBad && !lotIsBad) {
+    return {
+      isCompatible: false,
+      reason: "Cannot allocate bad/damaged stock into a standard storage lot",
+    };
+  }
+
+  if (!batchIsBad && lotIsBad) {
+    return {
+      isCompatible: false,
+      reason: "Cannot allocate good stock into a Bad Stock / Quarantine storage lot",
+    };
+  }
+
+  return { isCompatible: true };
 }
 
 

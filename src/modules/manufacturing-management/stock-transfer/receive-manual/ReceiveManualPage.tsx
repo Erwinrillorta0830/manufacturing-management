@@ -7,10 +7,10 @@ import { PackageOpen, Printer, Loader2, ChevronLeft, ChevronRight, Hand, Papercl
 import { useStockTransferReceiveManual } from './hooks/use-stock-transfer-receive-manual';
 import { OrderGroupItem, UnitOfMeasurement, CurrentUser, ProductRow } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
-import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
-import { checkLotProductTypeCompatibility } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import { checkLotProductTypeCompatibility, isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import { LotBatchSelectionModal, LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
 import { LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
@@ -544,53 +544,78 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                               return (
                                 <div className="space-y-1.5 min-w-[280px]">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <SearchableSelect
-                                      options={targetLots.map((l) => {
-                                        const lStock = Number(l.current_stock_quantity || 0);
-                                        const lCap = Number(l.max_batch_capacity || 0);
-                                        const isF = lCap > 0 && lStock >= lCap;
+                                    {(() => {
+                                      const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD');
+                                      const compatibleLots = targetLots.filter((l) => {
+                                        if (l.status && l.status !== 'ACTIVE') return false;
                                         const stored = lotStoredSummaryMap.get(Number(l.lot_id));
                                         const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                        const isTConflict = tCompat.isTypeMismatch;
-                                        const isDraft = stored?.is_draft_allocation;
-                                        const typeSourceLabel = isDraft ? "Draft" : "Stock";
+                                        if (!tCompat.isCompatible) return false;
+                                        const lotIsBad = isBadStockLot(l);
+                                        if (itemIsBad && !lotIsBad) return false;
+                                        if (!itemIsBad && lotIsBad) return false;
+                                        return true;
+                                      });
 
-                                        let badgeText: string | undefined;
-                                        let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+                                      const optionsLots = targetLots.filter(
+                                        (l) => Number(l.lot_id) === Number(destinationLotIds[item.id]) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
+                                      );
 
-                                        if (isTConflict && stored) {
-                                          badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
-                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                        } else if (isF) {
-                                          badgeText = `Full (${lStock}/${lCap})`;
-                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                        } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
-                                          badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                          badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                        } else if (stored?.is_empty) {
-                                          badgeText = "Empty Lot";
-                                          badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                        }
+                                      return (
+                                        <SearchableSelect
+                                          options={optionsLots.map((l) => {
+                                            const lStock = Number(l.current_stock_quantity || 0);
+                                            const lCap = Number(l.max_batch_capacity || 0);
+                                            const isF = lCap > 0 && lStock >= lCap;
+                                            const stored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                            const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
+                                            const isTConflict = tCompat.isTypeMismatch;
+                                            const isDraft = stored?.is_draft_allocation;
+                                            const typeSourceLabel = isDraft ? "Draft" : "Stock";
+                                            const lotIsBad = isBadStockLot(l);
 
-                                        const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
-                                        const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                        const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+                                            let badgeText: string | undefined;
+                                            let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
 
-                                        return {
-                                          value: String(l.lot_id),
-                                          label: `${prefix}${l.lot_name}${capStr}`,
-                                          subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                          badge: badgeText,
-                                          badgeClassName: badgeClass,
-                                        };
-                                      })}
-                                      value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
-                                      onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
-                                      placeholder={loadingLots ? "Loading..." : "Select Lot"}
-                                      searchPlaceholder="Search lots..."
-                                      disabled={loadingLots}
-                                      triggerClassName={`h-8 text-xs font-semibold w-[150px] border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
-                                    />
+                                            if (isTConflict && stored) {
+                                              badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
+                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                            } else if (isF) {
+                                              badgeText = `Full (${lStock}/${lCap})`;
+                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                            } else if (lotIsBad) {
+                                              badgeText = "Bad Stock / Quarantine";
+                                              badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
+                                            } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
+                                              badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                              badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                            } else if (stored?.is_empty) {
+                                              badgeText = "Empty Lot";
+                                              badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                            }
+
+                                            const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
+                                            const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                            const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+
+                                            return {
+                                              value: String(l.lot_id),
+                                              label: `${prefix}${l.lot_name}${capStr}`,
+                                              subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                              badge: badgeText,
+                                              badgeClassName: badgeClass,
+                                            };
+                                          })}
+                                          value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
+                                          onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
+                                          placeholder={loadingLots ? "Loading..." : "Select Lot"}
+                                          searchPlaceholder="Search lots..."
+                                          disabled={loadingLots}
+                                          emptyMessage="No compatible storage lots found."
+                                          triggerClassName={`h-8 text-xs font-semibold w-[150px] border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
+                                        />
+                                      );
+                                    })()}
 
                                     <Input
                                       value={destinationBatchNos[item.id] ?? item.batch_no ?? `TRF-${selectedGroup.orderNo}-${item.id}`}

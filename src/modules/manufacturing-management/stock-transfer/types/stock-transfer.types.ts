@@ -98,6 +98,7 @@ export interface StockTransferRow {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   qa_status?: string | null;
+  inventory_condition?: string | null;
   lot_allocations?: LotAllocationGroup[];
 }
 
@@ -131,6 +132,7 @@ export interface ScannedItem {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   qa_status?: string | null;
+  inventory_condition?: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   allocations?: any[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

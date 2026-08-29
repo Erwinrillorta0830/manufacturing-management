@@ -14,6 +14,8 @@ export const BranchSchema = z.object({
   id: z.number(),
   branch_name: z.string().optional(),
   branch_code: z.string().optional(),
+  isBadStock: z.union([z.number(), z.boolean(), z.string()]).nullable().optional(),
+  bad_stock_branch_id: z.number().nullable().optional(),
 });
 export type Branch = z.infer<typeof BranchSchema>;
 
@@ -198,6 +200,8 @@ export interface SelectionBranch {
   id: number;
   branch_name: string;
   branch_code?: string;
+  isBadStock?: number | boolean | string | null;
+  bad_stock_branch_id?: number | null;
 }
 
 export interface SelectionSupplier {

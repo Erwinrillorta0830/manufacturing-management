@@ -10,6 +10,7 @@ import {
   resolveProductClassification,
   buildLotStoredProductSummaryMap,
   checkLotProductTypeCompatibility,
+  isBadStockLot,
 } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import type { MMLot, MMInventoryLot, LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
@@ -273,6 +274,23 @@ export function useStockTransferReceiveManual() {
             });
             return;
           }
+
+          const lotIsBad = isBadStockLot(lot);
+          const hasBadBatches = (g.batches || []).some((b: any) => b.qa_status && b.qa_status !== 'GOOD');
+          if (hasBadBatches && !lotIsBad) {
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Bad Stock Storage Lot Conflict", {
+              description: `Cannot allocate bad/damaged stock of "${prodName}" into standard storage lot "${lot?.lot_name}". Bad stock must be allocated to a Bad Stock or Quarantine lot.`
+            });
+            return;
+          }
+          if (!hasBadBatches && lotIsBad) {
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Storage Lot Conflict", {
+              description: `Cannot allocate GOOD stock of "${prodName}" into Bad Stock / Quarantine storage lot "${lot?.lot_name}".`
+            });
+            return;
+          }
         }
       } else {
         const assignedLotId = destinationLotIds[item.id];
@@ -285,6 +303,23 @@ export function useStockTransferReceiveManual() {
             const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
             toast.error("Destination Storage Lot Conflict", {
               description: `Storage lot "${lot?.lot_name || `Lot #${assignedLotId}`}" currently stores ${stored?.is_draft_allocation ? "items in current form draft" : "warehouse stock"} of type "${stored?.primary_classification_label || "Other"}", which is incompatible with "${prodName}" (${itemClass.label}). Please choose a matching or empty storage lot.`
+            });
+            return;
+          }
+
+          const lotIsBad = isBadStockLot(lot);
+          const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD');
+          if (itemIsBad && !lotIsBad) {
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Bad Stock Storage Lot Conflict", {
+              description: `Item "${prodName}" is bad/damaged stock (${item.qa_status || item.inventory_condition}) and cannot be placed into standard storage lot "${lot?.lot_name}". Bad stock must be placed into a Bad Stock or Quarantine lot.`
+            });
+            return;
+          }
+          if (!itemIsBad && lotIsBad) {
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Storage Lot Conflict", {
+              description: `Item "${prodName}" is GOOD stock and cannot be placed into Bad Stock / Quarantine storage lot "${lot?.lot_name}".`
             });
             return;
           }
