@@ -141,7 +141,7 @@ async function fetchProductGraph(read: DirectusReader, initialProductIds: number
         const params = new URLSearchParams({
             "filter[_or][0][product_id][_in]": frontier.join(","),
             "filter[_or][1][parent_id][_in]": frontier.join(","),
-            fields: "product_id,product_name,product_code,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
+            fields: "product_id,product_name,product_code,description,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
             limit: "-1"
         });
         const rows = (await read("products", params)).data;
@@ -302,16 +302,18 @@ export async function enrichSalesOrderReadModel(
 
         detail.product_id = product ? {
             product_id: Number(product.product_id),
-            product_name: product.product_name,
+            product_name: product.description || product.product_name,
             product_code: product.product_code,
+            description: product.description || product.product_name,
             uom: unitName,
             uom_name: unitName,
             uom_shortcut: unitShortcut,
             unit_name: unitName,
-            uom_count: product.unit_of_measurement_count ? Number(product.unit_of_measurement_count) : 1,
+            unit_shortcut: unitShortcut,
+            unit_count: Number(product.unit_of_measurement_count || 1),
             parent_id: product.parent_id ? Number(typeof product.parent_id === "object" ? product.parent_id.product_id : product.parent_id) : null,
-            brand: product.product_brand?.brand_name || "N/A",
-            category: product.product_category?.category_name || "N/A"
+            brand_name: product.product_brand?.brand_name || null,
+            category_name: product.product_category?.category_name || null
         } : {
             product_id: rawProductId,
             product_name: `Product #${rawProductId}`,

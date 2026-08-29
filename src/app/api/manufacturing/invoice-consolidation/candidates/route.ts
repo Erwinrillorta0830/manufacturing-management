@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
         const qs = new URLSearchParams();
         qs.set("filter", JSON.stringify(filter));
         qs.set("limit", "-1");
-        qs.set("fields", "invoice_id,invoice_no,invoice_date,gross_amount,net_amount,branch_id,customer_code");
+        qs.set("fields", "invoice_id,invoice_no,invoice_date,gross_amount,net_amount,branch_id,customer_code,order_id,sales_order_id");
 
         const invRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?${qs.toString()}`, {
             headers: directusHeaders,
@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
             net_amount: number;
             branch_id: number;
             customer_code: string;
+            order_id?: number | null;
+            sales_order_id?: number | null;
         }[] = invJson.data || [];
 
         if (invoices.length === 0) {
@@ -119,15 +121,29 @@ export async function GET(req: NextRequest) {
         }
 
         const prodIds = [...new Set(positiveDetails.map((d) => d.product_id))];
-        let prodMap = new Map<number, { product_name: string; product_code: string }>();
+        let prodMap = new Map<number, { product_name: string; product_code: string; description?: string }>();
         if (prodIds.length > 0) {
             const prodRes = await fetch(
-                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${prodIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`,
+                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${prodIds.join(",")}&fields=product_id,product_name,product_code,description&limit=-1`,
                 { headers: directusHeaders, cache: "no-store" }
             );
             if (prodRes.ok) {
                 const prodData = (await prodRes.json()).data || [];
-                prodMap = new Map(prodData.map((p: { product_id: number; product_name: string; product_code: string }) => [p.product_id, p]));
+                prodMap = new Map(prodData.map((p: { product_id: number; product_name: string; product_code: string; description?: string }) => [p.product_id, p]));
+            }
+        }
+
+        // Fetch linked sales orders for all candidate invoices
+        const orderIds = [...new Set(invoices.map((inv) => Number(inv.order_id || inv.sales_order_id || 0)).filter(Boolean))];
+        let orderMap = new Map<number, { order_id: number; order_no: string; po_no: string; order_status: string }>();
+        if (orderIds.length > 0) {
+            const orderRes = await fetch(
+                `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${orderIds.join(",")}&limit=-1&fields=order_id,order_no,po_no,order_status`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (orderRes.ok) {
+                const orderData = (await orderRes.json()).data || [];
+                orderMap = new Map(orderData.map((o: { order_id: number; order_no: string; po_no: string; order_status: string }) => [o.order_id, o]));
             }
         }
 
@@ -165,7 +181,7 @@ export async function GET(req: NextRequest) {
                 const version = versionMap.get(versionKey);
                 existingLines.push({
                     productId: d.product_id,
-                    productName: prod?.product_name || `Product #${d.product_id}`,
+                    productName: prod?.description || prod?.product_name || `Product #${d.product_id}`,
                     productCode: prod?.product_code || "",
                     quantity: qty,
                     versionId: version?.versionId ?? null,
@@ -184,6 +200,7 @@ export async function GET(req: NextRequest) {
         // Build each candidate invoice entry
         const enriched = invoices.map((inv) => {
             const cust = customerMap.get(inv.customer_code);
+            const order = orderMap.get(Number(inv.order_id || inv.sales_order_id || 0));
             return {
                 invoiceId: inv.invoice_id,
                 invoiceNo: inv.invoice_no,
@@ -193,6 +210,10 @@ export async function GET(req: NextRequest) {
                 branchId: inv.branch_id,
                 customerCode: inv.customer_code,
                 customerName: cust?.customer_name || inv.customer_code,
+                orderId: order?.order_id ?? (inv.order_id || inv.sales_order_id || null),
+                orderNo: order?.order_no ?? "",
+                poNo: order?.po_no ?? "",
+                orderStatus: order?.order_status ?? "For Consolidation",
                 products: detailsByInvoice.get(inv.invoice_id) || [],
             };
         });

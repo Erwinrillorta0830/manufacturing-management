@@ -71,6 +71,10 @@ export interface CandidateInvoice {
     customerCode: string;
     customerName: string;
     businessName?: string;
+    orderId?: number | null;
+    orderNo?: string | null;
+    poNo?: string | null;
+    orderStatus?: string | null;
     products: CandidateProductLine[];
 }
 
@@ -82,9 +86,55 @@ export interface StatusSummary {
     All: number;
 }
 
+export interface AvailableLotBatch {
+    productId: number;
+    productName: string;
+    productCode: string;
+    inventoryLotId: number;
+    lotId: number;
+    lotName: string;
+    batchNo: string;
+    expiryDate: string | null;
+    onhandQuantity: number;
+    availableQuantity: number;
+    inventoryCondition: string;
+}
+
+export interface CustomAllocationItem {
+    invoiceDetailId?: number;
+    invoiceId?: number;
+    productId: number;
+    inventoryLotId: number;
+    lotId: number;
+    batchNo: string;
+    quantity: number;
+}
+
 export interface CreateConsolidationPayload {
     branchId: number;
     invoiceIds: number[];
+    customAllocations?: CustomAllocationItem[];
+}
+
+export interface InvoiceLineAllocationBreakdown {
+    detailId: number;
+    productId: number;
+    productName: string;
+    productCode: string;
+    requiredQuantity: number;
+    allocations: Array<{
+        inventoryLotId: number;
+        lotId: number;
+        lotName: string;
+        batchNo: string;
+        expiryDate: string | null;
+        quantity: number;
+    }>;
+}
+
+export interface InvoiceBreakdownItem {
+    invoiceId: number;
+    lines: InvoiceLineAllocationBreakdown[];
 }
 
 export interface AllocationPreview {
@@ -99,6 +149,8 @@ export interface AllocationPreview {
         expiryDate: string | null;
         quantity: number;
     }[];
+    invoiceBreakdown?: InvoiceBreakdownItem[];
+    availableBatches?: AvailableLotBatch[];
     shortages: {
         productId: number;
         productName: string;

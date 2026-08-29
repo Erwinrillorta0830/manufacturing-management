@@ -51,7 +51,6 @@ export async function GET(req: Request) {
     const batchNo = searchParams.get("batchNo") || searchParams.get("batch_no") || searchParams.get("batch");
     const direction = searchParams.get("direction") || searchParams.get("movementDirection");
     const transactionType = searchParams.get("transactionType") || searchParams.get("transaction_type");
-    const fetchAll = searchParams.get("all") === "true";
 
     const query = new URLSearchParams();
     if (branch && branch !== "ALL") query.append("branch", branch);

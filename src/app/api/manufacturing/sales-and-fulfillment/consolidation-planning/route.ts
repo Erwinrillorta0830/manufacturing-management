@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DIRECTUS_URL, headers as directusHeaders, getTodayDateString } from "../../directus-api";
+import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
 import { getUserIdFromToken } from "../../invoice-consolidation/_auth";
 
 export const runtime = "nodejs";
@@ -26,24 +26,6 @@ async function getBranchesMap(): Promise<Map<number, { branchName: string; branc
         branchesCache = new Map();
     }
     return branchesCache;
-}
-
-async function generateConsolidatorNo(): Promise<string> {
-    const todayStr = await getTodayDateString();
-    const today = todayStr.replace(/-/g, "");
-    const prefix = `CLINV-${today}-`;
-    const res = await fetch(
-        `${DIRECTUS_URL}/items/consolidator?filter[consolidator_no][_starts_with]=${prefix}&filter[is_delete][_eq]=0&sort=-consolidator_no&limit=1&fields=consolidator_no`,
-        { headers: directusHeaders, cache: "no-store" }
-    );
-    if (res.ok) {
-        const data = (await res.json()).data || [];
-        if (data.length > 0) {
-            const seq = parseInt(data[0].consolidator_no.slice(-3), 10) + 1;
-            return `${prefix}${String(seq).padStart(3, "0")}`;
-        }
-    }
-    return `${prefix}001`;
 }
 
 // ─── GET — list planning-stage batches ───────────────────────────────────────
@@ -93,23 +75,79 @@ export async function GET(req: NextRequest) {
         const json = await res.json();
         const items = json.data || [];
         const total = json.meta?.filter_count ?? items.length;
+        const ids: number[] = items.map((c: { id: number }) => c.id);
+
+        let details: { id: number; consolidator_id: number; product_id: number; ordered_quantity: number; picked_quantity: number; applied_quantity: number; picked_by: number | null; picked_at: string | null }[] = [];
+        let junctions: { consolidator_id: number; invoice_id: number }[] = [];
+        if (ids.length > 0) {
+            const [dRes, jRes] = await Promise.all([
+                fetch(`${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_in]=${ids.join(",")}&limit=-1`, { headers: directusHeaders, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_in]=${ids.join(",")}&limit=-1`, { headers: directusHeaders, cache: "no-store" }),
+            ]);
+            if (dRes.ok) details = (await dRes.json()).data || [];
+            if (jRes.ok) junctions = (await jRes.json()).data || [];
+        }
+
+        const detailMap = new Map<number, typeof details>();
+        for (const d of details) {
+            const list = detailMap.get(d.consolidator_id) || [];
+            list.push(d);
+            detailMap.set(d.consolidator_id, list);
+        }
+
+        const invMap = new Map<number, number>();
+        for (const j of junctions) {
+            invMap.set(j.consolidator_id, (invMap.get(j.consolidator_id) || 0) + 1);
+        }
+
+        const productIds = [...new Set(details.map((d) => d.product_id).filter(Boolean))];
+        let productMap = new Map<number, { product_name: string; product_code: string }>();
+        if (productIds.length > 0) {
+            const prodRes = await fetch(
+                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (prodRes.ok) {
+                const prodData: { product_id: number; product_name: string; product_code: string }[] = (await prodRes.json()).data || [];
+                productMap = new Map(prodData.map((p) => [p.product_id, p]));
+            }
+        }
+
         const branchMap = await getBranchesMap();
 
-        const enriched = items.map((c: { id: number; consolidator_no: string; status: string; created_by: number; checked_by: number | null; branch_id: number; created_at: string; updated_at: string }) => ({
-            id: c.id,
-            consolidatorNo: c.consolidator_no,
-            status: c.status || "Pending",
-            createdBy: c.created_by,
-            checkedBy: c.checked_by,
-            branchId: c.branch_id,
-            branchName: branchMap.get(c.branch_id)?.branchName || `Branch #${c.branch_id}`,
-            createdAt: c.created_at,
-            updatedAt: c.updated_at,
-            details: [],
-            dispatches: [],
-            invoices: [],
-            totalSalesOrderAmount: 0,
-        }));
+        const enriched = items.map((c: { id: number; consolidator_no: string; status: string; created_by: number; checked_by: number | null; branch_id: number; created_at: string; updated_at: string }) => {
+            const batchDetails = detailMap.get(c.id) || [];
+            return {
+                id: c.id,
+                consolidatorNo: c.consolidator_no,
+                status: c.status || "Pending",
+                createdBy: c.created_by,
+                checkedBy: c.checked_by,
+                branchId: c.branch_id,
+                branchName: branchMap.get(c.branch_id)?.branchName || `Branch #${c.branch_id}`,
+                invoiceCount: invMap.get(c.id) || 0,
+                createdAt: c.created_at,
+                updatedAt: c.updated_at,
+                details: batchDetails.map((d) => {
+                    const prod = productMap.get(d.product_id);
+                    return {
+                        id: d.id,
+                        consolidatorId: d.consolidator_id,
+                        productId: d.product_id,
+                        productName: prod?.product_name || `Product #${d.product_id}`,
+                        productCode: prod?.product_code || "",
+                        orderedQuantity: Number(d.ordered_quantity || 0),
+                        pickedQuantity: Number(d.picked_quantity || 0),
+                        appliedQuantity: Number(d.applied_quantity || 0),
+                        pickedById: d.picked_by,
+                        pickedAt: d.picked_at,
+                    };
+                }),
+                dispatches: [],
+                invoices: [],
+                totalSalesOrderAmount: 0,
+            };
+        });
 
         return NextResponse.json({
             content: enriched,
@@ -131,7 +169,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { branchId, invoiceIds } = body;
+        const { branchId, invoiceIds, customAllocations } = body;
 
         if (!branchId || !invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
             return NextResponse.json({ message: "branchId and invoiceIds are required" }, { status: 400 });
@@ -143,7 +181,7 @@ export async function POST(req: NextRequest) {
         const proxyRes = await fetch(`${origin}/api/manufacturing/invoice-consolidation`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Cookie: req.headers.get("cookie") || "" },
-            body: JSON.stringify({ branchId, invoiceIds }),
+            body: JSON.stringify({ branchId, invoiceIds, customAllocations }),
         });
         const proxyData = await proxyRes.json();
         return NextResponse.json(proxyData, { status: proxyRes.status });

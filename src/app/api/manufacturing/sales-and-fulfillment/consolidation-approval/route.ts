@@ -89,6 +89,19 @@ export async function GET(req: NextRequest) {
             invMap.set(j.consolidator_id, (invMap.get(j.consolidator_id) || 0) + 1);
         }
 
+        const productIds = [...new Set(details.map((d) => d.product_id).filter(Boolean))];
+        let productMap = new Map<number, { product_name: string; product_code: string }>();
+        if (productIds.length > 0) {
+            const prodRes = await fetch(
+                `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (prodRes.ok) {
+                const prodData: { product_id: number; product_name: string; product_code: string }[] = (await prodRes.json()).data || [];
+                productMap = new Map(prodData.map((p) => [p.product_id, p]));
+            }
+        }
+
         const branchMap = await getBranchesMap();
 
         const enriched = items.map((c: { id: number; consolidator_no: string; status: string; created_by: number; checked_by: number | null; branch_id: number; created_at: string; updated_at: string }) => {
@@ -104,14 +117,19 @@ export async function GET(req: NextRequest) {
                 invoiceCount: invMap.get(c.id) || 0,
                 createdAt: c.created_at,
                 updatedAt: c.updated_at,
-                details: batchDetails.map((d) => ({
-                    id: d.id,
-                    consolidatorId: d.consolidator_id,
-                    productId: d.product_id,
-                    orderedQuantity: Number(d.ordered_quantity || 0),
-                    pickedQuantity: Number(d.picked_quantity || 0),
-                    appliedQuantity: Number(d.applied_quantity || 0),
-                })),
+                details: batchDetails.map((d) => {
+                    const prod = productMap.get(d.product_id);
+                    return {
+                        id: d.id,
+                        consolidatorId: d.consolidator_id,
+                        productId: d.product_id,
+                        productName: prod?.product_name || `Product #${d.product_id}`,
+                        productCode: prod?.product_code || "",
+                        orderedQuantity: Number(d.ordered_quantity || 0),
+                        pickedQuantity: Number(d.picked_quantity || 0),
+                        appliedQuantity: Number(d.applied_quantity || 0),
+                    };
+                }),
                 dispatches: [],
                 invoices: [],
                 totalSalesOrderAmount: 0,

@@ -449,7 +449,7 @@ async function fetchLotsAndMovements(productIds: number[], branchId?: number): P
     const masterLotMap = new Map<number, MasterLotRow>();
     if (lotIds.length > 0) {
         const lotJson = await directusJson(
-            `${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name,batch_no,expiry_date,created_on&limit=-1`
+            `${DIRECTUS_URL}/items/mm_lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name,branch_id&limit=-1`
         );
         for (const lot of (lotJson.data || []) as MasterLotRow[]) {
             masterLotMap.set(Number(lot.lot_id), lot);
@@ -801,6 +801,93 @@ export async function allocateInvoicesForConsolidation(invoiceIds: number[], use
     }
 }
 
+export interface CustomAllocationInput {
+    invoiceDetailId?: number;
+    invoiceId?: number;
+    productId: number;
+    inventoryLotId: number;
+    lotId: number;
+    batchNo: string;
+    quantity: number;
+}
+
+export async function allocateInvoicesWithCustomAllocations(
+    invoiceIds: number[],
+    customAllocations: CustomAllocationInput[],
+    userId: number
+) {
+    const createdReservationIds: number[] = [];
+
+    try {
+        const detailsJson = await directusJson(
+            `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id,invoice_no,product_id,quantity&limit=-1`
+        );
+        const details: DetailRow[] = detailsJson.data || [];
+        if (details.length === 0) throw new Error("Selected invoices have no product details");
+
+        // Clone custom allocations pool
+        const allocPool = customAllocations.map((a) => ({ ...a }));
+        const pendingRows: Array<{
+            sales_invoice_detail_id: number;
+            inventory_lot_id: number;
+            quantity: number;
+            status: string;
+            reserved_by: number;
+        }> = [];
+
+        // Distribute custom allocations to details
+        for (const detail of details) {
+            const pId = Number(detail.product_id);
+            let remaining = Number(detail.quantity || 0);
+
+            // First check if matching invoiceDetailId or invoiceId
+            for (const item of allocPool) {
+                if (remaining <= 0) break;
+                if (item.quantity <= 0) continue;
+                if (item.productId === pId) {
+                    const take = Math.min(remaining, item.quantity);
+                    pendingRows.push({
+                        sales_invoice_detail_id: detail.detail_id,
+                        inventory_lot_id: item.inventoryLotId,
+                        quantity: take,
+                        status: "Reserved",
+                        reserved_by: userId,
+                    });
+                    item.quantity -= take;
+                    remaining -= take;
+                }
+            }
+
+            if (remaining > 0) {
+                throw new Error(`Insufficient custom allocation for product #${pId} in invoice ${detail.invoice_no}`);
+            }
+        }
+
+        if (pendingRows.length > 0) {
+            const createdJson = await directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation`, {
+                method: "POST",
+                body: JSON.stringify(pendingRows),
+            });
+            for (const row of createdJson.data || []) {
+                const id = Number(row.id);
+                if (id) createdReservationIds.push(id);
+            }
+            const touchedLotIds = [...new Set(pendingRows.map((row) => Number(row.inventory_lot_id)))];
+            try {
+                await reconcileInventoryLots(touchedLotIds, userId);
+            } catch (error) {
+                await releaseReservationIds(createdReservationIds, userId);
+                throw error;
+            }
+        }
+
+        return { createdReservationIds };
+    } catch (error) {
+        await releaseReservationIds(createdReservationIds, userId);
+        throw error;
+    }
+}
+
 export async function previewConsolidationAllocations(branchId: number, invoiceIds: number[]) {
     const invoiceJson = await directusJson(
         `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&fields=invoice_id,invoice_date,customer_code,branch_id,transaction_status,isDispatched&limit=-1`
@@ -898,9 +985,9 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
     }
 
     const productJson = await directusJson(
-        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`
+        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code,description&limit=-1`
     );
-    const productMap = new Map<number, { product_name: string; product_code: string }>();
+    const productMap = new Map<number, { product_name: string; product_code: string; description?: string }>();
     for (const product of productJson.data || []) productMap.set(Number(product.product_id), product);
 
     const lotById = new Map(unfilteredLots.flatMap((metadata) => {
@@ -912,6 +999,43 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
         lot.id,
         Math.max(0, Number(lot.quantity || 0) - (reservedByStock.get(lot.stockKey) || 0)),
     ]));
+
+    // Build available batches list for manual allocation
+    const availableBatches: Array<{
+        productId: number;
+        productName: string;
+        productCode: string;
+        inventoryLotId: number;
+        lotId: number;
+        lotName: string;
+        batchNo: string;
+        expiryDate: string | null;
+        onhandQuantity: number;
+        availableQuantity: number;
+        inventoryCondition: string;
+    }> = [];
+
+    for (const lot of lots) {
+        const pId = Number(lot.product_id);
+        const physicalLotId = numericId(lot.lot_id, ["lot_id"]) || 0;
+        const physicalLot = typeof lot.lot_id === "object" ? lot.lot_id : null;
+        const product = productMap.get(pId);
+        const avail = availableByLot.get(lot.id) || 0;
+        availableBatches.push({
+            productId: pId,
+            productName: product?.description || product?.product_name || `Product #${pId}`,
+            productCode: product?.product_code || "",
+            inventoryLotId: lot.id,
+            lotId: physicalLotId,
+            lotName: physicalLot?.lot_name || `Lot #${physicalLotId}`,
+            batchNo: lot.batch_no || lot.lot_number || `LOT-${physicalLotId}`,
+            expiryDate: lot.expiry_date || null,
+            onhandQuantity: Number(lot.quantity || 0),
+            availableQuantity: avail,
+            inventoryCondition: (lot as unknown as { inventory_condition?: string }).inventory_condition || "GOOD",
+        });
+    }
+
     const allocationMap = new Map<string, {
         productId: number;
         productName: string;
@@ -923,7 +1047,24 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
         expiryDate: string | null;
         quantity: number;
     }>();
-    const addAllocation = (productId: number, lot: InventoryLotRow, quantity: number) => {
+
+    const invoiceAllocationMap = new Map<number, Array<{
+        detailId: number;
+        productId: number;
+        productName: string;
+        productCode: string;
+        requiredQuantity: number;
+        allocations: Array<{
+            inventoryLotId: number;
+            lotId: number;
+            lotName: string;
+            batchNo: string;
+            expiryDate: string | null;
+            quantity: number;
+        }>;
+    }>>();
+
+    const addAllocation = (productId: number, lot: InventoryLotRow, quantity: number, invoiceId?: number, detailId?: number) => {
         const physicalLotId = numericId(lot.lot_id, ["lot_id"]) || 0;
         const physicalLot = typeof lot.lot_id === "object" ? lot.lot_id : null;
         const product = productMap.get(productId);
@@ -934,8 +1075,33 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
         } else {
             allocationMap.set(key, {
                 productId,
-                productName: product?.product_name || `Product #${productId}`,
+                productName: product?.description || product?.product_name || `Product #${productId}`,
                 productCode: product?.product_code || "",
+                inventoryLotId: lot.id,
+                lotId: physicalLotId,
+                lotName: physicalLot?.lot_name || `Lot #${physicalLotId}`,
+                batchNo: lot.batch_no || lot.lot_number || "LOT-N/A",
+                expiryDate: lot.expiry_date || null,
+                quantity,
+            });
+        }
+
+        if (invoiceId && detailId) {
+            const list = invoiceAllocationMap.get(invoiceId) || [];
+            let line = list.find((item) => item.detailId === detailId);
+            if (!line) {
+                line = {
+                    detailId,
+                    productId,
+                    productName: product?.description || product?.product_name || `Product #${productId}`,
+                    productCode: product?.product_code || "",
+                    requiredQuantity: 0,
+                    allocations: [],
+                };
+                list.push(line);
+                invoiceAllocationMap.set(invoiceId, list);
+            }
+            line.allocations.push({
                 inventoryLotId: lot.id,
                 lotId: physicalLotId,
                 lotName: physicalLot?.lot_name || `Lot #${physicalLotId}`,
@@ -953,14 +1119,35 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
     );
     for (const invoice of sortedInvoices) {
         const customerId = customerByCode.get(invoice.customer_code) || 0;
-        for (const detail of details.filter((row) => Number(row.invoice_no) === Number(invoice.invoice_id))) {
+        const invId = Number(invoice.invoice_id);
+
+        for (const detail of details.filter((row) => Number(row.invoice_no) === invId)) {
             const productId = Number(detail.product_id);
+            const reqQty = Number(detail.quantity || 0);
             const existingRows = selectedReservationsByDetail.get(detail.detail_id) || [];
-            let remaining = Number(detail.quantity || 0);
+            let remaining = reqQty;
+
+            // Ensure invoice line is initialized
+            const list = invoiceAllocationMap.get(invId) || [];
+            let line = list.find((item) => item.detailId === detail.detail_id);
+            if (!line) {
+                const product = productMap.get(productId);
+                line = {
+                    detailId: detail.detail_id,
+                    productId,
+                    productName: product?.description || product?.product_name || `Product #${productId}`,
+                    productCode: product?.product_code || "",
+                    requiredQuantity: reqQty,
+                    allocations: [],
+                };
+                list.push(line);
+                invoiceAllocationMap.set(invId, list);
+            }
+
             for (const reservation of existingRows) {
                 const lot = lotById.get(inventoryLotId(reservation));
                 const quantity = Math.min(remaining, Number(reservation.quantity || 0));
-                if (lot && quantity > 0) addAllocation(productId, lot, quantity);
+                if (lot && quantity > 0) addAllocation(productId, lot, quantity, invId, detail.detail_id);
                 remaining -= quantity;
             }
 
@@ -980,7 +1167,7 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
                 const available = availableByLot.get(lot.id) || 0;
                 const quantity = Math.min(remaining, available);
                 if (quantity <= 0) continue;
-                addAllocation(productId, lot, quantity);
+                addAllocation(productId, lot, quantity, invId, detail.detail_id);
                 availableByLot.set(lot.id, available - quantity);
                 remaining -= quantity;
             }
@@ -988,15 +1175,23 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
         }
     }
 
+    // Map invoiceBreakdown array
+    const invoiceBreakdown = invoices.map((inv) => ({
+        invoiceId: Number(inv.invoice_id),
+        lines: invoiceAllocationMap.get(Number(inv.invoice_id)) || [],
+    }));
+
     return {
         allocations: [...allocationMap.values()].sort((a, b) =>
             a.productName.localeCompare(b.productName)
             || (a.expiryDate || "9999-12-31").localeCompare(b.expiryDate || "9999-12-31")
             || a.inventoryLotId - b.inventoryLotId
         ),
+        invoiceBreakdown,
+        availableBatches,
         shortages: [...shortages.entries()].map(([productId, quantity]) => ({
             productId,
-            productName: productMap.get(productId)?.product_name || `Product #${productId}`,
+            productName: productMap.get(productId)?.description || productMap.get(productId)?.product_name || `Product #${productId}`,
             quantity,
         })),
     };
