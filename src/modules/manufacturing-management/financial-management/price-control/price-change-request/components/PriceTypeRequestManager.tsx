@@ -28,7 +28,7 @@ import { SupplierPrintEditorModals } from "../../shared/print/SupplierPrintEdito
 import { useSupplierPrintEditor } from "../../shared/print/useSupplierPrintEditor";
 import { ExcelExportOptionsDialog } from "../../shared/supplier-batch/ExcelExportOptionsDialog";
 import { useUnifiedApprovals } from "../hooks/useUnifiedApprovals";
-import type { SupplierOption } from "../providers/pcrApi";
+import type { SupplierOption, ProductTypeOption } from "../providers/pcrApi";
 import * as pcrApi from "../providers/pcrApi";
 import { applyBulkActionResult, type BulkActionOutcome } from "../utils/applyBulkActionResult";
 import {
@@ -52,6 +52,9 @@ type Props = {
     suppliers: SupplierOption[];
     suppliersLoading: boolean;
     suppliersError: string | null;
+    productTypes: ProductTypeOption[];
+    productTypesLoading?: boolean;
+    productTypesError?: string | null;
     query: ListQuery;
     setQuery: React.Dispatch<React.SetStateAction<ListQuery>>;
     onUnauthorized?: () => void;
@@ -63,6 +66,9 @@ export function PriceTypeRequestManager({
     suppliers,
     suppliersLoading,
     suppliersError,
+    productTypes,
+    productTypesLoading,
+    productTypesError,
     query,
     setQuery,
     onUnauthorized,
@@ -282,6 +288,9 @@ export function PriceTypeRequestManager({
                     suppliers={suppliers}
                     suppliersLoading={suppliersLoading}
                     suppliersError={suppliersError}
+                    productTypes={productTypes}
+                    productTypesLoading={productTypesLoading}
+                    productTypesError={productTypesError}
                     loading={inbox.loading}
                     total={inbox.total}
                     totalLabel="requests"

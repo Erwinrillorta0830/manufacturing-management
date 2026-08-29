@@ -93,6 +93,8 @@ export type PriceChangeBatchLine = {
     status: PriceChangeBatchStatus | PCRStatus | string;
     supplier_name?: string | null;
     unit_name?: string | null;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     effective_at?: string | null;
     application_status?: PriceChangeApplicationStatus | string | null;
     applied_at?: string | null;
@@ -123,6 +125,7 @@ export type PriceChangeBatchHeader = {
     applied_by?: number | string | null;
     applied_by_name?: string | null;
     line_count?: number;
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type PriceChangeBatchDetail = PriceChangeBatchHeader & {
@@ -171,6 +174,8 @@ export type ListCostBatchLine = {
     status: ListCostBatchStatus | PCRStatus | string;
     supplier_name?: string | null;
     unit_name?: string | null;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     effective_at?: string | null;
     application_status?: PriceChangeApplicationStatus | string | null;
     applied_at?: string | null;
@@ -199,6 +204,7 @@ export type ListCostBatchHeader = {
     applied_by?: number | string | null;
     applied_by_name?: string | null;
     line_count?: number;
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type ListCostBatchDetail = ListCostBatchHeader & {
@@ -215,6 +221,8 @@ export type UnifiedBatchLine = {
     unit_name?: string;
     price_type_id?: number;
     price_type_name?: string;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     current_price?: number | null;
     proposed_price?: number | null;
     current_cost?: number | null;
@@ -258,6 +266,7 @@ export type UnifiedBatchDetail = {
     batch_types: Array<"PRICE_TYPE" | "LIST_COST">;
     price_details: UnifiedBatchLine[];
     cost_details: UnifiedBatchLine[];
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type PriceTypeUnifiedApprovalRow = PriceChangeRequestRow & {
@@ -395,6 +404,7 @@ export type ListQuery = {
     q?: string;
     product_id?: number | "";
     supplier_ids?: number[];
+    product_type_ids?: number[];
     price_type_id?: number | "";
     requested_by?: number | "";
     date_from?: string | "";

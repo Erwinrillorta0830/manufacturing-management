@@ -20,7 +20,7 @@ import { CalendarDays, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import type { ListQuery } from "../types";
-import type { SupplierOption } from "../providers/pcrApi";
+import type { SupplierOption, ProductTypeOption } from "../providers/pcrApi";
 import { pcrStatusBadgeClass } from "../utils/pcrStatusStyles";
 
 type FilterContext = "all" | "price" | "cost";
@@ -31,6 +31,9 @@ type Props = {
     suppliers: SupplierOption[];
     suppliersLoading?: boolean;
     suppliersError?: string | null;
+    productTypes: ProductTypeOption[];
+    productTypesLoading?: boolean;
+    productTypesError?: string | null;
     loading: boolean;
     total: number;
     totalLabel: string;
@@ -103,6 +106,9 @@ export function RequestFiltersBar(props: Props) {
         suppliers,
         suppliersLoading = false,
         suppliersError = null,
+        productTypes,
+        productTypesLoading = false,
+        productTypesError = null,
         loading,
         total,
         totalLabel,
@@ -118,17 +124,31 @@ export function RequestFiltersBar(props: Props) {
         () => toSupplierIdStrings(query.supplier_ids),
         [query.supplier_ids],
     );
+    const selectedProductTypeIds = React.useMemo(
+        () => toSupplierIdStrings(query.product_type_ids),
+        [query.product_type_ids],
+    );
 
     const [localSupplierIds, setLocalSupplierIds] = React.useState(() =>
         toSupplierIdStrings(query.supplier_ids),
+    );
+    const [localProductTypeIds, setLocalProductTypeIds] = React.useState(() =>
+        toSupplierIdStrings(query.product_type_ids),
     );
 
     const supplierFilterDisabled = suppliersLoading || Boolean(suppliersError);
     const supplierHelper = suppliersError
         ? "Supplier filter is unavailable until suppliers reload successfully."
         : suppliersLoading
-          ? "Loading suppliers..."
-          : supplierFilterHelperText(filterContext, localSupplierIds.length);
+            ? "Loading suppliers..."
+            : supplierFilterHelperText(filterContext, localSupplierIds.length);
+
+    const productTypeFilterDisabled = productTypesLoading || Boolean(productTypesError);
+    const productTypeHelper = productTypesError
+        ? "Product types unavailable until reloaded."
+        : productTypesLoading
+            ? "Loading product types..."
+            : "Filter by product type.";
 
     const [localQ, setLocalQ] = React.useState(query.q ?? "");
     const [localDateFrom, setLocalDateFrom] = React.useState(query.date_from ?? "");
@@ -146,6 +166,10 @@ export function RequestFiltersBar(props: Props) {
     React.useEffect(() => {
         setLocalSupplierIds(toSupplierIdStrings(query.supplier_ids));
     }, [query.supplier_ids]);
+
+    React.useEffect(() => {
+        setLocalProductTypeIds(toSupplierIdStrings(query.product_type_ids));
+    }, [query.product_type_ids]);
 
     React.useEffect(() => {
         const committedSupplierIds = toSupplierIdStrings(query.supplier_ids).join(",");
@@ -172,6 +196,32 @@ export function RequestFiltersBar(props: Props) {
 
         return () => window.clearTimeout(timer);
     }, [localSupplierIds, query.supplier_ids, setQuery]);
+
+    React.useEffect(() => {
+        const committedTypeIds = toSupplierIdStrings(query.product_type_ids).join(",");
+        const draftTypeIds = localProductTypeIds.join(",");
+
+        if (draftTypeIds === committedTypeIds) {
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setQuery((prev) => {
+                const nextTypeIds = toNumericSupplierIds(localProductTypeIds);
+                const sameTypes =
+                    JSON.stringify(prev.product_type_ids ?? []) === JSON.stringify(nextTypeIds);
+                if (sameTypes) return prev;
+
+                return {
+                    ...prev,
+                    product_type_ids: nextTypeIds,
+                    page: 1,
+                };
+            });
+        }, SUPPLIER_FILTER_DEBOUNCE_MS);
+
+        return () => window.clearTimeout(timer);
+    }, [localProductTypeIds, query.product_type_ids, setQuery]);
 
     React.useEffect(() => {
         const committedFrom = query.date_from ?? "";
@@ -218,6 +268,24 @@ export function RequestFiltersBar(props: Props) {
         return map;
     }, [suppliers]);
 
+    const productTypeOptions = React.useMemo<MultiSelectOption[]>(
+        () =>
+            productTypes.map((pt) => ({
+                id: String(pt.id),
+                label: safeStr(pt.name),
+                search: safeStr(pt.name),
+            })),
+        [productTypes],
+    );
+
+    const productTypeLabelById = React.useMemo(() => {
+        const map = new Map<string, string>();
+        for (const pt of productTypes) {
+            map.set(String(pt.id), safeStr(pt.name));
+        }
+        return map;
+    }, [productTypes]);
+
     const applySearch = React.useCallback(() => {
         setQuery((prev) => ({
             ...prev,
@@ -246,15 +314,28 @@ export function RequestFiltersBar(props: Props) {
         [setQuery],
     );
 
+    const commitProductTypeIds = React.useCallback(
+        (ids: string[]) => {
+            setQuery((prev) => ({
+                ...prev,
+                product_type_ids: toNumericSupplierIds(ids),
+                page: 1,
+            }));
+        },
+        [setQuery],
+    );
+
     const resetFilters = React.useCallback(() => {
         setLocalQ("");
         setLocalDateFrom("");
         setLocalDateTo("");
         setLocalSupplierIds([]);
+        setLocalProductTypeIds([]);
         setQuery((prev) => ({
             ...prev,
             q: "",
             supplier_ids: [],
+            product_type_ids: [],
             date_from: "",
             date_to: "",
             status: "ALL",
@@ -266,7 +347,7 @@ export function RequestFiltersBar(props: Props) {
     const q = safeStr(query.q);
     const hasDateRange = Boolean(query.date_from || query.date_to);
     const hasStatusFilter = Boolean(query.status && query.status !== "ALL");
-    const hasFilters = Boolean(q || selectedSupplierIds.length > 0 || hasDateRange || hasStatusFilter);
+    const hasFilters = Boolean(q || selectedSupplierIds.length > 0 || selectedProductTypeIds.length > 0 || hasDateRange || hasStatusFilter);
 
     const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
 
@@ -287,6 +368,19 @@ export function RequestFiltersBar(props: Props) {
                 const next = selectedSupplierIds.filter((value) => value !== id);
                 setLocalSupplierIds(next);
                 commitSupplierIds(next);
+            },
+        });
+    }
+
+    for (const id of selectedProductTypeIds) {
+        const label = productTypeLabelById.get(id) ?? `Product Type #${id}`;
+        chips.push({
+            key: `product_type:${id}`,
+            label: `Product Type: ${label}`,
+            onRemove: () => {
+                const next = selectedProductTypeIds.filter((value) => value !== id);
+                setLocalProductTypeIds(next);
+                commitProductTypeIds(next);
             },
         });
     }
@@ -361,7 +455,7 @@ export function RequestFiltersBar(props: Props) {
                     </div>
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-[minmax(260px,1.35fr)_minmax(210px,0.9fr)_minmax(170px,0.65fr)_minmax(170px,0.65fr)]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(260px,1.35fr)_minmax(180px,0.8fr)_minmax(180px,0.8fr)_minmax(160px,0.65fr)_minmax(160px,0.65fr)]">
                     <FilterField label={searchLabel} helper={searchHelper}>
                         <InputGroup className="h-10 bg-background">
                             <InputGroupAddon align="inline-start">
@@ -417,6 +511,24 @@ export function RequestFiltersBar(props: Props) {
                         onChange={setLocalSupplierIds}
                         clearTitle="Clear suppliers"
                         disabled={supplierFilterDisabled}
+                    />
+
+                    <MultiSelectFilter
+                        label="Product Types"
+                        helper={productTypeHelper}
+                        triggerLabel={
+                            productTypesLoading
+                                ? "Loading types..."
+                                : labelCount("Types", localProductTypeIds.length, "All types")
+                        }
+                        searchPlaceholder="Search product type"
+                        emptyText="No product types found."
+                        groupLabel="Product Types"
+                        options={productTypeOptions}
+                        selectedIds={localProductTypeIds}
+                        onChange={setLocalProductTypeIds}
+                        clearTitle="Clear product types"
+                        disabled={productTypeFilterDisabled}
                     />
 
                     <FilterField label="From date" helper="Start date.">

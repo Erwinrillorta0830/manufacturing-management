@@ -608,7 +608,7 @@ export function mapBatchHeaderResponse(row: BatchHeaderRow, lineCount = 0) {
         id: headerId,
         header_id: headerId,
         supplier_id: supplierId,
-        supplier_name: supplierNameOf(row.supplier_id),
+        supplier_name: supplierLabelOf(row.supplier_id),
         reference_no: row.reference_no ?? "",
         remarks: row.remarks ?? "",
         status: row.status ?? "PENDING",
@@ -625,6 +625,19 @@ export function mapBatchHeaderResponse(row: BatchHeaderRow, lineCount = 0) {
         reject_reason: row.reject_reason ?? null,
         line_count: lineCount,
     };
+}
+
+export async function fetchProductTypesMap(): Promise<Map<number, string>> {
+    const url = `${mustBase()}/items/product_type?limit=-1`;
+    const res = await fetchDirectus<{ data?: { id?: number; name?: string }[] }>(url, { headers: directusHeaders() })
+        .catch(() => ({ data: [] }));
+    const map = new Map<number, string>();
+    for (const row of res.data ?? []) {
+        if (row.id && row.name) {
+            map.set(Number(row.id), String(row.name).trim());
+        }
+    }
+    return map;
 }
 
 export async function getExistingPendingBatchKeys(lines: NormalizedBatchCreateLine[]) {
@@ -891,6 +904,9 @@ export async function getDetails(headerId: number) {
         "product_id.unit_of_measurement.unit_id",
         "product_id.unit_of_measurement.unit_name",
         "product_id.unit_of_measurement.unit_shortcut",
+        "product_id.product_type",
+        "product_id.product_type.id",
+        "product_id.product_type.name",
         "price_type_id",
         "price_type_id.price_type_id",
         "price_type_id.price_type_name",

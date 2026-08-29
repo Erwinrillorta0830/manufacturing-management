@@ -49,6 +49,7 @@ function appendListQuery(sp: URLSearchParams, query: ListQuery) {
     if (status) sp.set("status", status);
     if (query.q) sp.set("q", query.q);
     if (query.supplier_ids?.length) sp.set("supplier_ids", query.supplier_ids.join(","));
+    if (query.product_type_ids?.length) sp.set("product_type_ids", query.product_type_ids.join(","));
     if (query.date_from) sp.set("date_from", query.date_from);
     if (query.date_to) sp.set("date_to", query.date_to);
     sp.set("page", String(query.page ?? 1));
@@ -180,6 +181,11 @@ export type SupplierOption = {
     isActive?: number | boolean | null;
 };
 
+export type ProductTypeOption = {
+    id: number;
+    name: string;
+};
+
 export type PriceTypeOption = {
     price_type_id: number;
     price_type_name?: string | null;
@@ -199,6 +205,7 @@ export type LookupsResponse = {
     brands: BrandOption[];
     units: UnitOption[];
     suppliers: SupplierOption[];
+    product_types?: ProductTypeOption[];
 };
 
 export async function getLookups(params?: {
@@ -233,6 +240,16 @@ export async function getSuppliers() {
     const d = res.data ?? ({} as Pick<LookupsResponse, "suppliers">);
     return {
         suppliers: Array.isArray(d.suppliers) ? d.suppliers : [],
+    };
+}
+
+export async function getProductTypes() {
+    const res = await http<{ data: Pick<LookupsResponse, "product_types"> }>(
+        `${LOOKUPS_ENDPOINT}?fields=product_types`,
+    );
+    const d = res.data ?? ({} as Pick<LookupsResponse, "product_types">);
+    return {
+        product_types: Array.isArray(d.product_types) ? d.product_types : [],
     };
 }
 

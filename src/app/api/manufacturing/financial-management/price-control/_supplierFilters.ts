@@ -193,6 +193,37 @@ export async function getSupplierScopedProductIdsForSuppliers(supplierIds: strin
     return Array.from(new Set([...directIds, ...childIds]));
 }
 
+export async function getProductIdsForProductTypes(productTypeIds: number[]): Promise<number[]> {
+    if (productTypeIds.length === 0) return [];
+
+    const ids: number[] = [];
+    const idChunks = chunk(productTypeIds, PRODUCT_ID_CHUNK_SIZE);
+
+    for (const chunkIds of idChunks) {
+        let offset = 0;
+        while (true) {
+            const sp = new URLSearchParams();
+            sp.set("limit", "500");
+            sp.set("offset", String(offset));
+            sp.set("fields", "product_id");
+            sp.set("filter[product_type][_in]", chunkIds.join(","));
+
+            const url = `${mustBase()}/items/products?${sp.toString()}`;
+            const res = await fetchDirectus<{ data?: { product_id?: number }[] }>(url, { headers: directusHeaders() });
+            const rows = res.data ?? [];
+
+            for (const row of rows) {
+                if (row.product_id) ids.push(Number(row.product_id));
+            }
+
+            if (rows.length < 500) break;
+            offset += 500;
+        }
+    }
+
+    return Array.from(new Set(ids));
+}
+
 export async function resolveBatchSuppliersFilter(supplierIds: string[]): Promise<{
     headerIdsFromProducts: number[];
 }> {

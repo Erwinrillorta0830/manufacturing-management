@@ -18,6 +18,7 @@ import {
     resolveBatchDecisionUserNames,
     resolveUserDisplayName,
 } from "../_batch";
+import { fetchProductTypesMap } from "../../price-change-batches/_batch";
 import {
     approveUnifiedBatch,
     isUnifiedBatchDetectionError,
@@ -71,17 +72,25 @@ function productUomLabel(value: unknown): string {
     return String(uom.unit_shortcut ?? uom.unit_name ?? "").trim();
 }
 
-function mapDetail(line: CostDetailRow) {
+function mapDetail(line: CostDetailRow, productTypesMap: Map<number, string>) {
     const current = line.current_cost === null || line.current_cost === undefined ? null : Number(line.current_cost);
     const proposed = Number(line.proposed_cost);
     const delta = Number.isFinite(proposed) && current !== null && Number.isFinite(current) ? proposed - current : null;
     const percentChange = delta !== null && current !== null && current !== 0 ? (delta / current) * 100 : null;
+
+    let product_type_id: number | null = null;
+    if (typeof line.product_id === 'object' && line.product_id !== null && 'product_type' in line.product_id) {
+        product_type_id = isRecord(line.product_id.product_type) ? pickId(line.product_id.product_type.id) : pickId(line.product_id.product_type) ?? null;
+    }
+    const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
 
     return {
         request_id: pickId(line.request_id),
         product_id: normalizeCostProductId(line),
         product_name: productLabel(line.product_id),
         product_code: productCode(line.product_id),
+        product_type_id,
+        product_type_name,
         current_cost: Number.isFinite(current) ? current : null,
         proposed_cost: Number.isFinite(proposed) ? proposed : null,
         delta,
@@ -106,6 +115,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
         if (!header) return NextResponse.json({ error: "Cost batch not found" }, { status: 404 });
 
         const details = await getCostDetails(headerId);
+        const productTypesMap = await fetchProductTypesMap();
 
         const detailProductIds = details
             .map((line) => normalizeCostProductId(line))
@@ -140,16 +150,31 @@ export async function GET(req: NextRequest, context: RouteContext) {
                 applied_at: header.applied_at ?? null,
                 applied_by: header.applied_by ?? null,
                 details: details.map((line) => {
-                    const pid = normalizeCostProductId(line);
+                    const productId = normalizeCostProductId(line);
                     return {
-                        ...mapDetail(line),
-                        supplier_name: supplierByProductId.get(pid) ?? null,
+                        ...mapDetail(line, productTypesMap),
+                        supplier_name: supplierByProductId.get(productId) ?? null,
                         effective_at: line.effective_at ?? null,
                         application_status: line.application_status ?? null,
                         applied_at: line.applied_at ?? null,
                         applied_by: line.applied_by ?? null,
                     };
                 }),
+                product_types: (() => {
+                    const productTypeMap = new Map<number, string>();
+                    for (const line of details) {
+                        let product_type_id: number | null = null;
+                        if (typeof line.product_id === 'object' && line.product_id !== null && 'product_type' in line.product_id) {
+                            product_type_id = isRecord(line.product_id.product_type) ? pickId(line.product_id.product_type.id) : pickId(line.product_id.product_type) ?? null;
+                        }
+                        const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
+
+                        if (product_type_id && product_type_name) {
+                            productTypeMap.set(product_type_id, product_type_name);
+                        }
+                    }
+                    return Array.from(productTypeMap.entries()).map(([id, name]) => ({ id, name }));
+                })(),
             },
         });
     } catch (error: unknown) {
