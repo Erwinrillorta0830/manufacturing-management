@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "next/navigation";
-import { InvoiceConsolidation, Branch } from "../../invoice-consolidation/types";
-import { fetchConsolidations, fetchBranches } from "../../invoice-consolidation/services/invoice-consolidation-api";
+import type { InvoiceConsolidation, Branch } from "../shared/consolidation-types";
+import { fetchConsolidations, fetchBranches } from "../shared/consolidation-api";
 import {
     ConsolidationEmptyState,
     ConsolidationHeader,

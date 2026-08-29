@@ -11,7 +11,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
-import PickingQueueModule from "@/modules/manufacturing-management/consolidation/picking/PickingQueueModule";
+import PickingQueueModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-picking/PickingQueueModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

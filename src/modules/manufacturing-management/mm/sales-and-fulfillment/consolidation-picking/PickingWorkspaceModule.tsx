@@ -3,8 +3,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { InvoiceConsolidation, PickingSavePayload } from "../types";
-import { fetchConsolidationByNo, savePickedQuantities, completePicking } from "../services/invoice-consolidation-api";
+import type { InvoiceConsolidation, PickingSavePayload } from "../shared/consolidation-types";
+import { fetchConsolidationByNo, savePickedQuantities, completePicking } from "../shared/consolidation-api";
 import { usePickingModal } from "./hooks/usePickingModal";
 import {
     Package, Minus, Plus, Save, SquarePen, AlertTriangle, Loader2, Keyboard, ArrowLeft
@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import {
     ConsolidationShell,
     ConsolidationStatusBadge,
-} from "../../shared/consolidation-ui";
+} from "../shared/consolidation-ui";
 
 interface PickingWorkspaceModuleProps {
     batchNo: string;
@@ -33,7 +33,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
             .then(setConsolidation)
             .catch(() => {
                 toast.error("Failed to load consolidation");
-                router.push("/mm/consolidation/picking");
+                router.push("/mm/sales-and-fulfillment/consolidation-picking");
             })
             .finally(() => setLoading(false));
     }, [batchNo, router]);
@@ -60,7 +60,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
         try {
             const result = await completePicking(batchId);
             toast.success(result.message || "Picking completed");
-            router.push("/mm/consolidation/picking");
+            router.push("/mm/sales-and-fulfillment/consolidation-picking");
             return true;
         } catch (e) {
             const err = e as Error;
@@ -72,7 +72,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
     }, [router]);
 
     const handleClose = useCallback(() => {
-        router.push("/mm/consolidation/picking");
+        router.push("/mm/sales-and-fulfillment/consolidation-picking");
     }, [router]);
 
     const {
@@ -473,7 +473,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
                                     className="text-xs font-bold"
                                     suppressHydrationWarning
                                 >
-                                    Discard & Close
+                                    Discard &amp; Close
                                 </Button>
                             </div>
                         </motion.div>

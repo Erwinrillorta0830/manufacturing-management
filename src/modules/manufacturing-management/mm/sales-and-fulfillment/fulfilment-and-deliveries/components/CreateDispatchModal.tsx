@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { PendingInvoice, Vehicle, User, Branch } from "../types";
 import { X, Truck, ListOrdered, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { CreatableSelect } from "../../finished-goods/components/CreatableSelect";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 
 const cityCoordinates: Record<string, { lat: number; lng: number }> = {
     "urdaneta": { lat: 15.9761, lng: 120.5713 },

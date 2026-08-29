@@ -11,7 +11,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
-import ApprovalQueueModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-approval/ApprovalQueueModule";
+import InvoiceConsolidationModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-planning/InvoiceConsolidationModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,7 +49,7 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     return { name, email: email || "", avatar: "/vertex_logo_black.png" };
 }
 
-export default async function AuditQueuePage() {
+export default async function ConsolidationPlanningPage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
     const headerUser = buildHeaderUserFromToken(token);
@@ -67,9 +67,13 @@ export default async function AuditQueuePage() {
                                     <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="/mm/sales-and-fulfillment/consolidation-planning">Sales & Fulfillment</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Batch Approval
+                                        Consolidation Planning
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -81,7 +85,7 @@ export default async function AuditQueuePage() {
                 </div>
             </header>
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background flex flex-col">
-                <ApprovalQueueModule />
+                <InvoiceConsolidationModule />
             </main>
         </div>
     );

@@ -12,7 +12,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import AuditWorkspaceModule from "@/modules/manufacturing-management/consolidation/auditing/AuditWorkspaceModule";
+import ApprovalWorkspaceModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-approval/ApprovalWorkspaceModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,10 +50,10 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     return { name, email: email || "", avatar: "/vertex_logo_black.png" };
 }
 
-export default async function AuditWorkspacePage(props: { params: Promise<{ consolidatorNo: string }> }) {
+export default async function ApprovalWorkspacePage(props: { params: Promise<{ consolidatorNo: string }> }) {
     const { consolidatorNo } = await props.params;
     if (!consolidatorNo) {
-        redirect("/mm/consolidation/auditing");
+        redirect("/mm/sales-and-fulfillment/consolidation-approval");
     }
 
     const cookieStore = await cookies();
@@ -74,7 +74,7 @@ export default async function AuditWorkspacePage(props: { params: Promise<{ cons
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="shrink-0">
-                                    <BreadcrumbLink href="/mm/consolidation/auditing">
+                                    <BreadcrumbLink href="/mm/sales-and-fulfillment/consolidation-approval">
                                         Batch Approval
                                     </BreadcrumbLink>
                                 </BreadcrumbItem>
@@ -93,7 +93,7 @@ export default async function AuditWorkspacePage(props: { params: Promise<{ cons
                 </div>
             </header>
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background flex flex-col">
-                <AuditWorkspaceModule batchNo={consolidatorNo} />
+                <ApprovalWorkspaceModule batchNo={consolidatorNo} />
             </main>
         </div>
     );

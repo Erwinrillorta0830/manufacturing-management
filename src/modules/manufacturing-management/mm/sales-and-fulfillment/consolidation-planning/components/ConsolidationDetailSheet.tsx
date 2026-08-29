@@ -27,7 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { InvoiceConsolidation } from "../types";
 import { generateConsolidationPDF } from "../utils/ConsolidationSummaryPrint";
 import { fetchAllocations, type LotAllocation } from "../services/invoice-consolidation-api";
-import { ConsolidationStatusBadge } from "../../consolidation/shared/consolidation-ui";
+import { ConsolidationStatusBadge } from "../../shared/consolidation-ui";
 
 type DetailAction = "revert" | "audit" | "start-picking";
 

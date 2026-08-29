@@ -12,7 +12,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import PickingWorkspaceModule from "@/modules/manufacturing-management/invoice-consolidation/picking/pickingWorkspaceModule";
+import PickingWorkspaceModule from "@/modules/manufacturing-management/mm/sales-and-fulfillment/consolidation-picking/PickingWorkspaceModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

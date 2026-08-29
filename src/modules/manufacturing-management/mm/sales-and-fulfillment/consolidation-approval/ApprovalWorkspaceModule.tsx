@@ -17,16 +17,16 @@ import {
     repickBatch,
 } from "../shared/consolidation-api";
 
-interface AuditWorkspaceModuleProps {
+interface ApprovalWorkspaceModuleProps {
     batchNo: string;
 }
 
-export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModuleProps) {
+export default function ApprovalWorkspaceModule({ batchNo }: ApprovalWorkspaceModuleProps) {
     const router = useRouter();
     const [consolidation, setConsolidation] = useState<InvoiceConsolidation | null>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
-    const [auditStatus, setAuditStatus] = useState<Record<number, boolean>>({});
+    const [approvalStatus, setApprovalStatus] = useState<Record<number, boolean>>({});
     const [showConfirm, setShowConfirm] = useState(false);
     const [showRepickConfirm, setShowRepickConfirm] = useState(false);
 
@@ -37,13 +37,13 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
             .then(setConsolidation)
             .catch(() => {
                 toast.error("Failed to load batch");
-                router.push("/mm/consolidation/auditing");
+                router.push("/mm/sales-and-fulfillment/consolidation-approval");
             })
             .finally(() => setLoading(false));
     }, [batchNo, router]);
 
-    const handleToggleAudit = useCallback((detailId: number) => {
-        setAuditStatus((prev) => {
+    const handleToggleApproval = useCallback((detailId: number) => {
+        setApprovalStatus((prev) => {
             if (prev[detailId]) {
                 const next = { ...prev };
                 delete next[detailId];
@@ -54,12 +54,12 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
     }, []);
 
     const details = consolidation?.details || [];
-    const auditedCount = Object.keys(auditStatus).length;
+    const approvedCount = Object.keys(approvalStatus).length;
     const totalItems = details.length;
-    const progressPercent = totalItems > 0 ? (auditedCount / totalItems) * 100 : 0;
-    const isComplete = auditedCount === totalItems && totalItems > 0;
+    const progressPercent = totalItems > 0 ? (approvedCount / totalItems) * 100 : 0;
+    const isComplete = approvedCount === totalItems && totalItems > 0;
 
-    const handleFinalize = async () => {
+    const handleApprove = async () => {
         if (!consolidation) return;
         setSubmitting(true);
         try {
@@ -68,7 +68,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
             router.push("/mm/sales-and-fulfillment/consolidation-approval");
         } catch (e) {
             const err = e as Error;
-            toast.error(err.message || "Failed to audit batch");
+            toast.error(err.message || "Failed to approve batch");
         } finally {
             setSubmitting(false);
             setShowConfirm(false);
@@ -81,10 +81,10 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
         try {
             const result = await repickBatch(consolidation.id);
             toast.success(result.message || "Batch returned to picking floor");
-            router.push("/mm/consolidation/picking");
+            router.push("/mm/sales-and-fulfillment/consolidation-picking");
         } catch (e) {
             const err = e as Error;
-            toast.error(err.message || "Failed to re-pick batch");
+            toast.error(err.message || "Failed to request re-pick");
         } finally {
             setSubmitting(false);
             setShowRepickConfirm(false);
@@ -115,7 +115,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                     <Button
                         variant="outline"
                         size="icon"
-                        onClick={() => router.push("/mm/consolidation/auditing")}
+                        onClick={() => router.push("/mm/sales-and-fulfillment/consolidation-approval")}
                         className="h-9 w-9 shrink-0 rounded-xl"
                         disabled={submitting}
                         suppressHydrationWarning
@@ -123,7 +123,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                         <ArrowLeft className="h-4 w-4" />
                     </Button>
                     <div>
-                        <p className="text-[10px] font-extrabold uppercase tracking-wide text-violet-600">Audit Workspace</p>
+                        <p className="text-[10px] font-extrabold uppercase tracking-wide text-violet-600">Approval Workspace</p>
                         <div className="flex flex-wrap items-center gap-2">
                             <h1 className="text-sm font-black uppercase tracking-wide">
                                 {consolidation.consolidatorNo}
@@ -138,9 +138,9 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                 <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-xl bg-muted/45 px-4 py-3 text-right">
                         <div className="text-2xl font-black leading-none text-emerald-600 tabular-nums">
-                            {auditedCount} <span className="text-sm text-muted-foreground/50">/ {totalItems}</span>
+                            {approvedCount} <span className="text-sm text-muted-foreground/50">/ {totalItems}</span>
                         </div>
-                        <p className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wide mt-0.5">Audited SKUs</p>
+                        <p className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wide mt-0.5">Verified SKUs</p>
                     </div>
                     <div className="rounded-xl bg-muted/45 px-4 py-3 text-right"><div className="text-2xl font-black leading-none tabular-nums">{progressPercent.toFixed(0)}%</div><p className="mt-0.5 text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Progress</p></div>
                 </div>
@@ -155,26 +155,26 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                             Products to Verify ({totalItems})
                         </h2>
                         <span className="text-[10px] font-bold text-muted-foreground">
-                            {isComplete ? "All verified" : `${totalItems - auditedCount} remaining`}
+                            {isComplete ? "All verified" : `${totalItems - approvedCount} remaining`}
                         </span>
                     </div>
 
                     {details.map((d) => {
-                        const isAudited = !!auditStatus[d.id];
+                        const isApproved = !!approvalStatus[d.id];
                         const short = d.orderedQuantity - d.pickedQuantity;
                         return (
                             <div
                                 key={d.id}
-                                onClick={() => handleToggleAudit(d.id)}
+                                onClick={() => handleToggleApproval(d.id)}
                                 className={`rounded-xl border p-4 transition-all cursor-pointer ${
-                                    isAudited
+                                    isApproved
                                         ? "bg-emerald-500/5 border-emerald-500/30"
                                         : "bg-card border-border hover:border-blue-500/30 hover:shadow-sm"
                                 }`}
                             >
                                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex-1 min-w-0">
-                                        <h3 className={`text-sm font-bold leading-tight truncate ${isAudited ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                                        <h3 className={`text-sm font-bold leading-tight truncate ${isApproved ? "line-through text-muted-foreground" : "text-foreground"}`}>
                                             {d.productName || `Product #${d.productId}`}
                                         </h3>
                                         <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
@@ -198,9 +198,9 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                                             </div>
                                         )}
                                         <div className={`h-9 w-9 rounded-full flex items-center justify-center ${
-                                            isAudited ? "bg-emerald-500/10" : "bg-muted/30"
+                                            isApproved ? "bg-emerald-500/10" : "bg-muted/30"
                                         }`}>
-                                            {isAudited ? (
+                                            {isApproved ? (
                                                 <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                                             ) : (
                                                 <ClipboardCheck className="h-5 w-5 text-muted-foreground/50" />
@@ -217,7 +217,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
             <footer className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-[1544px] flex-col gap-3 rounded-xl border bg-card/95 px-4 py-3 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between md:inset-x-8">
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <span>
-                        Verified: <strong className={isComplete ? "text-emerald-500" : "text-foreground"}>{auditedCount}/{totalItems}</strong>
+                        Verified: <strong className={isComplete ? "text-emerald-500" : "text-foreground"}>{approvedCount}/{totalItems}</strong>
                     </span>
                     {!isComplete && totalItems > 0 && (
                         <span className="text-muted-foreground/60">
@@ -238,11 +238,11 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                         ) : (
                             <RefreshCcw className="h-3.5 w-3.5" />
                         )}
-                        Return to Picker
+                        Request Re-pick
                     </Button>
                     <Button
                         variant="outline"
-                        onClick={() => router.push("/mm/consolidation/auditing")}
+                        onClick={() => router.push("/mm/sales-and-fulfillment/consolidation-approval")}
                         disabled={submitting}
                         className="text-xs font-bold"
                         suppressHydrationWarning
@@ -260,7 +260,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                         ) : (
                             <ShieldCheck className="h-3.5 w-3.5" />
                         )}
-                        Finalize Audit
+                        Approve Batch
                     </Button>
                 </div>
             </footer>
@@ -273,7 +273,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                                 <RefreshCcw className="h-5 w-5" />
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-foreground">Re-pick this batch?</h3>
+                                <h3 className="text-sm font-bold text-foreground">Request Re-pick?</h3>
                                 <p className="text-[11px] text-muted-foreground mt-0.5">
                                     {consolidation.consolidatorNo} will be returned to Picking status. Inventory will be restored and picked quantities cleared.
                                 </p>
@@ -317,9 +317,9 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                                 <ShieldCheck className="h-5 w-5" />
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-foreground">Finalize Audit?</h3>
+                                <h3 className="text-sm font-bold text-foreground">Approve Batch?</h3>
                                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                                    {consolidation.consolidatorNo} will be marked as Audited and all linked invoices will be dispatched.
+                                    {consolidation.consolidatorNo} will be marked as Approved and all linked invoices will be dispatched.
                                 </p>
                             </div>
                         </div>
@@ -335,12 +335,12 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                             </Button>
                             <Button
                                 size="sm"
-                                onClick={handleFinalize}
+                                onClick={handleApprove}
                                 disabled={submitting}
                                 className="bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700"
                                 suppressHydrationWarning
                             >
-                                {submitting ? "Processing..." : "Confirm Audit"}
+                                {submitting ? "Processing..." : "Confirm Approval"}
                             </Button>
                         </div>
                     </div>

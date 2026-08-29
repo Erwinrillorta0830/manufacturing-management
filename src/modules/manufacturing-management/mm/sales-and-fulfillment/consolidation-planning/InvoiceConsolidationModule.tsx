@@ -32,7 +32,7 @@ import {
     ConsolidationShell,
     ConsolidationStatusBadge,
     FilterField,
-} from "../consolidation/shared/consolidation-ui";
+} from "../shared/consolidation-ui";
 import {
     AlertDialog,
     AlertDialogAction,
