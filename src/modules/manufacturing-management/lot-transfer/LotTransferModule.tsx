@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useLotTransfer } from "./hooks/useLotTransfer";
+import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
 import type { BatchOption, LotTransferMode } from "./types";
 
 interface LotTransferModuleProps {
@@ -153,7 +153,7 @@ function BatchSelect({
         return active && (!source || batch.quantity > 0 || String(batch.batchId) === value);
     });
     return (
-        <SearchableSelect
+        <LotTransferSearchableSelect
             value={value}
             onValueChange={onChange}
             options={filtered.map((batch) => ({
@@ -210,7 +210,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 {!controller.userBranchId && (
                     <label>
                         <FieldLabel required>Branch</FieldLabel>
-                        <SearchableSelect
+                        <LotTransferSearchableSelect
                             value={form.branchId}
                             onValueChange={(value) => controller.setField("branchId", value)}
                             options={controller.branches.map((branch) => ({ value: String(branch.id), label: `${branch.branchName} (${branch.branchCode})` }))}
@@ -221,7 +221,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 )}
                 <label>
                     <FieldLabel required>Product</FieldLabel>
-                    <SearchableSelect
+                    <LotTransferSearchableSelect
                         value={form.productId}
                         onValueChange={controller.handleProductChange}
                         options={controller.products.map((product) => ({
@@ -236,13 +236,13 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             <div className="mt-4 grid gap-4 rounded-lg border bg-muted/20 p-3 md:grid-cols-2">
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">SOURCE</span>Move out</div>
-                    <label className="block"><FieldLabel required>Source lot</FieldLabel><SearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." disabled={!form.productId} className={selectClassName} /></label>
+                    <label className="block"><FieldLabel required>Source lot</FieldLabel><LotTransferSearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." disabled={!form.productId} className={selectClassName} /></label>
                     <label className="mt-3 block"><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceBatches} value={form.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange("source", value)} disabled={!form.sourceLotId} source /></label>
                     {sourceBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Available<br /><strong>{formatQuantity(sourceBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(sourceBatch.expirationDate)}</strong></span><span>QA<br /><strong>{sourceBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{sourceBatch.batchId}</strong></span></div>}
                 </div>
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><SearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /></label>
+                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /></label>
                     <label className="mt-3 block"><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetBatches} value={form.targetInventoryLotId} onChange={(value) => controller.handleBatchChange("target", value)} disabled={!form.targetLotId} source={false} /></label>
                     {targetBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Current on hand<br /><strong>{formatQuantity(targetBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(targetBatch.expirationDate)}</strong></span><span>QA<br /><strong>{targetBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{targetBatch.batchId}</strong></span></div>}
                 </div>
