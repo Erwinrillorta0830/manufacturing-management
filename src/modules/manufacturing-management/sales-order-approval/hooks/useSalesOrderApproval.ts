@@ -184,7 +184,7 @@ export function useSalesOrderApproval() {
     const handleSendToJO = async (orderId: number) => {
         setUpdatingStatusId(orderId);
         try {
-            await updateSalesOrderStatus(orderId, "In Production");
+            await updateSalesOrderStatus(orderId, "For Production");
             toast.success("Sales Order approved! Sent to production (JO).");
             loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
