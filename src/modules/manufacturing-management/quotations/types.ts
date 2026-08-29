@@ -13,6 +13,7 @@ export interface Project {
     customer_code: string;
     created_by?: number;
     created_at?: string;
+    status?: string;
 }
 
 export interface QuotationHeader {

@@ -122,7 +122,7 @@ export async function fetchReturns(
     remarks: item.remarks,
     orderNo: item.order_id || "",
     isThirdParty: parseBoolean(item.isThirdParty),
-    priceType: item.price_type || "-",
+    priceType: item.price_type_id ? String(item.price_type_id) : "-",
     createdAt: item.created_at
       ? new Intl.DateTimeFormat("en-PH", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(item.created_at))
       : "-",
@@ -204,6 +204,8 @@ export async function fetchReturnDetails(
         const percentage = discountPercentMap.get(discId) || 0;
         return Math.round((gross - gross * (percentage / 100)) * 100) / 100;
       })(),
+      lot_id: detail.lot_id ? Number(detail.lot_id) : null,
+      batch: detail.batch || null,
       reason: detail.reason || "",
       sales_return_type_id: detail.sales_return_type_id
         ? Number(detail.sales_return_type_id)
@@ -280,6 +282,7 @@ export async function fetchReferences(): Promise<{
     id: item.id,
     name: item.customer_name || item.store_name,
     code: item.customer_code,
+    price_type_id: item.price_type_id,
   }));
 
   // Branches
@@ -307,6 +310,14 @@ export async function fetchReferences(): Promise<{
     returnTypes: (returnTypesRes.data || []) as unknown as API_SalesReturnType[],
     priceTypes: priceTypesData,
   };
+}
+
+/**
+ * Fetches all lots.
+ */
+export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+  const result = await repo.getRawLots();
+  return (result.data || []) as { lot_id: number; lot_name: string; }[];
 }
 
 /**
@@ -491,7 +502,8 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     total_amount: Math.round(Number(payload.totalAmount) * 100) / 100,
     status: "Pending",
     return_date: formattedDate,
-    price_type: payload.priceType || "A",
+    price_type_id: payload.priceType ? Number(payload.priceType) : null,
+    branch_id: cleanId(payload.branchId),
     remarks: payload.remarks || "Created via Web App",
     order_id: payload.orderNo || "",
     isThirdParty: payload.isThirdParty ? 1 : 0,
@@ -548,6 +560,8 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
       sales_return_type_id: typeId,
       discount_type: discId,
+      lot_id: item.lot_id ? Number(item.lot_id) : null,
+      batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
       created_at: nowPH(),
     };
@@ -611,6 +625,7 @@ export async function updateReturn(
     gross_amount: totalGross,
     discount_amount: totalDiscount,
     total_amount: totalNet,
+    branch_id: cleanId(payload.branchId),
     invoice_no: payload.invoiceNo ?? "",
     order_id: payload.orderNo ?? "",
     isThirdParty: payload.isThirdParty ? 1 : 0,
@@ -720,6 +735,8 @@ export async function updateReturn(
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
       sales_return_type_id: typeId,
       discount_type: discId,
+      lot_id: item.lot_id ? Number(item.lot_id) : null,
+      batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
       updated_at: nowPH(),
     };

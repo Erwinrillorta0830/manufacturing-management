@@ -15,6 +15,7 @@ import {
   submitReturn,
   updateReturn,
   updateStatus,
+  fetchLots,
 } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return-service";
 /**
  * Decodes the base64url payload of a JWT without verifying the signature.
@@ -98,6 +99,11 @@ export async function GET(req: NextRequest) {
 
       case "references": {
         const data = await fetchReferences();
+        return json({ data });
+      }
+
+      case "lots": {
+        const data = await fetchLots();
         return json({ data });
       }
 

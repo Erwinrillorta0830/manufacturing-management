@@ -92,7 +92,7 @@ export async function getRawReturns(
   filters: { salesman?: string; customer?: string; status?: string; invoiceNo?: string } = {},
 ) {
   const allowedFields =
-    "return_id,return_number,invoice_no,customer_code,salesman_id,total_amount,status,return_date,remarks,order_id,isThirdParty,created_at,price_type,received_at";
+    "return_id,return_number,invoice_no,customer_code,salesman_id,total_amount,status,return_date,remarks,order_id,isThirdParty,created_at,price_type_id,received_at";
 
   let url = `/items/sales_return?page=${page}&limit=${limit}&meta=filter_count&fields=${allowedFields}&sort=-return_id`;
 
@@ -144,7 +144,7 @@ export async function getRawReferences() {
       "/items/salesman?limit=-1&fields=id,salesman_name,salesman_code,price_type,branch_code",
     ),
     directusGet<{ data: Record<string, unknown>[] }>(
-      "/items/customer?limit=-1&fields=id,customer_code,customer_name,store_name,discount_type",
+      "/items/customer?limit=-1&fields=id,customer_code,customer_name,store_name,discount_type,price_type_id",
     ),
     directusGet<{ data: Record<string, unknown>[] }>(
       "/items/branches?limit=-1&fields=id,branch_name",
@@ -156,6 +156,15 @@ export async function getRawReferences() {
       "/items/sales_return_type?limit=-1",
     ),
   ]);
+}
+
+/**
+ * Fetches all active lots (mm_lots)
+ */
+export async function getRawLots() {
+  return directusGet<{ data: Record<string, unknown>[] }>(
+    "/items/mm_lots?limit=-1&fields=lot_id,lot_name,status&filter[status][_eq]=ACTIVE"
+  );
 }
 
 /**

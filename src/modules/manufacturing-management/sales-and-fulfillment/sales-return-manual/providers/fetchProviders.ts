@@ -123,6 +123,11 @@ export const SalesReturnProvider = {
     return handleResponse<InvoiceOption[]>(res);
   },
 
+  async getLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+    const res = await fetch(`${API_BASE}?action=lots`, { cache: "no-store" });
+    return handleResponse<{ lot_id: number; lot_name: string; }[]>(res);
+  },
+
   // --- 4. PRODUCT LOOKUP HELPERS ---
   async getBrands(): Promise<Brand[]> {
     const catalog = await this._getProductCatalog();

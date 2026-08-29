@@ -16,6 +16,7 @@ interface ProjectPortfolioItem {
     quoteCount: number;
     latest: QuotationHeader;
     history: QuotationHeader[];
+    projectStatus?: string;
 }
 
 interface QuotationListProps {
@@ -35,7 +36,7 @@ export function QuotationList({
     allProjects,
     startCreateQuoteForProject
 }: QuotationListProps) {
-    const [subTab, setSubTab] = useState<"all" | "active" | "approved" | "rejected">("all");
+    const [subTab, setSubTab] = useState<"all" | "executed" | "draft" | "rejected">("all");
     const [listSearchQuery, setListSearchQuery] = useState("");
     const [listPage, setListPage] = useState(1);
     const [listItemsPerPage, setListItemsPerPage] = useState(10);
@@ -53,15 +54,14 @@ export function QuotationList({
     const [historyQuotes, setHistoryQuotes] = useState<QuotationHeader[]>([]);
     const [projectSnapshots, setProjectSnapshots] = useState<Record<number, QuotationSnapshotNode[]>>({});
 
-    // Grouping helper: finds the latest quote sheet per project name
     const projectGroups = React.useMemo(() => {
-        const groups: Record<string, { latest: QuotationHeader; history: QuotationHeader[] }> = {};
+        const groups: Record<string, { latest: QuotationHeader; history: QuotationHeader[]; projectStatus?: string }> = {};
 
         quotes.forEach(q => {
             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
             const key = projObj?.project_name || `No Project Name (Quote: ${q.quote_number})`;
             if (!groups[key]) {
-                groups[key] = { latest: q, history: [q] };
+                groups[key] = { latest: q, history: [q], projectStatus: projObj?.status || "Draft" };
             } else {
                 groups[key].history.push(q);
                 // Compare dates or revision suffixes to find the latest
@@ -81,7 +81,8 @@ export function QuotationList({
                 if (!groups[key]) {
                     groups[key] = {
                         latest: proj.latest,
-                        history: []
+                        history: [],
+                        projectStatus: proj.projectStatus
                     };
                 }
             }
@@ -104,12 +105,12 @@ export function QuotationList({
         let filtered = allProjectsList;
 
         // Status filter
-        if (subTab === "active") {
-            filtered = filtered.filter(p => p.latest.status !== "Rejected" && p.latest.status !== "Converted to SO");
-        } else if (subTab === "approved") {
-            filtered = filtered.filter(p => p.latest.status === "Converted to SO");
+        if (subTab === "executed") {
+            filtered = filtered.filter(p => p.projectStatus === "Executed");
         } else if (subTab === "rejected") {
-            filtered = filtered.filter(p => p.latest.status === "Rejected");
+            filtered = filtered.filter(p => p.projectStatus === "Rejected");
+        } else if (subTab === "draft") {
+            filtered = filtered.filter(p => p.projectStatus !== "Executed" && p.projectStatus !== "Rejected");
         }
 
         // Search filter
@@ -246,12 +247,12 @@ export function QuotationList({
                 <div className="relative w-full sm:w-auto min-w-[200px]">
                     <select
                         value={subTab}
-                        onChange={(e) => setSubTab(e.target.value as "all" | "active" | "approved" | "rejected")}
+                        onChange={(e) => setSubTab(e.target.value as "all" | "executed" | "draft" | "rejected")}
                         className="w-full appearance-none bg-background border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 pr-10 text-xs font-bold text-foreground outline-none focus:ring-1 focus:ring-primary shadow-sm cursor-pointer"
                     >
                         <option value="all">All</option>
-                        <option value="active">Active</option>
-                        <option value="approved">Approved</option>
+                        <option value="executed">Executed</option>
+                        <option value="draft">Draft</option>
                         <option value="rejected">Rejected</option>
                     </select>
                     <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground">
@@ -318,13 +319,13 @@ export function QuotationList({
                                                     </button>
                                                 </td>
                                                 <td className="p-3 text-center">
-                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${q.status === "Converted to SO"
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${proj.projectStatus === "Executed"
                                                         ? "bg-teal-500/10 text-teal-600 border-teal-500/20"
-                                                        : q.status === "Rejected"
+                                                        : proj.projectStatus === "Rejected"
                                                             ? "bg-destructive/10 text-destructive border-destructive/20"
                                                             : "bg-amber-500/10 text-amber-600 border-amber-500/20"
                                                         }`}>
-                                                        {q.status === "Converted to SO" ? "Approved" : (q.status || "Draft")}
+                                                        {proj.projectStatus || "Draft"}
                                                     </span>
                                                 </td>
                                             </tr>

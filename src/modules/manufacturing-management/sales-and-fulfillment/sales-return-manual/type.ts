@@ -18,6 +18,8 @@ export interface SalesReturnItem {
   discountType: string | number | null;
   discountAmount: number;
   totalAmount: number;
+  lot_id?: number | null;
+  batch?: string | null;
   reason?: string;
   returnType?: string;
   rfidTags?: string[];
@@ -158,6 +160,8 @@ export interface API_SalesReturnDetail {
   discount_type: number;
   discount_amount: string;
   total_amount: string;
+  lot_id: number | null;
+  batch: string | null;
   reason: string | null;
   sales_return_type_id: number;
 }
@@ -178,6 +182,7 @@ export interface CustomerOption {
   name: string; // Changed from 'customer_name' to 'name'
   code?: string; // Optional: Add this if your API returns a customer code
   discountType?: number | string | null;
+  price_type_id?: number | string | null;
 }
 
 // If you need the full object elsewhere, we can keep a separate type for that,
@@ -210,4 +215,9 @@ export interface InvoiceOption {
   salesman_id: number; // 🟢 Added this line
   amount?: number;
   isPosted?: boolean;
+}
+
+export interface LotOption {
+  lot_id: number;
+  lot_name: string;
 }

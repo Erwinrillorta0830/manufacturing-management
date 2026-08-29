@@ -40,10 +40,10 @@ export async function fetchQuotations(): Promise<unknown[]> {
         await Promise.all(promises);
 
         // Fetch projects
-        let projects: { id: string | number; project_name: string; customer_code: string }[] = [];
+        let projects: { id: string | number; project_name: string; customer_code: string; status?: string }[] = [];
         const projRes = await fetch(`${DIRECTUS_URL}/items/projects?limit=-1`, { headers, cache: "no-store" });
         if (projRes.ok) {
-            projects = ((await projRes.json()).data || []) as { id: string | number; project_name: string; customer_code: string }[];
+            projects = ((await projRes.json()).data || []) as { id: string | number; project_name: string; customer_code: string; status?: string }[];
         }
 
         return quotes.map(q => {

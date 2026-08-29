@@ -35,7 +35,7 @@ export function useQuotation() {
     const [showValidationErrors, setShowValidationErrors] = useState(false);
     
     // Project portfolio database registry
-    const [localProjects, setLocalProjects] = useState<{ id: number; project_name: string; customer_id: number; customer_name: string; customer_code: string }[]>([]);
+    const [localProjects, setLocalProjects] = useState<{ id: number; project_name: string; customer_id: number; customer_name: string; customer_code: string; status?: string }[]>([]);
 
     // Load master list of quotations
     const loadQuotes = async () => {
@@ -73,7 +73,8 @@ export function useQuotation() {
                                 project_name: p.project_name,
                                 customer_id: matchedCust ? Number(matchedCust.id) : 0,
                                 customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
-                                customer_code: p.customer_code
+                                customer_code: p.customer_code,
+                                status: p.status
                             };
                         });
                         setLocalProjects(mapped);
@@ -255,7 +256,8 @@ export function useQuotation() {
                         project_name: p.project_name,
                         customer_id: matchedCust ? Number(matchedCust.id) : 0,
                         customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
-                        customer_code: p.customer_code
+                        customer_code: p.customer_code,
+                        status: p.status
                     };
                 });
                 setLocalProjects(mapped);
@@ -749,7 +751,7 @@ export function useQuotation() {
 
     // Virtual Project Portfolio List: maps each project_name to a single portfolio
     const allProjects = useMemo(() => {
-        const projectMap = new Map<string, { projectId: number; projectName: string; customerId: number; customerName: string; customerCode: string; quoteCount: number; latest: QuotationHeader; history: QuotationHeader[] }>();
+        const projectMap = new Map<string, { projectId: number; projectName: string; customerId: number; customerName: string; customerCode: string; projectStatus: string; quoteCount: number; latest: QuotationHeader; history: QuotationHeader[] }>();
         
         quotes.forEach(q => {
             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
@@ -768,6 +770,7 @@ export function useQuotation() {
                     customerId: custId,
                     customerName: custName,
                     customerCode: custCode,
+                    projectStatus: projObj?.status || "Draft",
                     quoteCount: 1,
                     latest: q,
                     history: [q]
@@ -793,6 +796,7 @@ export function useQuotation() {
                     customerId: lp.customer_id,
                     customerName: lp.customer_name,
                     customerCode: lp.customer_code || "",
+                    projectStatus: lp.status || "Draft",
                     quoteCount: 0,
                     latest: {
                         id: 0,

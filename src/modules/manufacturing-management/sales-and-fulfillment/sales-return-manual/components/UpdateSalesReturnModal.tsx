@@ -279,6 +279,7 @@ export function UpdateSalesReturnModal({
   >([]);
   const [salesmenOptions, setSalesmenOptions] = useState<{ value: string; label: string; code: string; branch: string }[]>([]);
   const [customerOptions, setCustomerOptions] = useState<{ value: string; label: string }[]>([]);
+  const [lotOptions, setLotOptions] = useState<{ lot_id: number; lot_name: string; }[]>([]);
 
   const [isProductLookupOpen, setIsProductLookupOpen] = useState(false);
   const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
@@ -326,6 +327,7 @@ export function UpdateSalesReturnModal({
           retTypes,
           salesmen,
           customers,
+          lots,
         ] = await Promise.all([
           SalesReturnProvider.getProductsSummary(returnId, headerData.returnNo),
           SalesReturnProvider.getStatusCardData(returnId),
@@ -333,6 +335,7 @@ export function UpdateSalesReturnModal({
           SalesReturnProvider.getSalesReturnTypes(),
           SalesReturnProvider.getSalesmenList(),
           SalesReturnProvider.getCustomersList(),
+          SalesReturnProvider.getLots(),
         ]);
 
         setDetails(items);
@@ -347,6 +350,7 @@ export function UpdateSalesReturnModal({
         setReturnTypeOptions(retTypes);
         setSalesmenOptions(salesmen);
         setCustomerOptions(customers);
+        setLotOptions(lots);
 
         // Fetch invoices filtered by salesman and customer
         try {
@@ -873,6 +877,12 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 text-right min-w-[150px] uppercase text-xs">
                         Total
                       </TableHead>
+                      <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
+                        Lot
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
+                        Batch
+                      </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
                         Reason
                       </TableHead>
@@ -898,6 +908,8 @@ export function UpdateSalesReturnModal({
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[80px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[60px] ml-auto" /></TableCell>
+                          <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
+                          <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[120px]" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           {canEditAll && <TableCell><Skeleton className="h-8 w-8 rounded-md mx-auto" /></TableCell>}
@@ -1014,6 +1026,32 @@ export function UpdateSalesReturnModal({
                               </TableCell>
                               <TableCell className="text-right font-bold text-sm text-foreground align-middle whitespace-nowrap">
                                 ₱{(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {canEditAll ? (
+                                  <LocalSearchableSelect
+                                    value={item.lot_id ? item.lot_id.toString() : ""}
+                                    onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
+                                    options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                    placeholder="Select lot"
+                                    className="h-9 text-xs"
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {canEditAll ? (
+                                  <Input
+                                    type="text"
+                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    value={item.batch || ""}
+                                    onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
+                                    placeholder="Batch no."
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
+                                )}
                               </TableCell>
                               {/* Reason */}
                               <TableCell className="align-middle p-2">
@@ -1152,6 +1190,12 @@ export function UpdateSalesReturnModal({
                           <TableCell className="align-middle p-2 text-center text-muted-foreground">
                             -
                           </TableCell>
+                          <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                            -
+                          </TableCell>
+                          <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                            -
+                          </TableCell>
                           <TableCell className="align-middle p-2">
                             {group.returnType !== "Unassigned" ? (
                               <Badge
@@ -1274,6 +1318,32 @@ export function UpdateSalesReturnModal({
                             </TableCell>
                             <TableCell className="text-right font-bold text-sm text-foreground align-middle">
                               {(Number(item.totalAmount) || 0).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {canEditAll ? (
+                                <LocalSearchableSelect
+                                  value={item.lot_id ? item.lot_id.toString() : ""}
+                                  onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
+                                  options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                  placeholder="Select lot"
+                                  className="h-9 text-xs"
+                                />
+                              ) : (
+                                <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {canEditAll ? (
+                                <Input
+                                  type="text"
+                                  className="h-9 w-full text-left text-sm border-border px-2"
+                                  value={item.batch || ""}
+                                  onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
+                                  placeholder="Batch no."
+                                />
+                              ) : (
+                                <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
+                              )}
                             </TableCell>
                              <TableCell className="align-middle p-2">
                                {canEditAll ? (

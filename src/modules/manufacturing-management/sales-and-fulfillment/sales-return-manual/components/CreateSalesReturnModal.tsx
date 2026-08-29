@@ -229,6 +229,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     API_SalesReturnType[]
   >([]);
   const [priceTypeOptions, setPriceTypeOptions] = useState<PriceTypeOption[]>([]);
+  const [lotOptions, setLotOptions] = useState<{ lot_id: number; lot_name: string; }[]>([]);
 
   // INVOICE DATA LIST & DROPDOWN STATE
   const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
@@ -283,6 +284,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             lineDiscountData,
             returnTypesData,
             priceTypesData,
+            lotsData,
           ] = await Promise.all([
             SalesReturnProvider.getFormSalesmen(),
             SalesReturnProvider.getFormCustomers(),
@@ -290,6 +292,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             SalesReturnProvider.getLineDiscounts(),
             SalesReturnProvider.getSalesReturnTypes(),
             SalesReturnProvider.getPriceTypes(),
+            SalesReturnProvider.getLots(),
           ]);
           setSalesmen(salesmenData);
           setCustomers(customersData);
@@ -297,6 +300,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           setLineDiscountOptions(lineDiscountData);
           setReturnTypeOptions(returnTypesData);
           setPriceTypeOptions(priceTypesData);
+          setLotOptions(lotsData);
         } catch (error) {
           console.error("Failed to load form data", error);
         }
@@ -387,7 +391,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setSelectedSalesmanId(salesman.id.toString());
     setSalesmanSearch(salesman.name);
     setSalesmanCode(salesman.code);
-    setPriceType(salesman.priceType || "A");
+    
+    if (salesman.priceType) {
+      const pt = priceTypeOptions.find(p => p.price_type_id.toString() === salesman.priceType.toString());
+      if (pt) {
+        setPriceType(pt.price_type_name);
+      } else {
+        setPriceType(salesman.priceType.toString());
+      }
+    } else {
+      setPriceType("A");
+    }
+
     const linkedBranch = branches.find((b) => b.id === salesman.branchId);
     setBranchName(linkedBranch ? linkedBranch.name : "");
     setIsSalesmanOpen(false);
@@ -395,18 +410,27 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setOrderSearch("");
     setInvoiceNo("");
     setInvoiceSearch("");
-  }, [branches]);
+  }, [branches, priceTypeOptions]);
 
   const handleSelectCustomer = useCallback((customer: CustomerOption) => {
     setSelectedCustomerId(customer.id.toString());
     setCustomerSearch(customer.name);
     setCustomerCode(customer.code || "");
+    if (customer.price_type_id) {
+      const pt = priceTypeOptions.find(p => p.price_type_id.toString() === customer.price_type_id?.toString());
+      if (pt) {
+        setPriceType(pt.price_type_name);
+      } else {
+        // Fallback if priceTypeOptions is not yet loaded or doesn't match
+        setPriceType(customer.price_type_id.toString());
+      }
+    }
     setIsCustomerOpen(false);
     setOrderNo("");
     setOrderSearch("");
     setInvoiceNo("");
     setInvoiceSearch("");
-  }, []);
+  }, [priceTypeOptions]);
 
   // --- 5b. FETCH INVOICES when salesman or customer changes ---
   useEffect(() => {
@@ -633,6 +657,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         ? selectedSalesmanObj.branchId
         : null;
 
+      const selectedPt = priceTypeOptions.find(pt => pt.price_type_name === priceType);
+      const payloadPriceTypeId = selectedPt ? selectedPt.price_type_id : null;
+
       const payload = {
         invoiceNo,
         orderNo,
@@ -643,7 +670,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         isThirdParty,
         totalAmount: totalNet,
         returnDate,
-        priceType,
+        priceType: payloadPriceTypeId,
         remarks,
         items: items,
         appliedInvoiceId: appliedInvoiceId ?? undefined,
@@ -1090,6 +1117,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-40 text-right">
                       Total
                     </th>
+                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                      Lot
+                    </th>
+                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                      Batch
+                    </th>
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-48">
                       Reason
                     </th>
@@ -1182,6 +1215,32 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             </td>
                             <td className="px-3 py-2 text-right font-bold text-sm text-foreground whitespace-nowrap">
                               ₱{item.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-2 py-2">
+                              <Select
+                                value={item.lot_id ? item.lot_id.toString() : ""}
+                                onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
+                              >
+                                <SelectTrigger className="w-full h-8 text-xs px-2 bg-background border-border">
+                                  <SelectValue placeholder="Select lot" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-background">
+                                  {lotOptions.map((lot) => (
+                                    <SelectItem key={lot.lot_id} value={lot.lot_id.toString()}>
+                                      {lot.lot_name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-2">
+                              <input
+                                type="text"
+                                className="w-full text-left border border-border rounded h-8 text-sm px-2 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                                placeholder="Batch no."
+                                value={item.batch || ""}
+                                onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
+                              />
                             </td>
                              <td className="px-4 py-2">
                                <ReasonInputSection
@@ -1303,6 +1362,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             <td className="px-4 py-2 text-center text-muted-foreground">
                               -
                             </td>
+                            <td className="px-4 py-2 text-center text-muted-foreground">
+                              -
+                            </td>
+                            <td className="px-4 py-2 text-center text-muted-foreground">
+                              -
+                            </td>
                             <td className="px-4 py-2">
                               {group.returnType !== "Unassigned" ? (
                                 <span className="bg-primary/20 text-primary px-2 py-0.5 rounded text-xs font-medium">
@@ -1370,6 +1435,32 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               </td>
                               <td className="px-4 py-2 text-right font-bold text-foreground text-sm">
                                 ₱{item.totalAmount.toLocaleString()}
+                              </td>
+                              <td className="px-2 py-2">
+                                <Select
+                                  value={item.lot_id ? item.lot_id.toString() : ""}
+                                  onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
+                                >
+                                  <SelectTrigger className="w-full h-8 text-xs px-2 bg-background border-border">
+                                    <SelectValue placeholder="Select lot" />
+                                  </SelectTrigger>
+                                  <SelectContent className="bg-background">
+                                    {lotOptions.map((lot) => (
+                                      <SelectItem key={lot.lot_id} value={lot.lot_id.toString()}>
+                                        {lot.lot_name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </td>
+                              <td className="px-2 py-2">
+                                <input
+                                  type="text"
+                                  className="w-full text-left border border-border rounded h-8 text-sm px-2 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                                  placeholder="Batch no."
+                                  value={item.batch || ""}
+                                  onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
+                                />
                               </td>
                                <td className="px-4 py-2">
                                 <ReasonInputSection
