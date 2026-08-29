@@ -22,7 +22,9 @@ export default function LotManagementModule() {
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        setMounted(true);
+        queueMicrotask(() => {
+            setMounted(true);
+        });
     }, []);
     const {
         lots,

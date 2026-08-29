@@ -222,7 +222,7 @@ export default function CreateConsolidationModal({
             map.set(inv.invoiceId, lineMap);
         }
         return map;
-    }, [allocationPreview?.invoiceBreakdown]);
+    }, [allocationPreview]);
 
     // Available batches grouped by productId
     const batchesByProduct = useMemo(() => {
@@ -234,7 +234,7 @@ export default function CreateConsolidationModal({
             map.set(batch.productId, list);
         }
         return map;
-    }, [allocationPreview?.availableBatches]);
+    }, [allocationPreview]);
 
     // Manual allocation summary per product
     const manualSummaryByProduct = useMemo(() => {
