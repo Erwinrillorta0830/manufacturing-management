@@ -95,6 +95,12 @@ export async function updateLotTransfer(id: number, form: LotTransferForm): Prom
     return unwrap(payload);
 }
 
+export async function deleteLotTransfer(id: number): Promise<void> {
+    await requestJson<{ success?: boolean }>(`/api/manufacturing/lot-transfers/${id}`, {
+        method: "DELETE"
+    });
+}
+
 function toPayload(form: LotTransferForm) {
     return {
         branchId: Number(form.branchId),

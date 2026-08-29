@@ -779,6 +779,19 @@ export async function updateLotTransfer(id: number, input: LotTransferPatchInput
     return mapTransferRow(row);
 }
 
+export async function deleteLotTransfer(id: number): Promise<void> {
+    const current = await getLotTransfer(id);
+    if (current.status !== "Draft") {
+        throw new LotTransferError(409, "Only Draft lot-transfer requests can be deleted.");
+    }
+    await mutateDirectus(
+        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
+        "DELETE",
+        undefined,
+        "Lot-transfer Draft deletion"
+    );
+}
+
 interface TransferContext {
     record: LotTransferRecord;
     branch: RecordValue;
