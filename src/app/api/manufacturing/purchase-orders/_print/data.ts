@@ -1,6 +1,7 @@
 import { paymentStatusLabel, inventoryStatusToPurchaseOrderStatus } from "../../procurement/_domain";
 import { DIRECTUS_URL, procurementDirectusFetch, procurementDirectusHeaders } from "../../procurement/_directus";
 import { fetchShipmentLineItems } from "../../procurement/shipments/shipments-helper";
+import { loadMmLots } from "../../qa-receiving/_mm-lot-compat";
 import {
     getLandedCostComputation,
     resolveBaseUnitCostPhp,
@@ -378,13 +379,16 @@ async function loadReceivingData(
         ...headerRows.map(row => relationId(row.branch_id, ["id", "branch_id"]))
     ].filter((id): id is number => id !== null))];
     const lotIds = [...new Set(filteredRows.map(row => relationId(row.lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
-    const [branchRows, lotRows, movementDateRows] = await Promise.all([
+    const mmLotIds = [...new Set(filteredRows.map(row => relationId(row.mm_lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
+    const [branchRows, lotRows, mmLotRows, movementDateRows] = await Promise.all([
         branchIds.length ? directusRows(`/items/branches?filter[id][_in]=${branchIds.join(",")}&fields=id,branch_name,branch_code&limit=-1`, "Unable to load receiving branches.", true) : [],
         lotIds.length ? directusRows(`/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=*&limit=-1`, "Unable to load receiving storage lots.", true) : [],
+        mmLotIds.length ? loadMmLots({ ids: mmLotIds, onlyActive: false }) : [],
         receivingIds.length ? directusRows(`/items/inventory_movements?filter[source_document_id][_in]=${receivingIds.join(",")}&fields=source_document_id,manufacturing_date&limit=-1`, "Unable to load receiving manufacturing dates.", true) : []
     ]);
     const branches = new Map(branchRows.map(row => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
     const lots = new Map(lotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
+    const mmLots = new Map(mmLotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name, relationId(row, ["lot_id", "id"]) ? `Lot #${relationId(row, ["lot_id", "id"])}` : "N/A")]));
     const movementDates = new Map(movementDateRows.map(row => [relationId(row.source_document_id, ["purchase_order_product_id", "id"]), dateText(row.manufacturing_date)]));
     const committedHeaderIds = new Set(
         filteredRows
@@ -423,6 +427,7 @@ async function loadReceivingData(
         const rejected = number(row.quantity_rejected);
         const branchId = relationId(row.branch_id, ["id", "branch_id"]);
         const lotId = relationId(row.lot_id, ["lot_id", "id"]);
+        const mmLotId = relationId(row.mm_lot_id, ["lot_id", "id"]);
         return {
             receivingRecordId: relationId(row, ["purchase_order_product_id", "id"]) || 0,
             headerId,
@@ -430,7 +435,9 @@ async function loadReceivingData(
             product: productLine?.productName || relationText(row.product_id, ["product_name"], "Unknown product"),
             productCode: productLine?.productCode || relationText(row.product_id, ["product_code"], "N/A"),
             branch: branches.get(branchId) || (branchId ? `Branch #${branchId}` : "N/A"),
-            storageLot: lots.get(lotId) || (lotId ? `Lot #${lotId}` : "N/A"),
+            storageLot: mmLots.get(mmLotId) || lots.get(lotId) || (mmLotId ? `Lot #${mmLotId}` : lotId ? `Lot #${lotId}` : "N/A"),
+            mmLotId,
+            legacyLotId: lotId,
             batchNumber: text(row.batch_no),
             manufacturingDate: dateText(row.manufacturing_date) === "N/A"
                 ? movementDates.get(relationId(row, ["purchase_order_product_id", "id"])) || "N/A"
@@ -467,23 +474,29 @@ async function loadMovements(
     const lineByProduct = new Map(lines.map(line => [line.productId, line]));
     const branchIds = [...new Set(movementRows.map(row => relationId(row.branch_id, ["id", "branch_id"])).filter((id): id is number => id !== null))];
     const lotIds = [...new Set(movementRows.map(row => relationId(row.lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
-    const [branchRows, lotRows] = await Promise.all([
+    const mmLotIds = [...new Set(movementRows.map(row => relationId(row.mm_lot_id, ["lot_id", "id"])).filter((id): id is number => id !== null))];
+    const [branchRows, lotRows, mmLotRows] = await Promise.all([
         branchIds.length ? directusRows(`/items/branches?filter[id][_in]=${branchIds.join(",")}&fields=id,branch_name,branch_code&limit=-1`, "Unable to load movement branches.", true) : [],
-        lotIds.length ? directusRows(`/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=*&limit=-1`, "Unable to load movement lots.", true) : []
+        lotIds.length ? directusRows(`/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=*&limit=-1`, "Unable to load movement lots.", true) : [],
+        mmLotIds.length ? loadMmLots({ ids: mmLotIds, onlyActive: false }) : []
     ]);
     const branches = new Map(branchRows.map(row => [relationId(row, ["id"]), `${text(row.branch_name, "Branch")} ${text(row.branch_code, "")}`.trim()]));
     const lots = new Map(lotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name || row.lot_code, "N/A")]));
+    const mmLots = new Map(mmLotRows.map(row => [relationId(row, ["lot_id", "id"]), text(row.lot_name, "N/A")]));
     return movementRows.map(row => {
         const productId = relationId(row.product_id, ["product_id"]);
         const branchId = relationId(row.branch_id, ["id", "branch_id"]);
         const lotId = relationId(row.lot_id, ["lot_id", "id"]);
+        const mmLotId = relationId(row.mm_lot_id, ["lot_id", "id"]);
         const transactionType = relationText(row.transaction_type_id || row.transaction_type, ["type_name", "name"], "N/A");
         return {
             movementId: relationId(row, ["movement_id", "id"]) || 0,
             kind: /reject|bad/i.test(transactionType) ? "Rejected" : "Passed",
             product: lineByProduct.get(productId)?.productName || relationText(row.product_id, ["product_name"], "Unknown product"),
             productCode: lineByProduct.get(productId)?.productCode || relationText(row.product_id, ["product_code"], "N/A"),
-            storageLot: lots.get(lotId) || relationText(row.lot_id, ["lot_name", "lot_code"], lotId ? `Lot #${lotId}` : "N/A"),
+            storageLot: mmLots.get(mmLotId) || lots.get(lotId) || relationText(row.mm_lot_id || row.lot_id, ["lot_name", "lot_code"], mmLotId ? `Lot #${mmLotId}` : lotId ? `Lot #${lotId}` : "N/A"),
+            mmLotId,
+            legacyLotId: lotId,
             branch: branches.get(branchId) || relationText(row.branch_id, ["branch_name", "branch_code"], branchId ? `Branch #${branchId}` : "N/A"),
             quantity: number(row.quantity),
             transactionType,

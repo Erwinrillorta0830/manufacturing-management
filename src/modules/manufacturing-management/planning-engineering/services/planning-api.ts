@@ -78,6 +78,7 @@ export interface ReleaseJOPayload {
         }>;
     };
     salesOrderIds: number[];
+    salesOrderDetailIds: number[];
 }
 
 export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<void> {

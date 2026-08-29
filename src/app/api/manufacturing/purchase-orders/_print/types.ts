@@ -106,6 +106,8 @@ export interface ReceivingPrintRecord {
     productCode: string;
     branch: string;
     storageLot: string;
+    mmLotId?: number | null;
+    legacyLotId?: number | null;
     batchNumber: string;
     manufacturingDate: string;
     expirationDate: string;
@@ -127,6 +129,8 @@ export interface StorageMovementPrintRecord {
     product: string;
     productCode: string;
     storageLot: string;
+    mmLotId?: number | null;
+    legacyLotId?: number | null;
     branch: string;
     quantity: number;
     transactionType: string;

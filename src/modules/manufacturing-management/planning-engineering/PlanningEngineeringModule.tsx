@@ -736,7 +736,7 @@ export default function PlanningEngineeringModule() {
                 <div className="space-y-1">
                     <h1 className="text-2xl font-bold tracking-tight">Job Order Planning & MRP Engine</h1>
                     <p className="text-sm text-muted-foreground">
-                        Harvest sales order demand, run branch-scoped Net Requirements calculations, batch consolidate orders, and explode/release Job Orders.
+                        Schedule For Production demand by branch, track In Production lines, run branch-scoped Net Requirements calculations, and explode/release Job Orders.
                     </p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">

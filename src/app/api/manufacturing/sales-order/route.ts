@@ -7,6 +7,7 @@ import {
     enrichSalesOrderReadModel,
     fetchDetailsForOrders,
     findScheduledDetailIds,
+    isPlanningVisibleDetail,
     SALES_ORDER_FIELDS
 } from "./_read";
 import {
@@ -581,7 +582,7 @@ export async function GET(request: Request) {
 
         const filters = {
             search,
-            status: excludeHasJo ? "For Picking" : status,
+            status: excludeHasJo ? "For Production,In Production" : status,
             customerCode,
             dateFrom,
             dateTo
@@ -618,6 +619,7 @@ export async function GET(request: Request) {
 
                 const candidateDetails = await fetchDetailsForOrders(read, candidates.map((order: any) => Number(order.order_id)));
                 const chunkScheduledIds = await findScheduledDetailIds(read, candidateDetails);
+                chunkScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
                 const detailsByOrder = new Map<number, any[]>();
                 for (const detail of candidateDetails) {
                     const detailOrderId = Number(detail.order_id);
@@ -627,15 +629,13 @@ export async function GET(request: Request) {
                 }
                 for (const candidate of candidates) {
                     const orderDetails = detailsByOrder.get(Number(candidate.order_id)) || [];
-                    const unscheduled = orderDetails.filter((detail) => {
+                    const eligibleOrderDetails = orderDetails.filter((detail) => {
                         const isScheduled = chunkScheduledIds.has(Number(detail.detail_id || detail.id));
-                        const ordered = Number(detail.ordered_quantity || 0);
-                        const alloc = Number(detail.allocated_quantity || 0);
-                        return !isScheduled && alloc < ordered;
+                        return isPlanningVisibleDetail(detail, candidate.order_status, isScheduled);
                     });
-                    if (orderDetails.length === 0 || unscheduled.length > 0) {
+                    if (eligibleOrderDetails.length > 0) {
                         eligibleOrders.push(candidate);
-                        eligibleDetails.push(...unscheduled);
+                        eligibleDetails.push(...eligibleOrderDetails);
                     }
                 }
                 inspectedCount += candidates.length;
@@ -686,14 +686,17 @@ export async function GET(request: Request) {
             ? [...prefetchedDetails, ...(missingSelectedIds.length > 0 ? await fetchDetailsForOrders(read, missingSelectedIds) : [])]
             : await fetchDetailsForOrders(read, [...orderIdsToFetch]);
         if (excludeHasJo) {
+            const discoveredScheduledIds = await findScheduledDetailIds(read, details);
+            discoveredScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
+            const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
             details = details.filter((detail: any) => {
-                const ordered = Number(detail.ordered_quantity || 0);
-                const alloc = Number(detail.allocated_quantity || 0);
-                return alloc < ordered;
+                const order = orderById.get(Number(detail.order_id));
+                return isPlanningVisibleDetail(
+                    detail,
+                    order?.order_status,
+                    scheduledDetailIds.has(Number(detail.detail_id || detail.id))
+                );
             });
-        }
-        if (excludeHasJo && missingSelectedIds.length > 0) {
-            scheduledDetailIds = await findScheduledDetailIds(read, details);
         }
         const detailsMap = await enrichSalesOrderReadModel(read, contextOrders, details, scheduledDetailIds);
 
