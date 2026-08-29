@@ -189,7 +189,7 @@ export async function GET(req: NextRequest) {
 
         const lotIds = [...new Set(netNegative.map((a) => a.lotId))];
         const lotRes = await fetch(
-            `${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name&limit=-1`,
+            `${DIRECTUS_URL}/items/mm_lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name&limit=-1`,
             { headers: directusHeaders, cache: "no-store" }
         );
         const lotNameMap = new Map<number, string>();

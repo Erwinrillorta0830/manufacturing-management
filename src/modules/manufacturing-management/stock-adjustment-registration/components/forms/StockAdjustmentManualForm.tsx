@@ -854,6 +854,12 @@ export function StockAdjustmentManualForm({
                 item.unit_name ||
                 (item.product_id as { unit_name?: string })?.unit_name ||
                 "pcs",
+              product_type: (item.product_id as { product_type?: unknown })?.product_type || item.product_type,
+              product_category: (item.product_id as { product_category?: unknown })?.product_category || item.product_category,
+              category_name:
+                (item.product_id as { product_category?: { category_name?: string } })?.product_category?.category_name ||
+                (item.product_id as { category_name?: string })?.category_name ||
+                item.category_name,
               unit_order: (item.product_id as { unit_of_measurement?: { order: number } })?.unit_of_measurement?.order || 1,
               db_id: item.id,
             })),
@@ -1887,9 +1893,17 @@ export function StockAdjustmentManualForm({
             productCode={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_code`) || '') : undefined}
             productUomId={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.unit_id`) ? Number(form.watch(`items.${activeLotBatchIndex}.unit_id`)) : undefined) : undefined}
             productUomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
+            productType={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_type`) : undefined}
+            productCategory={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_category`) : undefined}
+            categoryName={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.category_name`) as string | undefined) : undefined}
             requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
             adjustmentType={watchedType || "IN"}
             initialLotAllocations={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.lot_allocations`) as LotAllocationGroup[] | undefined) : undefined}
+            existingFormAllocations={
+              activeLotBatchIndex !== null
+                ? (form.watch("items") || []).filter((_, idx) => idx !== activeLotBatchIndex)
+                : undefined
+            }
             initialValues={activeLotBatchIndex !== null ? {
               lot_id: form.watch(`items.${activeLotBatchIndex}.lot_id`) || undefined,
               lot_name: form.watch(`items.${activeLotBatchIndex}.lot_name`) || undefined,

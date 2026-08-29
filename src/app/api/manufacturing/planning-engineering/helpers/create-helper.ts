@@ -4,7 +4,11 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finis
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 
 
-export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrderIds?: number[]): Promise<{ jo_id?: string | null }> {
+export async function createJobOrder(
+    joData: Partial<DirectusJobOrder>,
+    salesOrderIds: number[] = [],
+    salesOrderDetailIds: number[] = []
+): Promise<{ jo_id?: string | null }> {
     try {
         const todayStr = await getTodayDateString();
         let productsList = joData.products || [];
@@ -745,61 +749,66 @@ export async function createJobOrder(joData: Partial<DirectusJobOrder>, salesOrd
             console.error("Error updating daily breakdown on Job Order:", dbErr);
         }
 
-        // 5. Insert junction entries (Sales Order allocations)
-        if (salesOrderIds && salesOrderIds.length > 0) {
-            for (const soId of salesOrderIds) {
-                // Fetch all detail lines for this sales order and filter in-memory to match family products
-                const detailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${soId}&limit=-1`, { headers });
-                if (detailsRes.ok) {
-                    const details = (await detailsRes.json()).data || [];
-                    for (const det of details) {
-                        const detProductId = Number(det.product_id);
-                        let isMatch = detProductId === Number(firstProd.product_id);
+        // 5. Insert junction entries only for the detail lines explicitly
+        // selected by Planning Engineering. Buffer JOs intentionally have no
+        // Sales Order links or lifecycle transition.
+        if (salesOrderDetailIds.length > 0 && initialStatus !== "Draft") {
+            const detailIds = [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+            const detailRes = await fetch(
+                `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            if (!detailRes.ok) {
+                throw new Error(`Failed to load selected Sales Order details for allocation: ${detailRes.status}`);
+            }
+            const details: any[] = (await detailRes.json()).data || [];
+            const detailsById = new Map(details.map((detail: any) => [Number(detail.detail_id), detail]));
+            const missingDetailIds = detailIds.filter((detailId) => !detailsById.has(detailId));
+            if (missingDetailIds.length > 0) {
+                throw new Error(`Selected Sales Order details were not found: ${missingDetailIds.join(", ")}`);
+            }
 
-                        if (!isMatch) {
-                            try {
-                                const prodCheckRes = await fetch(`${DIRECTUS_URL}/items/products/${detProductId}?fields=product_id,parent_id`, { headers });
-                                if (prodCheckRes.ok) {
-                                    const prodCheck = await prodCheckRes.json();
-                                    const parentVal = prodCheck.data?.parent_id;
-                                    const parentIdVal = parentVal && typeof parentVal === 'object' ? Number(parentVal.product_id) : (parentVal ? Number(parentVal) : null);
-                                    if (parentIdVal === Number(firstProd.product_id)) {
-                                        isMatch = true;
-                                    }
-                                }
-                            } catch (e) {
-                                console.error("Error checking product family hierarchy for allocation:", e);
-                            }
-                        }
+            const affectedOrderIds = new Set<number>();
+            for (const detailId of detailIds) {
+                const detail = detailsById.get(detailId);
+                const orderedQuantity = Number(detail.ordered_quantity || 0);
+                const allocatedQuantity = Number(detail.allocated_quantity || 0);
+                const servedQuantity = Number(detail.served_quantity || 0);
+                const remainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
+                if (remainingQuantity <= 0) continue;
 
-                        if (isMatch) {
-                            await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
-                                method: "POST",
-                                headers,
-                                body: JSON.stringify({
-                                    job_order_id: joIdInt,
-                                    sales_order_detail_id: det.detail_id,
-                                    allocated_quantity: Number(det.ordered_quantity || 0),
-                                    reservation_type: "SOFT",
-                                    status: "ACTIVE",
-                                    created_at: new Date().toISOString(),
-                                    created_by: joData.created_by ? Number(joData.created_by) : null
-                                })
-                            }).catch(err => console.error("Error creating manufacturing_job_order_allocations link:", err));
+                const allocationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({
+                        job_order_id: joIdInt,
+                        sales_order_detail_id: detailId,
+                        allocated_quantity: remainingQuantity,
+                        reservation_type: "SOFT",
+                        created_at: new Date().toISOString(),
+                        created_by: joData.created_by ? Number(joData.created_by) : null
+                    })
+                });
+                if (!allocationResponse.ok) {
+                    throw new Error(`Failed to create Sales Order allocation for detail ${detailId}: ${allocationResponse.status}`);
+                }
 
-                            // Automatically update the sales order status to 'For Invoicing'
-                            console.log(`[Manufacturing Directus API] Updating sales order status for details ${det.detail_id} to For Invoicing`);
-                            try {
-                                await fetch(`${DIRECTUS_URL}/items/sales_order/${soId}`, {
-                                    method: "PATCH",
-                                    headers,
-                                    body: JSON.stringify({ order_status: "For Invoicing" })
-                                });
-                            } catch (err) {
-                                console.error("Failed to update parent sales order status:", err);
-                            }
-                        }
-                    }
+                const parentOrderId = Number(
+                    typeof detail.order_id === "object" ? detail.order_id?.order_id || detail.order_id?.id : detail.order_id
+                );
+                if (Number.isInteger(parentOrderId) && parentOrderId > 0) affectedOrderIds.add(parentOrderId);
+            }
+
+            // A regular JO puts its linked parent orders into production only
+            // after every requested allocation has been persisted.
+            for (const parentOrderId of affectedOrderIds) {
+                const statusResponse = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ order_status: "In Production" })
+                });
+                if (!statusResponse.ok) {
+                    throw new Error(`Failed to transition Sales Order ${parentOrderId} to In Production: ${statusResponse.status}`);
                 }
             }
         }

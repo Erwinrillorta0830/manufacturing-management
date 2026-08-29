@@ -291,7 +291,7 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                         const targetQty = Math.max(0, item.allocated_quantity ?? 0);
                         const complete = (item.scannedQty || 0) >= targetQty;
                         const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
-                        const productName = product?.product_name || `PRD-${item.product_id}`;
+                        const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
 
                         const productImage = getAssetUrl(product?.product_image);
 

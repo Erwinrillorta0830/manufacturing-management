@@ -213,15 +213,13 @@ export function JobOrderShiftLogModal({
             toast.error("Please enter a valid yield quantity.");
             return;
         }
-        const targetQty = Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity || 0);
-        const alreadyProduced = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0);
         const newYield = Number(shiftYieldQty) || 0;
         const newScrap = Number(scrapQty) || 0;
 
-        if (alreadyProduced + newYield > targetQty * 1.05) {
-            toast.error(`Accumulated yield would exceed target! Already produced: ${alreadyProduced.toLocaleString()} pcs. New yield: ${newYield.toLocaleString()} pcs. Target: ${targetQty.toLocaleString()} pcs.`);
-            return;
-        }
+        // The API owns accumulated-yield validation and can distinguish a
+        // replay of the same batch from a new over-target run. Avoid blocking
+        // an idempotent retry when a prior request persisted only part of its
+        // material backflush before failing.
         if (!batchNo.trim()) {
             toast.error("Please enter a valid batch/lot number.");
             return;

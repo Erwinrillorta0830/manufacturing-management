@@ -122,7 +122,7 @@ const quantityPatchSchema = z.object({
 
 const statusPatchSchema = z.object({
     orderId: positiveId,
-    orderStatus: z.enum(["Draft", "Pending", "For Approval", "For Invoicing", "For Consolidation", "In Production", "For Picking", "For Loading", "On Hold", "For Cancellation", "Cancelled", "For Shipping", "En Route", "Partially Delivered", "Delivered", "Not Fulfilled"]),
+    orderStatus: z.enum(["Draft", "Pending", "For Approval", "For Production", "For Invoicing", "For Consolidation", "In Production", "For Picking", "For Loading", "On Hold", "For Cancellation", "Cancelled", "For Shipping", "En Route", "Partially Delivered", "Delivered", "Not Fulfilled"]),
     details: z.never().optional()
 }).strict();
 

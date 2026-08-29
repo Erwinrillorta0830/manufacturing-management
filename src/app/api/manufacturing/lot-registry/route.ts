@@ -57,7 +57,7 @@ export async function GET() {
                 { headers, cache: "no-store" }
             ).catch(() => null),
             fetch(
-                `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code&_t=${timestamp}`,
+                `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id&_t=${timestamp}`,
                 { headers, cache: "no-store" }
             ).catch(() => null)
         ]);
@@ -89,7 +89,7 @@ export async function GET() {
             }
         }
 
-        let branchesList: { id: number; branch_name?: string; branch_code?: string }[] = [];
+        let branchesList: { id: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null }[] = [];
         if (branchesRes && branchesRes.ok) {
             try {
                 const bJson = await branchesRes.json();
@@ -126,12 +126,14 @@ export async function GET() {
             let branchId: number | null = null;
             let branchName = "";
             let branchCode = "";
+            let isBadStockBranch = false;
             if (row.branch_id !== undefined && row.branch_id !== null) {
                 if (typeof row.branch_id === "object") {
-                    const bObj = row.branch_id as { id?: number; branch_name?: string; branch_code?: string };
+                    const bObj = row.branch_id as { id?: number; branch_name?: string; branch_code?: string; isBadStock?: number | boolean | string | null };
                     branchId = bObj.id ?? null;
                     branchName = bObj.branch_name || "";
                     branchCode = bObj.branch_code || "";
+                    isBadStockBranch = Number(bObj.isBadStock) === 1 || bObj.isBadStock === true || bObj.isBadStock === "1";
                 } else {
                     const bNum = Number(row.branch_id);
                     if (!isNaN(bNum)) branchId = bNum;
@@ -143,6 +145,7 @@ export async function GET() {
                 if (matchedBranch) {
                     branchName = matchedBranch.branch_name || branchName;
                     branchCode = matchedBranch.branch_code || branchCode;
+                    isBadStockBranch = isBadStockBranch || Number(matchedBranch.isBadStock) === 1 || matchedBranch.isBadStock === true || matchedBranch.isBadStock === "1";
                 }
             }
 
@@ -180,6 +183,8 @@ export async function GET() {
                 branchId,
                 branchName,
                 branchCode,
+                isBadStock: isBadStockBranch || Boolean(row.is_bad_stock),
+                branchIsBadStock: isBadStockBranch,
                 uomId,
                 uomName,
                 uomShortcut,

@@ -21,6 +21,14 @@ export interface StorageLot {
     lot_id: number;
     lot_name: string;
     lot_code?: string;
+    mm_lot_id?: number | null;
+    legacy_lot_id?: number | null;
+    branch_id?: number | null;
+    status?: "ACTIVE" | "CLOSED" | "INACTIVE" | string | null;
+    mapping_status?: "MAPPED" | "UNMAPPED" | string;
+    is_selectable?: boolean;
+    is_legacy_only?: boolean;
+    read_only?: boolean;
     inventory_type_id?: number | null;
     product_type_id?: number | null;
     product_category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";

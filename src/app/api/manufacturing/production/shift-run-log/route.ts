@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { movementLegacyLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { DIRECTUS_URL, headers, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 
 // Helper to decode user ID from session cookie
@@ -259,7 +259,7 @@ export async function POST(request: Request) {
 
         // 2. Validate all material stock levels before writing database entries
         const lotsCache: Record<number, any[]> = {};
-        if (!isRetryRun && materialsConsumed && materialsConsumed.length > 0) {
+        if (materialsConsumed && materialsConsumed.length > 0) {
             for (const item of materialsConsumed) {
                 const rawProductId = Number(item.product_id);
                 const consumedQty = Number(item.actual_qty || 0);
@@ -312,10 +312,20 @@ export async function POST(request: Request) {
                         const prodId = Number(parts[0]);
                         const bNo = parts[3] || "LOT-N/A";
                         if (prodId === rawProductId) {
+                            // The stock key uses the canonical MM-lot ID for
+                            // grouping, but inventory_movements.lot_id remains
+                            // the legacy foreign key used by backflush writes.
+                            const sourceMovement = movements.find((movement: any) =>
+                                movementStockKey(movement) === key
+                                && movementLegacyLotReference(movement) > 0
+                            );
+                            const legacyLotId = sourceMovement
+                                ? movementLegacyLotReference(sourceMovement)
+                                : 0;
                             const status = batchStatusMap.get(bNo) || "Passed";
                             if (status === "Passed" || status === "Partially Accepted") {
                                 lotsEnriched.push({
-                                    lot_id: parts[2] === "null" ? 0 : Number(parts[2]),
+                                    lot_id: legacyLotId,
                                     lot_number: bNo,
                                     batch_no: bNo,
                                     quantity: qty
@@ -328,7 +338,7 @@ export async function POST(request: Request) {
                 lotsCache[rawProductId] = lotsEnriched;
 
                 const totalAvailable = lotsEnriched.reduce((sum: number, l: any) => sum + Number(l.quantity || 0), 0);
-                if (totalAvailable < consumedQty) {
+                if (!isRetryRun && totalAvailable < consumedQty) {
                     let prodName = `Product #${rawProductId}`;
                     let unitName = "units";
                     try {
@@ -453,17 +463,29 @@ export async function POST(request: Request) {
         const existingRunGenealogyRows = persistedGenealogyRows.filter((row: any) =>
             String(row.batch_no || "").trim() === finalBatchNo
         );
+        const requestedMaterials = (materialsConsumed || []).filter((item: any) => Number(item.actual_qty || 0) > 0);
         const isCompleteRetry = isRetryRun
-            && existingRunGenealogyRows.length > 0
-            && existingRunGenealogyRows.every((genealogy: any) => persistedBackflushMovements.some((movement: any) =>
-                movementHasRunMarker(movement)
-                && Number(movement.product_id) === Number(genealogy.component_product_id)
-                && sameId(movement.lot_id, Number(genealogy.component_lot_id))
-                && Number(movement.source_document_id) === Number(joId)
-                && Number(movement.transaction_type_id) === 1
-                && String(movement.batch_no || "").trim() === String(genealogy.component_batch_no || "").trim()
-                && sameQuantity(movement.quantity, -Number(genealogy.consumed_quantity))
-            ));
+            && (requestedMaterials.length === 0
+                ? existingRunGenealogyRows.length > 0
+                : requestedMaterials.every((item: any) => {
+                    const productGenealogyRows = existingRunGenealogyRows.filter((genealogy: any) =>
+                        Number(genealogy.component_product_id) === Number(item.product_id)
+                    );
+                    const consumedForProduct = productGenealogyRows.reduce(
+                        (sum: number, genealogy: any) => sum + Number(genealogy.consumed_quantity || 0),
+                        0
+                    );
+                    return consumedForProduct >= Number(item.actual_qty || 0)
+                        && productGenealogyRows.every((genealogy: any) => persistedBackflushMovements.some((movement: any) =>
+                            movementHasRunMarker(movement)
+                            && Number(movement.product_id) === Number(genealogy.component_product_id)
+                            && sameId(movement.lot_id, Number(genealogy.component_lot_id))
+                            && Number(movement.source_document_id) === Number(joId)
+                            && Number(movement.transaction_type_id) === 1
+                            && String(movement.batch_no || "").trim() === String(genealogy.component_batch_no || "").trim()
+                            && sameQuantity(movement.quantity, -Number(genealogy.consumed_quantity))
+                        ));
+                }));
 
         // A replay of a fully persisted run should only read the existing audit
         // rows. Re-entering the material loop would otherwise risk deducting a
@@ -484,7 +506,12 @@ export async function POST(request: Request) {
                 if (consumedQty <= 0) continue;
 
                 const matchingMat = matsSheet.find((m: any) => Number(m.product_id) === rawProductId);
-                let remainingToConsume = consumedQty;
+                const existingConsumedForItem = existingRunGenealogyRows
+                    .filter((genealogy: any) => Number(genealogy.component_product_id) === rawProductId)
+                    .reduce((sum: number, genealogy: any) => sum + Number(genealogy.consumed_quantity || 0), 0);
+                const additionalQuantityToConsume = Math.max(0, consumedQty - existingConsumedForItem);
+                if (additionalQuantityToConsume <= 0) continue;
+                let remainingToConsume = additionalQuantityToConsume;
 
                 // Function to write Point-of-Use negative consumption movement and genealogy
                 const logConsumageAndMovement = async (qty: number, lot: any) => {
@@ -607,7 +634,7 @@ export async function POST(request: Request) {
 
                             // Update reservation row only for a new run. A matching
                             // ledger row marks a retry and prevents double deduction.
-                            if (!isRetryRun) {
+                            if (!isRetryRun || remainingToConsume > 0) {
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${resRow.jo_materials_reservation_id || resRow.id}`, {
                                     method: "PATCH",
                                     headers,
@@ -624,17 +651,17 @@ export async function POST(request: Request) {
                         }
 
                         // Update parent manufacturing_job_order_materials row
-                        const newJomReserved = Math.max(0, Number(matchingMat.reserved_quantity || 0) - consumedQty);
-                        const newJomConsumed = Number(matchingMat.actual_consumed_quantity || 0) + consumedQty;
-                        const newJomScrap = Number(matchingMat.scrap_quantity || 0) + (scrapUnits > 0 ? (consumedQty * (scrapUnits / (goodYield + scrapUnits))) : 0);
+                        const newJomReserved = Math.max(0, Number(matchingMat.reserved_quantity || 0) - additionalQuantityToConsume);
+                        const newJomConsumed = Number(matchingMat.actual_consumed_quantity || 0) + additionalQuantityToConsume;
+                        const newJomScrap = Number(matchingMat.scrap_quantity || 0) + (scrapUnits > 0 ? (additionalQuantityToConsume * (scrapUnits / (goodYield + scrapUnits))) : 0);
 
-                        if (!isRetryRun) {
+                        if (!isRetryRun || additionalQuantityToConsume > 0) {
                             await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${matchingMat.jo_material_id || matchingMat.id}`, {
                                 method: "PATCH",
                                 headers,
                                 body: JSON.stringify({
                                     reserved_quantity: newJomReserved,
-                                    actual_consumed_quantity: newJomConsumed,
+                                actual_consumed_quantity: newJomConsumed,
                                     scrap_quantity: Math.round(newJomScrap * 100) / 100
                                 })
                             }).catch(() => {});
@@ -646,7 +673,7 @@ export async function POST(request: Request) {
 
                 // If shortfall remains or mat wasn't pre-allocated, deduct standard FIFO from available staging stock
                 if (remainingToConsume > 0) {
-                    if (!matchingMat && !isRetryRun) {
+                    if (!matchingMat) {
                         await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials`, {
                             method: "POST",
                             headers,
@@ -656,7 +683,7 @@ export async function POST(request: Request) {
                                 uom_id: 1,
                                 allocated_quantity: 0,
                                 reserved_quantity: 0,
-                                actual_consumed_quantity: consumedQty,
+                                actual_consumed_quantity: additionalQuantityToConsume,
                                 scrap_quantity: 0
                             })
                         }).catch(() => {});

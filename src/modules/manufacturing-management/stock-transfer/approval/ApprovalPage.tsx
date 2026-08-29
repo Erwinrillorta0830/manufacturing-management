@@ -99,7 +99,7 @@ export default function StockTransferApprovalView() {
     if (!selectedGroup) return [];
     return selectedGroup.items.filter((item: OrderGroupItem) => {
       const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
-      const productName = product?.product_name || `PRD-${item.product_id}`;
+      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
       const barcode = product?.barcode || '';
       return (
         productName.toLowerCase().includes(productSearch.toLowerCase()) ||
@@ -257,7 +257,7 @@ export default function StockTransferApprovalView() {
                   <TableBody>
                     {paginatedItems.map((item: OrderGroupItem) => {
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
-                      const productName = product?.product_name || `PRD-${item.product_id}`;
+                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
                       const description = product?.description || product?.barcode || 'N/A';
                       const brandName = typeof product?.product_brand === 'object' ? product?.product_brand?.brand_name : 'N/A';
                       const unitName = typeof product?.unit_of_measurement === 'object' ? product?.unit_of_measurement?.unit_name : 'unit';

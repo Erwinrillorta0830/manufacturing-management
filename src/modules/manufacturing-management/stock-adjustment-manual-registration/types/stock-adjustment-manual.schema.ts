@@ -14,6 +14,8 @@ export const BranchSchema = z.object({
   id: z.number(),
   branch_name: z.string().optional(),
   branch_code: z.string().optional(),
+  isBadStock: z.union([z.number(), z.boolean(), z.string()]).nullable().optional(),
+  bad_stock_branch_id: z.number().nullable().optional(),
 });
 export type Branch = z.infer<typeof BranchSchema>;
 
@@ -53,6 +55,8 @@ export const StockAdjustmentManualItemSchema = z.object({
   description: z.string().nullable().optional(),
   inferred_supplier_id: z.number().optional(),
   category_name: z.string().nullable().optional(),
+  product_type: z.any().optional(),
+  product_category: z.any().optional(),
   unit_order: z.number().nullable().optional(),
   db_id: z.number().optional(),
   rfid_tags: z.array(z.string()).optional(),
@@ -197,6 +201,8 @@ export interface SelectionBranch {
   id: number;
   branch_name: string;
   branch_code?: string;
+  isBadStock?: number | boolean | string | null;
+  bad_stock_branch_id?: number | null;
 }
 
 export interface SelectionSupplier {

@@ -29,6 +29,8 @@ export interface Lot {
     branchId?: number | null;
     branchName?: string;
     branchCode?: string;
+    isBadStock?: boolean;
+    branchIsBadStock?: boolean;
     uomId: number | null;
     uomName: string;
     uomShortcut: string;
@@ -44,6 +46,8 @@ export interface Branch {
     id: number;
     branchName: string;
     branchCode: string;
+    isBadStock?: boolean;
+    badStockBranchId?: number | null;
 }
 
 export interface UnitOfMeasure {

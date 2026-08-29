@@ -597,8 +597,18 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                   return (
                     <React.Fragment key={item.id || idx}>
                       {/* Product Summary Row */}
-                      <TableRow className="border-border bg-muted/20 hover:bg-muted/30 transition-colors duration-150 font-semibold">
-                        <TableCell className="text-center text-muted-foreground font-bold">{idx + 1}</TableCell>
+                      <TableRow
+                        className={`border-b border-border/70 bg-muted/40 hover:bg-muted/50 transition-colors duration-150 font-semibold ${
+                          idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                        }`}
+                      >
+                        <TableCell className="text-center font-bold">
+                          <div className="flex items-center justify-center">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+                              {idx + 1}
+                            </span>
+                          </div>
+                        </TableCell>
                         <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1 py-1">
@@ -652,9 +662,9 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                         return (
                           <React.Fragment key={`lot-${lgIdx}`}>
                             {/* Storage Lot Sub-Header */}
-                            <TableRow className="bg-muted/40 border-b border-border/40 text-xs">
-                              <TableCell className="p-2 text-center border-r border-border/50 bg-muted/30"></TableCell>
-                              <TableCell colSpan={7} className="px-4 py-1.5 bg-muted/30">
+                            <TableRow className="bg-muted/20 border-b border-border/40 text-xs">
+                              <TableCell className="p-2 text-center border-r border-border/50 bg-muted/20"></TableCell>
+                              <TableCell colSpan={7} className="px-4 py-1.5 bg-muted/20">
                                 <div className="flex items-center justify-between text-xs font-bold text-foreground">
                                   <span className="flex items-center gap-1.5 text-primary">
                                     <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -741,8 +751,19 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                 }
 
                 return (
-                  <TableRow key={item.id || idx} className="border-border hover:bg-muted/35 transition-colors duration-150">
-                    <TableCell className="text-center text-muted-foreground/50 font-bold">{idx + 1}</TableCell>
+                  <TableRow
+                    key={item.id || idx}
+                    className={`border-b border-border/60 hover:bg-muted/35 transition-colors duration-150 ${
+                      idx > 0 ? "border-t-2 border-t-border" : "border-t border-border/50"
+                    }`}
+                  >
+                    <TableCell className="text-center font-bold">
+                      <div className="flex items-center justify-center">
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 text-primary font-bold text-xs">
+                          {idx + 1}
+                        </span>
+                      </div>
+                    </TableCell>
                     <TableCell className="font-bold text-foreground">{item.brand_name || "—"}</TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1.5 py-1">

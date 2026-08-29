@@ -210,6 +210,8 @@ export function ActiveSalesOrdersTable({
                                 <option value="Draft">Draft</option>
                                 <option value="Pending">Pending</option>
                                 <option value="For Approval">For Approval</option>
+                                <option value="For Production">For Production</option>
+                                <option value="In Production">In Production</option>
                                 <option value="For Consolidation">For Consolidation</option>
                             </select>
                         </div>

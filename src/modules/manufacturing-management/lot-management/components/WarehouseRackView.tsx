@@ -40,7 +40,13 @@ export default function WarehouseRackView({
     }, [batches, selectedProductId]);
 
     const sortedLots = React.useMemo(() => {
-        return sortLotsByFefoExpiry(lots, batches, selectedProductId);
+        if (selectedProductId === "ALL") {
+            return sortLotsByFefoExpiry(lots, batches, "ALL");
+        }
+        const matchingLots = lots.filter((lot) =>
+            batches.some((b) => b.lotId === lot.lotId && Number(b.productId) === Number(selectedProductId))
+        );
+        return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
     }, [lots, batches, selectedProductId]);
 
     if (loading) {
@@ -64,11 +70,29 @@ export default function WarehouseRackView({
         );
     }
 
+    if (sortedLots.length === 0 && selectedProductId !== "ALL") {
+        return (
+            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card rounded-xl border border-border">
+                <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
+                <span className="text-base font-bold text-foreground">No Storage Racks with Batches for this Product</span>
+                <p className="text-xs max-w-sm mt-1">
+                    There are currently no registered batches stored in any warehouse rack for the selected product.
+                </p>
+            </div>
+        );
+    }
+
     return (
         <TooltipProvider>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {sortedLots.map((lot) => {
-                    const rawLotBatches = batches.filter((b) => b.lotId === lot.lotId);
+                    const rawLotBatches = batches.filter((b) => {
+                        if (b.lotId !== lot.lotId) return false;
+                        if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
+                            return false;
+                        }
+                        return true;
+                    });
                     const fefoSortedBatches = sortBatchesByFefo(rawLotBatches);
                     const isExpanded = !!expandedLots[lot.lotId];
                     const visibleBatches = isExpanded ? fefoSortedBatches : fefoSortedBatches.slice(0, 5);

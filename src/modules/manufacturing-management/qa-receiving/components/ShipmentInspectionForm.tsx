@@ -17,7 +17,8 @@ interface ShipmentInspectionFormProps {
     lineItems: ShipmentLineItem[];
     branches: Branch[];
     storageLotsByProductId: Record<number, StorageLot[]>;
-    loadStorageLotBatches: (productId: number, lotId: number) => Promise<StorageLotBatch[]>;
+    rejectedStorageLotsByProductId: Record<number, StorageLot[]>;
+    loadStorageLotBatches: (productId: number, lotId: number, branchId?: number) => Promise<StorageLotBatch[]>;
     receivingTicketNumber: string;
     onReceiptNumberChange: (value: string) => void;
     receiptDate: string;
@@ -89,13 +90,14 @@ function SearchableStorageLotSelect({
 
     const filteredLots = React.useMemo(() => {
         const q = search.trim().toLowerCase();
-        if (!q) return storageLots;
-        return storageLots.filter(lot => 
+        const selectableLots = storageLots.filter(lot => lot.is_selectable !== false || String(lot.lot_id) === String(value));
+        if (!q) return selectableLots;
+        return selectableLots.filter(lot =>
             String(lot.lot_name || "").toLowerCase().includes(q) ||
             String(lot.lot_code || "").toLowerCase().includes(q) ||
             String(lot.lot_id || "").toLowerCase().includes(q)
         );
-    }, [search, storageLots]);
+    }, [search, storageLots, value]);
 
     return (
         <div ref={dropdownRef} className="relative min-w-0 flex-1">
@@ -200,7 +202,7 @@ interface LotAllocationEditorProps {
     expectedQuantity: number;
     storageLots: StorageLot[];
     readOnly: boolean;
-    loadStorageLotBatches: (productId: number, lotId: number) => Promise<StorageLotBatch[]>;
+    loadStorageLotBatches: (productId: number, lotId: number, branchId?: number) => Promise<StorageLotBatch[]>;
     onChange: (allocations: ReceivingLotAllocationInput[]) => void;
     onAddLot: () => void;
 }
@@ -226,14 +228,15 @@ function LotAllocationEditor({
 
     const loadBatches = React.useCallback((lotId: number) => {
         if (batchOptionsByLot[lotId]) return;
-        void loadStorageLotBatches(productId, lotId)
+        const lotBranchId = storageLots.find(lot => String(lot.lot_id) === String(lotId))?.branch_id || undefined;
+        void loadStorageLotBatches(productId, lotId, lotBranchId || undefined)
             .then(batches => setBatchOptionsByLot(previous => ({ ...previous, [lotId]: batches })))
             .catch(error => {
                 if ((error as Error).name !== "AbortError") {
                     setBatchOptionsByLot(previous => ({ ...previous, [lotId]: [] }));
                 }
             });
-    }, [batchOptionsByLot, loadStorageLotBatches, productId]);
+    }, [batchOptionsByLot, loadStorageLotBatches, productId, storageLots]);
 
     React.useEffect(() => {
         for (const allocation of allocations) {
@@ -590,6 +593,7 @@ export default function ShipmentInspectionForm({
     lineItems,
     branches,
     storageLotsByProductId,
+    rejectedStorageLotsByProductId,
     loadStorageLotBatches,
     receivingTicketNumber,
     onReceiptNumberChange,
@@ -721,7 +725,7 @@ export default function ShipmentInspectionForm({
 
     const addRejectedLot = (lineId: number, row: InspectionRow) => {
         const line = lineItems.find(item => item.line_id === lineId);
-        const storageLots = line ? storageLotsByProductId[Number(line.product_id?.product_id)] || [] : [];
+        const storageLots = line ? rejectedStorageLotsByProductId[Number(line.product_id?.product_id)] || [] : [];
         if (storageLots.length === 0) return;
         handleUpdateRejectedAllocations(lineId, [
             ...row.rejectedLotAllocations,
@@ -1044,6 +1048,7 @@ export default function ShipmentInspectionForm({
 
                         const prod = line.product_id;
                         const lineStorageLots = storageLotsByProductId[Number(prod.product_id)] || [];
+                        const lineRejectedStorageLots = rejectedStorageLotsByProductId[Number(prod.product_id)] || [];
                         const isHighlighted = highlightedLineId === line.line_id;
 
                         const receivedVal = row.receivedQty !== "" ? Number(row.receivedQty) : 0;
@@ -1311,7 +1316,7 @@ export default function ShipmentInspectionForm({
                                                     allocations={row.rejectedLotAllocations}
                                                     otherAllocations={row.acceptedLotAllocations}
                                                     expectedQuantity={rejectedVal}
-                                                    storageLots={lineStorageLots}
+                                                    storageLots={lineRejectedStorageLots}
                                                     readOnly={readOnly}
                                                     loadStorageLotBatches={loadStorageLotBatches}
                                                     onChange={allocations => handleUpdateRejectedAllocations(line.line_id, allocations)}

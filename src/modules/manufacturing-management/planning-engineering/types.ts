@@ -29,6 +29,10 @@ export interface SalesOrderDetail {
     customer_name?: string;  // joined client-side from sales order parent
     allocated_quantity?: number;
     allocated_amount?: number;
+    served_quantity?: number;
+    parent_order_status?: string | null;
+    is_scheduled?: boolean;
+    is_read_only?: boolean;
     id?: number;
 }
 

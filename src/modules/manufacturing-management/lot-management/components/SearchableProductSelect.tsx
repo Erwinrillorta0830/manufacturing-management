@@ -176,13 +176,13 @@ export function SearchableProductSelect({
                         </div>
                     ) : (
                         filteredProducts.map((p) => {
-                            const isSelected = selectedProduct?.productId === p.productId;
+                            const isSelected = selectedProduct ? Number(selectedProduct.productId) === Number(p.productId) : false;
                             return (
                                 <button
                                     key={p.productId}
                                     type="button"
                                     onClick={() => {
-                                        onValueChange(p.productId);
+                                        onValueChange(Number(p.productId));
                                         setOpen(false);
                                         setSearchQuery("");
                                     }}

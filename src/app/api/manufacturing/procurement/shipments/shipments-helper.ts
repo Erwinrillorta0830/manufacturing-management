@@ -11,6 +11,7 @@ import { DirectusShipment } from "@/modules/manufacturing-management/procurement
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
+import { movementLegacyLotId, movementMmLotId } from "../../qa-receiving/_mm-lot-compat";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
@@ -177,19 +178,6 @@ interface ProductMin {
     cbm_length?: number | string | null;
 }
 
-interface DirectusInventoryLot {
-    id: number;
-    product_id: number;
-    quantity: number;
-    qa_status?: string;
-    unit_cost?: number | string;
-    lot_number?: string;
-    batch_no?: string;
-    lot_id?: number | { lot_id: number; lot_name?: string } | null;
-    expiry_date?: string;
-    branch_id?: number;
-}
-
 interface DirectusReceivingRecord {
     purchase_order_product_id: number | string;
     purchase_order_line_id?: number | { purchase_order_product_id: number } | null;
@@ -199,6 +187,7 @@ interface DirectusReceivingRecord {
     receipt_type?: number | string | { id: number } | null;
     batch_no?: string | null;
     lot_id?: number | { lot_id: number } | null;
+    mm_lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
     quantity_rejected?: number | string | null;
     is_replacement?: boolean | number | null;
@@ -215,6 +204,7 @@ interface DirectusInventoryMovement {
     source_document_id: number | { purchase_order_product_id: number };
     product_id: number | { product_id: number };
     lot_id: number | { lot_id: number };
+    mm_lot_id?: number | { lot_id: number } | null;
     branch_id?: number | { id: number } | null;
     quantity?: number | string | null;
     batch_no?: string | null;
@@ -238,6 +228,8 @@ interface LatestReceivingSnapshot {
     rejected_quantity: number;
     supplier_batch_number: string;
     storage_lot_id: number | null;
+    mm_lot_id: number | null;
+    legacy_lot_id: number | null;
     accepted_lot_allocations: ReceivingLotAllocationSnapshot[];
     rejected_lot_allocations: ReceivingLotAllocationSnapshot[];
     manufacturing_date: string | null;
@@ -279,6 +271,7 @@ export interface ExtendedShipmentLineItem {
     lot_number?: string;
     batch_no?: string;
     lot_id?: number | null;
+    mm_lot_id?: number | null;
     manufacturing_date?: string | null;
     expiration_date?: string;
     discount_type?: number | null;
@@ -292,9 +285,9 @@ export interface ExtendedShipmentLineItem {
     job_order_id?: number | null;
 }
 
-function resolveInventoryLotId(value: DirectusInventoryLot["lot_id"]): number | null {
+function resolveInventoryLotId(value: unknown): number | null {
     if (typeof value === "number") return value;
-    return value?.lot_id || null;
+    return value && typeof value === "object" ? Number((value as { lot_id?: unknown }).lot_id) || null : null;
 }
 
 function receivingRecordId(value: DirectusReceivingRecord["purchase_order_product_id"]): number {
@@ -316,9 +309,10 @@ function sumMovementAllocations(
         if (!Number.isSafeInteger(movementBranchId) || branchId === null) continue;
         if (mode === "match" && movementBranchId !== branchId) continue;
         if (mode === "exclude" && movementBranchId === branchId) continue;
-        const storageLotId = movementRelationId(movement.lot_id, "lot_id");
+        const storageLotId = movementMmLotId(movement as unknown as Record<string, unknown>)
+            || movementLegacyLotId(movement as unknown as Record<string, unknown>);
         const quantity = Number(movement.quantity || 0);
-        if (!Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
+        if (storageLotId === null || !Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
         const batchNumber = String(movement.batch_no || "").trim();
         const manufacturingDate = movement.manufacturing_date ? String(movement.manufacturing_date).slice(0, 10) : null;
         const expirationDate = movement.expiry_date ? String(movement.expiry_date).slice(0, 10) : null;
@@ -797,11 +791,11 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,batch_no,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
@@ -815,7 +809,7 @@ export async function fetchShipmentLineItems(
         if (receivingIds.length > 0) {
             const movementParams = new URLSearchParams({
                 "filter[source_document_id][_in]": receivingIds.join(","),
-                fields: "source_document_id,product_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
+                fields: "source_document_id,product_id,mm_lot_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
                 limit: "-1"
             });
             const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
@@ -930,9 +924,12 @@ export async function fetchShipmentLineItems(
             const latestReceivedQuantity = Number(latestReceipt?.received_quantity || 0);
             const latestRejectedQuantity = Number(latestReceipt?.quantity_rejected || 0);
             const latestAcceptedQuantity = Math.max(0, latestReceivedQuantity - latestRejectedQuantity);
-            const latestPrimaryLotId = resolveInventoryLotId(latestReceipt?.lot_id)
+            const latestMmLotId = resolveInventoryLotId(latestReceipt?.mm_lot_id)
                 || latestAcceptedAllocations[0]?.storage_lot_id
                 || rejectedAllocations[0]?.storage_lot_id
+                || null;
+            const latestPrimaryLotId = latestMmLotId
+                || resolveInventoryLotId(latestReceipt?.lot_id)
                 || null;
             const latestSnapshot: LatestReceivingSnapshot | null = latestReceipt
                 ? {
@@ -949,6 +946,8 @@ export async function fetchShipmentLineItems(
                     rejected_quantity: latestRejectedQuantity,
                     supplier_batch_number: String(latestReceipt.batch_no || ""),
                     storage_lot_id: latestPrimaryLotId,
+                    mm_lot_id: latestMmLotId,
+                    legacy_lot_id: resolveInventoryLotId(latestReceipt.lot_id),
                     accepted_lot_allocations: latestAcceptedAllocations,
                     rejected_lot_allocations: rejectedAllocations,
                     manufacturing_date: latestMovementWithDate?.manufacturing_date || null,
@@ -1020,6 +1019,9 @@ export async function fetchShipmentLineItems(
                 batch_no: latestReceipt ? latestReceipt.batch_no || "" : "",
                 lot_number: latestReceipt ? latestReceipt.batch_no || "" : "",
                 lot_id: latestReceipt ? resolveInventoryLotId(latestReceipt.lot_id) : null,
+                mm_lot_id: latestReceipt
+                    ? resolveInventoryLotId(latestReceipt.mm_lot_id) || latestSnapshot?.mm_lot_id || null
+                    : null,
                 manufacturing_date: latestSnapshot?.manufacturing_date || matchingMovement?.manufacturing_date || null,
                 expiration_date: latestSnapshot?.expiration_date || (latestReceipt ? latestReceipt.expiry_date || "" : ""),
                 purchase_intent: pop.purchase_intent || "Buffer_Stock",

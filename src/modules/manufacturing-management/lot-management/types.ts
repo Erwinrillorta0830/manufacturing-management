@@ -57,6 +57,10 @@ export interface Lot {
     status: "ACTIVE" | "CLOSED" | "INACTIVE";
     createdAt: string;
     updatedAt: string;
+    branchName?: string;
+    branchCode?: string;
+    isBadStock?: boolean;
+    branchIsBadStock?: boolean;
     createdBy: string;
     updatedBy: string;
     displayNumber?: number;
@@ -169,6 +173,9 @@ export interface LotKpiMetrics {
     quarantinedOrExpiring: number;
     fefoNextCount: number;
     activeQuantity: number;
+    fefoNextBatches?: Batch[];
+    fefoNextBatchNumbers?: string[];
+    selectedProductName?: string;
 }
 
 export interface Branch {

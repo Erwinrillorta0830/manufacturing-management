@@ -1,11 +1,19 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useLotRegistry } from "./hooks/useLotRegistry";
 import LotTable from "./components/LotTable";
 import LotFormDialog from "./components/LotFormDialog";
 
 export default function LotRegistryModule() {
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        queueMicrotask(() => {
+            setMounted(true);
+        });
+    }, []);
+
     const {
         filteredLots,
         loading,
@@ -27,6 +35,14 @@ export default function LotRegistryModule() {
         handleUpdate,
         loadLots
     } = useLotRegistry();
+
+    if (!mounted) {
+        return (
+            <div className="space-y-4">
+                <div className="h-96 rounded-xl border border-border bg-card animate-pulse" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-4">

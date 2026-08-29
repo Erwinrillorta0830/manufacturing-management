@@ -32,7 +32,14 @@ import {
 } from "../_lot-allocation";
 import { summarizeReceivingHistory } from "../_receiving-history";
 import { evaluateReceivingStatus, quantityStatusFromReceivingStatus } from "../_receiving-status";
-import { sumMovementQuantitiesByLot } from "../_movement-stock";
+import { sumMovementQuantitiesByStorageLot } from "../_movement-stock";
+import {
+    legacyToMmLotMap,
+    loadMmLotMappings,
+    loadMmLots,
+    loadMovementRowsForLotRefs,
+    MmLotCompatibilityError,
+} from "../_mm-lot-compat";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../../procurement/_category-type";
 import { forceReceivedIntakeMessage } from "../_force-received";
@@ -239,15 +246,9 @@ export async function POST(request: Request) {
                     .map(allocation => allocation.storageLotId)
             ]))];
         const requestedProductIds = [...new Set(lines.map(line => line.productId))];
-        const [headerResponse, lineResponse, lotResponse, lotInventoryResponse, receivingResponseWithLine, movementTypeResponse, productResponse] = await Promise.all([
+        const [headerResponse, lineResponse, receivingResponseWithLine, movementTypeResponse, productResponse] = await Promise.all([
             procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`),
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
-            requestedLotIds.length > 0
-                ? procurementDirectusFetch(`/items/lots?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=*&limit=${requestedLotIds.length}`)
-                : Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 })),
-            requestedLotIds.length > 0
-                ? procurementDirectusFetch(`/items/inventory_movements?filter[lot_id][_in]=${requestedLotIds.join(",")}&fields=lot_id,product_id,quantity&limit=-1`)
-                : Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 })),
             procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`),
             procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1"),
             procurementDirectusFetch(`/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`)
@@ -257,7 +258,7 @@ export async function POST(request: Request) {
             receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`);
         }
         if (headerResponse.status === 404) throw new ReceivingPreviewError("Purchase order not found.", 404);
-        if (!headerResponse.ok || !lineResponse.ok || !lotResponse.ok || !lotInventoryResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok || !productResponse.ok) {
+        if (!headerResponse.ok || !lineResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok || !productResponse.ok) {
             throw new ReceivingPreviewError("Unable to validate receiving preview reference data.", 503);
         }
 
@@ -279,6 +280,55 @@ export async function POST(request: Request) {
         if (!enabled(destinationBranch.isActive) || enabled(destinationBranch.isBadStock)) {
             throw new ReceivingPreviewError("Select an active standard branch as the receiving destination.");
         }
+
+        const requestedAcceptedLotIds = [...new Set(lines
+            .filter(line => line.receivedQuantity > 0)
+            .flatMap(line => normalizeReceivingLotAllocations(line.acceptedQuantity, line.acceptedLotAllocations).map(allocation => allocation.storageLotId)))];
+        const requestedRejectedLotIds = [...new Set(lines
+            .filter(line => line.receivedQuantity > 0)
+            .flatMap(line => normalizeRejectedLotAllocations(line.rejectedQuantity, line.rejectedLotAllocations).map(allocation => allocation.storageLotId)))];
+        const badStockBranch = requestedRejectedLotIds.length > 0
+            ? await loadConfiguredBadStockBranch(destinationBranch)
+            : null;
+        if (requestedRejectedLotIds.length > 0 && (!badStockBranch || !enabled(badStockBranch.isActive) || !enabled(badStockBranch.isBadStock))) {
+            throw new ReceivingPreviewError("The selected destination has no active Bad Order branch configured for rejected inventory.");
+        }
+        const [acceptedStorageLots, rejectedStorageLots] = await Promise.all([
+            requestedAcceptedLotIds.length > 0
+                ? loadMmLots({ branchId: purchaseOrderBranchId, ids: requestedAcceptedLotIds, onlyActive: true })
+                : Promise.resolve([]),
+            requestedRejectedLotIds.length > 0 && badStockBranch
+                ? loadMmLots({ branchId: positiveInteger(badStockBranch.id) as number, ids: requestedRejectedLotIds, onlyActive: true })
+                : Promise.resolve([])
+        ]);
+        const storageLots = [...acceptedStorageLots, ...rejectedStorageLots];
+        const lotBranchById = new Map<number, number>([
+            ...acceptedStorageLots.map(lot => [Number(lot.lot_id), purchaseOrderBranchId] as const),
+            ...rejectedStorageLots.map(lot => [Number(lot.lot_id), Number(badStockBranch?.id)] as const)
+        ]);
+        const storageLotIds = storageLots
+            .map(lot => Number(lot.lot_id))
+            .filter((id): id is number => Number.isSafeInteger(id) && id > 0);
+        const [acceptedMappings, rejectedMappings] = await Promise.all([
+            acceptedStorageLots.length > 0 ? loadMmLotMappings(acceptedStorageLots.map(lot => Number(lot.lot_id)), purchaseOrderBranchId) : Promise.resolve([]),
+            rejectedStorageLots.length > 0 && badStockBranch
+                ? loadMmLotMappings(rejectedStorageLots.map(lot => Number(lot.lot_id)), Number(badStockBranch.id))
+                : Promise.resolve([])
+        ]);
+        const mappings = [...acceptedMappings, ...rejectedMappings];
+        const mappingByMmLot = new Map(mappings.map(mapping => [mapping.mm_lot_id, mapping]));
+        const missingMappings = storageLotIds.filter(id => !mappingByMmLot.has(id));
+        if (missingMappings.length > 0) {
+            throw new ReceivingPreviewError(`Storage lot mapping is not configured for MM lot(s): ${missingMappings.join(", ")}.`, 409);
+        }
+        if (storageLotIds.length !== requestedLotIds.length) {
+            throw new ReceivingPreviewError("One or more selected storage lots do not exist, are inactive, or belong to another branch.", 409);
+        }
+        const movementRows = await loadMovementRowsForLotRefs(
+            storageLotIds,
+            mappings.map(mapping => mapping.legacy_lot_id),
+            "movement_id,product_id,mm_lot_id,lot_id,quantity,batch_no,manufacturing_date,expiry_date"
+        );
 
         const poLines = rows(await lineResponse.json());
         if (poLines.length === 0) throw new ReceivingPreviewError("This purchase order has no purchase-order lines.");
@@ -371,13 +421,12 @@ export async function POST(request: Request) {
             throw new ReceivingPreviewError(`Over-delivery processing must be explicitly confirmed (${summary}).`);
         }
 
-        const storageLots = rows(await lotResponse.json());
         const storageLotById = new Map(storageLots.map(lot => [positiveInteger(lot.lot_id), lot]));
         const validLotIds = new Set(storageLotById.keys());
         if (requestedLotIds.some(id => !validLotIds.has(id))) {
             throw new ReceivingPreviewError("One or more storage lots do not exist.");
         }
-        const occupiedByLot = sumMovementQuantitiesByLot(rows(await lotInventoryResponse.json()));
+        const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows, legacyToMmLotMap(mappings));
         const productTypesByLot = new Map<number, Set<number>>();
         const lotCapacityInputs: LotCapacityAllocationInput[] = [];
         const normalizedAllocationsByLine = new Map<number, { accepted: ReceivingLotAllocation[]; rejected: ReceivingLotAllocation[] }>();
@@ -401,7 +450,11 @@ export async function POST(request: Request) {
                     quantity: allocation.quantity
                 });
             });
-            for (const allocation of [...accepted, ...rejected]) {
+            const allocationEntries = [
+                ...accepted.map(allocation => ({ allocation, expectedBranchId: purchaseOrderBranchId })),
+                ...rejected.map(allocation => ({ allocation, expectedBranchId: Number(badStockBranch?.id) }))
+            ];
+            for (const { allocation, expectedBranchId } of allocationEntries) {
                 if (!allocation.batchNumber.trim()) {
                     throw new ReceivingPreviewError(`Every allocation for product ${line.productId} must include a batch number.`);
                 }
@@ -413,16 +466,16 @@ export async function POST(request: Request) {
                 }
                 const lot = storageLotById.get(allocation.storageLotId);
                 if (!lot) throw new ReceivingPreviewError(`Storage lot ${allocation.storageLotId} does not exist.`);
-                const lotTypeId = relationId(lot.inventory_type_id, ["product_type_id", "type_id", "id"]);
+                if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
+                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required receiving branch.`, 409);
+                }
+                if (!mappingByMmLot.has(allocation.storageLotId)) {
+                    throw new ReceivingPreviewError(`Storage lot ${allocation.storageLotId} has no approved legacy mapping.`, 409);
+                }
                 const lotUomId = relationId(lot.unit_id, ["unit_id", "id"]);
-                const occupied = Math.max(0, occupiedByLot.get(allocation.storageLotId) || 0);
                 const capacity = normalizeLotCapacity(lot.max_batch_capacity);
-                const emptyUnassignedLot = !lotTypeId && occupied <= 1e-9;
                 if (!lotUomId || lotUomId !== productAllocation.uomId) {
                     throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${line.productId}.`);
-                }
-                if (!emptyUnassignedLot && lotTypeId !== productAllocation.productTypeId) {
-                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is assigned to a different Product Type.`);
                 }
                 if (capacity === null || !Number.isFinite(capacity) || capacity <= 0) {
                     throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} has no valid maximum capacity.`);
@@ -562,7 +615,6 @@ export async function POST(request: Request) {
         }
 
         const needsRejectedRoute = needsRejectedRouteBeforeQa || evaluated.some(entry => entry.result.rejectedQuantity > 0);
-        const badStockBranch = needsRejectedRoute ? await loadConfiguredBadStockBranch(destinationBranch) : null;
         if (needsRejectedRoute && (!badStockBranch || !enabled(badStockBranch.isActive) || !enabled(badStockBranch.isBadStock))) {
             throw new ReceivingPreviewError("The selected destination has no active Bad Order branch configured for rejected inventory.");
         }
@@ -648,6 +700,8 @@ export async function POST(request: Request) {
     } catch (error) {
         const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError || error instanceof ProductCategoryTypeValidationError
             ? error.status
+            : error instanceof MmLotCompatibilityError
+                ? error.status
             : error instanceof QuarantineDispositionError
                 ? error.statusCode
             : error instanceof ReceivingDocumentTypeError

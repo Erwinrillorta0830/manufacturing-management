@@ -2,6 +2,8 @@
 // All shared types for the stock-transfer feature module.
 // No Zod here — see stock-transfer.schema.ts for validation schemas.
 
+import type { LotAllocationGroup } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
+
 // ─── Master-Data Row Shapes ─────────────────────────────────
 
 /** Row from the `branches` collection. */
@@ -96,6 +98,8 @@ export interface StockTransferRow {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   qa_status?: string | null;
+  inventory_condition?: string | null;
+  lot_allocations?: LotAllocationGroup[];
 }
 
 /** Row from the `stock_transfer_rfid` tracking collection. */
@@ -128,6 +132,7 @@ export interface ScannedItem {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   qa_status?: string | null;
+  inventory_condition?: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   allocations?: any[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -263,6 +268,8 @@ export interface UpdateTransferItem {
   destination_batch_no?: string | null;
   manufacturing_date?: string | null;
   expiration_date?: string | null;
+  lot_allocations?: LotAllocationGroup[];
+  remarks?: string | null;
 }
 
 /** RFID tracking entry in the PATCH request body. */
@@ -279,6 +286,8 @@ export interface UpdateTransferPayload {
   ids?: number[];
   /** Status for legacy format. */
   status?: string;
+  /** Optional transaction remarks / deposit notes. */
+  remarks?: string | null;
   /** RFID tags to record in tracking table. */
   rfids?: RfidTrackingEntry[];
   /** Scan type for RFID tracking ('DISPATCH' or 'RECEIVE'). */
@@ -315,6 +324,8 @@ export interface StockTransferInsertPayload {
   source_inventory_lot_id?: number | null;
   destination_lot_id?: number | null;
   batch_no?: string | null;
+  manufacturing_date?: string | null;
+  expiration_date?: string | null;
 }
 
 // ─── Valid Statuses ─────────────────────────────────────────
@@ -376,7 +387,9 @@ export interface MMStockTransferDetail {
   variance_quantity: number;
   bay_id?: number | null;
   date_encoded?: string;
+  encoded_at?: string;
   updated_at?: string;
+  date_updated?: string;
   remarks?: string | null;
 }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromToken } from "../invoice-consolidation/_auth";
 import { allocateInvoicesForConsolidation, releaseReservationIds } from "../invoice-consolidation/_reservation-service";
-import { DIRECTUS_URL, headers } from "../directus-api";
+import { DIRECTUS_URL, getISOStringInConfiguredTimezone, headers } from "@/app/api/manufacturing/directus-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,6 +125,7 @@ export async function POST(request: Request) {
             const detailIds: number[] = [];
             let reservationIds: number[] = [];
             try {
+                const nowIso = await getISOStringInConfiguredTimezone();
                 const headerResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
                     method: "POST",
                     headers,
@@ -132,7 +133,7 @@ export async function POST(request: Request) {
                         invoice_no: invoiceNo,
                         invoice_date: invoiceDate,
                         due_date: dueDate,
-                        created_date: new Date().toISOString(),
+                        created_date: nowIso,
                         customer_code: order.customer_code,
                         order_id: salesOrderId,
                         salesman_id: order.salesman_id || null,

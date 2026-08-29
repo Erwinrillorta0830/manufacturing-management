@@ -11,7 +11,7 @@ export const SALES_ORDER_FIELDS = [
 
 export const SALES_ORDER_DETAIL_FIELDS = [
     "detail_id", "order_id", "bom_version_id", "product_id", "unit_price", "ordered_quantity", "net_amount",
-    "allocated_quantity", "allocated_amount", "discount_amount", "discount_type", "gross_amount"
+    "allocated_quantity", "allocated_amount", "served_quantity", "discount_amount", "discount_type", "gross_amount"
 ].join(",");
 
 export type DirectusReader = (collection: string, params: URLSearchParams) => Promise<{ data: Row[]; meta?: { filter_count?: number } }>;
@@ -50,17 +50,65 @@ export async function fetchDetailsForOrders(read: DirectusReader, orderIds: numb
     return (await read("sales_order_details", params)).data;
 }
 
+export function isDetailUnfulfilled(detail: Row): boolean {
+    const ordered = Number(detail.ordered_quantity || 0);
+    const allocated = Number(detail.allocated_quantity || 0);
+    const served = Number(detail.served_quantity || 0);
+    return Number.isFinite(ordered)
+        && ordered > 0
+        && Number.isFinite(allocated)
+        && Number.isFinite(served)
+        && allocated < ordered
+        && served < ordered;
+}
+
+export function isPlanningVisibleDetail(detail: Row, orderStatus: unknown, isScheduled: boolean): boolean {
+    const status = String(orderStatus || "").trim();
+    if (status === "For Production") return isDetailUnfulfilled(detail) && !isScheduled;
+    if (status === "In Production") return isDetailUnfulfilled(detail) || isScheduled;
+    return false;
+}
+
+function isCancelled(value: unknown): boolean {
+    return String(value || "").trim().toLowerCase() === "cancelled";
+}
+
+function relationId(value: unknown): number {
+    if (value && typeof value === "object") {
+        const relation = value as Row;
+        return Number(
+            relation.sales_order_detail_id
+            ?? relation.job_order_id
+            ?? relation.detail_id
+            ?? relation.id
+            ?? 0
+        );
+    }
+    return Number(value || 0);
+}
+
 export async function findScheduledDetailIds(read: DirectusReader, details: Row[]) {
-    const detailIds = details.map((detail) => Number(detail.detail_id || detail.id)).filter(Boolean);
+    const detailIds = details.map((detail) => relationId(detail.detail_id || detail.id)).filter(Boolean);
     if (detailIds.length === 0) return new Set<number>();
 
     const allocationParams = new URLSearchParams({
         "filter[sales_order_detail_id][_in]": detailIds.join(","),
-        fields: "sales_order_detail_id,job_order_id",
+        fields: "sales_order_detail_id,job_order_id,status",
         limit: "-1"
     });
-    const allocations = (await read("manufacturing_job_order_allocations", allocationParams)).data;
-    const jobOrderIds = [...new Set(allocations.map((allocation) => Number(allocation.job_order_id)).filter(Boolean))];
+    let allocations: Row[];
+    try {
+        allocations = (await read("manufacturing_job_order_allocations", allocationParams)).data;
+    } catch (error) {
+        // The Dummy schema predates the optional allocation status field. Keep
+        // the status-aware query for environments that support cancellation,
+        // then fall back only for Directus field-validation failures.
+        if (!/:\s*(400|403)$/.test(String(error))) throw error;
+        allocationParams.set("fields", "sales_order_detail_id,job_order_id");
+        allocations = (await read("manufacturing_job_order_allocations", allocationParams)).data;
+    }
+    const activeAllocations = allocations.filter((allocation) => !isCancelled(allocation.status));
+    const jobOrderIds = [...new Set(activeAllocations.map((allocation) => relationId(allocation.job_order_id)).filter(Boolean))];
     if (jobOrderIds.length === 0) return new Set<number>();
 
     const jobOrderParams = new URLSearchParams({
@@ -69,16 +117,19 @@ export async function findScheduledDetailIds(read: DirectusReader, details: Row[
         limit: "-1"
     });
     const jobOrders = (await read("manufacturing_job_orders", jobOrderParams)).data;
-    const activeJobOrderIds = new Set(
+    const cancelledJobOrderIds = new Set(
         jobOrders
-            .filter((jobOrder) => jobOrder.status !== "Cancelled")
-            .map((jobOrder) => Number(jobOrder.job_order_id))
+            .filter((jobOrder) => isCancelled(jobOrder.status))
+            .map((jobOrder) => relationId(jobOrder.job_order_id))
     );
 
+    // A non-cancelled allocation remains a scheduling conflict even when its
+    // linked JO cannot be resolved. This prevents an orphaned link from being
+    // silently scheduled a second time.
     return new Set(
-        allocations
-            .filter((allocation) => activeJobOrderIds.has(Number(allocation.job_order_id)))
-            .map((allocation) => Number(allocation.sales_order_detail_id))
+        activeAllocations
+            .filter((allocation) => !cancelledJobOrderIds.has(relationId(allocation.job_order_id)))
+            .map((allocation) => relationId(allocation.sales_order_detail_id))
     );
 }
 
@@ -90,7 +141,7 @@ async function fetchProductGraph(read: DirectusReader, initialProductIds: number
         const params = new URLSearchParams({
             "filter[_or][0][product_id][_in]": frontier.join(","),
             "filter[_or][1][parent_id][_in]": frontier.join(","),
-            fields: "product_id,product_name,product_code,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
+            fields: "product_id,product_name,product_code,description,unit_of_measurement,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count,product_brand.brand_name,product_category.category_name,parent_id",
             limit: "-1"
         });
         const rows = (await read("products", params)).data;
@@ -241,7 +292,6 @@ export async function enrichSalesOrderReadModel(
     const detailsMap: Record<number, Row[]> = {};
     for (const detail of details) {
         const detailId = Number(detail.detail_id || detail.id);
-        if (scheduledDetailIds.has(detailId)) continue;
         const orderId = Number(detail.order_id);
         const rawProductId = Number(detail.product_id);
         const product = products.get(rawProductId);
@@ -252,16 +302,18 @@ export async function enrichSalesOrderReadModel(
 
         detail.product_id = product ? {
             product_id: Number(product.product_id),
-            product_name: product.product_name,
+            product_name: product.description || product.product_name,
             product_code: product.product_code,
+            description: product.description || product.product_name,
             uom: unitName,
             uom_name: unitName,
             uom_shortcut: unitShortcut,
             unit_name: unitName,
-            uom_count: product.unit_of_measurement_count ? Number(product.unit_of_measurement_count) : 1,
+            unit_shortcut: unitShortcut,
+            unit_count: Number(product.unit_of_measurement_count || 1),
             parent_id: product.parent_id ? Number(typeof product.parent_id === "object" ? product.parent_id.product_id : product.parent_id) : null,
-            brand: product.product_brand?.brand_name || "N/A",
-            category: product.product_category?.category_name || "N/A"
+            brand_name: product.product_brand?.brand_name || null,
+            category_name: product.product_category?.category_name || null
         } : {
             product_id: rawProductId,
             product_name: `Product #${rawProductId}`,
@@ -277,6 +329,10 @@ export async function enrichSalesOrderReadModel(
         };
 
         const order = orderById.get(orderId);
+        const parentOrderStatus = String(order?.order_status || detail.parent_order_status || "").trim() || null;
+        detail.parent_order_status = parentOrderStatus;
+        detail.is_scheduled = scheduledDetailIds.has(detailId);
+        detail.is_read_only = parentOrderStatus !== "For Production" || detail.is_scheduled;
         const customer = order ? customersByCode.get(String(order.customer_code)) : undefined;
         const customerId = Number(customer?.id || customer?.customer_id) || undefined;
         const storedVersionId = detail.bom_version_id ? Number(detail.bom_version_id) : null;

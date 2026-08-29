@@ -14,6 +14,10 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
     const [lotFilter, setLotFilter] = useState<number | "ALL">("ALL");
     const [customProductFilter, setCustomProductFilter] = useState<number | "ALL" | null>(null);
 
+    useEffect(() => {
+        setCustomProductFilter(null);
+    }, [selectedProductId]);
+
     const productFilter = customProductFilter !== null ? customProductFilter : selectedProductId;
     const setProductFilter = (val: number | "ALL") => setCustomProductFilter(val);
 
@@ -158,7 +162,7 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
         setDirectionFilter("ALL");
         setTransactionTypeFilter("ALL");
         setLotFilter("ALL");
-        setProductFilter("ALL");
+        setCustomProductFilter(null);
     };
 
     return {
