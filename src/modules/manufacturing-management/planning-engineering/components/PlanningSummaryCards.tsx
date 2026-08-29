@@ -33,7 +33,7 @@ export function PlanningSummaryCards({
                         {demandLinesCount.toLocaleString()}
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        Sales order items ready for consolidation
+                        For Production and In Production demand lines
                     </p>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
