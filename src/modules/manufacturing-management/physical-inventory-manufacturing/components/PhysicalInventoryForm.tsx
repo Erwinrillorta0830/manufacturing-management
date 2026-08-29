@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import {
     MmPhysicalInventorySheet,
     MmPhysicalInventoryDetail,
+    MmOffsetPairing,
     Branch,
     ProductType,
     PriceType,
@@ -11,7 +13,7 @@ import {
 } from "../types";
 import SearchableSelect from "./SearchableSelect";
 import { formatQty, formatMoney } from "./PhysicalInventoryList";
-import { ArrowLeft, Plus, Save, Send, Trash2, CheckCircle2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Save, Send, Trash2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2, GitCompare } from "lucide-react";
 
 interface Props {
     sheet?: MmPhysicalInventorySheet | null;
@@ -19,6 +21,7 @@ interface Props {
     productTypes?: ProductType[];
     priceTypes?: PriceType[];
     existingSheets?: MmPhysicalInventorySheet[];
+    offsetPairings?: MmOffsetPairing[];
     loading: boolean;
     onBack: () => void;
     onSaveHeader: (payload: {
@@ -34,6 +37,7 @@ interface Props {
     onOpenAddDetailModal: (lotId?: number) => void;
     onRemoveDetail: (detail: MmPhysicalInventoryDetail) => void;
     onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number) => Promise<void>;
+    onOpenOffsettingModal?: () => void;
     onSubmit: () => void;
     onReturnToDraft?: () => void;
     onCommit?: () => void;
@@ -54,7 +58,6 @@ export default function PhysicalInventoryForm({
     onSaveInlineCount,
     onSubmit,
     onReturnToDraft,
-    onCommit,
 }: Props) {
     const isNew = !sheet || !sheet.physical_inventory_id;
     const isDraft = sheet?.status === "DRAFT" || isNew;
@@ -91,7 +94,7 @@ export default function PhysicalInventoryForm({
 
     const handleProductTypeChange = (newPtId: number) => {
         setProductTypeId(newPtId);
-        if (newPtId > 0) {
+        if (newPtId > 0 && !priceTypeId) {
             const pt = productTypes.find((p) => p.id === newPtId);
             if (pt?.default_purchase_price_type_id && pt.default_purchase_price_type_id > 0) {
                 setPriceTypeId(pt.default_purchase_price_type_id);
@@ -159,30 +162,26 @@ export default function PhysicalInventoryForm({
             if (bId) setBranchId(bId);
             if (sheet.stock_type) setStockType(sheet.stock_type);
             const ptId = extractPtId(sheet.product_type_id);
-            if (ptId > 0) setProductTypeId(ptId);
+            setProductTypeId(ptId);
             const prId = extractPriceTypeId(sheet.price_type_id);
             if (prId > 0) {
                 setPriceTypeId(prId);
             } else if (priceTypes.length > 0) {
-                setPriceTypeId(priceTypes[0].price_type_id);
+                setPriceTypeId((prev) => (prev > 0 ? prev : priceTypes[0].price_type_id));
             }
             if (sheet.starting_date) setStartingDate(formatDateTimeInput(sheet.starting_date));
             if (sheet.cutoff_date) setCutoffDate(formatDateTimeInput(sheet.cutoff_date));
             setRemarks(sheet.remarks || "");
         } else {
             if (!branchId && branches.length > 0) {
-                setBranchId(branches[0].id);
+                setBranchId((prev) => (prev > 0 ? prev : branches[0].id));
             }
-            if (!priceTypeId && priceTypes.length > 0) {
-                setPriceTypeId(priceTypes[0].price_type_id);
+            if (priceTypes.length > 0) {
+                setPriceTypeId((prev) => (prev > 0 ? prev : priceTypes[0].price_type_id));
             }
-            if (branchHasCommittedOpening) {
-                setStockType("REGULAR");
-            } else {
-                setStockType("OPENING");
-            }
+            setStockType(branchHasCommittedOpening ? "REGULAR" : "OPENING");
         }
-    }, [sheet, branches, branchId, branchHasCommittedOpening, priceTypes, priceTypeId]);
+    }, [sheet, branches, priceTypes, branchHasCommittedOpening, branchId]);
 
     const handleHeaderSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -250,13 +249,24 @@ export default function PhysicalInventoryForm({
     };
 
     const getUnitShortcut = (u: unknown, p: unknown) => {
-        if (typeof u === "object" && u !== null && (u as { unit_shortcut?: string }).unit_shortcut) {
-            return (u as { unit_shortcut?: string }).unit_shortcut;
+        let shortcut = "";
+        if (typeof u === "object" && u !== null && (u as { unit_shortcut?: string; unit_name?: string }).unit_shortcut) {
+            shortcut = (u as { unit_shortcut?: string }).unit_shortcut || "";
+        } else if (typeof u === "object" && u !== null && (u as { unit_name?: string }).unit_name) {
+            shortcut = (u as { unit_name?: string }).unit_name || "";
+        } else if (typeof p === "object" && p !== null && (p as { unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } }).unit_of_measurement?.unit_shortcut) {
+            shortcut = (p as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut || "";
+        } else if (typeof p === "object" && p !== null && (p as { unit_of_measurement?: { unit_name?: string } }).unit_of_measurement?.unit_name) {
+            shortcut = (p as { unit_of_measurement?: { unit_name?: string } }).unit_of_measurement?.unit_name || "";
         }
-        if (typeof p === "object" && p !== null && (p as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut) {
-            return (p as { unit_of_measurement?: { unit_shortcut?: string } }).unit_of_measurement?.unit_shortcut;
+
+        const count = typeof p === "object" && p !== null ? Number((p as { unit_of_measurement_count?: number }).unit_of_measurement_count || 0) : 0;
+        const baseUom = shortcut || "UOM";
+
+        if (count > 1) {
+            return `${baseUom} (${count} pcs/${baseUom.toLowerCase()})`;
         }
-        return "UOM";
+        return baseUom;
     };
 
     return (
@@ -307,19 +317,39 @@ export default function PhysicalInventoryForm({
                         </button>
                     )}
 
-                    {isPendingReview && onCommit && (
-                        <button
-                            type="button"
-                            onClick={onCommit}
-                            disabled={loading || details.length === 0}
-                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs"
+                    {isPendingReview && (
+                        <Link
+                            href={`/mm/physical-inventory-offsetting?id=${sheet?.physical_inventory_id || ""}`}
+                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs"
                         >
-                            <CheckCircle2 className="h-4 w-4" />
-                            Commit Inventory
-                        </button>
+                            <GitCompare className="h-4 w-4" />
+                            Go to Offsetting Module to Commit
+                        </Link>
                     )}
                 </div>
             </div>
+
+            {isPendingReview && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs text-indigo-900 dark:text-indigo-200 shadow-xs">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0">
+                            <GitCompare className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <div className="font-bold text-sm">Inventory Sheet Pending Offsetting Audit & Review</div>
+                            <div className="text-indigo-700 dark:text-indigo-300 mt-0.5">
+                                Direct committing is disabled in this entry form. Please proceed to the <strong>Physical Inventory Offsetting Module</strong> to reconcile lot variances and commit final stock adjustments.
+                            </div>
+                        </div>
+                    </div>
+                    <Link
+                        href={`/mm/physical-inventory-offsetting?id=${sheet?.physical_inventory_id || ""}`}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs shrink-0"
+                    >
+                        Go to Offsetting Module &rarr;
+                    </Link>
+                </div>
+            )}
 
             {error && (
                 <div className="flex items-center gap-2 p-3 text-sm text-rose-800 bg-rose-50 border border-rose-200 rounded-lg dark:bg-rose-950 dark:text-rose-300">

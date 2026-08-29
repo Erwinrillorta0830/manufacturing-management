@@ -228,6 +228,7 @@ export interface StationScanResponse {
     jobOrder?: JobOrder | null;
     activeOperation?: RoutingTask | null;
     statusTransitioned?: boolean;
+    stationHistoryRecorded?: boolean;
     statusHistoryRecord?: JobOrderStatusHistoryRecord | null;
     error?: string;
 }

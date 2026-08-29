@@ -1047,10 +1047,14 @@ export function useManufacturingQA() {
                 (j.job_order_no || j.jo_id) === String(selectedLedgerEntry.job_order_id)
         );
         const tasks = jo ? (jo.routing_tasks || jo.routingTasks || []) : [];
+        // Yields from Job Orders without configured routing steps still need a
+        // general daily QA audit. The BFF accepts a null joRouteId for this
+        // case, so do not submit an empty inspection batch.
+        const auditTasks = tasks.length > 0 ? tasks : [null];
 
-        const inspectionsPayload = tasks.map((task: any) => {
+        const inspectionsPayload = auditTasks.map((task: any) => {
             let activeParameters: any[] = [];
-            if (task.qa_template_id) {
+            if (task?.qa_template_id) {
                 const activeTemplate = qaTemplates.find((t: any) => Number(t.template_id) === Number(task.qa_template_id));
                 if (activeTemplate) {
                     activeParameters = activeTemplate.parameters || [];
@@ -1102,7 +1106,7 @@ export function useManufacturingQA() {
 
             return {
                 jobOrderId: selectedLedgerEntry.job_order_id,
-                joRouteId: task.id,
+                joRouteId: task?.id ?? null,
                 ledgerId: selectedLedgerEntry.id || selectedLedgerEntry.ledger_id,
                 inspectorId: 1,
                 moisturePercentage: resolvedMoisture,

@@ -87,7 +87,17 @@ export function extractId(value: unknown, defaultKey = "id"): number {
     }
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
-        const raw = record[defaultKey] ?? record.id ?? record.product_id ?? record.lot_id ?? record.inventory_lot_id ?? record.unit_id ?? record.branch_id;
+        const raw =
+            record[defaultKey] ??
+            record.id ??
+            record.price_type_id ??
+            record.product_type_id ??
+            record.type_id ??
+            record.product_id ??
+            record.lot_id ??
+            record.inventory_lot_id ??
+            record.unit_id ??
+            record.branch_id;
         const parsed = Number(raw);
         return Number.isFinite(parsed) ? parsed : 0;
     }
@@ -200,23 +210,37 @@ export async function resolveBatchPrices(productIds: number[], priceTypeId?: num
     const uniqueProductIds = Array.from(new Set(productIds.map((id) => Number(id)).filter((id) => id > 0)));
 
     if (priceTypeId && priceTypeId > 0 && uniqueProductIds.length > 0) {
-        // 1. Check product_per_price_type
-        try {
-            const filterUrl = `${DIRECTUS_URL}/items/product_per_price_type?filter[price_type_id][_eq]=${priceTypeId}&filter[product_id][_in]=${uniqueProductIds.join(",")}&limit=-1`;
-            const res = await fetch(filterUrl, { headers, cache: "no-store" });
-            if (res.ok) {
-                const json = await res.json();
-                const list: Array<Record<string, unknown>> = json.data || [];
-                list.forEach((row) => {
-                    const pId = extractId(row.product_id);
-                    const val = Number(row.price ?? row.cost_per_unit ?? 0);
-                    if (pId > 0 && !isNaN(val) && val > 0) {
-                        priceMap.set(pId, roundMoney(val));
-                    }
-                });
+        // 1. Check product_per_price_type with multiple filter strategies + in-memory matching
+        const pidsStr = uniqueProductIds.join(",");
+        const urlsToTry = [
+            `${DIRECTUS_URL}/items/product_per_price_type?filter[price_type_id][_eq]=${priceTypeId}&filter[product_id][_in]=${pidsStr}&limit=-1`,
+            `${DIRECTUS_URL}/items/product_per_price_type?filter[price_type_id][price_type_id][_eq]=${priceTypeId}&filter[product_id][_in]=${pidsStr}&limit=-1`,
+            `${DIRECTUS_URL}/items/product_per_price_type?filter[price_type_id][id][_eq]=${priceTypeId}&filter[product_id][_in]=${pidsStr}&limit=-1`,
+            `${DIRECTUS_URL}/items/product_per_price_type?limit=-1`,
+        ];
+
+        for (const url of urlsToTry) {
+            const missing = uniqueProductIds.filter((id) => !priceMap.has(id));
+            if (missing.length === 0) break;
+
+            try {
+                const res = await fetch(url, { headers, cache: "no-store" });
+                if (res.ok) {
+                    const json = await res.json();
+                    const list: Array<Record<string, unknown>> = json.data || [];
+                    list.forEach((row) => {
+                        const rowPtId = extractId(row.price_type_id);
+                        const rowPId = extractId(row.product_id);
+                        const val = Number(row.price ?? row.price_per_unit ?? row.cost_per_unit ?? 0);
+
+                        if (rowPtId === priceTypeId && uniqueProductIds.includes(rowPId) && !isNaN(val) && val > 0) {
+                            priceMap.set(rowPId, roundMoney(val));
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("[resolveBatchPrices] product_per_price_type lookup error:", e);
             }
-        } catch (e) {
-            console.error("[resolveBatchPrices] product_per_price_type error:", e);
         }
 
         // 2. Check product_version_prices for remaining missing products
