@@ -7,6 +7,13 @@ import {
     LotLookup
 } from "../types";
 
+export interface UserLookup {
+    id: number;
+    name: string;
+    firstName?: string;
+    lastName?: string;
+}
+
 /**
  * Fetches branches lookup for filtering
  */
@@ -70,7 +77,7 @@ export async function fetchProducts(): Promise<ProductLookup[]> {
             productCode: p.productCode ? String(p.productCode) : (p.skuCode ? String(p.skuCode) : undefined),
             skuCode: p.skuCode ? String(p.skuCode) : undefined,
             productTypeId: p.productTypeId ? Number(p.productTypeId) : undefined,
-            unitName: p.unitName ? String(p.unitName) : undefined,
+            unitName: p.unitName ? String(p.unitName) : (p.unit_name ? String(p.unit_name) : (p.unit_shortcut ? String(p.unit_shortcut) : undefined)),
             costPerUnit: p.unitCost ? Number(p.unitCost) : (p.cost_per_unit ? Number(p.cost_per_unit) : null)
         }));
     } catch (err) {
@@ -99,6 +106,26 @@ export async function fetchLots(branchId?: number): Promise<LotLookup[]> {
         }));
     } catch (err) {
         console.error("[ProductTracing] Error fetching lots lookup:", err);
+        return [];
+    }
+}
+
+/**
+ * Fetches system users for resolving author / postedBy names
+ */
+export async function fetchUsers(): Promise<UserLookup[]> {
+    try {
+        const res = await fetch("/api/manufacturing/financial-management/collection-posting/master-data/users", { cache: "no-store" });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data || []).map((u: Record<string, unknown>) => ({
+            id: Number(u.id || u.user_id),
+            name: String(u.name || `${u.firstName || u.user_fname || ""} ${u.lastName || u.user_lname || ""}`.trim() || `User #${u.id || u.user_id}`),
+            firstName: (u.firstName || u.user_fname) as string,
+            lastName: (u.lastName || u.user_lname) as string
+        }));
+    } catch (err) {
+        console.error("[ProductTracing] Error fetching users lookup:", err);
         return [];
     }
 }
@@ -138,11 +165,6 @@ export async function fetchMovements(filters: ProductTracingFiltersType): Promis
 
     const requestUrl = `/api/manufacturing/inventory-movements?${params.toString()}`;
 
-    console.groupCollapsed(`[MM-INVENTORY-MOVEMENTS FETCH] 🔍 Request to ${requestUrl}`);
-    console.log("Active Filter State:", filters);
-    console.log("Query Parameters:", Object.fromEntries(params.entries()));
-    console.groupEnd();
-
     const res = await fetch(requestUrl, {
         cache: "no-store",
     });
@@ -150,19 +172,9 @@ export async function fetchMovements(filters: ProductTracingFiltersType): Promis
     if (!res.ok) {
         const errorJson = await res.json().catch(() => ({}));
         const errorMessage = errorJson.error || `Spring Boot API returned status ${res.status}: ${res.statusText}`;
-        console.error(`[MM-INVENTORY-MOVEMENTS ERROR] HTTP ${res.status}:`, errorMessage);
         throw new Error(errorMessage);
     }
 
     const data: MMInventoryMovement[] = await res.json();
-
-    console.group(`[MM-INVENTORY-MOVEMENTS RESPONSE] ✅ Received ${data.length} Movements`);
-    console.log("Total Count:", data.length);
-    console.log("Movements Data Array:", data);
-    if (data.length > 0) {
-        console.log("Sample Item #1:", data[0]);
-    }
-    console.groupEnd();
-
     return data || [];
 }

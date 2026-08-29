@@ -6,7 +6,6 @@ import {
     CalendarIcon,
     RotateCcw,
     Search,
-    Filter,
     X,
     SlidersHorizontal,
     ChevronDown,
@@ -31,6 +30,13 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import {
     ProductTracingFiltersType,
     BranchLookup,
     ProductTypeLookup,
@@ -40,9 +46,10 @@ import {
 import { SearchableSelect } from "./SearchableSelect";
 
 const TRANSACTION_TYPES = [
-    { value: "ALL", label: "All Types" },
+    { value: "ALL", label: "All Transaction Types" },
     { value: "STOCK_TRANSFER", label: "Stock Transfer" },
     { value: "STOCK_ADJUSTMENT", label: "Stock Adjustment" },
+    { value: "STOCK_CONVERSION", label: "Stock Conversion" },
     { value: "PHYSICAL_INVENTORY", label: "Physical Inventory" },
     { value: "MATERIAL_ISSUANCE", label: "Material Issuance" },
     { value: "PRODUCTION_RECEIPT", label: "Production Receipt" },
@@ -168,18 +175,17 @@ export function ProductTracingFilters({
         }
     };
 
-    // Count active filters
+    // Count non-default active filters
     const activeFiltersCount = React.useMemo(() => {
         let count = 0;
         if (filters.branch_id) count++;
         if (filters.product_type_id) count++;
         if (filters.product_id) count++;
         if (filters.lot_id) count++;
-        if (filters.batch_no) count++;
+        if (filters.batch_no?.trim()) count++;
         if (filters.transaction_type && filters.transaction_type !== "ALL") count++;
         if (filters.movement_direction && filters.movement_direction !== "ALL") count++;
         if (filters.inventory_condition && filters.inventory_condition !== "ALL") count++;
-        if (filters.search_query) count++;
         if (filters.startDate || filters.endDate) count++;
         return count;
     }, [filters]);
@@ -221,7 +227,7 @@ export function ProductTracingFilters({
                             onClick={() => setShowAdvanced(!showAdvanced)}
                         >
                             <SlidersHorizontal className="h-3.5 w-3.5" />
-                            <span>Filters</span>
+                            <span>More Filters</span>
                             {activeFiltersCount > 0 && (
                                 <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-black rounded-full bg-primary text-primary-foreground">
                                     {activeFiltersCount}
@@ -252,7 +258,7 @@ export function ProductTracingFilters({
                     </div>
                 </div>
 
-                {/* Main Filter Dropdowns */}
+                {/* Primary Filters Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <SearchableSelect
                         label="Branch / Warehouse"
@@ -292,7 +298,7 @@ export function ProductTracingFilters({
                             Batch Number
                         </Label>
                         <Input
-                            placeholder="e.g. BATCH-001 or dsaf"
+                            placeholder="e.g. BATCH-001 or BATCH12"
                             className="h-10 rounded-xl text-xs border-muted-foreground/20"
                             value={filters.batch_no || ""}
                             onChange={(e) => onFilterChange({ batch_no: e.target.value })}
@@ -301,12 +307,12 @@ export function ProductTracingFilters({
                     </div>
                 </div>
 
-                {/* Advanced Filter Drawers (Expanded) */}
+                {/* Advanced Filter Drawer (Expanded) */}
                 {showAdvanced && (
                     <div className="pt-3 border-t space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <SearchableSelect
-                                label="Lot Assignment"
+                                label="Storage Lot Assignment"
                                 placeholder="Select Lot"
                                 emptyText="No lot found."
                                 value={filters.lot_id}
@@ -316,40 +322,50 @@ export function ProductTracingFilters({
                                 disabled={isLoading}
                             />
 
+                            {/* Transaction Type shadcn Select */}
                             <div className="space-y-1.5">
                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-70">
                                     Transaction Type
                                 </Label>
-                                <div className="relative">
-                                    <select
-                                        className="w-full h-10 rounded-xl px-3 bg-background border border-muted-foreground/20 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
-                                        value={filters.transaction_type || "ALL"}
-                                        onChange={(e) => onFilterChange({ transaction_type: e.target.value })}
-                                        disabled={isLoading}
-                                    >
+                                <Select
+                                    value={filters.transaction_type || "ALL"}
+                                    onValueChange={(val) => onFilterChange({ transaction_type: val })}
+                                    disabled={isLoading}
+                                >
+                                    <SelectTrigger className="h-10 w-full rounded-xl border-muted-foreground/20 text-xs font-semibold">
+                                        <SelectValue placeholder="Select Transaction Type" />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl border shadow-xl">
                                         {TRANSACTION_TYPES.map(t => (
-                                            <option key={t.value} value={t.value}>{t.label}</option>
+                                            <SelectItem key={t.value} value={t.value} className="text-xs font-medium">
+                                                {t.label}
+                                            </SelectItem>
                                         ))}
-                                    </select>
-                                </div>
+                                    </SelectContent>
+                                </Select>
                             </div>
 
+                            {/* Inventory Condition shadcn Select */}
                             <div className="space-y-1.5">
                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-70">
-                                    Inventory Condition
+                                    Inventory Quality Condition
                                 </Label>
-                                <div className="relative">
-                                    <select
-                                        className="w-full h-10 rounded-xl px-3 bg-background border border-muted-foreground/20 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
-                                        value={filters.inventory_condition || "ALL"}
-                                        onChange={(e) => onFilterChange({ inventory_condition: e.target.value as "ALL" | "GOOD" | "EXPIRED" | "DAMAGED" | "QUARANTINED" })}
-                                        disabled={isLoading}
-                                    >
+                                <Select
+                                    value={filters.inventory_condition || "ALL"}
+                                    onValueChange={(val) => onFilterChange({ inventory_condition: val as "ALL" | "GOOD" | "EXPIRED" | "DAMAGED" | "QUARANTINED" })}
+                                    disabled={isLoading}
+                                >
+                                    <SelectTrigger className="h-10 w-full rounded-xl border-muted-foreground/20 text-xs font-semibold">
+                                        <SelectValue placeholder="Select Condition" />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl border shadow-xl">
                                         {CONDITIONS.map(c => (
-                                            <option key={c.value} value={c.value}>{c.label}</option>
+                                            <SelectItem key={c.value} value={c.value} className="text-xs font-medium">
+                                                {c.label}
+                                            </SelectItem>
                                         ))}
-                                    </select>
-                                </div>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
 
@@ -358,7 +374,7 @@ export function ProductTracingFilters({
                             {/* Direction Selector */}
                             <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
-                                    Direction:
+                                    Movement Direction:
                                 </span>
                                 <div className="inline-flex rounded-xl bg-muted/60 p-1">
                                     {(["ALL", "IN", "OUT"] as const).map((dir) => (
@@ -382,7 +398,7 @@ export function ProductTracingFilters({
                             {/* Date Presets & Picker */}
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
-                                    Date Range:
+                                    Date Window:
                                 </span>
                                 <div className="inline-flex rounded-xl bg-muted/60 p-1">
                                     {DATE_PRESETS.map((dp) => (
@@ -453,85 +469,6 @@ export function ProductTracingFilters({
                                 </Popover>
                             </div>
                         </div>
-                    </div>
-                )}
-
-                {/* Active Filter Chips */}
-                {activeFiltersCount > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap pt-1 text-xs">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground mr-1">
-                            Active Filters:
-                        </span>
-
-                        {filters.branch_id && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Branch: {branches.find(b => b.id === filters.branch_id)?.branchName || `#${filters.branch_id}`}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ branch_id: null })} />
-                            </Badge>
-                        )}
-
-                        {filters.product_type_id && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Type: {productTypes.find(pt => Number(pt.id) === filters.product_type_id)?.name || `#${filters.product_type_id}`}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ product_type_id: null })} />
-                            </Badge>
-                        )}
-
-                        {filters.product_id && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Product: {products.find(p => p.productId === filters.product_id)?.productName || `#${filters.product_id}`}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ product_id: null })} />
-                            </Badge>
-                        )}
-
-                        {filters.batch_no && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Batch: {filters.batch_no}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ batch_no: "" })} />
-                            </Badge>
-                        )}
-
-                        {filters.lot_id && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Lot: #{filters.lot_id}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ lot_id: null })} />
-                            </Badge>
-                        )}
-
-                        {filters.transaction_type && filters.transaction_type !== "ALL" && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Type: {filters.transaction_type}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ transaction_type: "ALL" })} />
-                            </Badge>
-                        )}
-
-                        {filters.movement_direction && filters.movement_direction !== "ALL" && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Direction: {filters.movement_direction}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ movement_direction: "ALL" })} />
-                            </Badge>
-                        )}
-
-                        {filters.inventory_condition && filters.inventory_condition !== "ALL" && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Condition: {filters.inventory_condition}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ inventory_condition: "ALL" })} />
-                            </Badge>
-                        )}
-
-                        {(filters.startDate || filters.endDate) && (
-                            <Badge variant="secondary" className="gap-1 rounded-lg font-bold text-[10px] py-1 px-2">
-                                Date: {safeStartDate ? format(safeStartDate, "MMM dd") : "Any"} - {safeEndDate ? format(safeEndDate, "MMM dd, yyyy") : "Any"}
-                                <X className="h-3 w-3 cursor-pointer opacity-70 hover:opacity-100" onClick={() => onFilterChange({ startDate: null, endDate: null, datePreset: "all" })} />
-                            </Badge>
-                        )}
-
-                        <button
-                            onClick={onReset}
-                            className="text-[10px] font-bold uppercase tracking-wider text-primary hover:underline ml-1"
-                        >
-                            Clear all
-                        </button>
                     </div>
                 )}
             </CardContent>

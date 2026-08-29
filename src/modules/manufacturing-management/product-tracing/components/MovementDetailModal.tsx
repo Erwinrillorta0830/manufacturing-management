@@ -11,25 +11,27 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MMInventoryMovement } from "../types";
 import {
-    FileText,
+    MMInventoryMovement,
+    BranchLookup,
+    ProductTypeLookup,
+    ProductLookup,
+    LotLookup
+} from "../types";
+import { UserLookup } from "../providers/fetchProvider";
+import {
     ArrowUpRight,
     ArrowDownRight,
     Calendar,
     Package,
     Layers,
-    DollarSign,
-    User,
-    CheckCircle2,
-    AlertCircle,
     Copy,
     Building,
     Check,
     Code,
-    Clock,
-    Hash,
-    Maximize2
+    UserCheck,
+    Tag,
+    Boxes
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -38,12 +40,116 @@ interface Props {
     movement: MMInventoryMovement | null;
     isOpen: boolean;
     onClose: () => void;
-    branchName?: string;
+    branches?: BranchLookup[];
+    products?: ProductLookup[];
+    lots?: LotLookup[];
+    productTypes?: ProductTypeLookup[];
+    users?: UserLookup[];
 }
 
-export function MovementDetailModal({ movement, isOpen, onClose, branchName }: Props) {
+export function MovementDetailModal({
+    movement,
+    isOpen,
+    onClose,
+    branches = [],
+    products = [],
+    lots = [],
+    productTypes = [],
+    users = []
+}: Props) {
     const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
     const [showRawJson, setShowRawJson] = React.useState(false);
+
+    // ── Resolved Names (ALL HOOKS CALLED UNCONDITIONALLY AT TOP) ─────
+    const resolvedBranchName = React.useMemo(() => {
+        if (!movement?.branchId) return "All Branches";
+        const found = branches.find(b => b.id === Number(movement.branchId));
+        return found ? (found.branchName || found.branch_name || `Branch #${found.id}`) : "Main Plant Warehouse";
+    }, [movement?.branchId, branches]);
+
+    const resolvedProduct = React.useMemo(() => {
+        if (!movement?.productId) return null;
+        return products.find(p => p.productId === Number(movement.productId));
+    }, [movement?.productId, products]);
+
+    const resolvedProductName = movement?.productName || resolvedProduct?.productName || "Finished Product";
+    const resolvedProductCode = movement?.productCode || resolvedProduct?.productCode || "SKU-N/A";
+    const resolvedUnitName = resolvedProduct?.unitName || (movement?.unitId === 1 ? "Pieces (PCS)" : "Standard Units");
+
+    const resolvedProductTypeName = React.useMemo(() => {
+        if (movement?.productTypeName) return movement.productTypeName;
+        if (!movement?.productTypeId) return "Finished Goods";
+        const found = productTypes.find(pt => Number(pt.id) === Number(movement.productTypeId));
+        return found ? (found.name || found.type_name) : "Finished Goods";
+    }, [movement?.productTypeName, movement?.productTypeId, productTypes]);
+
+    const resolvedLotName = React.useMemo(() => {
+        if (!movement?.lotId) return "Standard Storage Lot";
+        const found = lots.find(l => l.lotId === Number(movement.lotId));
+        return found ? found.lotName : `Lot #${movement.lotId}`;
+    }, [movement?.lotId, lots]);
+
+    const resolvedAuthorName = React.useMemo(() => {
+        if (!movement?.postedBy) return "Authorized System User";
+        const found = users.find(u => u.id === Number(movement.postedBy));
+        return found ? found.name : `Authorized Encoder (User #${movement.postedBy})`;
+    }, [movement?.postedBy, users]);
+
+    const copyToClipboard = React.useCallback(async (text: string, label: string) => {
+        if (!text) return;
+        let success = false;
+        try {
+            if (typeof window !== "undefined" && navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                success = true;
+            }
+        } catch {
+            // fallback below
+        }
+
+        if (!success && typeof document !== "undefined") {
+            try {
+                const textarea = document.createElement("textarea");
+                textarea.value = text;
+                textarea.style.position = "fixed";
+                textarea.style.left = "-999999px";
+                textarea.style.top = "-999999px";
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                success = document.execCommand("copy");
+                document.body.removeChild(textarea);
+            } catch {
+                success = false;
+            }
+        }
+
+        if (success) {
+            setCopiedKey(label);
+            toast.success(`Copied ${label} to clipboard!`);
+            setTimeout(() => setCopiedKey(null), 2000);
+        } else {
+            toast.info(`${label}: ${text}`);
+        }
+    }, []);
+
+    const formatDate = React.useCallback((d?: string | null) => {
+        if (!d) return "N/A";
+        try {
+            return format(new Date(d), "MMM dd, yyyy HH:mm:ss");
+        } catch {
+            return d;
+        }
+    }, []);
+
+    const formatShortDate = React.useCallback((d?: string | null) => {
+        if (!d) return "N/A";
+        try {
+            return format(new Date(d), "MMM dd, yyyy");
+        } catch {
+            return d;
+        }
+    }, []);
 
     if (!movement) return null;
 
@@ -52,31 +158,6 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
     const isExpired = movement.inventoryCondition?.toUpperCase() === "EXPIRED";
     const isDamaged = movement.inventoryCondition?.toUpperCase() === "DAMAGED";
     const isQuarantined = movement.inventoryCondition?.toUpperCase() === "QUARANTINED";
-
-    const copyToClipboard = (text: string, label: string) => {
-        navigator.clipboard.writeText(text);
-        setCopiedKey(label);
-        toast.success(`Copied ${label} to clipboard!`);
-        setTimeout(() => setCopiedKey(null), 2000);
-    };
-
-    const formatDate = (d?: string | null) => {
-        if (!d) return "N/A";
-        try {
-            return format(new Date(d), "MMM dd, yyyy HH:mm:ss");
-        } catch {
-            return d;
-        }
-    };
-
-    const formatShortDate = (d?: string | null) => {
-        if (!d) return "N/A";
-        try {
-            return format(new Date(d), "MMM dd, yyyy");
-        } catch {
-            return d;
-        }
-    };
 
     const totalValuation = (Number(movement.quantityIn || movement.quantityOut || 0)) * Number(movement.unitCost || 0);
 
@@ -114,7 +195,7 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                 <DialogDescription className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                                     <span>Source Module: <strong className="text-foreground font-mono font-semibold">{movement.sourceModule || "MM_INVENTORY"}</strong></span>
                                     <span>•</span>
-                                    <span>Ref ID: <strong className="text-foreground font-mono">#{movement.referenceId}</strong> (Detail #{movement.referenceDetailId})</span>
+                                    <span>Reference: <strong className="text-foreground font-mono font-semibold">{movement.referenceNo || "N/A"}</strong></span>
                                 </DialogDescription>
                             </div>
                         </div>
@@ -169,8 +250,8 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                     <span className={cn("text-2xl font-black tabular-nums tracking-tight", isOut ? "text-rose-600" : "text-emerald-600")}>
                                         {isOut ? `-${Number(movement.quantityOut).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `+${Number(movement.quantityIn).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                     </span>
-                                    <span className="text-[11px] text-muted-foreground block">
-                                        Unit ID: {movement.unitId || 1}
+                                    <span className="text-[11px] font-bold text-foreground block">
+                                        Unit: <span className="text-primary font-semibold">{resolvedUnitName}</span>
                                     </span>
                                 </div>
 
@@ -182,7 +263,7 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                         ₱{Number(movement.unitCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                                     </span>
                                     <span className="text-[11px] text-muted-foreground block">
-                                        per base unit
+                                        per {resolvedUnitName}
                                     </span>
                                 </div>
 
@@ -213,7 +294,7 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
 
                             {/* Product & Batch Provenance Cards */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                {/* Product Card */}
+                                {/* Product Specification Card */}
                                 <div className="p-5 rounded-2xl border bg-card space-y-3">
                                     <div className="flex items-center justify-between border-b pb-2.5">
                                         <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
@@ -221,32 +302,32 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                             Product Specification
                                         </h4>
                                         <Badge variant="outline" className="text-[10px] font-bold">
-                                            {movement.productTypeName || "Finished Goods"}
+                                            {resolvedProductTypeName}
                                         </Badge>
                                     </div>
                                     <div className="space-y-2">
                                         <div className="text-base font-black text-foreground">
-                                            {movement.productName || "Unknown Product"}
+                                            {resolvedProductName}
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                                            <div className="p-2.5 rounded-xl bg-muted/40 border">
-                                                <span className="text-[10px] text-muted-foreground block font-bold">Product Code / SKU</span>
-                                                <span className="font-mono font-bold text-foreground mt-0.5 block">{movement.productCode || "N/A"}</span>
+                                            <div className="p-3 rounded-xl bg-muted/40 border">
+                                                <span className="text-[10px] text-muted-foreground block font-bold">Product SKU / Code</span>
+                                                <span className="font-mono font-black text-foreground mt-0.5 block">{resolvedProductCode}</span>
                                             </div>
-                                            <div className="p-2.5 rounded-xl bg-muted/40 border">
-                                                <span className="text-[10px] text-muted-foreground block font-bold">Product ID</span>
-                                                <span className="font-mono font-bold text-foreground mt-0.5 block">#{movement.productId}</span>
+                                            <div className="p-3 rounded-xl bg-muted/40 border">
+                                                <span className="text-[10px] text-muted-foreground block font-bold">Base Unit of Measurement</span>
+                                                <span className="font-bold text-foreground mt-0.5 block">{resolvedUnitName}</span>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Batch & Lot Card */}
+                                {/* Batch & Quality Condition Card */}
                                 <div className="p-5 rounded-2xl border bg-card space-y-3">
                                     <div className="flex items-center justify-between border-b pb-2.5">
                                         <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
                                             <Layers className="h-4 w-4 text-primary" />
-                                            Batch & Quality Condition
+                                            Batch & Storage Allocation
                                         </h4>
                                         <Badge className={cn(
                                             "text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border shadow-2xs",
@@ -261,18 +342,22 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                     <div className="space-y-2">
                                         <div className="flex items-center justify-between">
                                             <span className="text-xs text-muted-foreground font-bold">Batch Number:</span>
-                                            <span className="font-mono font-black text-sm text-foreground bg-muted/60 px-2.5 py-0.5 rounded-md">
-                                                {movement.batchNo || "N/A"}
+                                            <span className="font-mono font-black text-sm text-foreground bg-muted/60 px-3 py-1 rounded-lg border">
+                                                {movement.batchNo || "Standard Batch"}
                                             </span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                                            <div className="p-2.5 rounded-xl bg-muted/40 border">
-                                                <span className="text-[10px] text-muted-foreground block font-bold">Lot ID</span>
-                                                <span className="font-mono font-bold text-foreground mt-0.5 block">#{movement.lotId || "N/A"}</span>
+                                            <div className="p-3 rounded-xl bg-muted/40 border">
+                                                <span className="text-[10px] text-muted-foreground block font-bold">Assigned Storage Lot</span>
+                                                <span className="font-bold text-foreground mt-0.5 block truncate" title={resolvedLotName}>
+                                                    {resolvedLotName}
+                                                </span>
                                             </div>
-                                            <div className="p-2.5 rounded-xl bg-muted/40 border">
-                                                <span className="text-[10px] text-muted-foreground block font-bold">Inventory Lot ID</span>
-                                                <span className="font-mono font-bold text-foreground mt-0.5 block">#{movement.inventoryLotId || "N/A"}</span>
+                                            <div className="p-3 rounded-xl bg-muted/40 border">
+                                                <span className="text-[10px] text-muted-foreground block font-bold">Allocation Status</span>
+                                                <span className="font-bold text-emerald-600 mt-0.5 block">
+                                                    Active Lot Allocation
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
@@ -283,25 +368,25 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                             <div className="p-5 rounded-2xl border bg-card space-y-3">
                                 <h4 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2 border-b pb-2.5">
                                     <Calendar className="h-4 w-4 text-primary" />
-                                    Lifecycle Dates & Audit Trail
+                                    Lifecycle Dates & Provenance
                                 </h4>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                                     <div className="p-3 rounded-xl border bg-muted/20 space-y-0.5">
                                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Transaction Date</span>
-                                        <span className="font-semibold text-foreground block">{formatDate(movement.transactionDate)}</span>
+                                        <span className="font-bold text-foreground block">{formatDate(movement.transactionDate)}</span>
                                     </div>
                                     <div className="p-3 rounded-xl border bg-muted/20 space-y-0.5">
-                                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Posted Date</span>
-                                        <span className="font-semibold text-foreground block">{formatDate(movement.postedAt)}</span>
-                                        <span className="text-[10px] text-muted-foreground block">By User #{movement.postedBy || "N/A"}</span>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Posted Date & Author</span>
+                                        <span className="font-bold text-foreground block">{formatDate(movement.postedAt)}</span>
+                                        <span className="text-[11px] font-semibold text-primary block mt-0.5">By {resolvedAuthorName}</span>
                                     </div>
                                     <div className="p-3 rounded-xl border bg-muted/20 space-y-0.5">
                                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Manufacturing Date</span>
-                                        <span className="font-semibold text-foreground block">{formatShortDate(movement.manufacturingDate)}</span>
+                                        <span className="font-bold text-foreground block">{formatShortDate(movement.manufacturingDate)}</span>
                                     </div>
                                     <div className="p-3 rounded-xl border bg-muted/20 space-y-0.5">
                                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Expiration Date</span>
-                                        <span className={cn("font-semibold block", isExpired ? "text-destructive font-black" : "text-foreground")}>
+                                        <span className={cn("font-bold block", isExpired ? "text-destructive font-black" : "text-foreground")}>
                                             {formatShortDate(movement.expirationDate)}
                                         </span>
                                     </div>
@@ -322,7 +407,7 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                                             onClick={() => copyToClipboard(movement.referenceNo || "", "Reference No")}
                                         >
                                             {copiedKey === "Reference No" ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                                            Copy Ref No
+                                            Copy Reference
                                         </Button>
                                     </div>
                                     <p className="font-mono text-sm font-black text-foreground bg-muted/50 p-3 rounded-xl border break-all">
@@ -347,7 +432,7 @@ export function MovementDetailModal({ movement, isOpen, onClose, branchName }: P
                 <div className="p-5 bg-muted/40 border-t flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Building className="h-4 w-4 text-primary opacity-60" />
-                        <span>Branch: <strong className="text-foreground">{branchName || `Branch #${movement.branchId}`}</strong> (ID: {movement.branchId})</span>
+                        <span>Warehouse Branch: <strong className="text-foreground">{resolvedBranchName}</strong></span>
                     </div>
                     <Button
                         onClick={onClose}

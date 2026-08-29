@@ -14,7 +14,6 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MMInventoryMovement } from "../types";
 import {
     ArrowUpDown,
     ChevronUp,
@@ -33,8 +32,17 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { MovementDetailModal } from "./MovementDetailModal";
+import { BatchMovementsModal, BatchGroupData } from "./BatchMovementsModal";
 import { generateProductTracingHtml } from "../utils/printProductTracingReport";
 import { TracingReportPreviewModal } from "./TracingReportPreviewModal";
+import {
+    MMInventoryMovement,
+    BranchLookup,
+    ProductTypeLookup,
+    ProductLookup,
+    LotLookup
+} from "../types";
+import { UserLookup } from "../providers/fetchProvider";
 
 type ViewMode = "flat" | "by-doc" | "by-batch";
 
@@ -45,6 +53,11 @@ type Props = {
     productTypeName?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    branches?: BranchLookup[];
+    products?: ProductLookup[];
+    lots?: LotLookup[];
+    productTypes?: ProductTypeLookup[];
+    users?: UserLookup[];
     className?: string;
 };
 
@@ -55,10 +68,17 @@ export function ProductTracingTable({
     productTypeName,
     startDate,
     endDate,
+    branches = [],
+    products = [],
+    lots = [],
+    productTypes = [],
+    users = [],
     className
 }: Props) {
     const [selectedMovement, setSelectedMovement] = React.useState<MMInventoryMovement | null>(null);
     const [isDetailOpen, setIsDetailOpen] = React.useState(false);
+    const [selectedBatch, setSelectedBatch] = React.useState<BatchGroupData | null>(null);
+    const [isBatchModalOpen, setIsBatchModalOpen] = React.useState(false);
     const [viewMode, setViewMode] = React.useState<ViewMode>("flat");
     const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
     const [previewHtml, setPreviewHtml] = React.useState<string | null>(null);
@@ -86,11 +106,42 @@ export function ProductTracingTable({
             : <ChevronDown className="ml-1 h-3 w-3 text-primary font-bold" />;
     };
 
-    const copyToClipboard = (text: string, id: string) => {
-        navigator.clipboard.writeText(text);
-        setCopiedKey(id);
-        toast.success("Copied to clipboard!");
-        setTimeout(() => setCopiedKey(null), 2000);
+    const copyToClipboard = async (text: string, id: string) => {
+        if (!text) return;
+        let success = false;
+        try {
+            if (typeof window !== "undefined" && navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                success = true;
+            }
+        } catch {
+            // fallback below
+        }
+
+        if (!success && typeof document !== "undefined") {
+            try {
+                const textarea = document.createElement("textarea");
+                textarea.value = text;
+                textarea.style.position = "fixed";
+                textarea.style.left = "-999999px";
+                textarea.style.top = "-999999px";
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                success = document.execCommand("copy");
+                document.body.removeChild(textarea);
+            } catch {
+                success = false;
+            }
+        }
+
+        if (success) {
+            setCopiedKey(id);
+            toast.success("Copied to clipboard!");
+            setTimeout(() => setCopiedKey(null), 2000);
+        } else {
+            toast.info(`Reference: ${text}`);
+        }
     };
 
     // Sorting
@@ -704,42 +755,80 @@ export function ProductTracingTable({
 
             {/* Grouped by Batch View */}
             {viewMode === "by-batch" && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                     {groupedByBatch.map((group, bIdx) => (
-                        <Card key={group.key + bIdx} className="rounded-2xl border shadow-sm bg-card p-4 space-y-2.5">
+                        <Card
+                            key={group.key + bIdx}
+                            className="rounded-2xl border shadow-sm bg-card p-4 space-y-3 cursor-pointer hover:border-primary/50 hover:shadow-md hover:bg-muted/10 transition-all active:scale-[0.99] group select-none"
+                            onClick={() => {
+                                setSelectedBatch(group);
+                                setIsBatchModalOpen(true);
+                            }}
+                        >
                             <div className="flex items-start justify-between">
-                                <div>
-                                    <h4 className="text-xs font-black text-foreground">{group.main.productName}</h4>
-                                    <span className="font-mono text-[11px] font-bold text-primary block mt-0.5">
-                                        Batch #{group.main.batchNo || "NO-BATCH"}
-                                    </span>
+                                <div className="space-y-0.5">
+                                    <h4 className="text-xs font-black text-foreground group-hover:text-primary transition-colors">
+                                        {group.main.productName}
+                                    </h4>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-mono text-[11px] font-black text-primary">
+                                            Batch #{group.main.batchNo || "NO-BATCH"}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground">
+                                            • {group.items.length} transaction{group.items.length > 1 ? "s" : ""}
+                                        </span>
+                                    </div>
                                 </div>
-                                <Badge className={cn(
-                                    "text-[9px] font-bold uppercase",
-                                    group.main.inventoryCondition === "GOOD" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-destructive/10 text-destructive"
-                                )}>
-                                    {group.main.inventoryCondition || "GOOD"}
-                                </Badge>
+                                <div className="flex items-center gap-1.5">
+                                    <Badge className={cn(
+                                        "text-[9px] font-bold uppercase",
+                                        group.main.inventoryCondition === "GOOD" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-destructive/10 text-destructive"
+                                    )}>
+                                        {group.main.inventoryCondition || "GOOD"}
+                                    </Badge>
+                                </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-muted/30 text-xs">
+                            <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-muted/30 text-xs border">
                                 <div>
-                                    <span className="text-[10px] text-muted-foreground block">Inflow</span>
-                                    <span className="font-bold text-emerald-600">+{group.totalIn.toLocaleString()}</span>
+                                    <span className="text-[10px] font-bold text-muted-foreground block">Inflow</span>
+                                    <span className="font-black text-emerald-600">+{group.totalIn.toLocaleString()}</span>
                                 </div>
                                 <div>
-                                    <span className="text-[10px] text-muted-foreground block">Outflow</span>
-                                    <span className="font-bold text-rose-600">-{group.totalOut.toLocaleString()}</span>
+                                    <span className="text-[10px] font-bold text-muted-foreground block">Outflow</span>
+                                    <span className="font-black text-rose-600">-{group.totalOut.toLocaleString()}</span>
                                 </div>
                                 <div>
-                                    <span className="text-[10px] text-muted-foreground block">Net Bal</span>
+                                    <span className="text-[10px] font-bold text-muted-foreground block">Net Bal</span>
                                     <span className="font-black text-foreground">{group.balance.toLocaleString()}</span>
                                 </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground/70 group-hover:text-primary transition-colors pt-0.5 font-bold">
+                                <span>Click to inspect batch ledger</span>
+                                <span>View {group.items.length} records →</span>
                             </div>
                         </Card>
                     ))}
                 </div>
             )}
+
+            {/* Batch Movements History Modal */}
+            <BatchMovementsModal
+                batchGroup={selectedBatch}
+                isOpen={isBatchModalOpen}
+                onClose={() => {
+                    setIsBatchModalOpen(false);
+                    setSelectedBatch(null);
+                }}
+                onSelectMovement={(m) => {
+                    setSelectedMovement(m);
+                    setIsDetailOpen(true);
+                }}
+                branches={branches}
+                products={products}
+                lots={lots}
+            />
 
             {/* Movement Detail Modal */}
             <MovementDetailModal
@@ -749,7 +838,11 @@ export function ProductTracingTable({
                     setIsDetailOpen(false);
                     setSelectedMovement(null);
                 }}
-                branchName={branchName || undefined}
+                branches={branches}
+                products={products}
+                lots={lots}
+                productTypes={productTypes}
+                users={users}
             />
 
             {/* Report Preview Modal */}
