@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     approveLotTransfer,
     createLotTransfer,
+    deleteLotTransfer,
     fetchBranches,
     fetchBatches,
     fetchLotTransfers,
@@ -235,6 +236,22 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [form, refresh, selectedId, userBranchId]);
 
+    const deleteDraft = useCallback(async (id: number) => {
+        setIsActionLoading(true);
+        try {
+            await deleteLotTransfer(id);
+            await refresh();
+            if (selectedId === id) clearSelection();
+            setError(null);
+            return true;
+        } catch (deleteError) {
+            setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the lot-transfer draft.");
+            return false;
+        } finally {
+            setIsActionLoading(false);
+        }
+    }, [clearSelection, refresh, selectedId]);
+
     const submit = useCallback(async () => {
         if (!selectedId) {
             setError("Save the lot-transfer request as a Draft before submitting it for QA approval.");
@@ -336,6 +353,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         selectRecord,
         clearSelection,
         saveDraft,
+        deleteDraft,
         submit,
         approve,
         reject,

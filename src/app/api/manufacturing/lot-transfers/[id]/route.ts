@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+    deleteLotTransfer,
     getLotTransfer,
     parseLotTransferPatch,
     updateLotTransfer
@@ -31,5 +32,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         return NextResponse.json({ success: true, data: record });
     } catch (error) {
         return errorResponse(error, "update");
+    }
+}
+
+export async function DELETE(_request: Request, { params }: RouteContext) {
+    try {
+        const { id: rawId } = await params;
+        await deleteLotTransfer(parseTransferId(rawId));
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        return errorResponse(error, "delete");
     }
 }
