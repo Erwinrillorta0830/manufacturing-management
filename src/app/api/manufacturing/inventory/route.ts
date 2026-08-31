@@ -276,7 +276,10 @@ export async function GET() {
         );
         const reservedByStockKey = new Map<string, number>();
         const reservationRes = await fetch(
-            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[status][_eq]=Reserved&fields=id,quantity,inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.branch_id,inventory_lot_id.batch_no,inventory_lot_id.lot_number,inventory_lot_id.lot_id.lot_id,inventory_lot_id.lot_id&limit=-1`,
+            // The service token is not allowed to read the related `id` and
+            // `lot_number` fields. `batch_no` is the canonical stock key used
+            // by the inventory movement aggregation below.
+            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[status][_eq]=Reserved&fields=id,quantity,inventory_lot_id.product_id,inventory_lot_id.branch_id,inventory_lot_id.batch_no,inventory_lot_id.lot_id.lot_id,inventory_lot_id.lot_id&limit=-1`,
             { headers, cache: "no-store" }
         );
         if (!reservationRes.ok) throw new Error("Failed to fetch active invoice reservations from Directus");
