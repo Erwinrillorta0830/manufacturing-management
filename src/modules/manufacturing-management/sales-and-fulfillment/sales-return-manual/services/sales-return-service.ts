@@ -586,6 +586,7 @@ export async function updateReturn(
     orderNo?: string;
     appliedInvoiceId?: number;
     isThirdParty?: boolean;
+    branchId?: number | string;
   },
   userId: number,
 ): Promise<any> {

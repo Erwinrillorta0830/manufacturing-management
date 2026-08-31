@@ -182,6 +182,7 @@ export const SalesReturnProvider = {
     orderNo?: string;
     appliedInvoiceId?: number | null;
     isThirdParty?: boolean;
+    branchId?: number | string;
   }): Promise<any> {
     const res = await fetch(API_BASE, {
       method: "PATCH",
