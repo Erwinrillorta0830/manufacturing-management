@@ -43,6 +43,8 @@ export async function saveQuotation(
     quoteData: {
         quote_number: string;
         customer_id: number;
+        price_type_id?: number | null;
+        frozen_price_type_name?: string | null;
         total_selling_price: number;
         total_simulated_cost: number;
         forex_rate_used: number;

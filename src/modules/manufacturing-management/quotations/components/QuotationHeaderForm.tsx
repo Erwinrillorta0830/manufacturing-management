@@ -1,9 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Plus, X } from "lucide-react";
-import { toast } from "sonner";
+import { X } from "lucide-react";
 import { Customer } from "../types";
-import { PaymentTerm } from "../../clients/types";
-import ClientFormModal from "../../clients/components/ClientFormModal";
 
 interface PriceType {
     price_type_id: string | number;
@@ -16,7 +13,6 @@ interface QuotationHeaderFormProps {
     customerSearchText: string;
     selectedCustomerId: string;
     customers: Customer[];
-    setCustomers?: React.Dispatch<React.SetStateAction<Customer[]>>;
     handleSearchCustomers: (search: string) => void;
     selectCustomer: (id: string, nameCode: string) => void;
     priceTypes: PriceType[];
@@ -36,7 +32,6 @@ export function QuotationHeaderForm({
     customerSearchText,
     selectedCustomerId,
     customers,
-    setCustomers,
     handleSearchCustomers,
     selectCustomer,
     priceTypes,
@@ -59,138 +54,6 @@ export function QuotationHeaderForm({
         return "border-slate-200 dark:border-slate-800 focus:border-primary focus:ring-primary";
     };
 
-    // Modal state for customer creation
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [formData, setFormData] = useState({
-        customer_code: "",
-        customer_name: "",
-        customer_tin: "",
-        contact_number: "",
-        customer_email: "",
-        store_name: "",
-        store_type_id: "",
-        payment_term: "",
-        province: "",
-        city: "",
-        brgy: "",
-        latitude: "",
-        longitude: "",
-        isActive: true
-    });
-    
-    // PSGC Address Selection State
-    const [provinces, setProvinces] = useState<{ code: string; name: string }[]>([]);
-    const [cities, setCities] = useState<{ code: string; name: string; provinceCode: string | boolean }[]>([]);
-    const [barangays, setBarangays] = useState<{ code: string; name: string; cityCode: string }[]>([]);
-
-    const [selectedProvinceCode, setSelectedProvinceCode] = useState("");
-    const [selectedCityCode, setSelectedCityCode] = useState("");
-    
-    const [storeTypes, setStoreTypes] = useState<{ id: number; store_type: string }[]>([]);
-    const [paymentTerms, setPaymentTerms] = useState<PaymentTerm[]>([]);
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [isSaving, setIsSaving] = useState(false);
-
-    // Load store types & initial provinces/cities when customer modal is opened
-    useEffect(() => {
-        if (isModalOpen) {
-            // Load Store Types
-            fetch("/api/manufacturing/finished-goods/store-types")
-                .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) {
-                        setStoreTypes(data);
-                    }
-                })
-                .catch(err => console.error("Error loading store types:", err));
-
-            fetch("/api/manufacturing/payment-terms")
-                .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) {
-                        setPaymentTerms(data);
-                    }
-                })
-                .catch(err => console.error("Error loading payment terms:", err));
-
-            // Load PSGC Provinces
-            fetch("/api/psgc/provinces")
-                .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) {
-                        const list = [...data, { code: "130000000", name: "Metro Manila" }];
-                        list.sort((a, b) => a.name.localeCompare(b.name));
-                        setProvinces(list);
-                    }
-                })
-                .catch(err => console.error("Error fetching provinces:", err));
-
-            // Load all PSGC Cities globally for direct searchable combo
-            fetch("/api/psgc/cities-municipalities")
-                .then(res => res.json())
-                .then(data => {
-                    if (Array.isArray(data)) {
-                        data.sort((a, b) => a.name.localeCompare(b.name));
-                        setCities(data);
-                    }
-                })
-                .catch(err => console.error("Error fetching cities:", err));
-        } else {
-            // Reset state on close
-            setProvinces([]);
-            setCities([]);
-            setBarangays([]);
-            setPaymentTerms([]);
-            setSelectedProvinceCode("");
-            setSelectedCityCode("");
-            setFormData({
-                customer_code: "",
-                customer_name: "",
-                customer_tin: "",
-                contact_number: "",
-                customer_email: "",
-                store_name: "",
-                store_type_id: "",
-                payment_term: "",
-                province: "",
-                city: "",
-                brgy: "",
-                latitude: "",
-                longitude: "",
-                isActive: true
-            });
-        }
-    }, [isModalOpen]);
-
-    // Load barangays dynamically when selectedCityCode changes
-    useEffect(() => {
-        const loadBarangays = async () => {
-            if (!selectedCityCode) {
-                setBarangays([]);
-                return;
-            }
-            try {
-                const res = await fetch(`/api/psgc/cities-municipalities/${selectedCityCode}/barangays`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (Array.isArray(data)) {
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const mapped = data.map((b: any) => ({
-                            code: b.code,
-                            name: b.name,
-                            cityCode: selectedCityCode
-                        }));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        mapped.sort((a: any, b: any) => a.name.localeCompare(b.name));
-                        setBarangays(mapped);
-                    }
-                }
-            } catch (err) {
-                console.error("Error loading barangays:", err);
-            }
-        };
-        loadBarangays();
-    }, [selectedCityCode]);
 
     // Close search dropdown on click outside for the customer selection input
     useEffect(() => {
@@ -208,84 +71,6 @@ export function QuotationHeaderForm({
     // Filtered list for the Customer Client autocomplete selection
     const displayList = customers.slice(0, 10);
 
-    const handleCustomerNameChange = (nameVal: string) => {
-        setFormData(prev => {
-            const next = { ...prev, customer_name: nameVal };
-            if (nameVal.trim()) {
-                const words = nameVal.trim().toUpperCase().split(/\s+/).slice(0, 3);
-                const prefix = words.map(w => w.replace(/[^A-Z0-9]/g, "").slice(0, 3)).join("-");
-                const random = Math.floor(100 + Math.random() * 900);
-                next.customer_code = `CUST-${prefix}-${random}`;
-            }
-            return next;
-        });
-    };
-
-    const handleSaveCustomer = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!formData.customer_code.trim() || !formData.customer_name.trim()) {
-            toast.error("Customer Code and Customer Name are required");
-            return;
-        }
-
-        setIsSaving(true);
-        try {
-            // Map province and city names from selected codes
-            const provName = provinces.find(p => p.code === selectedProvinceCode)?.name || formData.province;
-            const cityName = cities.find(c => c.code === selectedCityCode)?.name || formData.city;
-            const brgyName = barangays.find(b => b.code === formData.brgy)?.name || formData.brgy;
-
-            // Parse coordinates
-            const latVal = formData.latitude.trim();
-            const lngVal = formData.longitude.trim();
-            const parsedLatitude = latVal ? parseFloat(latVal) : null;
-            const parsedLongitude = lngVal ? parseFloat(lngVal) : null;
-
-            const response = await fetch("/api/manufacturing/finished-goods/customers", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    customer_code: formData.customer_code.trim(),
-                    customer_name: formData.customer_name.trim(),
-                    customer_tin: formData.customer_tin.trim() || undefined,
-                    store_name: formData.store_name.trim() || undefined,
-                    contact_number: formData.contact_number.trim() || undefined,
-                    customer_email: formData.customer_email.trim() || undefined,
-                    brgy: brgyName.trim() || undefined,
-                    city: cityName.trim() || undefined,
-                    province: provName.trim() || undefined,
-                    store_type: formData.store_type_id ? Number(formData.store_type_id) : undefined,
-                    payment_term: formData.payment_term ? Number(formData.payment_term) : null,
-                    latitude: parsedLatitude !== null && !isNaN(parsedLatitude) ? parsedLatitude : null,
-                    longitude: parsedLongitude !== null && !isNaN(parsedLongitude) ? parsedLongitude : null,
-                    isActive: 1
-                })
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-                throw new Error(data.error || "Failed to create customer");
-            }
-
-            toast.success(`Customer "${data.customer_name}" registered successfully!`);
-            
-            if (setCustomers) {
-                setCustomers(prev => [data, ...prev]);
-            }
-            selectCustomer(String(data.id), `${data.customer_name} (${data.customer_code})`);
-            setIsModalOpen(false);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (error: any) {
-            console.error("Error creating customer:", error);
-            let errMsg = error.message || "Failed to create customer";
-            if (errMsg.toLowerCase().includes("unique")) {
-                errMsg = "A customer with this Customer Code already exists. Please choose a different code.";
-            }
-            toast.error(errMsg);
-        } finally {
-            setIsSaving(false);
-        }
-    };
 
     return (
         <div className="space-y-5 rounded-xl border bg-card p-5 shadow-sm">
@@ -320,15 +105,6 @@ export function QuotationHeaderForm({
                 <div className="relative" ref={containerRef}>
                     <div className="flex justify-between items-center mb-1">
                         <label className="text-[10px] font-bold text-muted-foreground uppercase block">Customer Client</label>
-                        {!selectedProjectId && (
-                            <button
-                                type="button"
-                                onClick={() => setIsModalOpen(true)}
-                                className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-0.5 font-bold uppercase transition-colors"
-                            >
-                                <Plus className="h-3 w-3" /> New Customer
-                            </button>
-                        )}
                     </div>
                     
                     <div className="relative">
@@ -418,27 +194,6 @@ export function QuotationHeaderForm({
                     />
                 </div>
             </div>
-
-            {/* Premium, High-Fidelity Customer Creation Modal */}
-            <ClientFormModal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
-                editingCustomer={null}
-                formData={formData}
-                setFormData={setFormData}
-                storeTypes={storeTypes}
-                setStoreTypes={setStoreTypes}
-                provinces={provinces}
-                cities={cities}
-                barangays={barangays}
-                paymentTerms={paymentTerms}
-                selectedProvinceCode={selectedProvinceCode}
-                setSelectedProvinceCode={setSelectedProvinceCode}
-                selectedCityCode={selectedCityCode}
-                setSelectedCityCode={setSelectedCityCode}
-                onSave={handleSaveCustomer}
-                onNameChange={handleCustomerNameChange}
-            />
         </div>
     );
 }

@@ -30,8 +30,11 @@ export default function SalesOrderApprovalModule() {
         totalCount,
         totalPages,
         limit,
+        stockData,
         viewOrderDetails,
         handleApprove,
+        handleSendToJO,
+        handleSendToInvoice,
         handleHold,
         handleReject,
         handleCancel,
@@ -104,7 +107,9 @@ export default function SalesOrderApprovalModule() {
                 orderDetails={orderDetails}
                 loadingDetails={loadingDetails}
                 updatingStatusId={updatingStatusId}
-                handleApprove={handleApprove}
+                stockData={stockData}
+                handleSendToJO={handleSendToJO}
+                handleSendToInvoice={handleSendToInvoice}
                 handleHold={handleHold}
                 handleReject={handleReject}
                 handleCancel={handleCancel}

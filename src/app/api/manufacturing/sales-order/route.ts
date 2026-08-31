@@ -509,6 +509,9 @@ export async function GET(request: Request) {
                     id: customer.id,
                     customer_name: customer.customer_name,
                     customer_code: customer.customer_code,
+                    payment_term: Number.isSafeInteger(paymentTermId) && paymentTermId > 0
+                        ? paymentTermId
+                        : null,
                     payment_term_id: Number.isSafeInteger(paymentTermId) && paymentTermId > 0
                         ? paymentTermId
                         : null
@@ -901,9 +904,9 @@ export async function POST(request: Request) {
         }
 
         // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
-        const quoteProductIds = quoteItems.map((item: any) => Number(item.product_id));
+        const quoteParentIds = quoteItems.map((item: any) => Number(item.parent_id || item.product_id));
         const quoteProductParams = new URLSearchParams({
-            "filter[product_id][_in]": quoteProductIds.join(","),
+            "filter[product_id][_in]": quoteParentIds.join(","),
             fields: "product_id,product_name",
             limit: "-1"
         });
@@ -911,13 +914,13 @@ export async function POST(request: Request) {
         const quoteProductsData = quoteProductRes.ok ? (await quoteProductRes.json()).data || [] : [];
         const quoteProductMap = new Map<number, any>(quoteProductsData.map((p: any) => [Number(p.product_id), p]));
 
-        const quoteVersionMap = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteProductIds);
+        const quoteVersionMap = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteParentIds);
 
         const missingQuoteVersionProductNames: string[] = [];
-        for (const productId of quoteProductIds) {
-            if (!quoteVersionMap.has(productId)) {
-                const p = quoteProductMap.get(productId);
-                missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${productId}`);
+        for (const parentId of quoteParentIds) {
+            if (!quoteVersionMap.has(parentId)) {
+                const p = quoteProductMap.get(parentId);
+                missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${parentId}`);
             }
         }
         if (missingQuoteVersionProductNames.length > 0) {
@@ -943,6 +946,7 @@ export async function POST(request: Request) {
         const salesOrderPayload = {
             order_no: orderNo,
             po_no: poNo,
+            quotation_id: quotationId,
             customer_code: customerCode,
             order_status: body.submitForApproval ? "For Approval" : "Draft", // Start as Draft or Submit
             total_amount: quoteTotal,
@@ -963,9 +967,10 @@ export async function POST(request: Request) {
             const unitPrice = Number(item.frozen_total_cost_php);
             const quantity = Number(item.quantity);
             const productId = Number(item.product_id);
+            const parentId = Number(item.parent_id || item.product_id);
             return {
                 product_id: productId,
-                bom_version_id: quoteVersionMap.get(productId),
+                bom_version_id: quoteVersionMap.get(parentId),
                 unit_price: unitPrice,
                 ordered_quantity: quantity,
                 allocated_quantity: 0,
@@ -990,6 +995,17 @@ export async function POST(request: Request) {
             });
             if (!quoteUpdateRes.ok) {
                 throw new Error(`quotation update returned ${quoteUpdateRes.status}`);
+            }
+
+            if (quote.project_id) {
+                const projectUpdateRes = await fetch(`${DIRECTUS_URL}/items/projects/${quote.project_id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ status: "Executed", modified_by: encoderId })
+                });
+                if (!projectUpdateRes.ok) {
+                    console.warn(`Failed to mark project ${quote.project_id} as Executed. Status: ${projectUpdateRes.status}`);
+                }
             }
         } catch (error) {
             const cleanupFailures: string[] = [];

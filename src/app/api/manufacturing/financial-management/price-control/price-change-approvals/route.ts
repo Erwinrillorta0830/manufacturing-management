@@ -19,6 +19,7 @@ import {
 } from "../_approvalSourceAdapters";
 import {
     getBatchHeaderIdsForProducts,
+    getProductIdsForProductTypes,
     getSupplierScopedProductIdsForSuppliers,
     resolveSupplierIds,
 } from "../_supplierFilters";
@@ -50,6 +51,7 @@ export async function GET(req: NextRequest) {
         const { searchParams } = new URL(req.url);
         const status = norm(searchParams.get("status"));
         const supplierIds = resolveSupplierIds(searchParams);
+        const productTypeIds = searchParams.get("product_type_ids")?.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0) || [];
         const q = norm(searchParams.get("q"));
         const dateFrom = norm(searchParams.get("date_from"));
         const dateTo = norm(searchParams.get("date_to"));
@@ -96,14 +98,37 @@ export async function GET(req: NextRequest) {
                 searchParse.costRequestId == null
             );
 
-        const supplierProductIds =
-            supplierIds.length > 0
-                ? await getSupplierScopedProductIdsForSuppliers(supplierIds)
-                : undefined;
+        let supplierProductIds: number[] | undefined;
+        if (supplierIds.length > 0 || productTypeIds.length > 0) {
+            let fromSupplier: number[] | undefined;
+            if (supplierIds.length > 0) {
+                fromSupplier = await getSupplierScopedProductIdsForSuppliers(supplierIds);
+                if (fromSupplier.length === 0) {
+                    return NextResponse.json({ data: [], meta: { total_count: 0 } });
+                }
+            }
+
+            let fromProductType: number[] | undefined;
+            if (productTypeIds.length > 0) {
+                fromProductType = await getProductIdsForProductTypes(productTypeIds);
+                if (fromProductType.length === 0) {
+                    return NextResponse.json({ data: [], meta: { total_count: 0 } });
+                }
+            }
+
+            if (fromSupplier && fromProductType) {
+                supplierProductIds = intersectHeaderIds(fromSupplier, fromProductType);
+                if (supplierProductIds.length === 0) {
+                    return NextResponse.json({ data: [], meta: { total_count: 0 } });
+                }
+            } else {
+                supplierProductIds = fromSupplier || fromProductType;
+            }
+        }
         let priceBatchHeaderIds: number[] = [];
         if (includeBatch) {
             const allPriceBatchHeaderIds = await getAllPriceBatchHeaderIds();
-            if (supplierIds.length > 0) {
+            if (supplierProductIds !== undefined) {
                 const supplierPriceBatchHeaderIds = supplierProductIds
                     ? await getBatchHeaderIdsForProducts(supplierProductIds)
                     : [];

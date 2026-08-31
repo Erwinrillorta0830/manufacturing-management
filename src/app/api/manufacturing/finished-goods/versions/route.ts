@@ -29,7 +29,12 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
         }
 
-        const url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
+        const statusFilter = searchParams.get("status");
+
+        let url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
+        if (statusFilter) {
+            url += `&filter[status][_eq]=${encodeURIComponent(statusFilter)}`;
+        }
         let res: Response | null = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {
             res = await fetch(url, { headers, cache: "no-store" });

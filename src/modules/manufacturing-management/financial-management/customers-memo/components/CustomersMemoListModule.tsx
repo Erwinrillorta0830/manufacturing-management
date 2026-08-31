@@ -447,6 +447,15 @@ export default function CustomersMemoListModule() {
                                                         {memo.type === 1 ? "CREDIT" : memo.type === 2 ? "DEBIT" : "UNKNOWN"}
                                                     </Badge>
                                                 </div>
+                                                {memo.collection_references && memo.collection_references.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                                        {memo.collection_references.map((ref, idx) => (
+                                                            <Badge key={idx} variant="outline" className="text-[9px] font-black tracking-wider bg-amber-50 text-amber-700 border-amber-200">
+                                                                Applied to: {ref}
+                                                            </Badge>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         </TableCell>
                                         <TableCell>

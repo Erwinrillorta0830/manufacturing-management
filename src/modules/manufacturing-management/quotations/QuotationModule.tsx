@@ -7,8 +7,9 @@ import { useQuotation } from "./hooks/useQuotation";
 import { QuotationList } from "./components/QuotationList";
 import { QuotationDetailModal } from "./components/QuotationDetailModal";
 import { QuotationHeaderForm } from "./components/QuotationHeaderForm";
-import { ProductCatalogTable } from "./components/ProductCatalogTable";
 import { SelectedProductsList } from "./components/SelectedProductsList";
+import { SaveConfirmationModal } from "./components/SaveConfirmationModal";
+import { PriceTypeWarningModal } from "./components/PriceTypeWarningModal";
 
 export default function QuotationModule() {
     const {
@@ -22,7 +23,6 @@ export default function QuotationModule() {
         isDetailModalOpen,
         setIsDetailModalOpen,
         customers,
-        setCustomers,
         selectedCustomerId,
         customerSearchText,
         quoteNumber,
@@ -33,33 +33,55 @@ export default function QuotationModule() {
         setProjectName,
         priceTypes,
         selectedPriceTypeId,
-        setSelectedPriceTypeId,
-        loadingProducts,
+        isPriceTypeWarningOpen,
+        handlePriceTypeChange,
+        confirmPriceTypeChange,
+        cancelPriceTypeChange,
         selectedProductsList,
-        searchQuery,
-        setSearchQuery,
-        currentPage,
-        setCurrentPage,
         savingQuote,
         loadQuotes,
         viewQuoteDetails,
         reviseQuotation,
-        addProductToQuote,
+        handlePrintQuotation,
         removeProductFromQuote,
         handleAgreedPriceChange,
         handleSearchCustomers,
         selectCustomer,
         submitQuotation,
-        filteredCatalog,
-        totalPages,
-        paginatedCatalog,
         changeProductVersion,
         showValidationErrors,
-        registerNewProject,
+        isConfirmModalOpen,
+        setIsConfirmModalOpen,
+        confirmSubmitQuotation,
+        productTypes,
+        allProducts,
+        addEmptyRow,
+        updateRow,
+        handleRowProductSelect,
         allProjects,
         startCreateQuoteForProject,
         selectedProjectId
     } = useQuotation();
+
+    const projectQuoteHistory = React.useMemo(() => {
+        if (!selectedQuote) return [];
+        const projectId = typeof selectedQuote.project_id === 'object' && selectedQuote.project_id !== null
+            ? (selectedQuote.project_id as { id: number }).id
+            : selectedQuote.project_id;
+        
+        if (!projectId) return [selectedQuote];
+        
+        return quotes.filter(q => {
+            const pId = typeof q.project_id === 'object' && q.project_id !== null
+                ? (q.project_id as { id: number }).id
+                : q.project_id;
+            return pId === projectId;
+        }).sort((a, b) => {
+            const tA = a.quote_date ? new Date(a.quote_date).getTime() : 0;
+            const tB = b.quote_date ? new Date(b.quote_date).getTime() : 0;
+            return tB - tA;
+        });
+    }, [quotes, selectedQuote]);
 
     return (
         <div className="space-y-6">
@@ -70,9 +92,6 @@ export default function QuotationModule() {
                      loadQuotes={loadQuotes}
                      viewQuoteDetails={viewQuoteDetails}
                      allProjects={allProjects}
-                     customers={customers}
-                     handleSearchCustomers={handleSearchCustomers}
-                     registerNewProject={registerNewProject}
                      startCreateQuoteForProject={startCreateQuoteForProject}
                 />
             ) : (
@@ -105,12 +124,11 @@ export default function QuotationModule() {
                         customerSearchText={customerSearchText}
                         selectedCustomerId={selectedCustomerId}
                         customers={customers}
-                        setCustomers={setCustomers}
                         handleSearchCustomers={handleSearchCustomers}
                         selectCustomer={selectCustomer}
                         priceTypes={priceTypes}
                         selectedPriceTypeId={selectedPriceTypeId}
-                        setSelectedPriceTypeId={setSelectedPriceTypeId}
+                        setSelectedPriceTypeId={handlePriceTypeChange}
                         remarks={remarks}
                         setRemarks={setRemarks}
                         projectName={projectName}
@@ -119,29 +137,17 @@ export default function QuotationModule() {
                         selectedProjectId={selectedProjectId}
                     />
 
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                        {/* Left sidebar: product catalog */}
-                        <div className="lg:col-span-1">
-                            <ProductCatalogTable
-                                loadingProducts={loadingProducts}
-                                searchQuery={searchQuery}
-                                setSearchQuery={setSearchQuery}
-                                paginatedCatalog={paginatedCatalog}
-                                filteredCatalog={filteredCatalog}
-                                addProductToQuote={addProductToQuote}
-                                currentPage={currentPage}
-                                setCurrentPage={setCurrentPage}
-                                totalPages={totalPages}
-                                selectedProductsList={selectedProductsList}
-                            />
-                        </div>
-
-                        {/* Right main area: selected override prices */}
+                    <div className="w-full">
                         <SelectedProductsList
                             selectedProductsList={selectedProductsList}
                             handleAgreedPriceChange={handleAgreedPriceChange}
                             removeProductFromQuote={removeProductFromQuote}
                             changeProductVersion={changeProductVersion}
+                            productTypes={productTypes}
+                            allProducts={allProducts}
+                            addEmptyRow={addEmptyRow}
+                            updateRow={updateRow}
+                            handleRowProductSelect={handleRowProductSelect}
                         />
                     </div>
                 </div>
@@ -151,11 +157,28 @@ export default function QuotationModule() {
             <QuotationDetailModal
                 isDetailModalOpen={isDetailModalOpen}
                 selectedQuote={selectedQuote}
+                projectQuoteHistory={projectQuoteHistory}
                 snapshots={snapshots}
                 loadingSnapshots={loadingSnapshots}
                 setIsDetailModalOpen={setIsDetailModalOpen}
                 reviseQuotation={reviseQuotation}
+                handlePrintQuotation={handlePrintQuotation}
                 loadQuotes={loadQuotes}
+            />
+
+            {/* Custom save confirmation modal */}
+            <SaveConfirmationModal
+                isOpen={isConfirmModalOpen}
+                onClose={() => setIsConfirmModalOpen(false)}
+                onConfirm={confirmSubmitQuotation}
+                isSaving={savingQuote}
+            />
+
+            {/* Price Type Change Warning Modal */}
+            <PriceTypeWarningModal
+                isOpen={isPriceTypeWarningOpen}
+                onClose={cancelPriceTypeChange}
+                onConfirm={confirmPriceTypeChange}
             />
         </div>
     );

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
     VersionApprovalItem,
     VersionComparisonData,
@@ -57,8 +57,10 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
     // Decision Form State
     const [setActive, setSetActive] = useState<boolean>(true);
     const [remarks, setRemarks] = useState<string>("");
+    const remarksRef = useRef<HTMLTextAreaElement>(null);
+    const [inlineError, setInlineError] = useState<string | null>(null);
 
-    const isProcessed = item?.status === "Approved" || item?.status === "Active" || item?.status === "Rejected";
+    const isProcessed = item?.status === "Approved" || item?.status === "Active" || item?.status === "Rejected" || item?.status === "Revision";
 
     useEffect(() => {
         if (item) {
@@ -117,18 +119,24 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
     if (!item) return null;
 
     const handleAction = async (action: "approve" | "reject" | "revision") => {
+        setErrorMsg(null);
+        setInlineError(null);
+
         if (action === "reject" && !remarks.trim()) {
-            setErrorMsg("Please specify a reason for rejecting this version in the remarks field.");
+            setInlineError("Please specify a reason for rejecting this version in the remarks field.");
+            remarksRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+            remarksRef.current?.focus();
             return;
         }
 
         if (action === "revision" && !remarks.trim()) {
-            setErrorMsg("Please specify what needs to be revised.");
+            setInlineError("Please specify what needs to be revised.");
+            remarksRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+            remarksRef.current?.focus();
             return;
         }
 
         setSubmitting(true);
-        setErrorMsg(null);
 
         const payload: DecisionPayload = {
             versionId: item.version_id,
@@ -172,6 +180,9 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
         if (st === "Rejected") {
             return <Badge className="ml-3 bg-rose-500/15 text-rose-500 hover:bg-rose-500/25 border-rose-500/30">Rejected</Badge>;
         }
+        if (st === "Revision" || st === "Revision Required") {
+            return <Badge className="ml-3 bg-blue-500/15 text-blue-400 border-blue-500/30 gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">For Revision</Badge>;
+        }
         return null;
     };
 
@@ -213,9 +224,16 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                             </div>
                             <div className="h-8 w-px bg-border"></div>
                             <div>
-                                <span className="text-xs text-muted-foreground block uppercase font-bold tracking-wider">Batch Size / Yield</span>
+                                <span className="text-xs text-muted-foreground block uppercase font-bold tracking-wider">Base Quantity / UOM</span>
                                 <span className="font-semibold text-foreground text-base">
-                                    {item.base_quantity} pcs / {item.expected_yield_percentage}%
+                                    {item.base_quantity} {item.uom || "pcs"}
+                                </span>
+                            </div>
+                            <div className="h-8 w-px bg-border"></div>
+                            <div>
+                                <span className="text-xs text-muted-foreground block uppercase font-bold tracking-wider">Yield</span>
+                                <span className="font-semibold text-foreground text-base">
+                                    {item.expected_yield_percentage}%
                                 </span>
                             </div>
                             <div className="h-8 w-px bg-border"></div>
@@ -407,12 +425,21 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                                 Review Remarks / Note (Required for Rejection & Revision)
                             </label>
                             <Textarea
-                                className="bg-background border-input text-foreground placeholder:text-muted-foreground min-h-[80px]"
+                                ref={remarksRef}
+                                className={`bg-background text-foreground placeholder:text-muted-foreground min-h-[80px] ${inlineError ? 'border-destructive ring-1 ring-destructive' : 'border-input'}`}
                                 placeholder="e.g. ECN-2026-8809 or specify rejection reason..."
                                 value={remarks}
-                                onChange={(e) => setRemarks(e.target.value)}
+                                onChange={(e) => {
+                                    setRemarks(e.target.value);
+                                    if (inlineError) setInlineError(null);
+                                }}
                                 disabled={isProcessed}
                             />
+                            {inlineError && (
+                                <span className="text-xs font-semibold text-destructive">
+                                    {inlineError}
+                                </span>
+                            )}
                         </div>
 
                         <div className={`flex flex-col gap-2 mt-1 p-3 bg-muted/30 rounded-lg border border-border/60 ${isProcessed ? 'opacity-70' : ''}`}>
@@ -447,40 +474,36 @@ export const VersionReviewModal: React.FC<VersionReviewModalProps> = ({
                     <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
                         {isProcessed ? "Close" : "Cancel"}
                     </Button>
-                    {!isProcessed && (
-                        <>
-                            <Button
-                                type="button"
-                                variant="destructive"
-                                disabled={submitting}
-                                onClick={() => handleAction("reject")}
-                                className="gap-2 px-5 bg-rose-600 hover:bg-rose-700"
-                            >
-                                <XCircle size={15} />
-                                <span>Reject</span>
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                disabled={submitting}
-                                onClick={() => handleAction("revision")}
-                                className="gap-2 px-5 text-blue-600 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20"
-                            >
-                                <AlertTriangle size={15} />
-                                <span>Revise</span>
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="default"
-                                disabled={submitting}
-                                onClick={() => handleAction("approve")}
-                                className="gap-2 px-5"
-                            >
-                                <CheckCircle2 size={15} />
-                                <span>Approve</span>
-                            </Button>
-                        </>
-                    )}
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        disabled={submitting || isProcessed}
+                        onClick={() => handleAction("reject")}
+                        className="gap-2 px-5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
+                    >
+                        <XCircle size={15} />
+                        <span>Reject</span>
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={submitting || isProcessed}
+                        onClick={() => handleAction("revision")}
+                        className="gap-2 px-5 text-blue-600 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
+                    >
+                        <AlertTriangle size={15} />
+                        <span>Revise</span>
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="default"
+                        disabled={submitting || isProcessed}
+                        onClick={() => handleAction("approve")}
+                        className="gap-2 px-5 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
+                    >
+                        <CheckCircle2 size={15} />
+                        <span>Approve</span>
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
