@@ -43,7 +43,7 @@ export const renderElement = (doc: jsPDF, el: PdfElementConfig, data: PdfData | 
         const borderColor = hexToRgb(el.borderColor || '#000000');
         doc.setDrawColor(borderColor.r, borderColor.g, borderColor.b);
         doc.setLineWidth(el.borderWidth || 0.1);
-
+        
         if (el.shapeType === 'line') {
             doc.line(el.x, el.y, el.x + el.width, el.y);
         } else if (el.shapeType === 'rectangle') {
@@ -81,11 +81,11 @@ export const renderElement = (doc: jsPDF, el: PdfElementConfig, data: PdfData | 
         doc.setTextColor(color.r, color.g, color.b);
 
         let textX = el.x;
-        const options: {
-            charSpace: number;
-            lineHeightFactor: number;
-            align?: 'left' | 'center' | 'right' | 'justify';
-            baseline?: 'alphabetic' | 'ideographic' | 'bottom' | 'top' | 'middle' | 'hanging'
+        const options: { 
+            charSpace: number; 
+            lineHeightFactor: number; 
+            align?: 'left' | 'center' | 'right' | 'justify'; 
+            baseline?: 'alphabetic' | 'ideographic' | 'bottom' | 'top' | 'middle' | 'hanging' 
         } = {
             charSpace: el.style.letterSpacing || 0,
             lineHeightFactor: el.style.lineHeight || 1.15
@@ -93,7 +93,7 @@ export const renderElement = (doc: jsPDF, el: PdfElementConfig, data: PdfData | 
 
         // Precise Hybrid Baseline Calculation for 100% WYSIWYG
         const fontHeightMm = (el.style.fontSize * 25.4) / 72; // Convert pt to mm
-
+        
         // Horizontal Alignment
         if (el.align === 'center') {
             textX = el.x + (el.width / 2);
@@ -114,16 +114,16 @@ export const renderElement = (doc: jsPDF, el: PdfElementConfig, data: PdfData | 
         // Standard cap-height is ~70% of font size.
         const capHeightMm = fontHeightMm * 0.7;
         const textY = el.y + (el.height / 2) + (capHeightMm / 2);
-
+        
         options.baseline = 'alphabetic';
-
+        
         doc.text(text, textX, textY, options);
     }
 };
 
 export const generatePdf = async (config: PdfConfig, data: PdfData | null): Promise<jsPDF> => {
     const { paperSize, customSize, orientation, elements } = config;
-
+    
     // Get numeric format based on PaperSize
     let format: [number, number];
     if (paperSize === 'Custom') {
@@ -157,7 +157,7 @@ export const drawPageNumbers = (doc: jsPDF, config: PdfConfig) => {
 
     const pageCount = doc.getNumberOfPages();
     const { format, position, fontSize, fontFamily, color, marginY, marginX } = config.pageNumber;
-
+    
     doc.setFontSize(fontSize || 9);
     doc.setFont(fontFamily || 'helvetica', 'normal');
     const rgb = hexToRgb(color || '#64748b');
