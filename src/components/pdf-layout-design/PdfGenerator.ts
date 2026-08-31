@@ -5,7 +5,7 @@ import { PAPER_SIZES } from "./constants";
 /**
  * Renders a single PDF element onto a jsPDF document.
  */
-export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfData | null) => {
+export const renderElement = (doc: jsPDF, el: PdfElementConfig, data: PdfData | null) => {
     if (!el.visible) return;
 
     const getElementValue = (el: PdfElementConfig): string | null => {
@@ -43,7 +43,7 @@ export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfD
         const borderColor = hexToRgb(el.borderColor || '#000000');
         doc.setDrawColor(borderColor.r, borderColor.g, borderColor.b);
         doc.setLineWidth(el.borderWidth || 0.1);
-        
+
         if (el.shapeType === 'line') {
             doc.line(el.x, el.y, el.x + el.width, el.y);
         } else if (el.shapeType === 'rectangle') {
@@ -64,45 +64,7 @@ export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfD
         const imageUrl = el.id === 'company_logo' ? d?.company_logo : (d?.[el.id] || el.content);
         if (imageUrl) {
             try {
-                const getBase64Image = async (url: string): Promise<{ dataUrl: string, format: string }> => {
-                    if (url.startsWith('data:image/')) {
-                        const isJpeg = url.startsWith('data:image/jpeg');
-                        const isWebp = url.startsWith('data:image/webp');
-                        return { dataUrl: url, format: isJpeg ? 'JPEG' : isWebp ? 'WEBP' : 'PNG' };
-                    }
-                    
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-                    const blob = await response.blob();
-                    
-                    const buffer = await blob.arrayBuffer();
-                    const view = new Uint8Array(buffer);
-                    
-                    let format = 'PNG';
-                    if (view.length >= 3 && view[0] === 0xFF && view[1] === 0xD8 && view[2] === 0xFF) {
-                        format = 'JPEG';
-                    } else if (view.length >= 4 && view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4E && view[3] === 0x47) {
-                        format = 'PNG';
-                    } else if (view.length >= 12 && 
-                               view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46 && // RIFF
-                               view[8] === 0x57 && view[9] === 0x45 && view[10] === 0x42 && view[11] === 0x50) { // WEBP
-                        format = 'WEBP';
-                    } else if (blob.type === 'image/jpeg') {
-                        format = 'JPEG';
-                    } else if (blob.type === 'image/webp') {
-                        format = 'WEBP';
-                    }
-                    
-                    return new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve({ dataUrl: reader.result as string, format });
-                        reader.onerror = reject;
-                        reader.readAsDataURL(new Blob([buffer], { type: blob.type }));
-                    });
-                };
-
-                const { dataUrl, format } = await getBase64Image(imageUrl);
-                doc.addImage(dataUrl, format, el.x, el.y, el.width, el.height, undefined, 'FAST');
+                doc.addImage(imageUrl, 'PNG', el.x, el.y, el.width, el.height, undefined, 'FAST');
             } catch (e) {
                 console.error("Error drawing image:", e);
             }
@@ -119,11 +81,11 @@ export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfD
         doc.setTextColor(color.r, color.g, color.b);
 
         let textX = el.x;
-        const options: { 
-            charSpace: number; 
-            lineHeightFactor: number; 
-            align?: 'left' | 'center' | 'right' | 'justify'; 
-            baseline?: 'alphabetic' | 'ideographic' | 'bottom' | 'top' | 'middle' | 'hanging' 
+        const options: {
+            charSpace: number;
+            lineHeightFactor: number;
+            align?: 'left' | 'center' | 'right' | 'justify';
+            baseline?: 'alphabetic' | 'ideographic' | 'bottom' | 'top' | 'middle' | 'hanging'
         } = {
             charSpace: el.style.letterSpacing || 0,
             lineHeightFactor: el.style.lineHeight || 1.15
@@ -131,7 +93,7 @@ export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfD
 
         // Precise Hybrid Baseline Calculation for 100% WYSIWYG
         const fontHeightMm = (el.style.fontSize * 25.4) / 72; // Convert pt to mm
-        
+
         // Horizontal Alignment
         if (el.align === 'center') {
             textX = el.x + (el.width / 2);
@@ -152,16 +114,16 @@ export const renderElement = async (doc: jsPDF, el: PdfElementConfig, data: PdfD
         // Standard cap-height is ~70% of font size.
         const capHeightMm = fontHeightMm * 0.7;
         const textY = el.y + (el.height / 2) + (capHeightMm / 2);
-        
+
         options.baseline = 'alphabetic';
-        
+
         doc.text(text, textX, textY, options);
     }
 };
 
 export const generatePdf = async (config: PdfConfig, data: PdfData | null): Promise<jsPDF> => {
     const { paperSize, customSize, orientation, elements } = config;
-    
+
     // Get numeric format based on PaperSize
     let format: [number, number];
     if (paperSize === 'Custom') {
@@ -181,9 +143,9 @@ export const generatePdf = async (config: PdfConfig, data: PdfData | null): Prom
         format: paperSize === 'Custom' ? format : paperSize.toLowerCase(),
     });
 
-    for (const el of Object.values(elements)) {
-        await renderElement(doc, el, data);
-    }
+    Object.values(elements).forEach((el) => {
+        renderElement(doc, el, data);
+    });
 
     drawPageNumbers(doc, config);
 
@@ -195,7 +157,7 @@ export const drawPageNumbers = (doc: jsPDF, config: PdfConfig) => {
 
     const pageCount = doc.getNumberOfPages();
     const { format, position, fontSize, fontFamily, color, marginY, marginX } = config.pageNumber;
-    
+
     doc.setFontSize(fontSize || 9);
     doc.setFont(fontFamily || 'helvetica', 'normal');
     const rgb = hexToRgb(color || '#64748b');

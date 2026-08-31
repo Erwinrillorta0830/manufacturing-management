@@ -29,8 +29,8 @@ export const PdfEngine = {
             // Render all elements from the template
             for (const el of elements) {
                 if (!el.visible) continue;
-                await renderElement(doc, el, data);
-                
+                renderElement(doc, el, data);
+
                 const elementBottom = el.y + el.height;
                 if (elementBottom > lowestY) lowestY = elementBottom;
             }
@@ -47,8 +47,8 @@ export const PdfEngine = {
      * Generates a full PDF using a template frame and a custom body renderer.
      */
     async generateWithFrame(
-        templateName: string, 
-        data: PdfData | null, 
+        templateName: string,
+        data: PdfData | null,
         renderBody: (doc: jsPDF, startY: number, config: PdfConfig) => void | Promise<void>
     ): Promise<jsPDF> {
         // 1. Fetch template config to get paper size/orientation
