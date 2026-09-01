@@ -59,7 +59,7 @@ export function ProductCatalogTable({
             <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1 custom-scrollbar">
                 {itemsWithHeaders.map(({ prod, showHeader, currentCategory }) => {
                     const cost = prod.cost_per_unit || 0;
-                    const isAlreadyAdded = selectedProductsList.some(item => Number(item.product.product_id) === Number(prod.product_id));
+                    const isAlreadyAdded = selectedProductsList.some(item => Number(item.product?.product_id) === Number(prod.product_id));
 
                     return (
                         <React.Fragment key={prod.product_id}>

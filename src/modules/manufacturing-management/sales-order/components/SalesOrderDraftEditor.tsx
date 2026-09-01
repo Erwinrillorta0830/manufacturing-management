@@ -249,7 +249,8 @@ export function SalesOrderDraftEditor({
         setCustomerId(value);
         setFormErrors(prev => ({ ...prev, customerId: undefined }));
         const customer = customers.find(item => String(item.id) === value);
-        const defaultTerm = Number(customer?.payment_term_id);
+        const pt = customer?.payment_term ?? customer?.payment_term_id;
+        const defaultTerm = typeof pt === 'object' && pt !== null ? Number((pt as any).id) : Number(pt);
         const hasTerm = Number.isSafeInteger(defaultTerm) && defaultTerm > 0 && paymentTerms.some(t => Number(t.id) === defaultTerm);
         setPaymentTermId(hasTerm ? String(defaultTerm) : "");
 

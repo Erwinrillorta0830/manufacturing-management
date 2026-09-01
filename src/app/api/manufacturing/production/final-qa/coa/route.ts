@@ -2,6 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError,
+    movementErrorStatus
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import {
     DIRECTUS_URL,
     directusCollection,
     directusRecord,
@@ -9,7 +14,6 @@ import {
     resolveCanonicalLotId,
     type DirectusJobOrder,
     type DirectusLot,
-    type DirectusMovement,
     type FinalQAReleaseRecord
 } from "../_domain";
 
@@ -46,7 +50,10 @@ function errorResponse(error: unknown, status = 500) {
             ? error
             : "Failed to load final QA COA data";
     console.error("Error in final-qa COA API:", error);
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+        { error: message },
+        { status: error instanceof MmInventoryMovementError ? movementErrorStatus(error) : status }
+    );
 }
 
 export async function GET(request: Request) {
@@ -84,10 +91,11 @@ export async function GET(request: Request) {
                     "Final QA Job Order lookup"
                 )
                 : Promise.resolve(null),
-            directusCollection<DirectusMovement>(
-                `${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_eq]=${canonicalLotId}&filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&fields=movement_id,lot_id,product_id,branch_id,source_document_id,source_document_no,batch_no,expiry_date,manufacturing_date,quantity,created_at,remarks,version_id&limit=-1&sort=-movement_id`,
-                "Final QA finished-goods movement lookup"
-            )
+            fetchMmInventoryMovements({
+                lot: canonicalLotId,
+                transactionTypeId: 2,
+                movementDirection: "IN"
+            })
         ]);
         const lot = lotRows[0] || null;
 

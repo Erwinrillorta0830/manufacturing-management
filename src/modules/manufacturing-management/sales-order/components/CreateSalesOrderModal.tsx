@@ -317,7 +317,7 @@ export function CreateSalesOrderModal({
     }, [isOpen]);
 
     useEffect(() => {
-        if (!isOpen || !prefillPayload || loadingLookups || products.length === 0 || customers.length === 0) return;
+        if (!isOpen || !prefillPayload || loadingLookups || products.length === 0 || customers.length === 0 || paymentTerms.length === 0) return;
 
         // Auto-populate customer
         if (prefillPayload.customer) {
@@ -331,10 +331,11 @@ export function CreateSalesOrderModal({
                 if (snap.productId) {
                     newItems.push({
                         line_id: nextLineIdRef.current++,
-                        parent_product_id: Number(snap.productId),
+                        parent_product_id: Number(snap.parentId || snap.productId),
                         product_id: Number(snap.productId),
+                        product_type_id: snap.productTypeId ? Number(snap.productTypeId) : undefined,
                         quantity: Number(snap.quantity) || 1,
-                        unit_price: Number(snap.frozenBaseCost) || 0,
+                        unit_price: Number(snap.agreedTargetPrice) || Number(snap.frozenBaseCost) || 0,
                         bom_version_id: snap.versionId ? Number(snap.versionId) : undefined
                     });
                 } else {
@@ -345,7 +346,7 @@ export function CreateSalesOrderModal({
                 setItems(newItems);
             }
         }
-    }, [isOpen, prefillPayload, loadingLookups, products.length, customers.length]);
+    }, [isOpen, prefillPayload, loadingLookups, products.length, customers.length, paymentTerms.length]);
 
     const fetchLineDiscount = async (cId: string, pId: number, basePrice: number) => {
         if (!cId || !pId) return { discountType: null, discountAmount: 0 };
@@ -381,7 +382,8 @@ export function CreateSalesOrderModal({
         setCustomerId(value);
         setFormErrors(previous => ({ ...previous, customerId: undefined }));
         const customer = customers.find(item => String(item.id) === value);
-        const defaultPaymentTermId = Number(customer?.payment_term);
+        const pt = customer?.payment_term ?? customer?.payment_term_id;
+        const defaultPaymentTermId = typeof pt === 'object' && pt !== null ? Number((pt as any).id) : Number(pt);
         const hasConfiguredTerm = Number.isSafeInteger(defaultPaymentTermId)
             && defaultPaymentTermId > 0
             && paymentTerms.some(term => Number(term.id) === defaultPaymentTermId);
@@ -637,8 +639,7 @@ export function CreateSalesOrderModal({
             : remarks;
 
         try {
-            await onSubmit({
-                customerId: Number(customerId),
+            const payload: Partial<CreateSalesOrderPayload> = {
                 poNo,
                 branchId: Number(branchId),
                 paymentTerms: Number(paymentTermId),
@@ -646,7 +647,14 @@ export function CreateSalesOrderModal({
                 deliveryDate,
                 dueDate,
                 remarks: finalRemarks,
-                items: items.map(item => {
+                submitForApproval: false
+            };
+
+            if (prefillPayload?.quoteId) {
+                payload.quotationId = Number(prefillPayload.quoteId);
+            } else {
+                payload.customerId = Number(customerId);
+                payload.items = items.map(item => {
                     const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
                     const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
                     const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
@@ -660,9 +668,10 @@ export function CreateSalesOrderModal({
                         discount_percent: item.discount_percent,
                         bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
                     };
-                }),
-                submitForApproval: false
-            });
+                });
+            }
+
+            await onSubmit(payload as CreateSalesOrderPayload);
             onClose();
         } catch (err) {
             console.error(err);

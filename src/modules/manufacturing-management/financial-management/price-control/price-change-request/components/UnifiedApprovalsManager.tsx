@@ -32,7 +32,7 @@ import { ExcelExportOptionsDialog } from "../../shared/supplier-batch/ExcelExpor
 import { pcrApproveButtonClass, pcrRejectButtonClass } from "../utils/pcrStatusStyles";
 import { useUnifiedApprovals } from "../hooks/useUnifiedApprovals";
 import { isUnauthorizedError } from "../../shared/apiHttp";
-import type { SupplierOption } from "../providers/pcrApi";
+import type { SupplierOption, ProductTypeOption } from "../providers/pcrApi";
 import { applyBulkActionResult, type BulkActionOutcome } from "../utils/applyBulkActionResult";
 import {
     approveManyPriceRequestsHybrid,
@@ -55,6 +55,9 @@ type Props = {
     suppliers: SupplierOption[];
     suppliersLoading?: boolean;
     suppliersError?: string | null;
+    productTypes: ProductTypeOption[];
+    productTypesLoading?: boolean;
+    productTypesError?: string | null;
     query: ListQuery;
     setQuery: React.Dispatch<React.SetStateAction<ListQuery>>;
     onUnauthorized?: () => void;
@@ -70,6 +73,9 @@ export function UnifiedApprovalsManager({
     suppliers,
     suppliersLoading,
     suppliersError,
+    productTypes,
+    productTypesLoading,
+    productTypesError,
     query,
     setQuery,
     onUnauthorized,
@@ -454,6 +460,9 @@ export function UnifiedApprovalsManager({
                     suppliers={suppliers}
                     suppliersLoading={suppliersLoading}
                     suppliersError={suppliersError}
+                    productTypes={productTypes}
+                    productTypesLoading={productTypesLoading}
+                    productTypesError={productTypesError}
                     loading={feed.loading}
                     total={feed.total}
                     totalLabel="records"

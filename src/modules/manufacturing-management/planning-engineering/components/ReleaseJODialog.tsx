@@ -85,6 +85,15 @@ export function ReleaseJODialog({
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
 
+    const normalizeInventoryMap = (value: any): Record<number, any> => {
+        if (!Array.isArray(value)) return value || {};
+        return value.reduce((map: Record<number, any>, item: any) => {
+            const productId = Number(item?.product_id);
+            if (productId > 0) map[productId] = item;
+            return map;
+        }, {});
+    };
+
     const selectedBranch = branches.find((b) => b.id === selectedBranchId);
 
     // Reset step on open/close
@@ -135,7 +144,7 @@ export function ReleaseJODialog({
                         setSubAssemblyRoutings(data.subAssemblyRoutings || {});
                         setSubAssemblyVersions(data.subAssemblyVersions || {});
                         setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
-                        setInventories(data.inventories || {});
+                        setInventories(normalizeInventoryMap(data.inventories));
                         if (data.bom) {
                             setBomBaseQty(Number(data.bom.base_quantity || 1));
                         }
@@ -162,7 +171,7 @@ export function ReleaseJODialog({
                 setSubAssemblyBoms(prev => ({ ...prev, [subProdId]: data.bomItems || [] }));
                 setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing || { setup_time_hours: 0, run_time_hours_per_unit: 0, base_quantity: 1 } }));
                 if (data.inventories) {
-                    setInventories(prev => ({ ...prev, ...data.inventories }));
+                    setInventories(prev => ({ ...prev, ...normalizeInventoryMap(data.inventories) }));
                 }
             }
         } catch (e) {

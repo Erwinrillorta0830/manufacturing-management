@@ -13,7 +13,8 @@ import {
     nowManila,
     pickId,
     resolveBatchDecisionUserNames,
-    supplierNameOf,
+    supplierLabelOf,
+    fetchProductTypesMap,
 } from "./price-change-batches/_batch";
 import {
     COST_DETAILS,
@@ -71,6 +72,8 @@ export type UnifiedBatchLine = {
     unit_name: string;
     price_type_id?: number;
     price_type_name?: string;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     current_price?: number | null;
     proposed_price?: number | null;
     current_cost?: number | null;
@@ -114,6 +117,7 @@ export type UnifiedBatchData = {
     price_details: UnifiedBatchLine[];
     cost_details: UnifiedBatchLine[];
     batch_types: Array<"PRICE_TYPE" | "LIST_COST">;
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 function productValue(value: unknown, key: string): string {
@@ -148,7 +152,7 @@ function detailPriceTypeId(line: DetailRow): number {
         : pickId(line.price_type_id) ?? 0;
 }
 
-function mapPriceLine(line: DetailRow): UnifiedBatchLine {
+function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): UnifiedBatchLine {
     const current = numberOrNull(line.current_price);
     const proposed = numberOrNull(line.proposed_price);
     const delta = current !== null && proposed !== null ? proposed - current : null;
@@ -156,6 +160,12 @@ function mapPriceLine(line: DetailRow): UnifiedBatchLine {
     const versionName = productValue(line.version_id, "version_name");
     const productName = productValue(line.product_id, "product_name");
     const displayName = versionName ? `${productName} (${versionName})` : productName;
+
+    let product_type_id: number | null = null;
+    if (isRecord(line.product_id) && 'product_type' in line.product_id) {
+        product_type_id = numberOrNull(isRecord(line.product_id.product_type) ? line.product_id.product_type.id : line.product_id.product_type);
+    }
+    const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
 
     return {
         request_id: pickId(line.request_id),
@@ -166,6 +176,8 @@ function mapPriceLine(line: DetailRow): UnifiedBatchLine {
         unit_name: productUom(line.product_id),
         price_type_id: detailPriceTypeId(line),
         price_type_name: productValue(line.price_type_id, "price_type_name"),
+        product_type_id,
+        product_type_name,
         current_price: current,
         proposed_price: proposed,
         delta,
@@ -180,7 +192,7 @@ function mapPriceLine(line: DetailRow): UnifiedBatchLine {
     };
 }
 
-function mapCostLine(line: DetailRow): UnifiedBatchLine {
+function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): UnifiedBatchLine {
     const current = numberOrNull(line.current_cost);
     const proposed = numberOrNull(line.proposed_cost);
     const delta = current !== null && proposed !== null ? proposed - current : null;
@@ -189,6 +201,12 @@ function mapCostLine(line: DetailRow): UnifiedBatchLine {
     const productName = productValue(line.product_id, "product_name");
     const displayName = versionName ? `${productName} (${versionName})` : productName;
 
+    let product_type_id: number | null = null;
+    if (isRecord(line.product_id) && 'product_type' in line.product_id) {
+        product_type_id = numberOrNull(isRecord(line.product_id.product_type) ? line.product_id.product_type.id : line.product_id.product_type);
+    }
+    const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
+
     return {
         request_id: pickId(line.request_id),
         kind: "list_cost",
@@ -196,6 +214,8 @@ function mapCostLine(line: DetailRow): UnifiedBatchLine {
         product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
         unit_name: productUom(line.product_id),
+        product_type_id,
+        product_type_name,
         current_cost: current,
         proposed_cost: proposed,
         delta,
@@ -214,13 +234,14 @@ export async function getUnifiedBatch(headerId: number): Promise<UnifiedBatchDat
     const header = await getHeader(headerId);
     if (!header) return null;
 
-    const [priceDetails, costDetails] = await Promise.all([
+    const [priceDetails, costDetails, productTypesMap] = await Promise.all([
         getPriceDetails(headerId) as Promise<DetailRow[]>,
         getCostDetails(headerId) as Promise<DetailRow[]>,
+        fetchProductTypesMap(),
     ]);
     const normalizedHeaderId = normalizeHeaderId(header);
-    const price = priceDetails.map(mapPriceLine);
-    const cost = costDetails.map(mapCostLine);
+    const price = priceDetails.map((line) => mapPriceLine(line, productTypesMap));
+    const cost = costDetails.map((line) => mapCostLine(line, productTypesMap));
     const supplierId = isRecord(header.supplier_id)
         ? pickId(header.supplier_id.id)
         : pickId(header.supplier_id);
@@ -236,11 +257,19 @@ export async function getUnifiedBatch(headerId: number): Promise<UnifiedBatchDat
                 (lineStatus === "FAILED" && Number(line.application_attempts ?? 0) < APPLICATION_MAX_FAILURES);
         });
 
+    const productTypeMap = new Map<number, string>();
+    for (const line of allLines) {
+        if (line.product_type_id && line.product_type_name) {
+            productTypeMap.set(line.product_type_id, line.product_type_name);
+        }
+    }
+    const product_types = Array.from(productTypeMap.entries()).map(([id, name]) => ({ id, name }));
+
     return {
         id: normalizedHeaderId,
         header_id: normalizedHeaderId,
         supplier_id: supplierId,
-        supplier_name: supplierNameOf(header.supplier_id),
+        supplier_name: supplierLabelOf(header.supplier_id),
         reference_no: String(header.reference_no ?? ""),
         remarks: String(header.remarks ?? ""),
         status: String(header.status ?? "PENDING"),
@@ -267,6 +296,7 @@ export async function getUnifiedBatch(headerId: number): Promise<UnifiedBatchDat
             ...(price.length > 0 ? (["PRICE_TYPE"] as const) : []),
             ...(cost.length > 0 ? (["LIST_COST"] as const) : []),
         ],
+        product_types,
     };
 }
 

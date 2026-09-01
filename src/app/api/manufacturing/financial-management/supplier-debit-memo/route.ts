@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   if (action === 'chart-of-accounts') {
     try {
       const res = await fetch(
-        `${DIRECTUS_URL}/items/chart_of_accounts?fields=coa_id,gl_code,account_title&filter[account_title][_nnull]=true&limit=-1&sort=gl_code`,
+        `${DIRECTUS_URL}/items/chart_of_accounts?fields=coa_id,gl_code,account_title&filter[account_type][account_name][_in]=Cost of Sales,Cost of Service,General and Administrative Expenses,Finance Cost,Other Income&limit=-1&sort=gl_code`,
         {
           method : 'GET',
           headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
@@ -112,8 +112,30 @@ export async function GET(request: NextRequest) {
     }
 
     const json = await res.json();
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mappedData = (json.data ?? []).map((m: any) => {
+      let created_at = m.created_at;
+      if (created_at && typeof created_at === 'string') {
+        if (!created_at.includes('T') && !created_at.includes('Z')) {
+          created_at = created_at.replace(' ', 'T') + 'Z';
+        } else if (created_at.includes('T') && !created_at.endsWith('Z')) {
+          created_at = created_at + 'Z';
+        }
+      }
+      let updated_at = m.updated_at;
+      if (updated_at && typeof updated_at === 'string') {
+        if (!updated_at.includes('T') && !updated_at.includes('Z')) {
+          updated_at = updated_at.replace(' ', 'T') + 'Z';
+        } else if (updated_at.includes('T') && !updated_at.endsWith('Z')) {
+          updated_at = updated_at + 'Z';
+        }
+      }
+      return { ...m, created_at, updated_at };
+    });
+
     return NextResponse.json({
-      data:  json.data  ?? [],
+      data:  mappedData,
       total: json.meta?.filter_count ?? json.data?.length ?? 0,
     });
   } catch (err: unknown) {

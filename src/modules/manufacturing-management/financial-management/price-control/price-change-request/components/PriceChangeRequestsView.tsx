@@ -8,6 +8,7 @@ import * as React from "react";
 
 import { SessionExpiredPanel } from "../../shared/SessionExpiredPanel";
 import { usePCRSuppliers } from "../hooks/usePCRSuppliers";
+import { usePCRProductTypes } from "../hooks/usePCRProductTypes";
 import type { ApprovalTypeFilter, ListQuery } from "../types";
 import { cn } from "@/lib/utils";
 import { ListCostRequestManager } from "./ListCostRequestManager";
@@ -51,6 +52,14 @@ export default function PriceChangeRequestsView({
         handleUnauthorized,
     } = usePCRSuppliers();
 
+    const {
+        productTypes,
+        productTypesLoading,
+        productTypesError,
+        sessionExpired: productTypesSessionExpired,
+        handleUnauthorized: handleProductTypesUnauthorized,
+    } = usePCRProductTypes();
+
     const [typeTab, setTypeTab] = React.useState<ApprovalTypeFilter>("all");
     const [sharedQuery, setSharedQuery] = React.useState<ListQuery>(DEFAULT_SHARED_QUERY);
     const [mountedTabs, setMountedTabs] = React.useState(() => new Set<ApprovalTypeFilter>(["all"]));
@@ -68,13 +77,16 @@ export default function PriceChangeRequestsView({
         });
     }, [typeTab]);
 
-    const supplierLookupProps = {
+    const lookupProps = {
         suppliers,
         suppliersLoading,
         suppliersError,
+        productTypes,
+        productTypesLoading,
+        productTypesError,
     };
 
-    if (sessionExpired) {
+    if (sessionExpired || productTypesSessionExpired) {
         return <SessionExpiredPanel returnPath={returnPath} />;
     }
 
@@ -117,10 +129,10 @@ export default function PriceChangeRequestsView({
                         className={cn(typeTab !== "all" && "hidden")}
                     >
                         <UnifiedApprovalsManager
-                            {...supplierLookupProps}
+                            {...lookupProps}
                             query={sharedQuery}
                             setQuery={setSharedQuery}
-                            onUnauthorized={handleUnauthorized}
+                            onUnauthorized={() => { handleUnauthorized(); handleProductTypesUnauthorized(); }}
                             active={typeTab === "all"}
                             readOnly={readOnly}
                         />
@@ -134,10 +146,10 @@ export default function PriceChangeRequestsView({
                         className={cn(typeTab !== "price" && "hidden")}
                     >
                         <PriceTypeRequestManager
-                            {...supplierLookupProps}
+                            {...lookupProps}
                             query={sharedQuery}
                             setQuery={setSharedQuery}
-                            onUnauthorized={handleUnauthorized}
+                            onUnauthorized={() => { handleUnauthorized(); handleProductTypesUnauthorized(); }}
                             active={typeTab === "price"}
                             readOnly={readOnly}
                         />
@@ -151,10 +163,10 @@ export default function PriceChangeRequestsView({
                         className={cn(typeTab !== "cost" && "hidden")}
                     >
                         <ListCostRequestManager
-                            {...supplierLookupProps}
+                            {...lookupProps}
                             query={sharedQuery}
                             setQuery={setSharedQuery}
-                            onUnauthorized={handleUnauthorized}
+                            onUnauthorized={() => { handleUnauthorized(); handleProductTypesUnauthorized(); }}
                             active={typeTab === "cost"}
                             readOnly={readOnly}
                         />

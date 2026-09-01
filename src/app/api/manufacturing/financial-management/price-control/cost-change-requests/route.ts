@@ -213,6 +213,7 @@ export async function GET(req: NextRequest) {
         const product_id = norm(searchParams.get("product_id"));
         const requested_by = norm(searchParams.get("requested_by"));
         const supplier_ids = resolveSupplierIds(searchParams);
+        const product_type_ids = searchParams.get("product_type_ids")?.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0) || [];
         const date_from = norm(searchParams.get("date_from"));
         const date_to = norm(searchParams.get("date_to"));
         const productIds = parseProductIdsParam(searchParams.get("product_ids"));
@@ -291,6 +292,10 @@ export async function GET(req: NextRequest) {
                 return NextResponse.json({ data: [], meta: { total_count: 0 } });
             }
             andIdx = appendProductIdInFilter(params, andIdx, supplierProductIds);
+        }
+
+        if (product_type_ids.length > 0) {
+            addAnd("[product_id][product_type][_in]", product_type_ids.join(","));
         }
 
         if (q) {

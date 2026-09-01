@@ -15,7 +15,7 @@ export async function fetchQuotations(): Promise<unknown[]> {
         const custIds = Array.from(new Set(quotes.map(q => q.customer_id).filter(Boolean)));
         let customers: { id: string | number; customer_name: string; customer_code: string }[] = [];
         if (custIds.length > 0) {
-            const custUrl = `${DIRECTUS_URL}/items/customer?filter[id][_in]=${custIds.join(",")}&limit=-1`;
+            const custUrl = `${DIRECTUS_URL}/items/customer?filter[id][_in]=${custIds.join(",")}&limit=-1&fields=id,customer_code,customer_name,price_type_id,price_type_id.price_type_id,price_type_id.price_type_name,price_type,bank_details`;
             const custRes = await fetch(custUrl, { headers, cache: "no-store" });
             if (custRes.ok) {
                 customers = ((await custRes.json()).data || []) as { id: string | number; customer_name: string; customer_code: string }[];
@@ -43,6 +43,8 @@ export async function saveQuotation(
     quoteData: {
         quote_number: string;
         customer_id: number;
+        price_type_id?: number | null;
+        frozen_price_type_name?: string | null;
         total_selling_price: number;
         total_simulated_cost: number;
         forex_rate_used: number;

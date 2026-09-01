@@ -12,11 +12,13 @@ import {
     Save,
     Send,
     ShieldCheck,
+    Trash2,
     XCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLotTransfer } from "./hooks/useLotTransfer";
+import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
 import type { BatchOption, LotTransferMode } from "./types";
 
 interface LotTransferModuleProps {
@@ -27,6 +29,7 @@ interface LotTransferModuleProps {
 type LotTransferController = ReturnType<typeof useLotTransfer>;
 
 const inputClassName = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
+const selectClassName = "h-9 w-full min-w-0 justify-between overflow-hidden text-left font-normal";
 const textAreaClassName = "min-h-20 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 const panelClassName = "rounded-xl border bg-card p-4 shadow-sm";
 
@@ -81,10 +84,11 @@ function ErrorBanner({ message }: { message: string | null }) {
     );
 }
 
-function RequestList({ controller, onCreate, onEdit }: {
+function RequestList({ controller, onCreate, onEdit, onDelete }: {
     controller: LotTransferController;
     onCreate: () => void;
     onEdit: (record: LotTransferController["records"][number]) => void;
+    onDelete: (record: LotTransferController["records"][number]) => void;
 }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-drafts-heading">
@@ -120,7 +124,7 @@ function RequestList({ controller, onCreate, onEdit }: {
                                     <td className="px-3 py-2.5">Lot #{record.sourceLotId}<br /><span className="text-xs text-muted-foreground">{record.sourceBatchNo}</span></td>
                                     <td className="px-3 py-2.5">Lot #{record.targetLotId}<br /><span className="text-xs text-muted-foreground">{record.targetBatchNo}</span></td>
                                     <td className="px-3 py-2.5 font-medium">{formatQuantity(record.quantity)}</td>
-                                    <td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onEdit(record)}>Edit</Button></td>
+                                    <td className="px-3 py-2.5"><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => onEdit(record)}>Edit</Button><Button type="button" variant="destructive" size="sm" onClick={() => onDelete(record)} disabled={controller.isActionLoading}><Trash2 />Delete</Button></div></td>
                                 </tr>
                             ))}
                         </tbody>
@@ -149,14 +153,17 @@ function BatchSelect({
         return active && (!source || batch.quantity > 0 || String(batch.batchId) === value);
     });
     return (
-        <select aria-label={source ? "Source batch" : "Target batch"} className={inputClassName} value={value} onChange={(event) => onChange(event.currentTarget.value)} disabled={disabled}>
-            <option value="">Select batch...</option>
-            {filtered.map((batch) => (
-                <option key={batch.batchId} value={batch.batchId}>
-                    {batch.batchNumber} | {source ? `available ${formatQuantity(batch.quantity)}` : `on hand ${formatQuantity(batch.quantity)}`}
-                </option>
-            ))}
-        </select>
+        <LotTransferSearchableSelect
+            value={value}
+            onValueChange={onChange}
+            options={filtered.map((batch) => ({
+                value: String(batch.batchId),
+                label: `${batch.batchNumber} | ${source ? `available ${formatQuantity(batch.quantity)}` : `on hand ${formatQuantity(batch.quantity)}`}`
+            }))}
+            placeholder={source ? "Select source batch..." : "Select target batch..."}
+            disabled={disabled}
+            className={selectClassName}
+        />
     );
 }
 
@@ -185,6 +192,11 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         }
     };
 
+    const handleDelete = async () => {
+        if (!controller.selectedId || !window.confirm("Delete this Draft lot-transfer request? This cannot be undone.")) return;
+        if (await controller.deleteDraft(controller.selectedId)) onClose();
+    };
+
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-editor-heading">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -198,30 +210,39 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 {!controller.userBranchId && (
                     <label>
                         <FieldLabel required>Branch</FieldLabel>
-                        <select className={inputClassName} value={form.branchId} onChange={(event) => controller.setField("branchId", event.currentTarget.value)}>
-                            <option value="">Select branch...</option>
-                            {controller.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branchName} ({branch.branchCode})</option>)}
-                        </select>
+                        <LotTransferSearchableSelect
+                            value={form.branchId}
+                            onValueChange={(value) => controller.setField("branchId", value)}
+                            options={controller.branches.map((branch) => ({ value: String(branch.id), label: `${branch.branchName} (${branch.branchCode})` }))}
+                            placeholder="Select branch..."
+                            className={selectClassName}
+                        />
                     </label>
                 )}
                 <label>
                     <FieldLabel required>Product</FieldLabel>
-                    <select className={inputClassName} value={form.productId} onChange={(event) => controller.handleProductChange(event.currentTarget.value)}>
-                        <option value="">Select product...</option>
-                        {controller.products.map((product) => <option key={product.productId} value={product.productId}>{product.productName}{product.skuCode ? ` | ${product.skuCode}` : ""}</option>)}
-                    </select>
+                    <LotTransferSearchableSelect
+                        value={form.productId}
+                        onValueChange={controller.handleProductChange}
+                        options={controller.products.map((product) => ({
+                            value: String(product.productId),
+                            label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}`
+                        }))}
+                        placeholder="Select product..."
+                        className={selectClassName}
+                    />
                 </label>
             </div>
             <div className="mt-4 grid gap-4 rounded-lg border bg-muted/20 p-3 md:grid-cols-2">
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">SOURCE</span>Move out</div>
-                    <label className="block"><FieldLabel required>Source lot</FieldLabel><select className={inputClassName} value={form.sourceLotId} onChange={(event) => controller.handleSourceLotChange(event.currentTarget.value)} disabled={!form.productId}><option value="">Select source lot...</option>{activeLots.map((lot) => <option key={lot.lotId} value={lot.lotId}>{lot.lotName || `Lot #${lot.lotId}`} | capacity {lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}</option>)}</select></label>
+                    <label className="block"><FieldLabel required>Source lot</FieldLabel><LotTransferSearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." disabled={!form.productId} className={selectClassName} /></label>
                     <label className="mt-3 block"><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceBatches} value={form.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange("source", value)} disabled={!form.sourceLotId} source /></label>
                     {sourceBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Available<br /><strong>{formatQuantity(sourceBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(sourceBatch.expirationDate)}</strong></span><span>QA<br /><strong>{sourceBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{sourceBatch.batchId}</strong></span></div>}
                 </div>
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><select className={inputClassName} value={form.targetLotId} onChange={(event) => controller.handleTargetLotChange(event.currentTarget.value)} disabled={!form.productId}><option value="">Select target lot...</option>{activeLots.map((lot) => <option key={lot.lotId} value={lot.lotId}>{lot.lotName || `Lot #${lot.lotId}`} | capacity {lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}</option>)}</select></label>
+                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /></label>
                     <label className="mt-3 block"><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetBatches} value={form.targetInventoryLotId} onChange={(value) => controller.handleBatchChange("target", value)} disabled={!form.targetLotId} source={false} /></label>
                     {targetBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Current on hand<br /><strong>{formatQuantity(targetBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(targetBatch.expirationDate)}</strong></span><span>QA<br /><strong>{targetBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{targetBatch.batchId}</strong></span></div>}
                 </div>
@@ -233,7 +254,9 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             <label className="mt-4 block"><FieldLabel required>Transfer reason</FieldLabel><textarea className={textAreaClassName} value={form.reason} onChange={(event) => controller.setField("reason", event.currentTarget.value)} placeholder="Explain why the stock is being moved..." /></label>
             {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
             <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" onClick={onClose} disabled={controller.isActionLoading}>Cancel</Button>
                 <Button type="button" variant="outline" onClick={() => { controller.clearSelection(); setNotice(null); }} disabled={controller.isActionLoading}><XCircle />Clear</Button>
+                {controller.selectedId && controller.selectedRecord?.status === "Draft" && <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={controller.isActionLoading}><Trash2 />Delete Draft</Button>}
                 <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={controller.isActionLoading || controller.isLookupLoading}><Save />Save Draft</Button>
                 <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft"}><Send />Submit for QA</Button>
             </div>
@@ -345,6 +368,11 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
         setRequestDialogOpen(true);
     };
 
+    const handleDeleteRequest = async (record: LotTransferController["records"][number]) => {
+        if (!window.confirm(`Delete ${record.requestNo}? This cannot be undone.`)) return;
+        await controller.deleteDraft(record.id);
+    };
+
     const closeApprovalDialog = () => {
         setApprovalDialogOpen(false);
         controller.clearSelection();
@@ -370,11 +398,11 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
             <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2"><ArrowRightLeft className="h-5 w-5 text-primary" /><h1 className="text-xl font-semibold tracking-tight">{title}</h1></div><p className="mt-1 text-sm text-muted-foreground">QA-gated movement of an existing inventory batch between storage lots.</p></div></div>
             <ErrorBanner message={controller.error} />
             {controller.isLookupLoading && <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">Loading branch, product, lot, and batch options...</div>}
-            {mode === "request" && <RequestList controller={controller} onCreate={openNewRequest} onEdit={(record) => void openRequestEditor(record)} />}
+            {mode === "request" && <RequestList controller={controller} onCreate={openNewRequest} onEdit={(record) => void openRequestEditor(record)} onDelete={(record) => void handleDeleteRequest(record)} />}
             {mode === "approval" && <ApprovalQueue controller={controller} onReview={(record) => void openApprovalReview(record)} />}
             {mode === "summary" && <SummaryTable controller={controller} onView={(record) => void openSummaryAudit(record)} />}
             {mode === "request" && <Dialog open={requestDialogOpen} onOpenChange={(open) => open ? setRequestDialogOpen(true) : closeRequestDialog()}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:w-[90vw] sm:max-w-6xl">
                     <DialogHeader>
                         <DialogTitle>Lot transfer request</DialogTitle>
                         <DialogDescription>Enter the source and target batch details, then save the request before submitting it for QA approval.</DialogDescription>

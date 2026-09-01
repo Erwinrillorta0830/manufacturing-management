@@ -29,9 +29,10 @@ import { cn } from "@/lib/utils";
 import type { ListCostBatchDetail, ListCostBatchLine } from "../types";
 import { DecisionConfirmationDialog } from "./DecisionConfirmationDialog";
 import { BatchDecisionSummaryFields } from "./BatchDecisionSummaryFields";
-import { getListCostBatch } from "../providers/pcrApi";
+import { getProductTypeBadgeProps } from "../utils/productTypeLabels";
 import { decisionUserLabel } from "../utils/labels";
 import { displayPcrStatus, pcrApproveButtonClass, pcrRejectButtonClass, pcrStatusBadgeClass } from "../utils/pcrStatusStyles";
+import { getListCostBatch } from "../providers/pcrApi";
 
 type Props = {
     batchId: number | null;
@@ -260,6 +261,27 @@ export function ListCostBatchDetailDialog({
                                 <div>
                                     <div className="text-xs font-medium uppercase text-muted-foreground">Lines</div>
                                     <div className="mt-1 font-medium">{lines.length.toLocaleString()}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs font-medium uppercase text-muted-foreground">Product Type</div>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                        {detail.product_types && detail.product_types.length > 0 ? (
+                                            detail.product_types.map((type) => {
+                                                const badgeProps = getProductTypeBadgeProps(type.name);
+                                                return (
+                                                    <Badge
+                                                        key={type.id}
+                                                        variant="outline"
+                                                        className={badgeProps.className}
+                                                    >
+                                                        {badgeProps.label}
+                                                    </Badge>
+                                                );
+                                            })
+                                        ) : (
+                                            <span className="font-medium">-</span>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="sm:col-span-2">
                                     <div className="text-xs font-medium uppercase text-muted-foreground">Reference No.</div>
