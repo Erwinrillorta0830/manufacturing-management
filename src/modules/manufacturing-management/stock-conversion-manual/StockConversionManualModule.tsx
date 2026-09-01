@@ -23,13 +23,18 @@ export default function StockConversionManualModule({
   userBranchId = 0,
 }: StockConversionManualModuleProps) {
   const [selectedBranchId, setSelectedBranchId] = useState<number>(userBranchId);
-  const [branches, setBranches] = useState<{ id: number; branch_name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: number; branch_name: string; isActive?: number | boolean | string }[]>([]);
 
   useEffect(() => {
     fetch("/api/scm/inventory-management/branch-management")
       .then(res => res.json())
       .then(json => {
-        if (Array.isArray(json.branches)) setBranches(json.branches);
+        if (Array.isArray(json.branches)) {
+          const activeBranches = json.branches.filter(
+            (b: { isActive?: number | boolean | string }) => b.isActive === 1 || b.isActive === true || b.isActive === "1"
+          );
+          setBranches(activeBranches);
+        }
       })
       .catch(err => console.error("Failed to fetch branches", err));
   }, []);
