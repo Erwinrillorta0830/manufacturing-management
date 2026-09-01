@@ -7,6 +7,7 @@ import {
     normalizeBatchNo
 } from "../_stock";
 import { z } from "zod";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -376,15 +377,10 @@ export async function POST(request: Request) {
             throw new TransferError("The material product does not match the selected product.", 400);
         }
 
-        const movFilter = encodeURIComponent(JSON.stringify({
-            product_id: { _eq: data.product_id }
-        }));
-        const movements = await directusRequest<DirectusRecord[]>(
-            `/items/inventory_movements?filter=${movFilter}&fields=product_id,lot_id,branch_id,batch_no,quantity,source_document_id,transaction_type_id,remarks&limit=-1`,
-            { headers, cache: "no-store" },
-            "Load inventory movements",
-            true
-        );
+        const movements = await fetchMmInventoryMovements({
+            branch: branchId,
+            product: data.product_id
+        });
 
         const requestedBatch = normalizeBatchNo(data.batch_no);
         const stockByBatch = new Map<string, number>();
@@ -666,12 +662,11 @@ export async function POST(request: Request) {
         }
 
         for (const [index, movementId] of transactionState.movementIds.entries()) {
-            const verifiedMovement = await directusRequest<DirectusRecord>(
-                `/items/inventory_movements/${movementId}?fields=product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
-                { headers, cache: "no-store" },
-                "Verify inventory movement",
-                true
-            );
+            const verifiedMovement = (await fetchMmInventoryMovements({ movementId }))
+                .find((movement) => Number(movement.movement_id) === movementId);
+            if (!verifiedMovement) {
+                throw new TransferError("The inventory movement could not be verified after saving.", 503);
+            }
             const expectedMovement = movementPayloads[index];
             if (
                 relationId(verifiedMovement.product_id, ["product_id"]) !== data.product_id ||
@@ -713,19 +708,11 @@ export async function POST(request: Request) {
             "Validate Job Order staging reservations",
             true
         );
-        const jobOrderMovementFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                { source_document_id: { _eq: data.job_order_id } },
-                { branch_id: { _eq: branchId } },
-                { transaction_type_id: { _eq: 4 } }
-            ]
-        }));
-        const allJobOrderMovements = await directusRequest<DirectusRecord[]>(
-            `/items/inventory_movements?filter=${jobOrderMovementFilter}&fields=product_id,batch_no,quantity,remarks&limit=-1`,
-            { headers, cache: "no-store" },
-            "Validate Job Order staging movements",
-            true
-        );
+        const allJobOrderMovements = await fetchMmInventoryMovements({
+            referenceId: data.job_order_id,
+            branch: branchId,
+            transactionTypeId: 4
+        });
         const stagedQuantityByProductBatch = new Map<string, number>();
         allJobOrderMovements.forEach((movement) => {
             if (!String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")) return;
@@ -836,7 +823,9 @@ export async function POST(request: Request) {
     } catch (error) {
         const transferError = error instanceof TransferError
             ? error
-            : new TransferError(error instanceof Error ? error.message : "Failed to execute bin transfer", 500);
+            : error instanceof MmInventoryMovementError
+                ? new TransferError(error.message, error.status)
+                : new TransferError(error instanceof Error ? error.message : "Failed to execute bin transfer", 500);
         let rollbackFailures: string[] = [];
 
         if (transactionState) {

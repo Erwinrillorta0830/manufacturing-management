@@ -1,3 +1,5 @@
+import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+
 export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 export const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
 
@@ -90,10 +92,7 @@ export async function resolveCanonicalLotId(storedLotId: number): Promise<number
             `${DIRECTUS_URL}/items/lots?filter[lot_id][_eq]=${storedLotId}&fields=lot_id,lot_name&limit=1`,
             "Master lot lookup"
         ),
-        directusCollection<DirectusMovement>(
-            `${DIRECTUS_URL}/items/inventory_movements?filter[movement_id][_eq]=${storedLotId}&fields=movement_id,lot_id&limit=1`,
-            "Legacy lot reference lookup"
-        )
+        fetchMmInventoryMovements({ movementId: storedLotId })
     ]);
 
     const movementLotId = relationId(legacyMovements[0]?.lot_id, ["lot_id", "id"]);
