@@ -34,7 +34,7 @@ export default function SalesOrderApprovalModule() {
         viewOrderDetails,
         handleApprove,
         handleSendToJO,
-        handleSendToInvoice,
+        handleSendToConsolidation,
         handleHold,
         handleReject,
         handleCancel,
@@ -109,7 +109,7 @@ export default function SalesOrderApprovalModule() {
                 updatingStatusId={updatingStatusId}
                 stockData={stockData}
                 handleSendToJO={handleSendToJO}
-                handleSendToInvoice={handleSendToInvoice}
+                handleSendToConsolidation={handleSendToConsolidation}
                 handleHold={handleHold}
                 handleReject={handleReject}
                 handleCancel={handleCancel}

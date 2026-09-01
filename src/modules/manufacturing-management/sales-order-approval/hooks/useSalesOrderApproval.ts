@@ -197,7 +197,7 @@ export function useSalesOrderApproval() {
         }
     };
 
-    const handleSendToInvoice = async (orderId: number) => {
+    const handleSendToConsolidation = async (orderId: number) => {
         setUpdatingStatusId(orderId);
         try {
             await updateSalesOrderStatus(orderId, "For Consolidation");
@@ -207,7 +207,7 @@ export function useSalesOrderApproval() {
                 setSelectedOrder(null);
             }
         } catch (e: unknown) {
-            toast.error(e instanceof Error ? e.message : "Failed to send to Invoice");
+            toast.error(e instanceof Error ? e.message : "Failed to send to Consolidation");
         } finally {
             setUpdatingStatusId(null);
         }
@@ -312,7 +312,7 @@ export function useSalesOrderApproval() {
         viewOrderDetails,
         handleApprove,
         handleSendToJO,
-        handleSendToInvoice,
+        handleSendToConsolidation,
         handleHold,
         handleReject,
         handleCancel,
