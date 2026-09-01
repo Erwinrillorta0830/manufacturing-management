@@ -101,6 +101,19 @@ export function FinalQAReleases({
         return Number(lot?.lot_id || 0);
     };
 
+    const getLotRowKey = (lot: any, index: number) => {
+        const movementId = Number(lot?.line_id || lot?.id || 0);
+        if (Number.isSafeInteger(movementId) && movementId > 0) {
+            return `movement-${movementId}`;
+        }
+
+        const productId = Number(lot?.product_id || 0);
+        const branchId = Number(lot?.branch_id || 0);
+        const canonicalLotId = getCanonicalLotId(lot);
+        const batchNo = String(lot?.batch_no || lot?.lot_number || "LOT-N/A").trim() || "LOT-N/A";
+        return `stock-${productId}-${branchId}-${canonicalLotId || "unassigned"}-${batchNo}-${index}`;
+    };
+
     const getReleaseForLot = (lot: any) => {
         const lotId = getCanonicalLotId(lot);
         return finalReleases.find((release) => {
@@ -156,14 +169,14 @@ export function FinalQAReleases({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {fgLots.map((lot) => {
+                            {fgLots.map((lot, index) => {
                                 const release = getReleaseForLot(lot);
                                 const status = dispositionStatus(release);
                                 const isApproved = status === "approved";
                                 const isQuarantined = status === "quarantined";
                                 const isRejected = status === "rejected";
                                 return (
-                                    <TableRow key={lot.line_id || lot.id || lot.lot_id}>
+                                    <TableRow key={getLotRowKey(lot, index)}>
                                         <TableCell className="text-xs font-semibold text-foreground">
                                             <div className="flex flex-col gap-1">
                                                 <span>{getProductName(lot.product_id)}</span>
