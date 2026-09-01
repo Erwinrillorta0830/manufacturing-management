@@ -52,6 +52,8 @@ interface DirectusMovementRaw {
         transaction_type_id?: number | null;
         type_name?: string | null;
     } | null;
+    transaction_type?: string | null;
+    transactionType?: string | null;
     version_id?: number | { version_id?: number } | null;
     expiry_date?: string | null;
     created_at?: string | null;
@@ -252,7 +254,9 @@ export async function GET() {
                 rejection_reason: null,
                 created_on: createdOnVal,
                 source_reference: creationMvt.source_document_no || null,
-                source_type: typeof creationMvt.transaction_type_id === "object" ? creationMvt.transaction_type_id?.type_name || null : null,
+                source_type: typeof creationMvt.transaction_type_id === "object"
+                    ? creationMvt.transaction_type_id?.type_name || null
+                    : creationMvt.transaction_type || creationMvt.transactionType || null,
                 remarks: creationMvt.remarks || null,
                 version_id: creationMvt.version_id ? (typeof creationMvt.version_id === "object" ? creationMvt.version_id.version_id : creationMvt.version_id) : null,
                 job_order_id: jobOrderRelationship.jobOrderId,
@@ -339,7 +343,7 @@ export async function GET() {
 
             const txnTypeName = typeof creationMvt?.transaction_type_id === "object"
                 ? creationMvt.transaction_type_id?.type_name
-                : null;
+                : creationMvt?.transaction_type || creationMvt?.transactionType;
 
             const resolvedTxnType = txnTypeName || (b.source_type ? String(b.source_type).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "Legacy Stock");
             const resolvedRemarks = b.remarks || b.rejection_reason || creationMvt?.remarks || null;
