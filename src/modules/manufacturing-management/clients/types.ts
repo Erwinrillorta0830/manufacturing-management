@@ -25,6 +25,9 @@ export interface Customer {
     province?: string;
     isActive?: number | boolean;
     created_at?: string;
+    updated_by?: number | null;
+    updated_at?: string | null;
+    updated_by_name?: string | null;
     latitude?: number | null;
     longitude?: number | null;
 }

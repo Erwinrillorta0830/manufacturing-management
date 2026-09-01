@@ -823,6 +823,36 @@ export default function ClientFormModal({
                                 </label>
                             </div>
                         </div>
+
+                        {editingCustomer && (
+                            <div className="bg-card border rounded-2xl p-5 space-y-4 shadow-sm">
+                                <div className="flex items-center gap-2.5 border-b pb-3">
+                                    <span className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+                                        <User className="h-4 w-4" />
+                                    </span>
+                                    <div>
+                                        <h4 className="text-xs font-extrabold text-foreground uppercase tracking-wider">Audit Trail</h4>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">Server-recorded profile modification details.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Last Updated By</span>
+                                        <span className="block font-semibold text-foreground">
+                                            {editingCustomer.updated_by_name?.trim() || "Unavailable"}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Last Updated At</span>
+                                        <span className="block font-mono font-semibold text-foreground">
+                                            {editingCustomer.updated_at
+                                                ? editingCustomer.updated_at.replace("T", " ")
+                                                : "Never updated"}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         </fieldset>
                     </form>
                 )}
