@@ -4,6 +4,7 @@ export type PriceType = {
     price_type_id: number;
     price_type_name: "A" | "B" | "C" | "D" | "E" | string;
     sort: number | null;
+    is_active?: boolean | number | string | null;
 };
 
 export type Category = { category_id: number; category_name: string };

@@ -12,7 +12,7 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function GET() {
     try {
-        const url = `${DIRECTUS_URL}/items/customer?limit=-1&sort=customer_name`;
+        const url = `${DIRECTUS_URL}/items/customer?limit=-1&sort=customer_name&fields=id,customer_name,customer_code,bank_details,price_type_id,price_type_id.price_type_name,price_type`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
         const data = await res.json();

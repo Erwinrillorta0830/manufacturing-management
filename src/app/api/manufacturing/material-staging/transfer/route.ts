@@ -11,6 +11,8 @@ import { z } from "zod";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const QUANTITY_EPSILON = 0.000001;
+
 type DirectusRecord = Record<string, unknown>;
 
 class TransferError extends Error {
@@ -57,7 +59,10 @@ const transferPayloadSchema = z.object({
     work_center_id: z.number().int().positive(),
     override_negative: z.boolean().default(false),
     remarks: z.string().optional()
-});
+}).refine(
+    (payload) => !payload.override_negative || Boolean(payload.remarks?.trim()),
+    { path: ["remarks"], message: "Authorization remarks are required for a negative stock override." }
+);
 
 function relationId(value: unknown, preferredKeys: string[] = []): number {
     if (typeof value === "number" || typeof value === "string") {
@@ -255,10 +260,23 @@ async function rollbackTransfer(
     return failures;
 }
 
-async function getUserIdFromSession(): Promise<number> {
+function readCookieValue(cookieHeader: string | null, name: string): string | null {
+    if (!cookieHeader) return null;
+
+    const prefix = `${name}=`;
+    const cookie = cookieHeader
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+
+    return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : null;
+}
+
+async function getUserIdFromSession(request: Request): Promise<number | null> {
     try {
         const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
+        const token = readCookieValue(request.headers.get("cookie"), "vos_access_token") ||
+            cookieStore.get("vos_access_token")?.value;
         if (token) {
             const parts = token.split(".");
             if (parts.length >= 2) {
@@ -266,14 +284,15 @@ async function getUserIdFromSession(): Promise<number> {
                 while (base64.length % 4) base64 += "=";
                 const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
                 const payload = JSON.parse(jsonPayload);
-                const rawId = payload?.id || payload?.user_id || payload?.sub;
-                if (rawId && !isNaN(Number(rawId))) return Number(rawId);
+                const rawId = payload?.id || payload?.user_id || payload?.userId || payload?.sub;
+                const parsedId = Number(rawId);
+                if (Number.isInteger(parsedId) && parsedId > 0) return parsedId;
             }
         }
     } catch (e) {
         console.error("[Material Staging Transfer] Session resolution error:", e);
     }
-    return 1; // Fallback admin
+    return null;
 }
 
 export async function POST(request: Request) {
@@ -295,7 +314,10 @@ export async function POST(request: Request) {
         const data = parseResult.data;
         rollbackJobOrderId = data.job_order_id;
         rollbackMaterialId = data.jo_material_id;
-        const userId = await getUserIdFromSession();
+        const userId = await getUserIdFromSession(request);
+        if (!userId) {
+            throw new TransferError("An authenticated user is required to stage material.", 401);
+        }
         transactionState = createTransactionState();
 
         const jobOrder = await directusRequest<DirectusRecord>(
@@ -658,7 +680,7 @@ export async function POST(request: Request) {
                 Number(verifiedMovement.transaction_type_id) !== expectedMovement.transaction_type_id ||
                 Number(verifiedMovement.source_document_id) !== data.job_order_id ||
                 String(verifiedMovement.batch_no || "") !== data.batch_no ||
-                Number(verifiedMovement.quantity) !== expectedMovement.quantity
+                Math.abs(Number(verifiedMovement.quantity) - expectedMovement.quantity) > QUANTITY_EPSILON
             ) {
                 throw new TransferError("The inventory movement could not be verified after saving.", 503);
             }
@@ -769,7 +791,10 @@ export async function POST(request: Request) {
         const verifiedAllocation = verifiedAllocations[0];
         if (
             verifiedAllocations.length !== 1 ||
-            Number(verifiedAllocation?.reserved_quantity || 0) !== existingAllocationQuantity + data.transfer_quantity
+            Math.abs(
+                Number(verifiedAllocation?.reserved_quantity || 0) -
+                (existingAllocationQuantity + data.transfer_quantity)
+            ) > QUANTITY_EPSILON
         ) {
             throw new TransferError("The staging reservation could not be verified after saving.", 503);
         }
@@ -781,7 +806,10 @@ export async function POST(request: Request) {
             true
         );
         if (
-            Number(verifiedMaterial.reserved_quantity || 0) !== currentReservedQuantity + data.transfer_quantity
+            Math.abs(
+                Number(verifiedMaterial.reserved_quantity || 0) -
+                (currentReservedQuantity + data.transfer_quantity)
+            ) > QUANTITY_EPSILON
         ) {
             throw new TransferError("The material staging state could not be verified after saving.", 503);
         }

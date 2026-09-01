@@ -65,6 +65,7 @@ export default function ClientsTable({
                             // Full address builder
                             const addressParts = [c.brgy, c.city, c.province].filter(Boolean);
                             const fullAddress = addressParts.join(", ") || "No Address Provided";
+                            const telephone = c.tel_number || c.contact_number;
 
                             return (
                                 <tr key={c.id} className="hover:bg-muted/10 transition-colors">
@@ -102,13 +103,13 @@ export default function ClientsTable({
                                                     <span className="truncate max-w-[150px]">{c.customer_email}</span>
                                                 </div>
                                             )}
-                                            {c.contact_number && (
+                                            {telephone && (
                                                 <div className="flex items-center gap-1.5 text-muted-foreground font-mono">
                                                     <Phone className="h-3 w-3 text-primary shrink-0" />
-                                                    <span>{c.contact_number}</span>
+                                                    <span>{telephone}</span>
                                                 </div>
                                             )}
-                                            {!c.customer_email && !c.contact_number && (
+                                            {!c.customer_email && !telephone && (
                                                 <span className="text-muted-foreground/50 italic">None</span>
                                             )}
                                         </div>

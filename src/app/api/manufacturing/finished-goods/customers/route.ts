@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchCustomers, createCustomer, updateCustomer, deleteCustomer } from "./customers-helper";
 import {
+    CustomerNotFoundError,
+    CustomerProfileValidationError,
     CustomerUnauthorizedError,
     getCustomerAuditContext
 } from "@/app/api/manufacturing/services/customer-api.service";
@@ -12,9 +14,13 @@ const CUSTOMER_PROFILE_FIELDS = [
     "customer_code",
     "customer_name",
     "customer_tin",
-    "contact_number",
     "customer_email",
     "store_name",
+    "store_signage",
+    "tel_number",
+    "bank_details",
+    "price_type_id",
+    "otherDetails",
     "store_type",
     "payment_term",
     "brgy",
@@ -78,9 +84,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body: unknown = await request.json();
-        if (!isRecord(body) || typeof body.customer_code !== "string" || !body.customer_code.trim()
-            || typeof body.customer_name !== "string" || !body.customer_name.trim()) {
-            return NextResponse.json({ error: "Customer Code and Customer Name are required" }, { status: 400 });
+        if (!isRecord(body)) {
+            return NextResponse.json({ error: "A customer registration payload is required." }, { status: 400 });
         }
 
         let paymentTerm: number | null | undefined;
@@ -94,14 +99,15 @@ export async function POST(request: Request) {
         if (!audit) return unauthorizedResponse();
 
         const profile = pickCustomerProfile(body);
-        profile.customer_code = body.customer_code.trim();
-        profile.customer_name = body.customer_name.trim();
         if (paymentTerm !== undefined) profile.payment_term = paymentTerm;
 
         const newCustomer = await createCustomer(profile, audit);
         return NextResponse.json(newCustomer);
     } catch (error) {
         if (error instanceof CustomerUnauthorizedError) return unauthorizedResponse();
+        if (error instanceof CustomerProfileValidationError) {
+            return NextResponse.json({ error: error.message, fields: error.fields }, { status: 400 });
+        }
         console.error("API Error creating customer:", error);
         return NextResponse.json({ error: errorMessage(error, "Failed to create customer") }, { status: 500 });
     }
@@ -140,6 +146,12 @@ export async function PATCH(request: Request) {
         return NextResponse.json(updated);
     } catch (error) {
         if (error instanceof CustomerUnauthorizedError) return unauthorizedResponse();
+        if (error instanceof CustomerProfileValidationError) {
+            return NextResponse.json({ error: error.message, fields: error.fields }, { status: 400 });
+        }
+        if (error instanceof CustomerNotFoundError) {
+            return NextResponse.json({ error: error.message }, { status: 404 });
+        }
         console.error("API Error updating customer:", error);
         return NextResponse.json({ error: errorMessage(error, "Failed to update customer") }, { status: 500 });
     }

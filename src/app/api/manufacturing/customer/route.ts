@@ -5,7 +5,7 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const limit = searchParams.get("limit") || "-1";
-        const fields = searchParams.get("fields") || "id,customer_name,customer_code";
+        const fields = searchParams.get("fields") || "id,customer_name,customer_code,store_signage,tel_number,bank_details,price_type_id,price_type_id.price_type_name,price_type,otherDetails";
 
         const url = `${DIRECTUS_URL}/items/customer?limit=${limit}&fields=${fields}`;
         const res = await fetch(url, { headers, cache: "no-store" });
