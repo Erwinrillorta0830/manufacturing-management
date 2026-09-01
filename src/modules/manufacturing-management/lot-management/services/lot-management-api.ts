@@ -11,10 +11,24 @@ import {
     InventoryMovement
 } from "../types";
 
+async function extractErrorMessage(res: Response, defaultMessage: string): Promise<string> {
+    if (res.status === 401) {
+        return "Authentication expired. Please log in again.";
+    }
+    let errorDetail = "";
+    try {
+        const errorJson = await res.json();
+        errorDetail = errorJson?.error || errorJson?.message || "";
+    } catch {
+        errorDetail = await res.text().catch(() => "");
+    }
+    return errorDetail || `${defaultMessage} (HTTP ${res.status})`;
+}
+
 export async function fetchBranches(): Promise<Branch[]> {
     const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch branches lookup from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch branches lookup from BFF"));
     }
     return await res.json();
 }
@@ -22,7 +36,7 @@ export async function fetchBranches(): Promise<Branch[]> {
 export async function fetchProducts(): Promise<ProductItem[]> {
     const res = await fetch("/api/manufacturing/lots/products", { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch products lookup from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch products lookup from BFF"));
     }
     return await res.json();
 }
@@ -30,7 +44,7 @@ export async function fetchProducts(): Promise<ProductItem[]> {
 export async function fetchLots(): Promise<Lot[]> {
     const res = await fetch(`/api/manufacturing/lots?_t=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch lots from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch lots from BFF"));
     }
     return await res.json();
 }
@@ -44,8 +58,7 @@ export async function createLot(payload: CreateLotPayload): Promise<{ success: b
         body: JSON.stringify(payload)
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || "Failed to create lot via BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to create lot via BFF"));
     }
     return await res.json();
 }
@@ -62,8 +75,7 @@ export async function updateLot(
         body: JSON.stringify(payload)
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Failed to update lot ${lotId} via BFF`);
+        throw new Error(await extractErrorMessage(res, `Failed to update lot ${lotId} via BFF`));
     }
     const data = await res.json();
     return { success: true, data };
@@ -74,8 +86,7 @@ export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
         method: "DELETE"
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Failed to delete lot ${lotId} via BFF`);
+        throw new Error(await extractErrorMessage(res, `Failed to delete lot ${lotId} via BFF`));
     }
     return await res.json();
 }
@@ -83,7 +94,7 @@ export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
 export async function fetchUoms(): Promise<UnitOfMeasure[]> {
     const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch UOM lookup from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch UOM lookup from BFF"));
     }
     return await res.json();
 }
@@ -94,7 +105,7 @@ export async function fetchBatches(lotId?: number): Promise<Batch[]> {
     const query = lotId ? `?lotId=${lotId}&_t=${Date.now()}` : `?_t=${Date.now()}`;
     const res = await fetch(`/api/manufacturing/lots/batches${query}`, { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch batches from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch batches from BFF"));
     }
     return await res.json();
 }
@@ -108,8 +119,7 @@ export async function createBatch(payload: CreateBatchPayload): Promise<{ succes
         body: JSON.stringify(payload)
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || "Failed to register batch via BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to register batch via BFF"));
     }
     return await res.json();
 }
@@ -126,8 +136,7 @@ export async function updateBatch(
         body: JSON.stringify(payload)
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Failed to update batch ${batchId} via BFF`);
+        throw new Error(await extractErrorMessage(res, `Failed to update batch ${batchId} via BFF`));
     }
     return await res.json();
 }
@@ -137,8 +146,7 @@ export async function deleteBatch(batchId: number): Promise<{ success: boolean }
         method: "DELETE"
     });
     if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Failed to delete batch ${batchId} via BFF`);
+        throw new Error(await extractErrorMessage(res, `Failed to delete batch ${batchId} via BFF`));
     }
     return await res.json();
 }
@@ -167,7 +175,7 @@ export async function fetchInventoryMovements(params?: {
     const queryStr = searchParams.toString();
     const res = await fetch(`/api/manufacturing/inventory-movements?${queryStr}`, { cache: "no-store" });
     if (!res.ok) {
-        throw new Error("Failed to fetch inventory movements from BFF");
+        throw new Error(await extractErrorMessage(res, "Failed to fetch inventory movements from server"));
     }
     return await res.json();
 }

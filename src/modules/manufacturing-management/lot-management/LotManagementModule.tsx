@@ -70,6 +70,7 @@ export default function LotManagementModule() {
         movements,
         filteredMovements,
         loadingMovements,
+        movementError,
         movementSearchQuery,
         setMovementSearchQuery,
         directionFilter,
@@ -395,6 +396,7 @@ export default function LotManagementModule() {
                         lots={lots}
                         products={products}
                         loading={loadingMovements}
+                        error={movementError}
                         searchQuery={movementSearchQuery}
                         onSearchChange={setMovementSearchQuery}
                         directionFilter={directionFilter}

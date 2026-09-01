@@ -11,6 +11,7 @@ export function useInventoryMovements(
 ) {
     const [movements, setMovements] = useState<InventoryMovement[]>([]);
     const [loadingMovements, setLoadingMovements] = useState(true);
+    const [movementError, setMovementError] = useState<string | null>(null);
 
     // Filters
     const [movementSearchQuery, setMovementSearchQuery] = useState("");
@@ -35,12 +36,16 @@ export function useInventoryMovements(
 
     const loadMovements = useCallback(async () => {
         setLoadingMovements(true);
+        setMovementError(null);
         try {
             const list = await fetchInventoryMovements();
             setMovements(list);
+            setMovementError(null);
         } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to load inventory movements";
             console.error("Failed to load inventory movements:", e);
-            toast.error("Failed to load inventory movements");
+            setMovementError(msg);
+            toast.error(msg);
         } finally {
             setLoadingMovements(false);
         }
@@ -48,17 +53,21 @@ export function useInventoryMovements(
 
     useEffect(() => {
         let isMounted = true;
+        setMovementError(null);
         fetchInventoryMovements()
             .then((list) => {
                 if (isMounted) {
                     setMovements(list);
+                    setMovementError(null);
                     setLoadingMovements(false);
                 }
             })
             .catch((e) => {
                 if (isMounted) {
+                    const msg = e instanceof Error ? e.message : "Failed to load inventory movements";
                     console.error("Failed to load inventory movements:", e);
-                    toast.error("Failed to load inventory movements");
+                    setMovementError(msg);
+                    toast.error(msg);
                     setLoadingMovements(false);
                 }
             });
@@ -186,6 +195,7 @@ export function useInventoryMovements(
         movements,
         filteredMovements,
         loadingMovements,
+        movementError,
         movementSearchQuery,
         setMovementSearchQuery,
         directionFilter,
