@@ -1,7 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { User, Plus, Search } from "lucide-react";
+import {
+    User,
+    Plus,
+    Search,
+    ChevronLeft,
+    ChevronRight,
+    ChevronsLeft,
+    ChevronsRight
+} from "lucide-react";
+import { CUSTOMER_PAGE_SIZE_OPTIONS } from "./types";
 import { useClients } from "./hooks/useClients";
 import ClientsTable from "./components/ClientsTable";
 import ClientFormModal from "./components/ClientFormModal";
@@ -12,6 +21,10 @@ export default function ClientsModule() {
     const [modalMode, setModalMode] = useState<ClientModalMode>("create");
     const {
         customers,
+        customerPage,
+        customerPageSize,
+        customerPagination,
+        customerPageError,
         storeTypes,
         setStoreTypes,
         priceTypes,
@@ -33,6 +46,9 @@ export default function ClientsModule() {
         setSelectedProvinceCode,
         selectedCityCode,
         setSelectedCityCode,
+        setCustomerPage,
+        setCustomerPageSize,
+        refresh,
         openCreateModal,
         openEditModal,
         handleCustomerNameChange,
@@ -133,11 +149,98 @@ export default function ClientsModule() {
             </div>
 
             {/* Customers List / Table */}
-            <ClientsTable
-                customers={customers}
-                loading={loading}
-                onView={handleView}
-            />
+            {customerPageError && !loading && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+                    <span>{customerPageError}</span>
+                    <button
+                        type="button"
+                        onClick={refresh}
+                        className="shrink-0 rounded-md border border-destructive/30 px-2.5 py-1 font-semibold hover:bg-destructive/10"
+                    >
+                        Retry
+                    </button>
+                </div>
+            )}
+
+            {(!customerPageError || loading) && (
+                <ClientsTable
+                    customers={customers}
+                    loading={loading}
+                    onView={handleView}
+                />
+            )}
+
+            {!loading && customerPagination.total > 0 && (
+                <div className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 text-xs shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-muted-foreground">
+                        Showing <span className="font-bold text-foreground">{((customerPage - 1) * customerPageSize) + 1}</span>
+                        –<span className="font-bold text-foreground">{Math.min(customerPage * customerPageSize, customerPagination.total)}</span>
+                        {" "}of <span className="font-bold text-foreground">{customerPagination.total}</span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
+                        <label className="flex items-center gap-2 text-muted-foreground">
+                            <span>Rows per page</span>
+                            <select
+                                value={customerPageSize}
+                                onChange={(event) => setCustomerPageSize(Number(event.target.value))}
+                                className="h-8 rounded-md border bg-background px-2 font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
+                            >
+                                {CUSTOMER_PAGE_SIZE_OPTIONS.map((option) => (
+                                    <option key={option} value={option}>{option}</option>
+                                ))}
+                            </select>
+                        </label>
+
+                        <span className="font-semibold text-muted-foreground">
+                            Page <span className="text-foreground">{customerPage}</span> of <span className="text-foreground">{customerPagination.totalPages}</span>
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                aria-label="Go to first page"
+                                title="First page"
+                                disabled={!customerPagination.hasPreviousPage}
+                                onClick={() => setCustomerPage(1)}
+                                className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                            >
+                                <ChevronsLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                aria-label="Go to previous page"
+                                title="Previous page"
+                                disabled={!customerPagination.hasPreviousPage}
+                                onClick={() => setCustomerPage(customerPage - 1)}
+                                className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                aria-label="Go to next page"
+                                title="Next page"
+                                disabled={!customerPagination.hasNextPage}
+                                onClick={() => setCustomerPage(customerPage + 1)}
+                                className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                aria-label="Go to last page"
+                                title="Last page"
+                                disabled={!customerPagination.hasNextPage}
+                                onClick={() => setCustomerPage(customerPagination.totalPages)}
+                                className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                            >
+                                <ChevronsRight className="h-4 w-4" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Modal Dialog Form Overlay */}
             <ClientFormModal

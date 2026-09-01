@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
-import { fetchCustomers, createCustomer, updateCustomer, deleteCustomer } from "./customers-helper";
 import {
+    createCustomer,
+    deleteCustomer,
+    fetchCustomersPage,
+    updateCustomer
+} from "./customers-helper";
+import {
+    CUSTOMER_PAGE_SIZE_OPTIONS,
+    CustomerPaginationValidationError,
     CustomerNotFoundError,
     CustomerProfileValidationError,
     CustomerUnauthorizedError,
@@ -68,14 +75,47 @@ function errorMessage(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function parsePositiveInteger(value: string | null, name: string, fallback: number): number {
+    if (value === null || value.trim() === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new CustomerPaginationValidationError(`${name} must be a positive integer.`);
+    }
+    return parsed;
+}
+
+function parsePageSize(value: string | null): number {
+    const pageSize = parsePositiveInteger(value, "pageSize", CUSTOMER_PAGE_SIZE_OPTIONS[0]);
+    if (!CUSTOMER_PAGE_SIZE_OPTIONS.includes(pageSize as typeof CUSTOMER_PAGE_SIZE_OPTIONS[number])) {
+        throw new CustomerPaginationValidationError(
+            `pageSize must be one of ${CUSTOMER_PAGE_SIZE_OPTIONS.join(", ")}.`
+        );
+    }
+    return pageSize;
+}
+
+function parseStatus(value: string | null, includeInactive: boolean): "all" | "active" | "inactive" {
+    const status = value || (includeInactive ? "all" : "active");
+    if (status !== "all" && status !== "active" && status !== "inactive") {
+        throw new CustomerPaginationValidationError("status must be all, active, or inactive.");
+    }
+    return status;
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const search = searchParams.get("search") || "";
         const all = searchParams.get("all") === "true";
-        const customers = await fetchCustomers(search, all);
-        return NextResponse.json(customers);
+        const page = parsePositiveInteger(searchParams.get("page"), "page", 1);
+        const pageSize = parsePageSize(searchParams.get("pageSize"));
+        const status = parseStatus(searchParams.get("status"), all);
+        const result = await fetchCustomersPage({ page, pageSize, search, status });
+        return NextResponse.json(result);
     } catch (error) {
+        if (error instanceof CustomerPaginationValidationError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         console.error("API Error fetching customers:", error);
         return NextResponse.json({ error: errorMessage(error, "Failed to fetch customers") }, { status: 500 });
     }

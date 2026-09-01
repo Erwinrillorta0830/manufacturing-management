@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import { ClientFormData, Customer, PaymentTerm, PriceType, StoreType } from "../types";
+import {
+    ClientFormData,
+    Customer,
+    CustomerPageResponse,
+    CustomerStatusFilter,
+    PaymentTerm,
+    PriceType,
+    StoreType,
+    CUSTOMER_PAGE_SIZE_OPTIONS
+} from "../types";
 import { validateCustomerProfileFields } from "../customer-profile-validation";
 import { toast } from "sonner";
 
@@ -43,11 +52,24 @@ const EMPTY_CLIENT_FORM_DATA: ClientFormData = {
 
 export function useClients() {
     const [customers, setCustomers] = useState<Customer[]>([]);
+    const [customerPage, setCustomerPage] = useState(1);
+    const [customerPageSize, setCustomerPageSize] = useState<number>(CUSTOMER_PAGE_SIZE_OPTIONS[0]);
+    const [customerPagination, setCustomerPagination] = useState<CustomerPageResponse["pagination"]>({
+        page: 1,
+        pageSize: CUSTOMER_PAGE_SIZE_OPTIONS[0],
+        total: 0,
+        totalPages: 0,
+        hasPreviousPage: false,
+        hasNextPage: false
+    });
+    const [customerPageError, setCustomerPageError] = useState<string | null>(null);
+    const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
+    const customerRequestId = useRef(0);
     const [storeTypes, setStoreTypes] = useState<StoreType[]>([]);
     const [priceTypes, setPriceTypes] = useState<PriceType[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchText, setSearchText] = useState("");
-    const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+    const [statusFilter, setStatusFilter] = useState<CustomerStatusFilter>("all");
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -75,21 +97,16 @@ export function useClients() {
     const [selectedCityCode, setSelectedCityCode] = useState("");
     const [paymentTerms, setPaymentTerms] = useState<PaymentTerm[]>([]);
 
-    // Load customers and store types
-    const loadData = async () => {
-        setLoading(true);
+    // Load customer reference data once. Customer rows are loaded separately so
+    // pagination and directory filters never reload unrelated lookups.
+    const loadReferenceData = async () => {
         try {
-            const [custRes, storeRes, paymentRes, priceTypeRes] = await Promise.all([
-                fetch("/api/manufacturing/finished-goods/customers?all=true"),
+            const [storeRes, paymentRes, priceTypeRes] = await Promise.all([
                 fetch("/api/manufacturing/finished-goods/store-types"),
                 fetch("/api/manufacturing/payment-terms"),
                 fetch("/api/manufacturing/financial-management/price-control/price-types?activeOnly=true")
             ]);
-            
-            if (custRes.ok) {
-                const custData = await custRes.json();
-                setCustomers(custData);
-            }
+
             if (storeRes.ok) {
                 const storeData = await storeRes.json();
                 setStoreTypes(storeData);
@@ -109,9 +126,11 @@ export function useClients() {
             }
         } catch {
             toast.error("Failed to load customer registry");
-        } finally {
-            setLoading(false);
         }
+    };
+
+    const refreshCustomers = () => {
+        setCustomerRefreshKey(previous => previous + 1);
     };
 
     // Load PSGC address references
@@ -137,10 +156,83 @@ export function useClients() {
 
     useEffect(() => {
         queueMicrotask(() => {
-            loadData();
+            loadReferenceData();
             loadProvincesAndCities();
         });
     }, []);
+
+    // Fetch only the requested customer page. The request id and abort signal
+    // prevent slower searches from replacing newer results.
+    useEffect(() => {
+        const requestId = customerRequestId.current + 1;
+        customerRequestId.current = requestId;
+        const controller = new AbortController();
+        const timer = window.setTimeout(async () => {
+            setLoading(true);
+            setCustomerPageError(null);
+
+            try {
+                const params = new URLSearchParams({
+                    page: String(customerPage),
+                    pageSize: String(customerPageSize),
+                    search: searchText,
+                    status: statusFilter
+                });
+                const response = await fetch(`/api/manufacturing/finished-goods/customers?${params.toString()}`, {
+                    signal: controller.signal
+                });
+                if (!response.ok) {
+                    const body: unknown = await response.json().catch(() => ({}));
+                    const message = body !== null && typeof body === "object" && "error" in body
+                        ? String((body as { error?: unknown }).error || "Failed to load customers")
+                        : "Failed to load customers";
+                    throw new Error(message);
+                }
+
+                const result: unknown = await response.json();
+                if (
+                    result === null
+                    || typeof result !== "object"
+                    || !Array.isArray((result as { data?: unknown }).data)
+                    || (result as { pagination?: unknown }).pagination === null
+                    || typeof (result as { pagination?: unknown }).pagination !== "object"
+                ) {
+                    throw new Error("Customer directory returned an invalid page.");
+                }
+
+                if (controller.signal.aborted || requestId !== customerRequestId.current) return;
+
+                const pageResult = result as CustomerPageResponse;
+                setCustomers(pageResult.data);
+                setCustomerPagination(pageResult.pagination);
+                if (pageResult.pagination.page !== customerPage) {
+                    setCustomerPage(pageResult.pagination.page);
+                }
+            } catch (error) {
+                if (controller.signal.aborted || requestId !== customerRequestId.current) return;
+                console.error("Error loading customer page:", error);
+                setCustomers([]);
+                setCustomerPagination(previous => ({
+                    ...previous,
+                    page: customerPage,
+                    total: 0,
+                    totalPages: 0,
+                    hasPreviousPage: false,
+                    hasNextPage: false
+                }));
+                setCustomerPageError(error instanceof Error ? error.message : "Failed to load customers");
+            } finally {
+                if (!controller.signal.aborted && requestId === customerRequestId.current) {
+                    setLoading(false);
+                }
+            }
+        }, searchText.trim() ? 300 : 0);
+
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [customerPage, customerPageSize, customerRefreshKey, searchText, statusFilter]);
 
     // Load barangays dynamically when city changes
     useEffect(() => {
@@ -440,7 +532,7 @@ export function useClients() {
             }
             
             setIsModalOpen(false);
-            loadData();
+            refreshCustomers();
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to save client details";
             toast.error(message);
@@ -464,7 +556,7 @@ export function useClients() {
                 throw new Error(err.error || "Failed to delete client record");
             }
             toast.success("Client record deleted successfully");
-            loadData();
+            refreshCustomers();
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to delete client account";
             toast.error(message);
@@ -504,33 +596,43 @@ export function useClients() {
         }
     };
 
-    // Client filtering logic
-    const filteredCustomers = customers.filter(c => {
-        const matchesSearch =
-            c.customer_name.toLowerCase().includes(searchText.toLowerCase()) ||
-            c.customer_code.toLowerCase().includes(searchText.toLowerCase()) ||
-            (c.customer_tin || "").toLowerCase().includes(searchText.toLowerCase()) ||
-            (c.customer_email || "").toLowerCase().includes(searchText.toLowerCase()) ||
-            (c.province || "").toLowerCase().includes(searchText.toLowerCase()) ||
-            (c.city || "").toLowerCase().includes(searchText.toLowerCase()) ||
-            (c.brgy || "").toLowerCase().includes(searchText.toLowerCase());
+    const handleSearchTextChange = (value: string) => {
+        setSearchText(value);
+        setCustomerPage(1);
+    };
 
-        const activeBool = c.isActive === 1 || c.isActive === true;
-        if (statusFilter === "active") return matchesSearch && activeBool;
-        if (statusFilter === "inactive") return matchesSearch && !activeBool;
-        return matchesSearch;
-    });
+    const handleStatusFilterChange = (value: CustomerStatusFilter) => {
+        setStatusFilter(value);
+        setCustomerPage(1);
+    };
+
+    const handleCustomerPageChange = (page: number) => {
+        const lastPage = customerPagination.totalPages || 1;
+        setCustomerPage(Math.min(Math.max(page, 1), lastPage));
+    };
+
+    const handleCustomerPageSizeChange = (pageSize: number) => {
+        if (!CUSTOMER_PAGE_SIZE_OPTIONS.includes(pageSize as typeof CUSTOMER_PAGE_SIZE_OPTIONS[number])) return;
+        setCustomerPageSize(pageSize);
+        setCustomerPage(1);
+    };
 
     return {
-        customers: filteredCustomers,
+        customers,
+        customerPage,
+        customerPageSize,
+        customerPagination,
+        customerPageError,
         storeTypes,
         setStoreTypes,
         priceTypes,
         loading,
         searchText,
-        setSearchText,
+        setSearchText: handleSearchTextChange,
         statusFilter,
-        setStatusFilter,
+        setStatusFilter: handleStatusFilterChange,
+        setCustomerPage: handleCustomerPageChange,
+        setCustomerPageSize: handleCustomerPageSizeChange,
         isModalOpen,
         setIsModalOpen,
         editingCustomer,
@@ -557,6 +659,6 @@ export function useClients() {
         loadingBomSettings,
         bomSettingsError,
         updateProductVersionOverride,
-        refresh: loadData
+        refresh: refreshCustomers
     };
 }
