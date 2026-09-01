@@ -104,8 +104,6 @@ export type PriceChangeBatchLine = {
 export type PriceChangeBatchHeader = {
     id: number;
     header_id: number;
-    supplier_id: number | null;
-    supplier_name?: string;
     reference_no?: string;
     remarks?: string;
     status: PriceChangeBatchStatus;
@@ -217,8 +215,11 @@ export type UnifiedBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
+    version_id?: number | null;
     version_name?: string | null;
     unit_name?: string;
+    supplier_id?: number | null;
+    supplier_name?: string | null;
     price_type_id?: number;
     price_type_name?: string;
     product_type_id?: number | null;
@@ -241,8 +242,6 @@ export type UnifiedBatchLine = {
 export type UnifiedBatchDetail = {
     id: number;
     header_id: number;
-    supplier_id: number | null;
-    supplier_name: string;
     reference_no: string;
     remarks: string;
     status: string;

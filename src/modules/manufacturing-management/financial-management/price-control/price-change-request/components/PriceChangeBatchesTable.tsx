@@ -80,7 +80,6 @@ export function PriceChangeBatchesTable({
                 <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
                     <TableRow>
                         <TableHead className="w-[120px]">Batch #</TableHead>
-                        <TableHead className="w-[220px]">Supplier</TableHead>
                         <TableHead>Remarks</TableHead>
                         <TableHead className="w-[90px] text-right">Lines</TableHead>
                         <TableHead className="w-[120px]">Status</TableHead>
@@ -91,14 +90,14 @@ export function PriceChangeBatchesTable({
                 <TableBody>
                     {loading ? (
                         <TableRow>
-                            <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                            <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
                                 <Loader2 className="mx-auto mb-2 size-5 animate-spin" />
                                 Loading batches
                             </TableCell>
                         </TableRow>
                     ) : rows.length === 0 ? (
                         <TableRow>
-                            <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                            <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
                                 No price change batches found.
                             </TableCell>
                         </TableRow>
@@ -111,9 +110,6 @@ export function PriceChangeBatchesTable({
                             return (
                                 <TableRow key={headerId}>
                                     <TableCell className="font-medium">PCB-{headerId}</TableCell>
-                                    <TableCell className="max-w-[220px] truncate">
-                                        {row.supplier_name || (row.supplier_id ? `Supplier #${row.supplier_id}` : "-")}
-                                    </TableCell>
                                     <TableCell className="max-w-[420px]">
                                         <div className="line-clamp-2">{row.remarks || "-"}</div>
                                         {row.reference_no ? (

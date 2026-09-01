@@ -603,12 +603,9 @@ export function supplierLabelOf(value: unknown): string {
 
 export function mapBatchHeaderResponse(row: BatchHeaderRow, lineCount = 0) {
     const headerId = normalizeHeaderId(row);
-    const supplierId = supplierIdOf(row.supplier_id);
     return {
         id: headerId,
         header_id: headerId,
-        supplier_id: supplierId,
-        supplier_name: supplierLabelOf(row.supplier_id),
         reference_no: row.reference_no ?? "",
         remarks: row.remarks ?? "",
         status: row.status ?? "PENDING",
@@ -721,12 +718,10 @@ export async function normalizeBatchCreateLines(rawLines: BatchCreateLineInput[]
 
 export async function createPriceBatchHeader(args: {
     userId: number;
-    supplierId: number;
     referenceNo: string;
     remarks: string;
 }) {
     const headerPayload = {
-        supplier_id: args.supplierId,
         reference_no: args.referenceNo || null,
         remarks: args.remarks,
         status: "PENDING",
@@ -755,10 +750,11 @@ export async function createPriceBatchHeader(args: {
 export async function createPriceBatchDetails(args: {
     userId: number;
     headerId: number;
+    supplierId: number;
     linesToCreate: NormalizedBatchCreateLine[];
     requestedAt?: string;
 }) {
-    const { userId, headerId, linesToCreate } = args;
+    const { userId, headerId, supplierId, linesToCreate } = args;
     if (linesToCreate.length === 0) {
         return { created: 0, detailRows: [] as BatchDetailRow[] };
     }
@@ -773,6 +769,7 @@ export async function createPriceBatchDetails(args: {
     const detailPayload = snapshottedLines.map((line) => ({
         header_id: headerId,
         product_id: line.product_id,
+        supplier_id: supplierId,
         version_id: line.version_id,
         price_type_id: line.price_type_id,
         current_price: line.current_price,
@@ -812,10 +809,11 @@ export async function createPendingPriceBatch(args: {
         throw new Error("linesToCreate must be non-empty");
     }
 
-    const header = await createPriceBatchHeader({ userId, supplierId, referenceNo, remarks });
+    const header = await createPriceBatchHeader({ userId, referenceNo, remarks });
     const details = await createPriceBatchDetails({
         userId,
         headerId: header.headerId,
+        supplierId,
         linesToCreate,
         requestedAt: header.requestedAt,
     });
@@ -833,12 +831,6 @@ export async function getHeader(headerId: number) {
         "fields",
         [
             "header_id",
-            "supplier_id",
-            "supplier_id.id",
-            "supplier_id.supplier_name",
-            "supplier_id.supplier_shortcut",
-            "supplier_id.isActive",
-            "supplier_id.nonBuy",
             "reference_no",
             "remarks",
             "status",
@@ -907,6 +899,10 @@ export async function getDetails(headerId: number) {
         "product_id.product_type",
         "product_id.product_type.id",
         "product_id.product_type.name",
+        "supplier_id",
+        "supplier_id.id",
+        "supplier_id.supplier_name",
+        "supplier_id.supplier_shortcut",
         "price_type_id",
         "price_type_id.price_type_id",
         "price_type_id.price_type_name",

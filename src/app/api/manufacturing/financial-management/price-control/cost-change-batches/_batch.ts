@@ -61,13 +61,6 @@ type DirectusUserRelation = {
 export type CostHeaderRow = {
     id?: number | string | null;
     header_id?: number | string | null;
-    supplier_id?: number | string | {
-        id?: number | string | null;
-        supplier_name?: string | null;
-        supplier_shortcut?: string | null;
-        isActive?: DirectusFlagValue;
-        nonBuy?: DirectusFlagValue;
-    } | null;
     reference_no?: string | null;
     remarks?: string | null;
     status?: string | null;
@@ -100,6 +93,11 @@ export type CostDetailRow = {
               product_name?: string | null;
           }
         | null;
+    supplier_id?: number | string | {
+        id?: number | string | null;
+        supplier_name?: string | null;
+        supplier_shortcut?: string | null;
+    } | null;
     current_cost?: number | string | null;
     proposed_cost?: number | string | null;
     status?: string | null;
@@ -176,12 +174,9 @@ export function isCostBatchStorageSetupError(error: unknown): error is Error {
 
 export function mapCostBatchHeaderResponse(row: CostHeaderRow, lineCount = 0) {
     const headerId = normalizeCostHeaderId(row);
-    const supplierId = pickId(row.supplier_id);
     return {
         id: headerId,
         header_id: headerId,
-        supplier_id: supplierId,
-        supplier_name: supplierNameOf(row.supplier_id) || null,
         reference_no: row.reference_no ?? "",
         remarks: row.remarks ?? "",
         status: row.status ?? "PENDING",
@@ -223,6 +218,7 @@ export async function createCostBatchDetails(args: {
     const detailPayload = validatedItems.map((item) => ({
         header_id: headerId,
         product_id: item.product_id,
+        supplier_id: item.supplier_id ?? null,
         current_cost: item.current_cost,
         proposed_cost: item.proposed_cost,
         status: "PENDING",
@@ -284,7 +280,6 @@ export async function createPendingCostBatch(args: {
     const requestedAt = nowManila();
     const referenceNo = resolveBatchReferenceNo(args.referenceNo, requestedAt);
     const headerPayload = {
-        ...(args.supplierId ? { supplier_id: args.supplierId } : {}),
         reference_no: referenceNo,
         remarks: args.remarks?.trim() || "List cost change request",
         status: "PENDING",
@@ -404,6 +399,10 @@ export async function getCostDetails(headerId: number) {
             "product_id.product_type",
             "product_id.product_type.id",
             "product_id.product_type.name",
+            "supplier_id",
+            "supplier_id.id",
+            "supplier_id.supplier_name",
+            "supplier_id.supplier_shortcut",
             "current_cost",
             "proposed_cost",
             "status",

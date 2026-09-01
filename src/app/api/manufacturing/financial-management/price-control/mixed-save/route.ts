@@ -123,7 +123,6 @@ export async function POST(req: NextRequest) {
                 await assertCostBatchStorageReady();
                 const sharedHeader = await createPriceBatchHeader({
                     userId,
-                    supplierId,
                     referenceNo,
                     remarks,
                 });
@@ -132,6 +131,7 @@ export async function POST(req: NextRequest) {
                 const priceCreated = await createPriceBatchDetails({
                     userId,
                     headerId: sharedHeaderId,
+                    supplierId,
                     linesToCreate: pricePlan!.linesToCreate,
                     requestedAt: sharedHeader.requestedAt,
                 });

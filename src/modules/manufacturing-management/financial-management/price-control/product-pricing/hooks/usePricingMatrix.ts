@@ -616,8 +616,8 @@ export function usePricingMatrix(args: {
             const meta = dirtyMeta.get(k);
             const product = findProductInRows(rows, productId);
             const pObj = typeof product?.product_id === "object" ? product?.product_id : null;
-            const product_name = meta?.product_name ?? pObj?.product_name ?? `Product #${productId}`;
-            const product_code = meta?.product_code ?? pObj?.product_code ?? null;
+            const product_name = meta?.product_name ?? pObj?.product_name ?? product?.product_name ?? `Product #${productId}`;
+            const product_code = meta?.product_code ?? pObj?.product_code ?? product?.product_code ?? null;
 
             if (!price.trim()) {
                 const validation_error = dirtyErrors.get(k) ?? EMPTY_PRICE_ERROR;
