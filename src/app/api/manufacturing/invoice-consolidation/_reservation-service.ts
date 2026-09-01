@@ -260,6 +260,7 @@ async function directusJson(url: string, init?: RequestInit) {
 }
 
 export async function loadCandidateDocuments(documentIds: number[], _branchId?: number): Promise<{ invoices: InvoiceRow[]; details: DetailRow[] }> {
+    void _branchId;
     if (!documentIds || documentIds.length === 0) {
         return { invoices: [], details: [] };
     }
