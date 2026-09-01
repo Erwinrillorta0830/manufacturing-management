@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "next/navigation";
 import { InvoiceConsolidation, Branch } from "../shared/consolidation-types";
 import { fetchPickingQueue, fetchBranches } from "../shared/consolidation-api";
+import PickingModal from "./components/PickingModal";
 import {
     ConsolidationEmptyState,
     ConsolidationHeader,
@@ -25,6 +26,8 @@ export default function PickingQueueModule() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [selectedBranchId, setSelectedBranchId] = useState<number | undefined>(undefined);
     const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [selectedBatch, setSelectedBatch] = useState<InvoiceConsolidation | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
 
     useEffect(() => {
         const handler = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -60,7 +63,8 @@ export default function PickingQueueModule() {
     }, [loadBatches]);
 
     const handleBatchClick = (batch: InvoiceConsolidation) => {
-        router.push(`/mm/sales-and-fulfillment/consolidation-picking/${encodeURIComponent(batch.consolidatorNo)}`);
+        setSelectedBatch(batch);
+        setIsModalOpen(true);
     };
 
     const progressPct = (batch: InvoiceConsolidation) => {
@@ -168,6 +172,18 @@ export default function PickingQueueModule() {
                     </div>
                 )}
             </ConsolidationSection>
+
+            <PickingModal
+                isOpen={isModalOpen}
+                batch={selectedBatch}
+                onClose={() => {
+                    setIsModalOpen(false);
+                    setSelectedBatch(null);
+                }}
+                onSuccess={() => {
+                    loadBatches();
+                }}
+            />
         </ConsolidationShell>
     );
 }

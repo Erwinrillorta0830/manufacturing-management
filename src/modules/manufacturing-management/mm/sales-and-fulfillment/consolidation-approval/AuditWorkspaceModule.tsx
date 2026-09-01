@@ -37,7 +37,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
             .then(setConsolidation)
             .catch(() => {
                 toast.error("Failed to load batch");
-                router.push("/mm/consolidation/auditing");
+                router.push("/mm/sales-and-fulfillment/consolidation-approval");
             })
             .finally(() => setLoading(false));
     }, [batchNo, router]);
@@ -81,7 +81,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
         try {
             const result = await repickBatch(consolidation.id);
             toast.success(result.message || "Batch returned to picking floor");
-            router.push("/mm/consolidation/picking");
+            router.push("/mm/sales-and-fulfillment/consolidation-picking");
         } catch (e) {
             const err = e as Error;
             toast.error(err.message || "Failed to re-pick batch");
@@ -115,7 +115,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                     <Button
                         variant="outline"
                         size="icon"
-                        onClick={() => router.push("/mm/consolidation/auditing")}
+                        onClick={() => router.push("/mm/sales-and-fulfillment/consolidation-approval")}
                         className="h-9 w-9 shrink-0 rounded-xl"
                         disabled={submitting}
                         suppressHydrationWarning
@@ -242,7 +242,7 @@ export default function AuditWorkspaceModule({ batchNo }: AuditWorkspaceModulePr
                     </Button>
                     <Button
                         variant="outline"
-                        onClick={() => router.push("/mm/consolidation/auditing")}
+                        onClick={() => router.push("/mm/sales-and-fulfillment/consolidation-approval")}
                         disabled={submitting}
                         className="text-xs font-bold"
                         suppressHydrationWarning

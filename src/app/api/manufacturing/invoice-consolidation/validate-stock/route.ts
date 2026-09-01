@@ -48,48 +48,63 @@ export async function GET(req: NextRequest) {
             .filter(Boolean);
         if (invoiceIds.length === 0) return NextResponse.json({ availability: [] });
 
-        const detailsRes = await fetch(
-            `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!detailsRes.ok) {
-            return NextResponse.json({ message: "Failed to load invoice details" }, { status: 502 });
+        let details: { detail_id: number; product_id?: number }[] = [];
+        if (invoiceIds.length > 0) {
+            const [sodRes, sidRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
+            if (sodRes.ok) details.push(...((await sodRes.json()).data || []));
+            if (sidRes.ok) details.push(...((await sidRes.json()).data || []));
         }
-        const detailIds: number[] = ((await detailsRes.json()).data || [])
-            .map((row: { detail_id: number }) => Number(row.detail_id))
-            .filter(Boolean);
+
+        const detailIds: number[] = details.map((d) => Number(d.detail_id)).filter(Boolean);
         if (detailIds.length === 0) return NextResponse.json({ availability: [] });
 
-        const reservationRes = await fetch(
-            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.quantity,quantity&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!reservationRes.ok) {
-            return NextResponse.json({ message: "Failed to load reserved invoice stock" }, { status: 502 });
-        }
+        const [soRes, siRes] = await Promise.all([
+            fetch(
+                `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=product_id,inventory_lot_id,reserved_quantity&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            ),
+            fetch(
+                `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.quantity,quantity&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            ),
+        ]);
 
-        const reservations: ReservationRow[] = (await reservationRes.json()).data || [];
-        const reservedByLot = new Map<number, { productId: number; physicalQuantity: number; reservedQuantity: number }>();
-        for (const reservation of reservations) {
-            const lot = typeof reservation.inventory_lot_id === "object" ? reservation.inventory_lot_id : null;
-            const lotId = Number(lot?.id || reservation.inventory_lot_id || 0);
-            const productId = Number(lot?.product_id || 0);
-            if (!lotId || !productId) continue;
-            const current = reservedByLot.get(lotId) || {
-                productId,
-                physicalQuantity: Number(lot?.quantity || 0),
-                reservedQuantity: 0,
-            };
-            current.reservedQuantity += Number(reservation.quantity || 0);
-            reservedByLot.set(lotId, current);
+        const reservations: Array<{ productId: number; quantity: number }> = [];
+        if (soRes.ok) {
+            for (const r of (await soRes.json()).data || []) {
+                reservations.push({
+                    productId: Number(r.product_id || 0),
+                    quantity: Number(r.reserved_quantity ?? r.quantity ?? 0),
+                });
+            }
+        }
+        if (siRes.ok) {
+            for (const r of (await siRes.json()).data || []) {
+                const lot = typeof r.inventory_lot_id === "object" ? r.inventory_lot_id : null;
+                const pId = Number(lot?.product_id || 0);
+                if (pId) {
+                    reservations.push({
+                        productId: pId,
+                        quantity: Number(r.quantity || 0),
+                    });
+                }
+            }
         }
 
         const totals = new Map<number, number>();
-        for (const lot of reservedByLot.values()) {
-            totals.set(
-                lot.productId,
-                (totals.get(lot.productId) || 0) + Math.min(lot.physicalQuantity, lot.reservedQuantity)
-            );
+        for (const r of reservations) {
+            if (r.productId > 0) {
+                totals.set(r.productId, (totals.get(r.productId) || 0) + r.quantity);
+            }
         }
 
         return NextResponse.json({

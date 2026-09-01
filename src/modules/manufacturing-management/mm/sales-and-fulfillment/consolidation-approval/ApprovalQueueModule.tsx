@@ -17,6 +17,8 @@ import {
     FilterField,
 } from "../shared/consolidation-ui";
 
+import { ApprovalModal } from "./components/ApprovalModal";
+
 export default function ApprovalQueueModule() {
     const router = useRouter();
     const [batches, setBatches] = useState<InvoiceConsolidation[]>([]);
@@ -25,6 +27,8 @@ export default function ApprovalQueueModule() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [selectedBranchId, setSelectedBranchId] = useState<number | undefined>(undefined);
     const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [selectedBatch, setSelectedBatch] = useState<InvoiceConsolidation | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
 
     useEffect(() => {
         const handler = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -60,7 +64,8 @@ export default function ApprovalQueueModule() {
     }, [loadBatches]);
 
     const handleBatchClick = (batch: InvoiceConsolidation) => {
-        router.push(`/mm/sales-and-fulfillment/consolidation-approval/${encodeURIComponent(batch.consolidatorNo)}`);
+        setSelectedBatch(batch);
+        setIsModalOpen(true);
     };
 
     const progressPct = (batch: InvoiceConsolidation) => {
@@ -156,7 +161,7 @@ export default function ApprovalQueueModule() {
 
                                     <div className="mt-4 flex items-center justify-between">
                                         <span className="text-[10px] font-bold text-muted-foreground">
-                                            {batch.invoices?.length || 0} invoice(s) &middot; {productCount(batch)} product(s)
+                                            {batch.invoices?.length || 0} order(s) &middot; {productCount(batch)} product(s)
                                         </span>
                                         <span className="text-[9px] font-black uppercase tracking-widest text-violet-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                                             Approve &rarr;
@@ -168,6 +173,17 @@ export default function ApprovalQueueModule() {
                     </div>
                 )}
             </ConsolidationSection>
+
+            {/* In-Page Approval Modal Dialog */}
+            <ApprovalModal
+                batch={selectedBatch}
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSuccess={() => {
+                    loadBatches();
+                    setIsModalOpen(false);
+                }}
+            />
         </ConsolidationShell>
     );
 }

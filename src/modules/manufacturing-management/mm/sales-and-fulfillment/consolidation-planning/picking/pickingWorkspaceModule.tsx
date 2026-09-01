@@ -33,7 +33,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
             .then(setConsolidation)
             .catch(() => {
                 toast.error("Failed to load consolidation");
-                router.push("/mm/consolidation/picking");
+                router.push("/mm/sales-and-fulfillment/consolidation-picking");
             })
             .finally(() => setLoading(false));
     }, [batchNo, router]);
@@ -60,7 +60,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
         try {
             const result = await completePicking(batchId);
             toast.success(result.message || "Picking completed");
-            router.push("/mm/consolidation/picking");
+            router.push("/mm/sales-and-fulfillment/consolidation-picking");
             return true;
         } catch (e) {
             const err = e as Error;
@@ -72,7 +72,7 @@ export default function PickingWorkspaceModule({ batchNo }: PickingWorkspaceModu
     }, [router]);
 
     const handleClose = useCallback(() => {
-        router.push("/mm/consolidation/picking");
+        router.push("/mm/sales-and-fulfillment/consolidation-picking");
     }, [router]);
 
     const {
