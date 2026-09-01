@@ -59,6 +59,8 @@ export function JobOrderShiftLogModal({
     const [selectedLotId, setSelectedLotId] = useState<string>("");
     const [shiftQAStatus, setShiftQAStatus] = useState<"Passed" | "QA Hold" | "Pending">("Pending");
     const [shiftMaterials, setShiftMaterials] = useState<any[]>([]);
+    const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
+    const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
@@ -93,6 +95,38 @@ export function JobOrderShiftLogModal({
         return options;
     }, [selectedJobOrder]);
 
+    const loadShiftMaterials = useCallback(async () => {
+        const joId = selectedJobOrder?.order_id || selectedJobOrder?.job_order_id;
+        if (!joId) return;
+
+        setLoadingShiftMaterials(true);
+        setMaterialsLoadError(null);
+
+        try {
+            const response = await fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${joId}&_t=${Date.now()}`);
+            const data = await response.json().catch(() => null);
+
+            if (!response.ok) {
+                throw new Error(data?.error || `Failed to load Job Order materials (${response.status})`);
+            }
+            if (!Array.isArray(data)) {
+                throw new Error("Job Order materials lookup returned an invalid response");
+            }
+
+            setShiftMaterials(data.map((m: any) => ({
+                ...m,
+                actual_qty: String((Number(m.allocated_quantity || 0) * 0.5).toFixed(2))
+            })));
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to load Job Order materials";
+            setShiftMaterials([]);
+            setMaterialsLoadError(message);
+            console.error("Error loading Job BOM materials for shift log:", err);
+        } finally {
+            setLoadingShiftMaterials(false);
+        }
+    }, [selectedJobOrder]);
+
     // Fetch full Job Order BOM materials, physical lots, and rejection reasons
     useEffect(() => {
         if (open && selectedJobOrder && (selectedJobOrder.order_id || selectedJobOrder.job_order_id)) {
@@ -101,6 +135,8 @@ export function JobOrderShiftLogModal({
             setSelectedReasonId("");
             setRejectionRemarks("");
             setShiftQAStatus("Pending");
+            setShiftMaterials([]);
+            setMaterialsLoadError(null);
             setProductionDay("1");
             
             const todayStr = new Date().toISOString().split("T")[0];
@@ -130,18 +166,9 @@ export function JobOrderShiftLogModal({
                 .catch((err) => console.error("Error loading rejection reasons:", err));
 
             // Fetch all BOM materials for the whole Job Order
-            const joId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
-            fetch(`/api/manufacturing/planning-engineering?action=job-materials&joId=${joId}&_t=${Date.now()}`)
-                .then((res) => res.json())
-                .then((data) => {
-                    setShiftMaterials(data.map((m: any) => ({
-                        ...m,
-                        actual_qty: String((Number(m.allocated_quantity || 0) * 0.5).toFixed(2))
-                    })));
-                })
-                .catch((err) => console.error("Error loading Job BOM materials for shift log:", err));
+            void loadShiftMaterials();
         }
-    }, [open, selectedJobOrder, getAvailableShifts]);
+    }, [open, selectedJobOrder, getAvailableShifts, loadShiftMaterials]);
 
     const groupedJobOperators = React.useMemo(() => {
         const groups: Record<number, {
@@ -361,8 +388,8 @@ export function JobOrderShiftLogModal({
     };
 
     const hasInsufficiency = shiftMaterials.some(m => Number(m.actual_qty || 0) > Number(m.available_stock || 0));
-    const isSubmitDisabled = submittingShiftLog || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
-    const isPrintDisabled = hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
+    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
+    const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
 
     return (
         <>
@@ -591,7 +618,23 @@ export function JobOrderShiftLogModal({
                                         </Badge>
                                     </div>
 
-                                    {shiftMaterials.length === 0 ? (
+                                    {loadingShiftMaterials ? (
+                                        <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
+                                            Loading required raw materials...
+                                        </div>
+                                    ) : materialsLoadError ? (
+                                        <div className="p-6 bg-red-500/5 rounded-lg text-red-700 text-center border border-red-500/20 flex-1 flex flex-col items-center justify-center gap-3" role="alert">
+                                            <AlertTriangle className="h-5 w-5" />
+                                            <div>
+                                                <p className="font-semibold">Required raw materials are unavailable.</p>
+                                                <p className="text-xs mt-1">Backflush submission is disabled until the materials lookup succeeds.</p>
+                                                <p className="text-[11px] mt-1 opacity-80">{materialsLoadError}</p>
+                                            </div>
+                                            <Button type="button" variant="outline" onClick={() => void loadShiftMaterials()}>
+                                                Retry Materials Lookup
+                                            </Button>
+                                        </div>
+                                    ) : shiftMaterials.length === 0 ? (
                                         <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
                                             No raw materials pre-allocated for this workstation.
                                         </div>
