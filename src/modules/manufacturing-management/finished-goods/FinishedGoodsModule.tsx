@@ -866,16 +866,6 @@ export default function FinishedGoodsModule() {
                                     {versions.length}
                                 </span>
                             </div>
-                            <button
-                                type="button"
-                                onClick={handleOpenVersionModal}
-                                disabled={!selectedProduct}
-                                className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Register a new version recipe"
-                            >
-                                <Plus className="h-3 w-3" />
-                                New
-                            </button>
                         </div>
 
                         {/* Compare Matrix + Sync Yield Toolbar */}
