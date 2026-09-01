@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { InvoiceConsolidation, CandidateInvoice, StatusSummary, CreateConsolidationPayload, AuditPayload, PickingSavePayload, Branch, AllocationPreview } from "../types";
 
 let refreshPromise: Promise<boolean> | null = null;
@@ -27,6 +28,10 @@ async function fetchWithSessionRetry(input: RequestInfo | URL, init?: RequestIni
 
 async function handleResponse(res: Response, fallback: string) {
     if (!res.ok) {
+        if (res.status === 401) {
+            toast.error("Authentication Expired, please log in again");
+            throw new Error("Authentication Expired, please log in again");
+        }
         let msg = fallback;
         try {
             const data = await res.json();

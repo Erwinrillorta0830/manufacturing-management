@@ -10,7 +10,10 @@ interface WarehouseRackViewProps {
     batches: Batch[];
     loading: boolean;
     selectedProductId?: number | "ALL";
-    onEditLot: (lot: Lot) => void;
+    selectedLotId?: number | "ALL";
+    selectedBatchId?: number | "ALL";
+    searchQuery?: string;
+    onEditLot?: (lot: Lot) => void;
     onAddBatchToLot?: (lotId: number) => void;
     onEditBatch?: (batch: Batch) => void;
     onViewBatchMovements?: (batch: Batch) => void;
@@ -22,6 +25,9 @@ export default function WarehouseRackView({
     batches,
     loading,
     selectedProductId = "ALL",
+    selectedLotId = "ALL",
+    selectedBatchId = "ALL",
+    searchQuery = "",
     onEditLot,
     onViewBatchMovements,
     onViewLotMovements
@@ -40,14 +46,43 @@ export default function WarehouseRackView({
     }, [batches, selectedProductId]);
 
     const sortedLots = React.useMemo(() => {
-        if (selectedProductId === "ALL") {
-            return sortLotsByFefoExpiry(lots, batches, "ALL");
+        let baseLots = lots;
+        if (selectedLotId !== "ALL") {
+            baseLots = baseLots.filter((lot) => Number(lot.lotId) === Number(selectedLotId));
         }
-        const matchingLots = lots.filter((lot) =>
-            batches.some((b) => b.lotId === lot.lotId && Number(b.productId) === Number(selectedProductId))
-        );
+
+        const query = (searchQuery || "").toLowerCase().trim();
+
+        const matchingLots = baseLots.filter((lot) => {
+            const lotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+
+            if (selectedProductId !== "ALL") {
+                const hasProduct = lotBatches.some((b) => Number(b.productId) === Number(selectedProductId));
+                if (!hasProduct) return false;
+            }
+
+            if (selectedBatchId !== "ALL") {
+                const hasBatch = lotBatches.some((b) => Number(b.batchId) === Number(selectedBatchId));
+                if (!hasBatch) return false;
+            }
+
+            if (query) {
+                const lotNameMatches = lot.lotName?.toLowerCase().includes(query);
+                const hasMatchingBatch = lotBatches.some(
+                    (b) =>
+                        b.batchNumber?.toLowerCase().includes(query) ||
+                        b.productName?.toLowerCase().includes(query) ||
+                        b.itemCode?.toLowerCase().includes(query) ||
+                        b.remarks?.toLowerCase().includes(query)
+                );
+                if (!lotNameMatches && !hasMatchingBatch) return false;
+            }
+
+            return true;
+        });
+
         return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
-    }, [lots, batches, selectedProductId]);
+    }, [lots, batches, selectedProductId, selectedLotId, selectedBatchId, searchQuery]);
 
     if (loading) {
         return (
@@ -64,19 +99,21 @@ export default function WarehouseRackView({
                 <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
                 <span className="text-base font-bold text-foreground">No Warehouse Storage Racks Configured</span>
                 <p className="text-xs max-w-sm mt-1">
-                    Click &quot;Add Rack / Lot&quot; above to create your first warehouse rack bay.
+                    Configure warehouse storage locations and racks in the Lot Registry module.
                 </p>
             </div>
         );
     }
 
-    if (sortedLots.length === 0 && selectedProductId !== "ALL") {
+    const hasActiveFilter = selectedProductId !== "ALL" || selectedLotId !== "ALL" || selectedBatchId !== "ALL" || !!searchQuery.trim();
+
+    if (sortedLots.length === 0 && hasActiveFilter) {
         return (
             <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card rounded-xl border border-border">
                 <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
-                <span className="text-base font-bold text-foreground">No Storage Racks with Batches for this Product</span>
+                <span className="text-base font-bold text-foreground">No Storage Racks Matching Selected Filters</span>
                 <p className="text-xs max-w-sm mt-1">
-                    There are currently no registered batches stored in any warehouse rack for the selected product.
+                    There are currently no registered batches or storage racks matching your filter criteria.
                 </p>
             </div>
         );
@@ -87,9 +124,22 @@ export default function WarehouseRackView({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {sortedLots.map((lot) => {
                     const rawLotBatches = batches.filter((b) => {
-                        if (b.lotId !== lot.lotId) return false;
+                        if (Number(b.lotId) !== Number(lot.lotId)) return false;
                         if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
                             return false;
+                        }
+                        if (selectedBatchId !== "ALL" && Number(b.batchId) !== Number(selectedBatchId)) {
+                            return false;
+                        }
+                        if (searchQuery.trim()) {
+                            const q = searchQuery.toLowerCase().trim();
+                            const matches =
+                                lot.lotName?.toLowerCase().includes(q) ||
+                                b.batchNumber?.toLowerCase().includes(q) ||
+                                b.productName?.toLowerCase().includes(q) ||
+                                b.itemCode?.toLowerCase().includes(q) ||
+                                b.remarks?.toLowerCase().includes(q);
+                            if (!matches) return false;
                         }
                         return true;
                     });
@@ -97,10 +147,13 @@ export default function WarehouseRackView({
                     const isExpanded = !!expandedLots[lot.lotId];
                     const visibleBatches = isExpanded ? fefoSortedBatches : fefoSortedBatches.slice(0, 5);
                     const hasMoreThan5 = fefoSortedBatches.length > 5;
-                    const totalQty = rawLotBatches.reduce((sum, b) => sum + (b.quantity || 0), 0);
+
+                    // Physical rack occupancy and capacity reflect all inventory stored in this rack (unaffected by active product/batch filters)
+                    const allLotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+                    const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
                     const capacityPercent = Math.min(
                         100,
-                        lot.maxBatchCapacity > 0 ? Math.round((totalQty / lot.maxBatchCapacity) * 100) : 0
+                        lot.maxBatchCapacity > 0 ? Math.round((totalRackOccupancy / lot.maxBatchCapacity) * 100) : 0
                     );
 
                     // Capacity status color
@@ -155,15 +208,17 @@ export default function WarehouseRackView({
                                                 <History className="h-3.5 w-3.5" />
                                             </Button>
                                         )}
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => onEditLot(lot)}
-                                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                            title="Edit Rack Settings"
-                                        >
-                                            <Pencil className="h-3.5 w-3.5" />
-                                        </Button>
+                                        {onEditLot && (
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => onEditLot(lot)}
+                                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                                title="Edit Rack Settings"
+                                            >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
 
@@ -171,7 +226,7 @@ export default function WarehouseRackView({
                                 <div className="mt-3.5 space-y-1.5">
                                     <div className="flex items-center justify-between text-[11px]">
                                         <span className="font-semibold text-muted-foreground">
-                                            Occupancy: {totalQty.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
+                                            Occupancy: {totalRackOccupancy.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
                                         </span>
                                         <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] border ${progressBadgeClass}`}>
                                             {capacityPercent}%

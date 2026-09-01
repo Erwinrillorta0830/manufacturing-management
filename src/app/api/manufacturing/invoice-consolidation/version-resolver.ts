@@ -75,6 +75,25 @@ export async function resolveVersions(
             }
         }
 
+        // Fallback: For products with no "Active" status version, fetch any latest version
+        const missingProductIds = Array.from(activeVersionProductIds).filter((pid) => !activeByProduct.has(pid));
+        if (missingProductIds.length > 0) {
+            const fallbackFilter = encodeURIComponent(JSON.stringify({ product_id: { _in: missingProductIds } }));
+            const fallbackRes = await fetch(
+                `${DIRECTUS_URL}/items/product_manufacturing_version?filter=${fallbackFilter}&sort=-version_id&limit=-1&fields=version_id,product_id,version_name`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (fallbackRes.ok) {
+                const fallbackData: { version_id: number; product_id: number; version_name: string }[] = (await fallbackRes.json()).data || [];
+                for (const fv of fallbackData) {
+                    if (!activeByProduct.has(fv.product_id)) {
+                        activeByProduct.set(fv.product_id, { versionId: fv.version_id, versionName: fv.version_name });
+                        resolvedVersionIds.add(fv.version_id);
+                    }
+                }
+            }
+        }
+
         for (const key of Array.from(versionPairs.keys())) {
             if (versionMap.has(key)) continue;
             const pair = versionPairs.get(key)!;

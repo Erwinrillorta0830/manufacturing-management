@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import type {
     InvoiceConsolidation,
     CandidateInvoice,
@@ -33,6 +34,10 @@ async function fetchWithSessionRetry(input: RequestInfo | URL, init?: RequestIni
 
 async function handleResponse(res: Response, fallback: string) {
     if (!res.ok) {
+        if (res.status === 401) {
+            toast.error("Authentication Expired, please log in again");
+            throw new Error("Authentication Expired, please log in again");
+        }
         let msg = fallback;
         try { const d = await res.json(); if (d?.message) msg = d.message; } catch {}
         throw new Error(msg);
@@ -179,8 +184,17 @@ export async function fetchStockAvailability(batchId: number): Promise<ProductSt
 }
 
 export interface LotAllocation {
-    productId: number; productName: string; lotId: number; lotName: string;
-    batchNo: string; expiryDate: string | null; manufacturingDate: string | null; quantity: number;
+    productId: number;
+    productName: string;
+    lotId: number;
+    lotName: string;
+    batchNo: string;
+    expiryDate: string | null;
+    manufacturingDate: string | null;
+    quantity: number;
+    inventoryLotId?: number;
+    reservationIds?: number[];
+    status?: string;
 }
 
 export async function fetchAllocations(batchId: number): Promise<LotAllocation[]> {

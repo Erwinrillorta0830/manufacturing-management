@@ -36,7 +36,13 @@ export function useInvoicing() {
         }
     }, []);
 
-    useEffect(() => { void refresh(); }, [refresh]);
+    useEffect(() => {
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) void refresh();
+        });
+        return () => { cancelled = true; };
+    }, [refresh]);
 
     const applyFilters = (patch: Partial<InvoicingFilters>) => {
         const next = { ...filters, ...patch };

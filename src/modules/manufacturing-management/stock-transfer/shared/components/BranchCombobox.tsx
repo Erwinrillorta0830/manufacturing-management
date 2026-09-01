@@ -69,6 +69,7 @@ export function BranchCombobox({
         <ComboboxList>
           {branches.length === 0 && <ComboboxEmpty>No branches available.</ComboboxEmpty>}
           {branches
+            .filter(b => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
             .filter(b => {
               const label = getBranchLabel(b);
               if (selectedBranch && search.toLowerCase() === getBranchLabel(selectedBranch).toLowerCase()) {

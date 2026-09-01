@@ -238,6 +238,7 @@ export interface InventoryMovement {
     postedBy?: number;
     branchId?: number;
     inventoryLotId?: number;
+    batchId?: number;
     lotId?: number;
     lotName?: string;
     productId: number;

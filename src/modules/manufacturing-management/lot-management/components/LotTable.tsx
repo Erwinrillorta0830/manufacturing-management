@@ -24,7 +24,7 @@ interface LotTableProps {
     loading: boolean;
     searchQuery: string;
     onSearchChange: (value: string) => void;
-    onEdit: (lot: Lot) => void;
+    onEdit?: (lot: Lot) => void;
     onRefresh?: () => void;
     onAddClick?: () => void;
 }
@@ -62,11 +62,8 @@ export default function LotTable({
                         />
                     </div>
                 </div>
-                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
-                    {/* <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
-                        <RefreshCw className="h-4 w-4" />
-                    </Button> */}
-                    {onAddClick && (
+                {onAddClick && (
+                    <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
                         <Button
                             onClick={onAddClick}
                             className="h-9 gap-1.5 shadow-md shadow-primary/15 shrink-0"
@@ -74,8 +71,8 @@ export default function LotTable({
                             <Plus className="h-4 w-4" />
                             Add New Lot
                         </Button>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
 
             {/* Table Container */}
@@ -90,7 +87,7 @@ export default function LotTable({
                         <Boxes className="h-12 w-12 text-muted-foreground/30 mb-2" />
                         <span className="text-sm font-semibold">No storage lots found</span>
                         <p className="text-xs max-w-xs mt-1">
-                            Adjust your search or add a new lot to register a storage location.
+                            Adjust your search or register new storage racks in the Lot Registry module.
                         </p>
                     </div>
                 ) : (
@@ -102,7 +99,7 @@ export default function LotTable({
                                 <TableHead>UOM</TableHead>
                                 <TableHead>Max Capacity</TableHead>
                                 <TableHead>Created By</TableHead>
-                                <TableHead className="text-right w-[100px]">Actions</TableHead>
+                                {onEdit && <TableHead className="text-right w-[100px]">Actions</TableHead>}
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -112,7 +109,7 @@ export default function LotTable({
                                     <TableRow key={lot.lotId}>
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
                                         <TableCell className="font-semibold text-foreground">
-                                            {lot.lotName}
+                                             {lot.lotName}
                                         </TableCell>
                                         <TableCell>
                                             {unitLabel ? (
@@ -136,18 +133,20 @@ export default function LotTable({
                                         <TableCell className="text-muted-foreground">
                                             {lot.createdBy || "System"}
                                         </TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex justify-end gap-1">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={() => onEdit(lot)}
-                                                    className="h-8 w-8 text-muted-foreground hover:text-primary"
-                                                >
-                                                    <Pencil className="h-4 w-4" />
-                                                </Button>
-                                            </div>
-                                        </TableCell>
+                                        {onEdit && (
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end gap-1">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => onEdit(lot)}
+                                                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                                    >
+                                                        <Pencil className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        )}
                                     </TableRow>
                                 );
                             })}

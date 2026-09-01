@@ -146,6 +146,7 @@ export interface BatchItem {
     manufacturingDate?: string | null;
     expirationDate?: string | null;
     onhandQuantity: number;
+    pickedQuantity?: number;
 }
 
 export interface LineAvailability {
@@ -155,14 +156,18 @@ export interface LineAvailability {
     unitId?: number;
     requiredQuantity: number;
     onhandQuantity: number;
+    pickedQuantity?: number;
     isAvailable: boolean;
+    isPicked?: boolean;
     batches: BatchItem[];
 }
 
 export interface SalesOrderAvailability {
     salesOrderId: number;
     branchId: number;
+    consolidatorNo?: string;
     isFullyAvailable: boolean;
+    isFullyPicked?: boolean;
     lines: LineAvailability[];
 }
 

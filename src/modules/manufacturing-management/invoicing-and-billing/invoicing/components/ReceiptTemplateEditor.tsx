@@ -17,7 +17,13 @@ export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, 
     const [uploading, setUploading] = useState(false);
     const canvas = useRef<HTMLDivElement>(null);
 
-    useEffect(() => setTemplate(normalizeReceiptTemplate(initialTemplate)), [initialTemplate]);
+    useEffect(() => {
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (!cancelled) setTemplate(normalizeReceiptTemplate(initialTemplate));
+        });
+        return () => { cancelled = true; };
+    }, [initialTemplate]);
 
     useEffect(() => {
         const previous = document.body.style.overflow;

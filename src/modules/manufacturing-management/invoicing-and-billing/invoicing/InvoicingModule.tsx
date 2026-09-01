@@ -53,7 +53,7 @@ export default function InvoicingModule() {
         <div className="flex flex-col justify-between gap-3 rounded-xl border bg-card p-3 shadow-sm sm:flex-row sm:items-center">
             <div className="flex items-center gap-3">
                 <div className="rounded-xl border border-primary/20 bg-primary/10 p-2.5 text-primary"><FileCheck2 className="h-5 w-5" /></div>
-                <div><h2 className="text-sm font-black uppercase tracking-wide">Invoicing</h2><p className="text-[10px] text-muted-foreground">Convert approved sales orders to invoices</p></div>
+                <div><h2 className="text-sm font-black uppercase tracking-wide">Invoicing</h2><p className="text-[10px] text-muted-foreground">Convert picked sales orders to invoices and prepare for dispatch</p></div>
             </div>
             <button onClick={() => { void refresh(); }} disabled={loading} className="flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold hover:bg-muted disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />Refresh</button>
         </div>
@@ -61,7 +61,7 @@ export default function InvoicingModule() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
                 { icon: Users, label: "Customers", value: customerCount, color: "text-blue-600 bg-blue-500/10 border-blue-500/20" },
-                { icon: FileCheck2, label: "Approved Orders", value: orderCount, color: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20" },
+                { icon: FileCheck2, label: "Orders To Invoice", value: orderCount, color: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20" },
                 { icon: Building2, label: "Total Invoice Value", value: formatCurrency(totalInvoiceValue), color: "text-violet-600 bg-violet-500/10 border-violet-500/20", large: true },
             ].map(({ icon: Icon, label, value, color, large }) => <div key={label} className={`${FM.card} flex items-center gap-3`}>
                 <div className={`rounded-xl border p-2.5 ${color}`}><Icon className="h-5 w-5" /></div>
@@ -104,7 +104,7 @@ export default function InvoicingModule() {
         <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-4 lg:grid-cols-3">
         <div className="relative min-h-48 overflow-auto rounded-xl border bg-background p-3 shadow-sm md:p-4 lg:col-span-2">
             {loading && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
-            {!loading && groups.length === 0 ? <div className="py-16 text-center"><FileCheck2 className="mx-auto h-12 w-12 text-muted-foreground/20" /><h3 className="mt-3 text-xs font-bold uppercase">No Orders Found</h3><p className="mt-1 text-[10px] text-muted-foreground">No approved sales orders match the current filters.</p></div> : <>
+            {!loading && groups.length === 0 ? <div className="py-16 text-center"><FileCheck2 className="mx-auto h-12 w-12 text-muted-foreground/20" /><h3 className="mt-3 text-xs font-bold uppercase">No Orders Found</h3><p className="mt-1 text-[10px] text-muted-foreground">No picked sales orders match the current filters.</p></div> : <>
                 <div className="mb-3 flex items-center justify-between">
                     <p className="text-[10px] text-muted-foreground">{orderCount} order{orderCount === 1 ? "" : "s"} across {customerCount} customer{customerCount === 1 ? "" : "s"}</p>
                     <button onClick={toggleAll} disabled={groups.length === 0} className="flex items-center gap-1 rounded-lg border px-3 py-1 text-[9px] font-extrabold uppercase tracking-wider hover:bg-muted disabled:opacity-30">{allExpanded ? "Close All" : "Open All"}<ChevronDown className={`h-3 w-3 transition-transform ${allExpanded ? "" : "-rotate-90"}`} /></button>
@@ -144,7 +144,7 @@ export default function InvoicingModule() {
                                             <span>{order.branch_name || `Branch #${order.branch_id}`}</span>
                                             <span className="text-right font-bold text-foreground">{formatCurrency(Number(order.net_amount || order.total_amount || 0))}</span>
                                         </div>
-                                        <div className="mt-1.5 text-muted-foreground">{order.details.length} item{order.details.length === 1 ? "" : "s"} · <span className={FM.badge}>Approved</span></div>
+                                        <div className="mt-1.5 text-muted-foreground">{order.details.length} item{order.details.length === 1 ? "" : "s"} · <span className={FM.badge}>For Invoicing</span></div>
                                     </div>)}
                                 </div>
                             </div></td></tr>}

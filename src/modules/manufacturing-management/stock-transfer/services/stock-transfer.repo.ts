@@ -72,10 +72,12 @@ export async function fetchStockTransfers(status?: string): Promise<StockTransfe
  */
 export async function fetchBranches(): Promise<BranchRow[]> {
   const res = await fetchItems<BranchRow>("items/branches", {
-    fields: "id,branch_name,branch_code",
+    fields: "id,branch_name,branch_code,isActive",
     limit: -1,
   });
-  return res.data;
+  return (res.data || []).filter(
+    (b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1"
+  );
 }
 
 /**
