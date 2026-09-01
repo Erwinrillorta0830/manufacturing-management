@@ -180,11 +180,15 @@ export async function POST(request: Request) {
                     detailIds.push(detailId);
                 }
 
-                // Transition sales order to "For Consolidation"
+                // Transition sales order to "Dispatched"
                 await fetch(`${DIRECTUS_URL}/items/sales_order/${salesOrderId}`, {
                     method: "PATCH",
                     headers: directusHeaders,
-                    body: JSON.stringify({ order_status: "For Consolidation" }),
+                    body: JSON.stringify({
+                        order_status: "Dispatched",
+                        modified_date: nowIso,
+                        modified_by: userId,
+                    }),
                 }).catch(() => undefined);
 
                 return NextResponse.json({
