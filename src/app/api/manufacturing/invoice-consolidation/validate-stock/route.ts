@@ -5,15 +5,6 @@ import { getUserIdFromToken } from "../_auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface ReservationRow {
-    inventory_lot_id: {
-        id: number;
-        product_id: number;
-        quantity: number;
-    } | number;
-    quantity: number;
-}
-
 export async function GET(req: NextRequest) {
     try {
         const userId = await getUserIdFromToken();
@@ -48,7 +39,7 @@ export async function GET(req: NextRequest) {
             .filter(Boolean);
         if (invoiceIds.length === 0) return NextResponse.json({ availability: [] });
 
-        let details: { detail_id: number; product_id?: number }[] = [];
+        const details: { detail_id: number; product_id?: number }[] = [];
         if (invoiceIds.length > 0) {
             const [sodRes, sidRes] = await Promise.all([
                 fetch(

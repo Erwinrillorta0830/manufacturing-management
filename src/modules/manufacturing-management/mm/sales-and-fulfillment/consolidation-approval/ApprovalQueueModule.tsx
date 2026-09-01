@@ -5,7 +5,6 @@ import { Search, ShieldCheck, Building2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useRouter } from "next/navigation";
 import type { InvoiceConsolidation, Branch } from "../shared/consolidation-types";
 import { fetchApprovalQueue, fetchBranches } from "../shared/consolidation-api";
 import {
@@ -20,7 +19,6 @@ import {
 import { ApprovalModal } from "./components/ApprovalModal";
 
 export default function ApprovalQueueModule() {
-    const router = useRouter();
     const [batches, setBatches] = useState<InvoiceConsolidation[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");

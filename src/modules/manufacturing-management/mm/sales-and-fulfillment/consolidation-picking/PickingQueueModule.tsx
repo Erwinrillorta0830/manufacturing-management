@@ -5,7 +5,6 @@ import { Search, ScanLine, Building2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useRouter } from "next/navigation";
 import { InvoiceConsolidation, Branch } from "../shared/consolidation-types";
 import { fetchPickingQueue, fetchBranches } from "../shared/consolidation-api";
 import PickingModal from "./components/PickingModal";
@@ -19,7 +18,6 @@ import {
 } from "../shared/consolidation-ui";
 
 export default function PickingQueueModule() {
-    const router = useRouter();
     const [batches, setBatches] = useState<InvoiceConsolidation[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");

@@ -5,15 +5,12 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     CheckCircle2,
-    Circle,
     Loader2,
     Package,
     PackageCheck,
     Save,
     ScanLine,
     Search,
-    Tag,
-    X,
     Building2,
     Calendar,
     Minus,
@@ -21,7 +18,6 @@ import {
     FileText,
     Check,
     Layers,
-    MousePointerClick,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

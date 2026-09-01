@@ -146,7 +146,7 @@ export async function GET(
 
         // BOM Version lookup
         const allVersionIds = [...new Set(soDetailsRaw.map((d) => Number(d.bom_version_id)).filter(Boolean))];
-        let versionTitleMap = new Map<number, string>();
+        const versionTitleMap = new Map<number, string>();
         if (allVersionIds.length > 0) {
             const verRes = await fetch(
                 `${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_id][_in]=${allVersionIds.join(",")}&fields=version_id,version_name,version_code&limit=-1`,

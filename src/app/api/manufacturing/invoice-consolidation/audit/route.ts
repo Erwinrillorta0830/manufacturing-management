@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
-import { fetchSourceMovements, movementsExistForSource } from "../inventory-movements-client";
-import { productLedgerMatchesQuantities } from "../product-ledger-client";
 import { getUserIdFromToken } from "../_auth";
 import { getPhTimestamp } from "../_time-utils";
-
-const TXN_TYPE_SALES_ISSUE = 4;
 
 async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?: number): Promise<{ updated: number; errors: string[] }> {
     const errors: string[] = [];

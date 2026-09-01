@@ -12,20 +12,15 @@ import {
     Package,
     ChevronRight,
     ChevronDown,
-    ChevronUp,
-    MapPin,
     AlertTriangle,
+    AlertCircle,
     Sliders,
     Sparkles,
     CheckCircle2,
-    AlertCircle,
     RotateCcw,
     ArrowRight,
     ArrowLeft,
     Filter,
-    Calendar,
-    User,
-    Check,
     Layers,
     Maximize2,
     Minimize2,
@@ -67,12 +62,11 @@ export default function CreateConsolidationModal({
     const [step, setStep] = useState<ModalStep>(1);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<number>>(new Set());
-    const [expandedStep2InvoiceIds, setExpandedStep2InvoiceIds] = useState<Set<number>>(new Set());
+    const [collapsedStep2InvoiceIds, setCollapsedStep2InvoiceIds] = useState<Set<number>>(new Set());
     const [step2Search, setStep2Search] = useState<string>("");
     const [step2CustomerFilter, setStep2CustomerFilter] = useState<string>("ALL");
     const [step2ProductFilter, setStep2ProductFilter] = useState<string>("ALL");
     const [step2StatusFilter, setStep2StatusFilter] = useState<string>("ALL");
-    const [showOverviewSummary, setShowOverviewSummary] = useState<boolean>(true);
     const [submitting, setSubmitting] = useState(false);
     const [allocationMode, setAllocationMode] = useState<AllocationMode>("auto");
 
@@ -95,39 +89,6 @@ export default function CreateConsolidationModal({
             `${invoiceId}:${productId}:${inventoryLotId || 0}:${batchNo || "LOT-N/A"}:${lotId || 0}`,
         []
     );
-
-    // Reset step when modal opens/closes
-    useEffect(() => {
-        if (isOpen) {
-            setStep(1);
-            setSearch("");
-            setSelectedCustomer("ALL");
-            setSelectedDocType("ALL");
-            setDateFrom("");
-            setDateTo("");
-            setStep2Search("");
-            setStep2CustomerFilter("ALL");
-            setStep2ProductFilter("ALL");
-            setStep2StatusFilter("ALL");
-            setShowOverviewSummary(true);
-        } else {
-            setSelectedIds(new Set());
-            setAllocationPreview(null);
-            setManualAllocations({});
-            setExpandedStep2InvoiceIds(new Set());
-            setStep2Search("");
-            setStep2CustomerFilter("ALL");
-            setStep2ProductFilter("ALL");
-            setStep2StatusFilter("ALL");
-        }
-    }, [isOpen]);
-
-    // When entering Step 2 or selection changes, expand all selected invoices by default
-    useEffect(() => {
-        if (step === 2) {
-            setExpandedStep2InvoiceIds(new Set(selectedIds));
-        }
-    }, [step, selectedIds]);
 
     // Fetch allocation preview when entering step 2 or step 3
     useEffect(() => {
@@ -175,7 +136,7 @@ export default function CreateConsolidationModal({
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [branch.id, isOpen, selectedIds, step]);
+    }, [branch.id, isOpen, selectedIds, step, allocationPreview, getManualKey]);
 
     const setSelection = (next: Set<number>) => {
         setSelectedIds(next);
@@ -185,13 +146,35 @@ export default function CreateConsolidationModal({
         setManualAllocations({});
     };
 
+    const resetStep2Filters = () => {
+        setStep2Search("");
+        setStep2CustomerFilter("ALL");
+        setStep2ProductFilter("ALL");
+        setStep2StatusFilter("ALL");
+    };
+
+    const handleClose = () => {
+        setStep(1);
+        setSelectedIds(new Set());
+        setAllocationPreview(null);
+        setManualAllocations({});
+        setCollapsedStep2InvoiceIds(new Set());
+        setExpandedInvoiceIds(new Set());
+        setSearch("");
+        setSelectedCustomer("ALL");
+        setSelectedDocType("ALL");
+        setDateFrom("");
+        setDateTo("");
+        resetStep2Filters();
+        onClose();
+    };
+
     const step1DocTypeSelectOptions = [
         { value: "ALL", label: "All Orders (SO & JO)" },
         { value: "SALES_ORDER", label: "Sales Orders (SO)" },
         { value: "JOB_ORDER", label: "Job Orders (JO)" },
     ];
 
-    // Distinct customers for filter dropdown
     const customerOptions = useMemo(() => {
         const map = new Map<string, string>();
         for (const c of candidates) {
@@ -213,33 +196,19 @@ export default function CreateConsolidationModal({
         ];
     }, [customerOptions]);
 
-    // Filtered invoices for Step 1
     const filtered = useMemo(() => {
         return candidates.filter((c) => {
-            // Doc type filter
-            if (selectedDocType !== "ALL" && (c.documentType || "SALES_ORDER") !== selectedDocType) {
-                return false;
-            }
+            if (selectedDocType === "SALES_ORDER" && c.documentType !== "SALES_ORDER") return false;
+            if (selectedDocType === "JOB_ORDER" && c.documentType !== "JOB_ORDER") return false;
+            if (selectedCustomer !== "ALL" && c.customerCode !== selectedCustomer) return false;
+            if (dateFrom && c.invoiceDate && c.invoiceDate < dateFrom) return false;
+            if (dateTo && c.invoiceDate && c.invoiceDate > dateTo) return false;
 
-            // Customer filter
-            if (selectedCustomer !== "ALL" && c.customerCode !== selectedCustomer) {
-                return false;
-            }
-
-            // Date Range filter
-            if (dateFrom && c.invoiceDate) {
-                if (c.invoiceDate < dateFrom) return false;
-            }
-            if (dateTo && c.invoiceDate) {
-                if (c.invoiceDate > dateTo) return false;
-            }
-
-            // Search filter
             if (search.trim()) {
                 const q = search.toLowerCase();
                 const matchInvoice = c.invoiceNo.toLowerCase().includes(q);
-                const matchCustName = c.customerName.toLowerCase().includes(q);
-                const matchCustCode = c.customerCode.toLowerCase().includes(q);
+                const matchCustName = (c.customerName || "").toLowerCase().includes(q);
+                const matchCustCode = (c.customerCode || "").toLowerCase().includes(q);
                 const matchSo = (c.orderNo || "").toLowerCase().includes(q);
                 const matchPo = (c.poNo || "").toLowerCase().includes(q);
                 const matchProduct = c.products.some(
@@ -279,6 +248,7 @@ export default function CreateConsolidationModal({
     const resetFilters = () => {
         setSearch("");
         setSelectedCustomer("ALL");
+        setSelectedDocType("ALL");
         setDateFrom("");
         setDateTo("");
     };
@@ -355,13 +325,6 @@ export default function CreateConsolidationModal({
         ];
     }, []);
 
-    const resetStep2Filters = () => {
-        setStep2Search("");
-        setStep2CustomerFilter("ALL");
-        setStep2ProductFilter("ALL");
-        setStep2StatusFilter("ALL");
-    };
-
     const hasActiveStep2Filters =
         step2Search.trim() !== "" ||
         step2CustomerFilter !== "ALL" ||
@@ -369,7 +332,7 @@ export default function CreateConsolidationModal({
         step2StatusFilter !== "ALL";
 
     const toggleStep2Invoice = (id: number) => {
-        setExpandedStep2InvoiceIds((prev) => {
+        setCollapsedStep2InvoiceIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
@@ -378,11 +341,11 @@ export default function CreateConsolidationModal({
     };
 
     const expandAllStep2Invoices = () => {
-        setExpandedStep2InvoiceIds(new Set(selectedIds));
+        setCollapsedStep2InvoiceIds(new Set());
     };
 
     const collapseAllStep2Invoices = () => {
-        setExpandedStep2InvoiceIds(new Set());
+        setCollapsedStep2InvoiceIds(new Set(selectedIds));
     };
 
     const aggregatedProducts = useMemo(() => {
@@ -847,7 +810,7 @@ export default function CreateConsolidationModal({
                             </button>
                         </div>
 
-                        <Button variant="ghost" size="icon" onClick={onClose} className="shrink-0 rounded-xl">
+                        <Button variant="ghost" size="icon" onClick={handleClose} className="shrink-0 rounded-xl">
                             <X className="h-4 w-4 text-muted-foreground" />
                         </Button>
                     </div>
@@ -918,13 +881,7 @@ export default function CreateConsolidationModal({
                                         <Button
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() => {
-                                                setSearch("");
-                                                setSelectedCustomer("ALL");
-                                                setSelectedDocType("ALL");
-                                                setDateFrom("");
-                                                setDateTo("");
-                                            }}
+                                            onClick={resetFilters}
                                             className="h-8.5 text-xs text-muted-foreground hover:text-foreground font-bold px-2 rounded-xl"
                                         >
                                             <RotateCcw className="h-3 w-3 mr-1" />
@@ -1135,7 +1092,7 @@ export default function CreateConsolidationModal({
                             </div>
 
                             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                <Button variant="ghost" onClick={onClose} className="rounded-xl">
+                                <Button variant="ghost" onClick={handleClose} className="rounded-xl">
                                     Cancel
                                 </Button>
                                 <Button
@@ -1412,7 +1369,7 @@ export default function CreateConsolidationModal({
                                             </div>
                                         ) : (
                                             filteredStep2Invoices.map((inv) => {
-                                                const isExpanded = expandedStep2InvoiceIds.has(inv.invoiceId);
+                                                const isExpanded = !collapsedStep2InvoiceIds.has(inv.invoiceId);
                                                 const status = getInvoiceAllocationStatus(inv);
 
                                                 return (

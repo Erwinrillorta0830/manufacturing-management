@@ -35,21 +35,16 @@ export async function GET(req: NextRequest) {
 
         let invoiceIds: number[] = [];
         let batchProductIds: number[] = [];
-        let batchBranchId: number = 0;
         let explicitDetailIds: number[] = [];
 
         try {
-            const [linksRes, conDetRes, batchRes] = await Promise.all([
+            const [linksRes, conDetRes] = await Promise.all([
                 fetch(
                     `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&fields=invoice_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
                 fetch(
                     `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${batchId}&fields=id,product_id,sales_order_detail_id,ordered_quantity,picked_quantity,applied_quantity,picked_at,picked_by&limit=-1`,
-                    { headers: directusHeaders, cache: "no-store" }
-                ),
-                fetch(
-                    `${DIRECTUS_URL}/items/consolidator/${batchId}?fields=id,branch_id,status&limit=1`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
             ]);
@@ -62,15 +57,11 @@ export async function GET(req: NextRequest) {
                 batchProductIds = conData.map((row: { product_id: number }) => Number(row.product_id)).filter(Boolean);
                 explicitDetailIds = conData.map((row: { sales_order_detail_id?: number }) => Number(row.sales_order_detail_id)).filter(Boolean);
             }
-            if (batchRes.ok) {
-                const bData = (await batchRes.json()).data;
-                if (bData?.branch_id) batchBranchId = Number(bData.branch_id);
-            }
         } catch (err) {
             console.warn("[allocations] Warning fetching batch metadata:", err);
         }
 
-        let details: { detail_id: number; product_id: number }[] = [];
+        const details: { detail_id: number; product_id: number }[] = [];
 
         if (invoiceIds.length > 0) {
             try {
@@ -108,7 +99,7 @@ export async function GET(req: NextRequest) {
         ].filter(Boolean))];
         const productByDetail = new Map(details.map((detail) => [Number(detail.detail_id), Number(detail.product_id)]));
 
-        let reservations: Array<{
+        const reservations: Array<{
             id: number;
             sales_invoice_detail_id?: number | { detail_id: number } | null;
             sales_order_detail_id?: number | { detail_id: number } | null;
@@ -326,7 +317,7 @@ export async function GET(req: NextRequest) {
                     : reservation.inventory_lot_id;
                 const invLotId = Number(rawInvId || 0);
 
-                let batchInfo = invLotMap.get(invLotId);
+                const batchInfo = invLotMap.get(invLotId);
                 const resLotObj = typeof reservation.inventory_lot_id === "object" && reservation.inventory_lot_id !== null
                     ? (reservation.inventory_lot_id as Record<string, unknown>)
                     : null;

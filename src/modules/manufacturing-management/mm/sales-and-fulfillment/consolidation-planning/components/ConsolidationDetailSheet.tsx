@@ -151,9 +151,11 @@ export default function ConsolidationDetailSheet({
         };
     }, [consolidation]);
 
-    const allocations = (allocationState && allocationState.batchId === consolidation?.id) ? allocationState.allocations : [];
+    const allocations = useMemo(
+        () => (allocationState && allocationState.batchId === consolidation?.id ? allocationState.allocations : []),
+        [allocationState, consolidation?.id]
+    );
     const allocationsLoading = !allocationState || allocationState.batchId !== consolidation?.id;
-    const allocationError = (allocationState && allocationState.batchId === consolidation?.id) ? allocationState.error : null;
 
     // Group allocations by productId
     const allocationsByProduct = useMemo(() => {
@@ -460,7 +462,7 @@ export default function ConsolidationDetailSheet({
                                     </p>
                                 </div>
                             ) : (
-                                filteredDetails.map((detail, dIdx) => {
+                                filteredDetails.map((detail) => {
                                     const productLots = allocationsByProduct.get(detail.productId) || [];
                                     const totalAllocatedForProduct = productLots.reduce((sum, a) => sum + (a.quantity || 0), 0);
                                     const allocProgress =

@@ -22,7 +22,6 @@ import {
     Loader2,
     Building2,
     RotateCcw,
-    Sparkles,
     AlertCircle,
     FileText,
 } from "lucide-react";
@@ -51,7 +50,6 @@ export function ApprovalModal({
     const [fullBatch, setFullBatch] = useState<InvoiceConsolidation | null>(null);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [allocations, setAllocations] = useState<LotAllocation[]>([]);
-    const [loadingAllocations, setLoadingAllocations] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [activeTab, setActiveTab] = useState<"products" | "orders">("products");
 
@@ -61,7 +59,7 @@ export function ApprovalModal({
     const [showRepickConfirm, setShowRepickConfirm] = useState(false);
 
     useEffect(() => {
-        if (!batch?.consolidatorNo || !open) {
+        if (!open || !batch) {
             setFullBatch(null);
             setAllocations([]);
             setApprovalStatus({});
@@ -86,13 +84,11 @@ export function ApprovalModal({
             })
             .finally(() => setLoadingDetails(false));
 
-        setLoadingAllocations(true);
         fetchAllocations(batch.id)
             .then((allocs) => {
                 setAllocations(allocs || []);
             })
-            .catch(() => {})
-            .finally(() => setLoadingAllocations(false));
+            .catch(() => {});
     }, [batch, open]);
 
     const activeBatch = fullBatch || batch;
@@ -109,7 +105,7 @@ export function ApprovalModal({
     }, [allocations]);
 
     // Summary calculations
-    const details = activeBatch?.details || [];
+    const details = useMemo(() => activeBatch?.details || [], [activeBatch?.details]);
     const totalItems = details.length;
     const approvedCount = Object.keys(approvalStatus).filter((k) => approvalStatus[Number(k)]).length;
     const progressPercent = totalItems > 0 ? (approvedCount / totalItems) * 100 : 0;
@@ -123,14 +119,6 @@ export function ApprovalModal({
             ...prev,
             [detailId]: !prev[detailId],
         }));
-    };
-
-    const handleApproveAll = () => {
-        const next: Record<number, boolean> = {};
-        for (const d of details) {
-            next[d.id] = true;
-        }
-        setApprovalStatus(next);
     };
 
     // Confirm Batch Approval
