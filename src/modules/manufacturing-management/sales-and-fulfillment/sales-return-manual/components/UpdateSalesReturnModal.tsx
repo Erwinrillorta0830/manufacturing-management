@@ -847,7 +847,7 @@ export function UpdateSalesReturnModal({
 
             <div className="border border-border rounded-xl overflow-hidden bg-background shadow-sm">
               <div className="overflow-x-auto pb-4">
-                <Table className="min-w-[1500px]">
+                <Table className="min-w-[1600px]">
                   <TableHeader>
                     <TableRow className="bg-primary hover:bg-primary! border-none">
                       <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
@@ -859,7 +859,7 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 w-[80px] uppercase text-xs">
                         Unit
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-center w-[120px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 text-center min-w-[150px] uppercase text-xs">
                         Qty
                       </TableHead>
                       <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
@@ -877,10 +877,10 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 text-right min-w-[150px] uppercase text-xs">
                         Total
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Lot
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Batch
                       </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">

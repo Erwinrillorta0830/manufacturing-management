@@ -33,6 +33,7 @@ import {
   API_SalesReturnType,
   InvoiceOption,
   PriceTypeOption,
+  ProductPerPriceType,
 } from "../type";
 
 // Import Child Modal
@@ -265,10 +266,26 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
    * Resolves the correct unit price based on the selected salesman's priceType.
    * Falls back to priceA if the specific price type is not available.
    */
-  const resolvePrice = (product: SalesReturnItem | Record<string, unknown>, currentPriceType: string): number => {
-    const key = `price${currentPriceType}`;
-    const productRecord = product as Record<string, unknown>;
-    const price = Number(productRecord[key]) || Number(productRecord.priceA) || Number(productRecord.unitPrice) || 0;
+  const resolvePrice = (item: SalesReturnItem | Record<string, unknown>, currentPriceType: string, catalogPrices?: ProductPerPriceType[]): number => {
+    const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
+    
+    // For SalesReturnItem mapped structure
+    if (pt && Array.isArray((item as SalesReturnItem).availablePrices)) {
+      const priceRecord = (item as SalesReturnItem).availablePrices!.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
+      if (priceRecord && priceRecord.price !== undefined) {
+        return Math.round(Number(priceRecord.price) * 100) / 100;
+      }
+    }
+    
+    // For raw Product data during updateDiscounts
+    if (pt && Array.isArray(catalogPrices)) {
+      const priceRecord = catalogPrices.find((p: any) => Number(p.product_id) === Number((item as any).product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+      if (priceRecord && priceRecord.price !== undefined) {
+        return Math.round(Number(priceRecord.price) * 100) / 100;
+      }
+    }
+
+    const price = Number((item as any).unitPrice) || 0;
     return Math.round(price * 100) / 100;
   };
 
@@ -351,8 +368,11 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
           setItems((prevItems) =>
             prevItems.map((item) => {
-              const productInfo = catalog.products?.find((p: Product) => p.product_id === Number(item.productId));
+              const productInfo = catalog.products?.find((p: Product) => Number(p.product_id) === Number(item.productId));
               if (!productInfo) return item;
+
+              const newUnitPrice = resolvePrice(productInfo as any, priceType, catalog.productPrices);
+              const newGross = Math.round(item.quantity * newUnitPrice * 100) / 100;
 
               const newDiscountType = resolveFinalDiscount(
                 productInfo,
@@ -367,15 +387,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 );
                 if (selectedOption) {
                   const percentage = parseFloat(selectedOption.total_percent) || 0;
-                  newDiscountAmt = Math.round((item.grossAmount || 0) * (percentage / 100) * 100) / 100;
+                  newDiscountAmt = Math.round(newGross * (percentage / 100) * 100) / 100;
                 }
               }
 
               return {
                 ...item,
+                unitPrice: newUnitPrice,
+                grossAmount: newGross,
                 discountType: newDiscountType,
                 discountAmount: newDiscountAmt,
-                totalAmount: Math.round(((item.grossAmount || 0) - newDiscountAmt) * 100) / 100,
+                totalAmount: Math.round((newGross - newDiscountAmt) * 100) / 100,
+                availablePrices: catalog.productPrices?.filter((p: any) => Number(p.product_id) === Number(productInfo.product_id)),
               };
             })
           );
@@ -385,7 +408,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       };
       updateDiscounts();
     }
-  }, [customerCode, customers, lineDiscountOptions, items.length]);
+  }, [customerCode, customers, lineDiscountOptions, items.length, priceType]);
 
   const handleSelectSalesman = useCallback((salesman: SalesmanOption) => {
     setSelectedSalesmanId(salesman.id.toString());
@@ -1087,7 +1110,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             </div>
 
             <div className="overflow-x-auto relative pb-4">
-              <table className="w-full text-sm text-left min-w-[1500px]">
+              <table className="w-full text-sm text-left min-w-[1600px]">
                 <thead>
                   <tr className="bg-primary text-white">
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-28">
@@ -1099,7 +1122,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-20">
                       Unit
                     </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-28 text-center">
+                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider min-w-[120px] text-center">
                       Qty
                     </th>
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32 text-right">
@@ -1117,10 +1140,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-40 text-right">
                       Total
                     </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider min-w-[160px]">
                       Lot
                     </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider min-w-[160px]">
                       Batch
                     </th>
                     <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-48">
@@ -1738,6 +1761,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         priceType={priceType}
         customerCode={customerCode}
         lineDiscounts={lineDiscountOptions}
+        priceTypeOptions={priceTypeOptions}
       />
 
       {/* SUCCESS MODAL */}

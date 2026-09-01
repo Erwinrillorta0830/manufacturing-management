@@ -24,11 +24,7 @@ export interface SalesReturnItem {
   returnType?: string;
   rfidTags?: string[];
   // 🟢 Fields for Price Type Recalculation
-  priceA?: number;
-  priceB?: number;
-  priceC?: number;
-  priceD?: number;
-  priceE?: number;
+  availablePrices?: ProductPerPriceType[];
   unitMultiplier?: number;
 }
 
@@ -120,6 +116,14 @@ export interface SupplierCategoryDiscount {
   discount_type: number | string | null;
 }
 
+export interface ProductPerPriceType {
+  id: number;
+  product_id: number;
+  price_type_id: number;
+  price: number;
+  status: string;
+}
+
 export interface ProductCatalog {
   brands: Brand[];
   categories: Category[];
@@ -128,6 +132,7 @@ export interface ProductCatalog {
   connections: ProductSupplierConnection[];
   products: Product[];
   supplierCategoryDiscount?: SupplierCategoryDiscount[];
+  productPrices: ProductPerPriceType[];
 }
 
 // --- API LOOKUPS ---

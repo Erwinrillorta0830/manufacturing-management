@@ -19,6 +19,7 @@ import type {
   API_LineDiscount,
   API_SalesReturnType,
   PriceTypeOption,
+  ProductPerPriceType,
 } from "../type";
 
 import * as repo from "../repositories/sales-return-repository";
@@ -334,9 +335,10 @@ export async function fetchProductCatalog(
   connections: ProductSupplierConnection[];
   supplierCategoryDiscount: any[];
   products: Product[];
+  productPrices: ProductPerPriceType[];
 }> {
   const catalogData = await repo.getRawProductCatalog(includeInactive);
-  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes] = catalogData;
+  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes, productPricesRes] = catalogData;
 
   let scdpcRes = { data: [] as any[] };
 
@@ -362,6 +364,18 @@ export async function fetchProductCatalog(
     discount_type: item.discount_type,
   }));
 
+  const productPrices = ((productPricesRes?.data || []) as any[]).map((item: any) => ({
+    id: item.id,
+    price: item.price,
+    status: item.status,
+    price_type_id: typeof item.price_type_id === "object" && item.price_type_id !== null 
+      ? (item.price_type_id.price_type_id || item.price_type_id.id)
+      : item.price_type_id,
+    product_id: typeof item.product_id === "object" && item.product_id !== null
+      ? (item.product_id.product_id || item.product_id.id)
+      : item.product_id,
+  }));
+
   return {
     brands: (brandsRes.data || []) as unknown as Brand[],
     categories: (categoriesRes.data || []) as unknown as Category[],
@@ -370,6 +384,7 @@ export async function fetchProductCatalog(
     connections: connections as ProductSupplierConnection[],
     supplierCategoryDiscount,
     products: (productsRes.data || []) as unknown as Product[],
+    productPrices: productPrices as ProductPerPriceType[],
   };
 }
 
@@ -564,6 +579,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
       created_at: nowPH(),
+      status: "Draft",
     };
 
     await repo.createReturnDetail(detailPayload);
@@ -748,6 +764,7 @@ export async function updateReturn(
         return_no: payload.returnNo,
         product_id: Number(item.productId || item.product_id),
         created_at: nowPH(),
+        status: "Draft",
       });
     } else {
       await repo.updateReturnDetail(item.id, detailPayload);
@@ -766,5 +783,22 @@ export async function updateStatus(
   isReceived?: number,
   received_at?: string,
 ): Promise<any> {
+  if (status === "Received") {
+    try {
+      const headerRes = await repo.getRawReturnById(id);
+      const returnNo = headerRes.data?.return_number;
+      if (returnNo) {
+        const detailsRes = await repo.getRawReturnDetails(returnNo as string);
+        const details = detailsRes.data || [];
+        const detailPromises = details.map((d: any) =>
+          repo.updateReturnDetail(d.detail_id, { status: "Returned" }),
+        );
+        await Promise.all(detailPromises);
+      }
+    } catch (e) {
+      console.error("Failed to update sales return details status to Returned:", e);
+    }
+  }
+
   return repo.updateReturnStatus(id, status, isReceived, received_at);
 }

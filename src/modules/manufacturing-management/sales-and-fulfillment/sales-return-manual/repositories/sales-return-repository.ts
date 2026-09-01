@@ -120,7 +120,7 @@ export async function getRawReturnDetails(returnNo: string) {
  * Fetches a single sales return header by ID (for status card).
  */
 export async function getRawReturnById(returnId: number) {
-  const fields = "return_id,isApplied,updated_at,status,isPosted,isReceived,order_id,received_at";
+  const fields = "return_id,return_number,isApplied,updated_at,status,isPosted,isReceived,order_id,received_at";
   return directusGet<{ data: Record<string, unknown> }>(
     `/items/sales_return/${returnId}?fields=${fields}`,
   );
@@ -206,6 +206,9 @@ export async function getRawProductCatalog(includeInactive = false) {
     ),
     directusGet<{ data: Record<string, unknown>[] }>(
       `/items/products?limit=-1${includeInactive ? "" : "&filter[isActive][_eq]=1"}`,
+    ),
+    directusGet<{ data: Record<string, unknown>[] }>(
+      "/items/product_per_price_type?limit=-1&filter[status][_eq]=approved",
     ),
   ]);
 }
