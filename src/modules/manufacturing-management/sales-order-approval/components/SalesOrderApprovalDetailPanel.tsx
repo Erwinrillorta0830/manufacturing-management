@@ -34,6 +34,8 @@ export function SalesOrderApprovalDetailPanel({
     handleReject,
     handleCancel
 }: SalesOrderApprovalDetailPanelProps) {
+    const [isInvoiceConfirmOpen, setIsInvoiceConfirmOpen] = React.useState(false);
+
     if (!selectedOrder) return null;
 
     // Compute pricing sums
@@ -41,12 +43,9 @@ export function SalesOrderApprovalDetailPanel({
     const discount = Number(selectedOrder.discount_amount || 0);
     const netSum = Math.max(0, grossSum - discount);
     const isZeroNet = netSum <= 0;
-    const isOutOfStock = orderDetails.some(item => {
-        const pid = typeof item.product_id === 'object' ? item.product_id?.product_id : item.product_id;
-        return item.ordered_quantity > (stockData[Number(pid)] || 0);
-    });
 
     return (
+        <>
         <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
             <DialogContent showCloseButton={false} className="sm:max-w-3xl p-0 gap-0 border-none overflow-hidden bg-transparent shadow-none">
                 <DialogTitle className="sr-only">Review Sales Order {selectedOrder.order_no}</DialogTitle>
@@ -59,7 +58,7 @@ export function SalesOrderApprovalDetailPanel({
                             {selectedOrder.order_no}
                         </h4>
                         <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider whitespace-nowrap ${
-                            selectedOrder.order_status === "For Invoicing" || selectedOrder.order_status === "For Picking"
+                            selectedOrder.order_status === "For Consolidation" || selectedOrder.order_status === "For Picking"
                                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                 : selectedOrder.order_status === "On Hold"
                                 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
@@ -290,10 +289,10 @@ export function SalesOrderApprovalDetailPanel({
                     </button>
 
                     <button
-                        disabled={updatingStatusId === selectedOrder.order_id || isZeroNet || isOutOfStock}
-                        onClick={() => handleSendToInvoice(selectedOrder.order_id)}
+                        disabled={updatingStatusId === selectedOrder.order_id || isZeroNet}
+                        onClick={() => setIsInvoiceConfirmOpen(true)}
                         className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3.5 text-xs font-black text-white shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-none"
-                        title={isOutOfStock ? "Cannot send to invoice: Insufficient stock" : (isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to Invoice")}
+                        title={isZeroNet ? "Approval blocked due to ₱0.00 net total" : "Send to Consolidation"}
                     >
                         {updatingStatusId === selectedOrder.order_id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -340,5 +339,46 @@ export function SalesOrderApprovalDetailPanel({
             </div>
         </DialogContent>
       </Dialog>
+
+      {/* Confirmation Modal */}
+      <Dialog open={isInvoiceConfirmOpen} onOpenChange={setIsInvoiceConfirmOpen}>
+          <DialogContent showCloseButton={false} className="sm:max-w-md p-0 gap-0 overflow-hidden bg-card border-none shadow-2xl">
+              <DialogTitle className="sr-only">Confirm Send to Consolidation</DialogTitle>
+              <div className="px-6 py-4 border-b bg-amber-500/10 text-amber-600 border-border">
+                  <h3 className="text-base font-bold flex items-center gap-2">
+                      <ShieldCheck className="h-5 w-5" />
+                      Confirm Action
+                  </h3>
+              </div>
+              <div className="p-6">
+                  <p className="text-sm text-foreground/80 mb-6 leading-relaxed">
+                      Are you sure you want to send this Sales Order for <strong>Consolidation</strong>? 
+                      <br/><br/>
+                      <span className="text-amber-600 font-medium">Please note that this action can be done even if some items are out of stock.</span>
+                  </p>
+                  <div className="flex justify-end gap-3">
+                      <button
+                          onClick={() => setIsInvoiceConfirmOpen(false)}
+                          disabled={updatingStatusId === selectedOrder.order_id}
+                          className="px-4 py-2 rounded-lg text-xs font-semibold border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                      >
+                          Cancel
+                      </button>
+                      <button
+                          onClick={() => {
+                              setIsInvoiceConfirmOpen(false);
+                              handleSendToInvoice(selectedOrder.order_id);
+                          }}
+                          disabled={updatingStatusId === selectedOrder.order_id}
+                          className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 border-none"
+                      >
+                          {updatingStatusId === selectedOrder.order_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          Confirm & Send
+                      </button>
+                  </div>
+              </div>
+          </DialogContent>
+      </Dialog>
+    </>
     );
 }

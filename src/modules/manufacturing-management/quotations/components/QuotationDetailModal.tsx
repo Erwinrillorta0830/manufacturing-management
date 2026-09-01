@@ -169,21 +169,28 @@ export function QuotationDetailModal({
                                 </span>
                             )}
                         </div>
-                        <div className="flex items-center gap-3">
-                            <p className="text-xs text-muted-foreground">Quote Number: <strong className="text-foreground">{displayQuote.quote_number}</strong> | Status: <span className="font-bold text-primary">{displayQuote.status || "Draft"}</span></p>
-                            {projectQuoteHistory.length > 1 && (
-                                <select 
-                                    value={activeHistoryQuoteId || selectedQuote.id}
-                                    onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
-                                    className="text-[10px] border border-slate-200 dark:border-slate-800 rounded px-2 py-1 bg-background text-foreground cursor-pointer font-bold outline-none focus:ring-1 focus:ring-primary shadow-sm"
-                                >
-                                    {projectQuoteHistory.map(q => (
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">Quote Number:</span>
+                            <select 
+                                value={activeHistoryQuoteId || selectedQuote.id}
+                                onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
+                                disabled={projectQuoteHistory.length <= 1}
+                                className="text-[11px] border border-slate-200 dark:border-slate-800 rounded px-2 py-1 bg-background text-foreground font-bold outline-none focus:ring-1 focus:ring-primary shadow-sm cursor-pointer disabled:opacity-70 disabled:cursor-default"
+                            >
+                                {projectQuoteHistory.length > 0 ? (
+                                    projectQuoteHistory.map(q => (
                                         <option key={q.id} value={q.id}>
-                                            {q.quote_number} {q.id === selectedQuote.id ? "(Latest)" : ""} - {q.status || "Draft"}
+                                            {q.quote_number} {q.id === selectedQuote.id ? "(Latest)" : ""}
                                         </option>
-                                    ))}
-                                </select>
-                            )}
+                                    ))
+                                ) : (
+                                    <option value={selectedQuote.id}>
+                                        {selectedQuote.quote_number} (Latest)
+                                    </option>
+                                )}
+                            </select>
+                            <span className="text-xs text-muted-foreground ml-1">| Status:</span>
+                            <span className="text-xs font-bold text-primary">{displayQuote.status || "Draft"}</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">

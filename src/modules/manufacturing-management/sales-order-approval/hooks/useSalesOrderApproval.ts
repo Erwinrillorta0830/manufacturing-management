@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { SalesOrder, SalesOrderDetail } from "../../sales-order/types";
-import { 
-    fetchSalesOrders, 
-    fetchSalesOrderDetails, 
-    approveSalesOrder, 
+import {
+    fetchSalesOrders,
+    fetchSalesOrderDetails,
+    approveSalesOrder,
     holdSalesOrder,
     cancelSalesOrder,
-    updateSalesOrderStatus 
+    updateSalesOrderStatus
 } from "../../sales-order/services/sales-order-api";
 
 export function useSalesOrderApproval() {
@@ -17,7 +17,7 @@ export function useSalesOrderApproval() {
     const [orderDetails, setOrderDetails] = useState<SalesOrderDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [stockData, setStockData] = useState<Record<number, number>>({});
-    
+
     const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null);
 
     // Pagination and search states
@@ -54,10 +54,10 @@ export function useSalesOrderApproval() {
     };
 
     const loadPendingOrders = async (
-        page = currentPage, 
-        search = searchQuery, 
-        customer = customerCodeFilter, 
-        dateFrom = dateFromFilter, 
+        page = currentPage,
+        search = searchQuery,
+        customer = customerCodeFilter,
+        dateFrom = dateFromFilter,
         dateTo = dateToFilter,
         status = statusFilter
     ) => {
@@ -97,7 +97,7 @@ export function useSalesOrderApproval() {
 
     useEffect(() => {
         loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
-// eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter]);
 
     useEffect(() => () => {
@@ -123,19 +123,19 @@ export function useSalesOrderApproval() {
             const data = await fetchSalesOrderDetails(order.order_id, { signal: controller.signal });
             if (requestId !== detailRequestIdRef.current || selectedOrderIdRef.current !== order.order_id) return;
             setOrderDetails(data);
-            
+
             try {
                 const productIds = Array.from(new Set(data.map(d => d.product_id?.product_id).filter(Boolean)));
                 if (productIds.length > 0) {
                     const branchParam = order.branch_id ? `?branch=${order.branch_id}` : '';
-                    
+
                     // Fetch all stocks for the branch in a single request to avoid dropped concurrent requests
                     const stockRes = await fetch(`/api/manufacturing/product-onhand${branchParam}`, {
                         signal: controller.signal
                     });
 
                     const newStockData: Record<number, number> = {};
-                    
+
                     if (stockRes.ok) {
                         const stockJson = await stockRes.json();
                         if (Array.isArray(stockJson)) {
@@ -148,7 +148,7 @@ export function useSalesOrderApproval() {
                             }
                         }
                     }
-                    
+
                     setStockData(newStockData);
                 }
             } catch (e) {
@@ -200,8 +200,8 @@ export function useSalesOrderApproval() {
     const handleSendToInvoice = async (orderId: number) => {
         setUpdatingStatusId(orderId);
         try {
-            await updateSalesOrderStatus(orderId, "For Invoicing");
-            toast.success("Sales Order approved! Sent to Invoicing.");
+            await updateSalesOrderStatus(orderId, "For Consolidation");
+            toast.success("Sales Order approved! Sent to Consolidation.");
             loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
