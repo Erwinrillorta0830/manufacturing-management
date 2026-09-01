@@ -33,7 +33,7 @@ export default function LotManagementModule() {
         loading: loadingLots,
         searchQuery: lotSearchQuery,
         setSearchQuery: setLotSearchQuery,
-        uoms,
+        // uoms,
         loadLots
     } = useLotManagement();
 
