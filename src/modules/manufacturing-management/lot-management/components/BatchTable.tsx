@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, Plus, AlertTriangle, ShieldAlert, History } from "lucide-react";
+import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History } from "lucide-react";
 import { Batch, Lot, type BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -34,7 +34,7 @@ interface BatchTableProps {
     selectedProductId?: number | "ALL";
     onDelete: (batchId: number) => void;
     onRefresh?: () => void;
-    onAddClick: () => void;
+    onAddClick?: () => void;
     onViewMovements?: (batch: Batch) => void;
 }
 
@@ -112,15 +112,13 @@ export default function BatchTable({
                     </Select>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
-                    {/* <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9">
-                        <RefreshCw className="h-4 w-4" />
-                    </Button> */}
-                    <Button onClick={onAddClick} className="h-9 gap-1.5 shadow-md shadow-primary/15 shrink-0">
-                        <Plus className="h-4 w-4" />
-                        Register New Batch
-                    </Button>
-                </div>
+                {onAddClick && (
+                    <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+                        <Button onClick={onAddClick} className="h-9 gap-1.5 shadow-md shadow-primary/15 shrink-0">
+                            Register New Batch
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* Table Container */}
@@ -133,9 +131,9 @@ export default function BatchTable({
                 ) : batches.length === 0 ? (
                     <div className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground">
                         <Layers className="h-12 w-12 text-muted-foreground/30 mb-2" />
-                        <span className="text-sm font-semibold">No batches registered</span>
+                        <span className="text-sm font-semibold">No batches found</span>
                         <p className="text-xs max-w-xs mt-1">
-                            Adjust your filters or register a new batch to track inventory lots.
+                            Adjust your search or product filter to view inventory batches.
                         </p>
                     </div>
                 ) : (

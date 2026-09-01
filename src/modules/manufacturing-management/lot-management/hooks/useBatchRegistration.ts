@@ -19,7 +19,13 @@ import {
 } from "../services/lot-management-api";
 import { getFefoPriorityMap, evaluateBatchEligibility, sortBatchesForDisplay } from "../utils/fefoEngine";
 
-export function useBatchRegistration(lots: Lot[], selectedProductId: number | "ALL" = "ALL") {
+export function useBatchRegistration(
+    lots: Lot[],
+    selectedProductId: number | "ALL" = "ALL",
+    selectedLotId: number | "ALL" = "ALL",
+    selectedBatchId: number | "ALL" = "ALL",
+    globalSearchQuery: string = ""
+) {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [products, setProducts] = useState<ProductItem[]>([]);
     const [loadingBatches, setLoadingBatches] = useState(true);
@@ -356,38 +362,76 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
     const filteredBatches = useMemo(() => {
         const rawFiltered = batches.filter((b) => {
             const matchesProduct = selectedProductId === "ALL" || Number(b.productId) === Number(selectedProductId);
-            const matchesLot = selectedLotFilter === "ALL" || b.lotId === selectedLotFilter;
+            const matchesGlobalLot = selectedLotId === "ALL" || Number(b.lotId) === Number(selectedLotId);
+            const matchesLocalLot = selectedLotFilter === "ALL" || Number(b.lotId) === Number(selectedLotFilter);
+            const matchesBatch = selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId);
             const matchesStatus = statusFilter === "ALL" || b.status === statusFilter || b.qaStatus === statusFilter;
-            const query = batchSearchQuery.toLowerCase().trim();
-            const matchesSearch =
-                !query ||
-                b.batchNumber.toLowerCase().includes(query) ||
-                b.lotName.toLowerCase().includes(query) ||
-                b.productName?.toLowerCase().includes(query) ||
-                b.itemCode.toLowerCase().includes(query) ||
-                b.remarks.toLowerCase().includes(query);
+            
+            const localQuery = batchSearchQuery.toLowerCase().trim();
+            const globalQuery = globalSearchQuery.toLowerCase().trim();
 
-            return matchesProduct && matchesLot && matchesStatus && matchesSearch;
+            const matchesText = (q: string) =>
+                !q ||
+                b.batchNumber.toLowerCase().includes(q) ||
+                b.lotName.toLowerCase().includes(q) ||
+                b.productName?.toLowerCase().includes(q) ||
+                b.itemCode.toLowerCase().includes(q) ||
+                b.remarks.toLowerCase().includes(q);
+
+            return (
+                matchesProduct &&
+                matchesGlobalLot &&
+                matchesLocalLot &&
+                matchesBatch &&
+                matchesStatus &&
+                matchesText(localQuery) &&
+                matchesText(globalQuery)
+            );
         });
 
         // Sort by FEFO Priority order (#1 FEFO NEXT items at the top)
         const fefoSorted = sortBatchesForDisplay(rawFiltered, selectedProductId);
 
         return fefoSorted.map((b, idx) => ({ ...b, displayNumber: idx + 1 }));
-    }, [batches, selectedLotFilter, statusFilter, batchSearchQuery, selectedProductId]);
+    }, [
+        batches,
+        selectedLotFilter,
+        selectedLotId,
+        selectedBatchId,
+        statusFilter,
+        batchSearchQuery,
+        globalSearchQuery,
+        selectedProductId
+    ]);
 
     const kpiMetrics: LotKpiMetrics = useMemo(() => {
         const isAllProducts = selectedProductId === "ALL";
-        const targetProductBatches = isAllProducts
-            ? batches
-            : batches.filter((b) => Number(b.productId) === Number(selectedProductId));
+        const isAllLots = selectedLotId === "ALL";
+        const isAllBatches = selectedBatchId === "ALL";
+        const globalQuery = globalSearchQuery.toLowerCase().trim();
+
+        const targetBatches = batches.filter((b) => {
+            if (!isAllProducts && Number(b.productId) !== Number(selectedProductId)) return false;
+            if (!isAllLots && Number(b.lotId) !== Number(selectedLotId)) return false;
+            if (!isAllBatches && Number(b.batchId) !== Number(selectedBatchId)) return false;
+            if (globalQuery) {
+                const matches =
+                    b.batchNumber.toLowerCase().includes(globalQuery) ||
+                    b.lotName.toLowerCase().includes(globalQuery) ||
+                    b.productName?.toLowerCase().includes(globalQuery) ||
+                    b.itemCode.toLowerCase().includes(globalQuery) ||
+                    b.remarks.toLowerCase().includes(globalQuery);
+                if (!matches) return false;
+            }
+            return true;
+        });
 
         const fefoMap = getFefoPriorityMap(batches, selectedProductId);
-        const relevantLotIds = new Set(targetProductBatches.map((b) => b.lotId));
-        const totalLots = isAllProducts
+        const relevantLotIds = new Set(targetBatches.map((b) => b.lotId));
+        const totalLots = isAllProducts && isAllLots && isAllBatches && !globalQuery
             ? lots.length
             : lots.filter((l) => relevantLotIds.has(l.lotId)).length;
-        const totalBatches = targetProductBatches.length;
+        const totalBatches = targetBatches.length;
 
         let totalQuantity = 0;
         let activeQuantity = 0;
@@ -395,7 +439,7 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
         let quarantinedOrExpiring = 0;
         const fefoNextBatches: Batch[] = [];
 
-        targetProductBatches.forEach((b) => {
+        targetBatches.forEach((b) => {
             const qty = Number(b.quantity || 0);
             totalQuantity += qty;
 
@@ -435,7 +479,15 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
             fefoNextBatchNumbers: fefoNextBatches.map((b) => b.batchNumber),
             selectedProductName
         };
-    }, [lots, batches, products, selectedProductId]);
+    }, [
+        lots,
+        batches,
+        products,
+        selectedProductId,
+        selectedLotId,
+        selectedBatchId,
+        globalSearchQuery
+    ]);
 
     return {
         batches,
