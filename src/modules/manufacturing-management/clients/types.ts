@@ -66,3 +66,21 @@ export interface Customer {
     latitude?: number | null;
     longitude?: number | null;
 }
+
+export type CustomerStatusFilter = "all" | "active" | "inactive";
+
+export const CUSTOMER_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+export interface CustomerPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+}
+
+export interface CustomerPageResponse {
+    data: Customer[];
+    pagination: CustomerPagination;
+}

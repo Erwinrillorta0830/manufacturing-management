@@ -100,6 +100,48 @@ export class CustomerProfileValidationError extends Error {
 
 type UnknownRecord = Record<string, unknown>;
 
+export const CUSTOMER_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+export const CUSTOMER_PAGE_SIZE_DEFAULT = CUSTOMER_PAGE_SIZE_OPTIONS[0];
+export const CUSTOMER_LOOKUP_LIMIT_DEFAULT = 10;
+export const CUSTOMER_LOOKUP_LIMIT_MAX = 25;
+
+export type CustomerStatusFilter = "all" | "active" | "inactive";
+
+export interface CustomerPageQuery {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: CustomerStatusFilter;
+}
+
+export interface CustomerPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+}
+
+export interface CustomerPageResponse {
+    data: UnknownRecord[];
+    pagination: CustomerPagination;
+}
+
+export interface CustomerLookupQuery {
+    search?: string;
+    customerId?: number | string;
+    customerCode?: string;
+    limit?: number;
+}
+
+export class CustomerPaginationValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CustomerPaginationValidationError";
+    }
+}
+
 function asRecord(value: unknown): UnknownRecord | null {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? value as UnknownRecord
@@ -324,28 +366,190 @@ async function directusMutation(pathname: string, method: "POST" | "PATCH", body
     return responseBody.data;
 }
 
-export async function fetchCustomers(search?: string, includeInactive = false): Promise<UnknownRecord[]> {
-    try {
-        const params = new URLSearchParams({
-            limit: "250",
-            sort: "customer_name",
-            fields: CUSTOMER_READ_FIELDS
-        });
-        if (!includeInactive) params.set("filter[isActive][_eq]", "true");
-        if (search && search.trim()) params.set("search", search.trim());
-
-        const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
-            headers,
-            cache: "no-store"
-        });
-        if (!response.ok) return [];
-
-        const body = await response.json().catch(() => ({}));
-        return Array.isArray(body?.data) ? body.data.map(normalizeCustomer) : [];
-    } catch (error) {
-        console.error("[Manufacturing Directus API] Failed to fetch customers:", error);
-        return [];
+function normalizeCustomerPage(value: number | undefined, fallback: number, label: string): number {
+    if (value === undefined) return fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new CustomerPaginationValidationError(`${label} must be a positive integer.`);
     }
+    return value;
+}
+
+function normalizeCustomerPageSize(value: number | undefined): number {
+    if (value === undefined) return CUSTOMER_PAGE_SIZE_DEFAULT;
+    if (!CUSTOMER_PAGE_SIZE_OPTIONS.includes(value as typeof CUSTOMER_PAGE_SIZE_OPTIONS[number])) {
+        throw new CustomerPaginationValidationError(
+            `pageSize must be one of ${CUSTOMER_PAGE_SIZE_OPTIONS.join(", ")}.`
+        );
+    }
+    return value;
+}
+
+function normalizeCustomerStatus(value: CustomerStatusFilter | undefined): CustomerStatusFilter {
+    const status = value || "active";
+    if (status !== "all" && status !== "active" && status !== "inactive") {
+        throw new CustomerPaginationValidationError("status must be all, active, or inactive.");
+    }
+    return status;
+}
+
+function directusFilterCount(value: unknown): number {
+    const body = asRecord(value);
+    const meta = asRecord(body?.meta);
+    const total = Number(meta?.filter_count);
+    if (!Number.isSafeInteger(total) || total < 0) {
+        throw new Error("Directus did not return a valid customer filter count.");
+    }
+    return total;
+}
+
+function applyCustomerFilters(
+    params: URLSearchParams,
+    search: string,
+    status: CustomerStatusFilter
+): void {
+    if (status !== "all") {
+        params.set("filter[isActive][_eq]", status === "active" ? "true" : "false");
+    }
+
+    const normalizedSearch = search.trim();
+    if (!normalizedSearch) return;
+
+    const searchableFields = [
+        "customer_name",
+        "customer_code",
+        "customer_tin",
+        "customer_email",
+        "province",
+        "city",
+        "brgy"
+    ];
+    searchableFields.forEach((field, index) => {
+        params.set(`filter[_or][${index}][${field}][_icontains]`, normalizedSearch);
+    });
+}
+
+async function fetchCustomerPageFromDirectus(
+    page: number,
+    pageSize: number,
+    search: string,
+    status: CustomerStatusFilter
+): Promise<{ data: UnknownRecord[]; total: number }> {
+    const params = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String((page - 1) * pageSize),
+        sort: "customer_name,id",
+        fields: CUSTOMER_READ_FIELDS,
+        meta: "filter_count"
+    });
+    applyCustomerFilters(params, search, status);
+
+    const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load customers (${response.status}).`);
+    }
+
+    const body: unknown = await response.json().catch(() => ({}));
+    const record = asRecord(body);
+    if (!Array.isArray(record?.data)) {
+        throw new Error("Directus returned an invalid customer page.");
+    }
+
+    return {
+        data: record.data.map(normalizeCustomer),
+        total: directusFilterCount(body)
+    };
+}
+
+export async function fetchCustomersPage(query: CustomerPageQuery = {}): Promise<CustomerPageResponse> {
+    const requestedPage = normalizeCustomerPage(query.page, 1, "page");
+    const pageSize = normalizeCustomerPageSize(query.pageSize);
+    const search = query.search || "";
+    const status = normalizeCustomerStatus(query.status);
+
+    let page = requestedPage;
+    let result = await fetchCustomerPageFromDirectus(page, pageSize, search, status);
+    let totalPages = result.total === 0 ? 0 : Math.ceil(result.total / pageSize);
+
+    if (totalPages === 0) {
+        page = 1;
+    } else if (page > totalPages) {
+        page = totalPages;
+        result = await fetchCustomerPageFromDirectus(page, pageSize, search, status);
+        totalPages = Math.ceil(result.total / pageSize);
+    }
+
+    return {
+        data: result.data,
+        pagination: {
+            page,
+            pageSize,
+            total: result.total,
+            totalPages,
+            hasPreviousPage: page > 1,
+            hasNextPage: totalPages > 0 && page < totalPages
+        }
+    };
+}
+
+function normalizeCustomerLookupLimit(value: number | undefined): number {
+    if (value === undefined) return CUSTOMER_LOOKUP_LIMIT_DEFAULT;
+    if (!Number.isSafeInteger(value) || value <= 0 || value > CUSTOMER_LOOKUP_LIMIT_MAX) {
+        throw new CustomerPaginationValidationError(
+            `limit must be a positive integer no greater than ${CUSTOMER_LOOKUP_LIMIT_MAX}.`
+        );
+    }
+    return value;
+}
+
+export async function fetchCustomerLookup(query: CustomerLookupQuery = {}): Promise<UnknownRecord[]> {
+    const limit = normalizeCustomerLookupLimit(query.limit);
+    const params = new URLSearchParams({
+        limit: String(limit),
+        sort: "customer_name,id",
+        fields: CUSTOMER_READ_FIELDS
+    });
+    params.set("filter[isActive][_eq]", "true");
+
+    const customerId = query.customerId === undefined ? "" : String(query.customerId).trim();
+    if (customerId) params.set("filter[id][_eq]", customerId);
+
+    const customerCode = query.customerCode?.trim();
+    if (customerCode) params.set("filter[customer_code][_eq]", customerCode);
+
+    applyCustomerFilters(params, query.search || "", "all");
+
+    const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load customer lookup results (${response.status}).`);
+    }
+
+    const body: unknown = await response.json().catch(() => ({}));
+    const record = asRecord(body);
+    if (!Array.isArray(record?.data)) {
+        throw new Error("Directus returned an invalid customer lookup response.");
+    }
+
+    return record.data.map(normalizeCustomer);
+}
+
+/**
+ * Backward-compatible bounded helper for server consumers that still expect an array.
+ * Directory callers must use fetchCustomersPage instead.
+ */
+export async function fetchCustomers(search?: string, includeInactive = false): Promise<UnknownRecord[]> {
+    const result = await fetchCustomersPage({
+        page: 1,
+        pageSize: CUSTOMER_PAGE_SIZE_OPTIONS[CUSTOMER_PAGE_SIZE_OPTIONS.length - 1],
+        search,
+        status: includeInactive ? "all" : "active"
+    });
+    return result.data;
 }
 
 export async function createCustomer(

@@ -11,6 +11,8 @@ export interface Project {
     id: number;
     project_name: string;
     customer_code: string;
+    customer_id?: number | string | null;
+    customer_name?: string | null;
     created_by?: number;
     created_at?: string;
     status?: string;
