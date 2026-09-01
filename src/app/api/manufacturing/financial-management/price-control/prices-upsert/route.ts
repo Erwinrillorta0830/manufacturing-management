@@ -7,7 +7,7 @@ import { assertValidPriceValue, isInvalidPriceValueError } from "../_pricePrecis
 import { invalidateGroupIndexCacheOnCatalogChange } from "../_productGroupIndexCache";
 import { batchAsyncOps, CHUNK_SIZE } from "../_supplierFilters";
 import { assertPriceAuditRecord, resolveAuditUserId } from "../_priceAudit";
-import { directusHeaders, readAuditUserId } from "../price-change-batches/_batch";
+import { directusHeaders, readAuditUserId, nowManila } from "../price-change-batches/_batch";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -45,11 +45,13 @@ type PriceRecordPayload = {
     product_id: number;
     price_type_id: number;
     price: number | null;
+    updated_at?: string;
     updated_by: number;
     created_by?: number;
 };
 
 type CreatePriceRecordPayload = PriceRecordPayload & {
+    created_at?: string;
     created_by: number;
 };
 
@@ -203,6 +205,7 @@ export async function POST(req: NextRequest) {
                 price: line.price === null || line.price === undefined
                     ? null
                     : assertValidPriceValue(line.price, "price"),
+                updated_at: nowManila(),
                 updated_by: auditUserId,
             };
 
@@ -215,7 +218,7 @@ export async function POST(req: NextRequest) {
                     payload: existingCreatedBy ? payload : { ...payload, created_by: auditUserId },
                 });
             } else {
-                toCreate.push({ ...payload, created_by: auditUserId });
+                toCreate.push({ ...payload, created_at: nowManila(), created_by: auditUserId });
             }
         }
 
