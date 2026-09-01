@@ -14,6 +14,7 @@ export default function ClientsModule() {
         customers,
         storeTypes,
         setStoreTypes,
+        priceTypes,
         loading,
         searchText,
         setSearchText,
@@ -37,6 +38,7 @@ export default function ClientsModule() {
         handleCustomerNameChange,
         handleSaveCustomer,
         savingCustomer,
+        formErrors,
         products,
         versionsMap,
         overrides,
@@ -148,6 +150,7 @@ export default function ClientsModule() {
                 setFormData={setFormData}
                 storeTypes={storeTypes}
                 setStoreTypes={setStoreTypes}
+                priceTypes={priceTypes}
                 provinces={provinces}
                 cities={cities}
                 barangays={barangays}
@@ -157,6 +160,7 @@ export default function ClientsModule() {
                 selectedCityCode={selectedCityCode}
                 setSelectedCityCode={setSelectedCityCode}
                 onSave={handleSaveCustomer}
+                formErrors={formErrors}
                 saving={savingCustomer}
                 onNameChange={handleCustomerNameChange}
                 products={products}

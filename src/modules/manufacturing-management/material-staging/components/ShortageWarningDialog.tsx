@@ -41,18 +41,27 @@ export function ShortageWarningDialog({
 }: ShortageWarningDialogProps) {
     const [overrideRemarks, setOverrideRemarks] = useState("");
     const [showOverrideConfirm, setShowOverrideConfirm] = useState(false);
+    const [formError, setFormError] = useState<string | null>(null);
 
     if (!warningInfo) return null;
 
     const handleConfirmNegativeOverride = async () => {
-        await onProceedWithNegative(overrideRemarks || "Floor hold override authorized by staging supervisor.");
+        const remarks = overrideRemarks.trim();
+        if (!remarks) {
+            setFormError("Authorization justification is required before confirming the override.");
+            return;
+        }
+
+        await onProceedWithNegative(remarks);
         setShowOverrideConfirm(false);
         setOverrideRemarks("");
+        setFormError(null);
     };
 
     const handleCancel = () => {
         setShowOverrideConfirm(false);
         setOverrideRemarks("");
+        setFormError(null);
         onClose();
     };
 
@@ -186,7 +195,10 @@ export function ShortageWarningDialog({
                                     <Button
                                         variant="destructive"
                                         size="sm"
-                                        onClick={() => setShowOverrideConfirm(true)}
+                                        onClick={() => {
+                                            setFormError(null);
+                                            setShowOverrideConfirm(true);
+                                        }}
                                         disabled={isLoading}
                                         className="shrink-0 shadow-sm"
                                     >
@@ -209,6 +221,11 @@ export function ShortageWarningDialog({
                                             placeholder="e.g. Physical stock verified on shelf; PO receiving paperwork pending."
                                             className="text-xs h-9 bg-background"
                                         />
+                                        {formError && (
+                                            <p className="text-xs text-destructive" role="alert">
+                                                {formError}
+                                            </p>
+                                        )}
                                     </div>
 
                                     <div className="flex items-center justify-between gap-2 pt-1">
