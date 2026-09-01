@@ -225,6 +225,12 @@ export function useMaterialStaging() {
     const handleProceedWithNegativeStock = useCallback(async (remarks?: string) => {
         if (!shortageWarningInfo) return;
 
+        const authorizationRemarks = remarks?.trim();
+        if (!authorizationRemarks) {
+            toast.error("Authorization justification is required for a negative stock override.");
+            return;
+        }
+
         const payload: BinTransferPayload = {
             job_order_id: shortageWarningInfo.job_order_id,
             job_order_no: shortageWarningInfo.job_order_no,
@@ -239,7 +245,7 @@ export function useMaterialStaging() {
             target_bin: shortageWarningInfo.target_bin,
             work_center_id: shortageWarningInfo.work_center_id,
             override_negative: true,
-            remarks: remarks || "Floor hold override authorized by staging operator."
+            remarks: authorizationRemarks
         };
 
         await handlePerformTransfer(payload);

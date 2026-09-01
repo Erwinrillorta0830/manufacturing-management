@@ -1,50 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { DIRECTUS_URL, headers as directusHeaders } from "@/app/api/manufacturing/services/core-api.service";
 
-const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const COLLECTION = "price_types";
-
-type JwtPayload = {
-    sub?: string | number | null;
-};
 
 type PriceTypeRow = {
     price_type_id?: number | string | null;
     price_type_name?: string | null;
     sort?: number | string | null;
+    is_active?: boolean | number | string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function fetchDirectus<T>(url: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(url, { cache: "no-store", ...init });
+function unauthorizedResponse() {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+function parseActive(value: unknown): boolean {
+    if (value === true || value === 1 || value === "1" || (typeof value === "string" && value.trim().toLowerCase() === "true")) return true;
+    if (value === false || value === 0 || value === "0" || (typeof value === "string" && value.trim().toLowerCase() === "false")) return false;
+    throw new Error("is_active must be a boolean value.");
+}
+
+function priceTypePayload(value: unknown): Record<string, unknown> {
+    if (!isRecord(value)) throw new Error("A price-type payload is required.");
+
+    const name = typeof value.price_type_name === "string" ? value.price_type_name.trim() : "";
+    if (!name) throw new Error("Price Type Name is required.");
+
+    const payload: Record<string, unknown> = {
+        price_type_name: name,
+        sort: value.sort === undefined || value.sort === "" ? null : value.sort
+    };
+    if (Object.prototype.hasOwnProperty.call(value, "is_active")) payload.is_active = parseActive(value.is_active);
+    return payload;
+}
+
+async function fetchDirectus<T>(url: string, init: RequestInit = {}): Promise<T> {
+    const res = await fetch(url, {
+        cache: "no-store",
+        ...init,
+        headers: { ...directusHeaders, ...(init.headers || {}) }
+    });
     if (!res.ok) throw new Error(await res.text());
     return (await res.json()) as T;
 }
 
-function decodeUserIdFromJwtCookie(req: NextRequest, cookieName = "vos_access_token") {
-    const token = req.cookies.get(cookieName)?.value;
-    if (!token) return null;
-
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-
-    try {
-        const payloadPart = parts[1];
-        const pad = "=".repeat((4 - (payloadPart.length % 4)) % 4);
-        const b64 = (payloadPart + pad).replace(/-/g, "+").replace(/_/g, "/");
-        const jsonStr = Buffer.from(b64, "base64").toString("utf8");
-        const payloadUnknown: unknown = JSON.parse(jsonStr);
-
-        if (!isRecord(payloadUnknown)) return null;
-
-        const payload = payloadUnknown as JwtPayload;
-        const userId = Number(payload.sub);
-        return Number.isFinite(userId) ? userId : null;
-    } catch {
-        return null;
-    }
+async function requireAuthenticatedUser(): Promise<boolean> {
+    return Boolean(await getUserIdFromToken());
 }
 
 export async function PATCH(
@@ -55,24 +61,13 @@ export async function PATCH(
         if (!DIRECTUS_URL) {
             return NextResponse.json({ error: "NEXT_PUBLIC_API_BASE_URL is not set" }, { status: 500 });
         }
+        if (!(await requireAuthenticatedUser())) return unauthorizedResponse();
 
         const { id } = await params;
-        const userId = decodeUserIdFromJwtCookie(req);
-        if (!userId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        const body = await req.json();
-        const payload = {
-            price_type_name: body.price_type_name,
-            sort: body.sort,
-        };
-
-        const url = `${DIRECTUS_URL}/items/${COLLECTION}/${id}`;
-        const json = await fetchDirectus<{ data: PriceTypeRow }>(url, {
+        const payload = priceTypePayload(await req.json());
+        const json = await fetchDirectus<{ data: PriceTypeRow }>(`${DIRECTUS_URL}/items/${COLLECTION}/${encodeURIComponent(id)}`, {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(payload)
         });
 
         return NextResponse.json({ data: json.data });
@@ -95,16 +90,11 @@ export async function DELETE(
         if (!DIRECTUS_URL) {
             return NextResponse.json({ error: "NEXT_PUBLIC_API_BASE_URL is not set" }, { status: 500 });
         }
+        if (!(await requireAuthenticatedUser())) return unauthorizedResponse();
 
         const { id } = await params;
-        const userId = decodeUserIdFromJwtCookie(req);
-        if (!userId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        const url = `${DIRECTUS_URL}/items/${COLLECTION}/${id}`;
-        await fetchDirectus<unknown>(url, {
-            method: "DELETE",
+        await fetchDirectus<unknown>(`${DIRECTUS_URL}/items/${COLLECTION}/${encodeURIComponent(id)}`, {
+            method: "DELETE"
         });
 
         return NextResponse.json({ ok: true });
