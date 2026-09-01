@@ -4,7 +4,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 
-import type { AccountTypeRow, BalanceTypeRow, BSISTypeRow, COARow, UserRow } from "../types";
+import type { AccountTypeRow, BalanceTypeRow, BSISTypeRow, COARow } from "../types";
 import * as api from "../providers/fetchProvider";
 
 type EditState =
@@ -12,7 +12,18 @@ type EditState =
   | { open: true; row: COARow };
 
 export function useChartOfAccounts() {
-  const [q, setQ] = React.useState("");
+  const [glCode, setGlCode] = React.useState("");
+  const [accountTitle, setAccountTitle] = React.useState("");
+  const [accountType, setAccountType] = React.useState("");
+  const [balanceType, setBalanceType] = React.useState("");
+
+  const [activeFilters, setActiveFilters] = React.useState({
+    glCode: "",
+    accountTitle: "",
+    accountType: "",
+    balanceType: "",
+  });
+
   const [page, setPage] = React.useState(1);
   const [pageSize] = React.useState(20);
 
@@ -23,7 +34,7 @@ export function useChartOfAccounts() {
   const [accountTypes, setAccountTypes] = React.useState<AccountTypeRow[]>([]);
   const [balanceTypes, setBalanceTypes] = React.useState<BalanceTypeRow[]>([]);
   const [bsisTypes, setBsisTypes] = React.useState<BSISTypeRow[]>([]);
-  const [users, setUsers] = React.useState<UserRow[]>([]);
+  const [accountTitlesLookup, setAccountTitlesLookup] = React.useState<string[]>([]);
   const [lookupsLoading, setLookupsLoading] = React.useState(true);
 
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -51,16 +62,16 @@ export function useChartOfAccounts() {
   const loadLookups = React.useCallback(async () => {
     try {
       setLookupsLoading(true);
-      const [a, b, c, u] = await Promise.all([
+      const [a, b, c, titles] = await Promise.all([
         api.listAccountTypes(),
         api.listBalanceTypes(),
         api.listBSISTypes(),
-        api.listUsers(),
+        api.listAccountTitles(),
       ]);
       setAccountTypes(a);
       setBalanceTypes(b);
       setBsisTypes(c);
-      setUsers(u);
+      setAccountTitlesLookup(titles);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to load lookups");
     } finally {
@@ -71,7 +82,14 @@ export function useChartOfAccounts() {
   const load = React.useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.listCOA({ q, page, pageSize });
+      const res = await api.listCOA({ 
+        glCode: activeFilters.glCode,
+        accountTitle: activeFilters.accountTitle,
+        accountType: activeFilters.accountType,
+        balanceType: activeFilters.balanceType,
+        page, 
+        pageSize 
+      });
       setRows(res.data ?? []);
       const t = res?.meta?.filter_count ?? res?.meta?.total_count ?? 0;
       setTotal(typeof t === "number" ? t : 0);
@@ -82,7 +100,7 @@ export function useChartOfAccounts() {
     } finally {
       setLoading(false);
     }
-  }, [q, page, pageSize]);
+  }, [activeFilters, page, pageSize]);
 
   React.useEffect(() => {
     loadLookups();
@@ -94,6 +112,20 @@ export function useChartOfAccounts() {
 
   function openCreate() {
     setCreateOpen(true);
+  }
+
+  function applyFilters() {
+    setActiveFilters({ glCode, accountTitle, accountType, balanceType });
+    setPage(1);
+  }
+
+  function clearFilters() {
+    setGlCode("");
+    setAccountTitle("");
+    setAccountType("");
+    setBalanceType("");
+    setActiveFilters({ glCode: "", accountTitle: "", accountType: "", balanceType: "" });
+    setPage(1);
   }
 
   function openEdit(row: COARow) {
@@ -160,8 +192,16 @@ export function useChartOfAccounts() {
     loading,
 
     // search/paging
-    q,
-    setQ,
+    glCode,
+    setGlCode,
+    accountTitle,
+    setAccountTitle,
+    accountType,
+    setAccountType,
+    balanceType,
+    setBalanceType,
+    applyFilters,
+    clearFilters,
     page,
     setPage,
     pageSize,
@@ -173,7 +213,7 @@ export function useChartOfAccounts() {
     accountTypes,
     balanceTypes,
     bsisTypes,
-    users,
+    accountTitlesLookup,
     lookupsLoading,
 
     // dialogs

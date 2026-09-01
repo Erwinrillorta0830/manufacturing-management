@@ -24,7 +24,7 @@ export type COARow = {
   bsis_code: number | null;
   memo_type: number | null;
   description: string | null;
-  added_by: number | string | null;
+  added_by: { id?: number; user_fname?: string; user_lname?: string } | number | string | null;
   date_added: string | null;
 
   // optional fields based on your API sample
@@ -51,7 +51,10 @@ export type BSISTypeRow = {
 };
 
 export type COAListParams = {
-  q: string;
+  glCode?: string;
+  accountTitle?: string;
+  accountType?: string;
+  balanceType?: string;
   page: number;
   pageSize: number;
 };
