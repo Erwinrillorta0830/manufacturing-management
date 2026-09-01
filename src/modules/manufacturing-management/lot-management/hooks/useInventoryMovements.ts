@@ -119,7 +119,7 @@ export function useInventoryMovements(
 
                 // Batch filter
                 if (selectedBatchId !== "ALL") {
-                    if (Number(m.batchId) !== Number(selectedBatchId)) return false;
+                    if (Number(m.inventoryLotId ?? m.batchId) !== Number(selectedBatchId)) return false;
                 }
 
                 const matchesText = (query: string) => {

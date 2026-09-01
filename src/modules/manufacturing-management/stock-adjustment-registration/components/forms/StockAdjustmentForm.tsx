@@ -1245,10 +1245,12 @@ export function StockAdjustmentForm({
                   <ComboboxContent>
                     <ComboboxList>
                       {(() => {
-                        const filtered = branches.filter(b =>
-                          b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
-                          (b.branch_code ?? "").toLowerCase().includes(branchSearch.toLowerCase())
-                        );
+                        const filtered = branches
+                          .filter(b => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
+                          .filter(b =>
+                            b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
+                            (b.branch_code ?? "").toLowerCase().includes(branchSearch.toLowerCase())
+                          );
                         if (filtered.length === 0) return <ComboboxEmpty>No branches found.</ComboboxEmpty>;
                         return filtered.map(b => {
                           const bCode = b.branch_code ?? "";

@@ -203,6 +203,7 @@ export interface SelectionBranch {
   branch_code?: string;
   isBadStock?: number | boolean | string | null;
   bad_stock_branch_id?: number | null;
+  isActive?: number | boolean | string | null;
 }
 
 export interface SelectionSupplier {
