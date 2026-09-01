@@ -1,161 +1,101 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import {
+  fetchMmInventoryMovements,
+  movementErrorStatus,
+  type MmInventoryMovement
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+export type MMInventoryMovement = MmInventoryMovement;
 
-export interface MMInventoryMovement {
-  movementKey?: string;
-  transactionType?: string;
-  movementDirection?: string; // "IN" | "OUT"
-  sourceModule?: string;
-  referenceId?: number;
-  referenceDetailId?: number;
-  referenceNo?: string;
-  transactionDate?: string;
-  postedAt?: string;
-  postedBy?: number;
-  branchId?: number;
-  inventoryLotId?: number;
-  lotId?: number;
-  productId?: number;
-  productCode?: string;
-  productName?: string;
-  productTypeId?: number;
-  productTypeName?: string;
-  unitId?: number;
-  batchNo?: string;
-  manufacturingDate?: string | null;
-  expirationDate?: string | null;
-  inventoryCondition?: string;
-  quantityIn?: number;
-  quantityOut?: number;
-  unitCost?: number;
-  differenceCost?: number;
-  remarks?: string | null;
-  stockType?: string;
-  sourceStatus?: string;
+function valueOrNull(value: string | null): string | null {
+  const normalized = value?.trim() || null;
+  return normalized && normalized.toUpperCase() !== "ALL" ? normalized : null;
+}
+
+function numberOrNull(value: string | null): number | null {
+  const normalized = valueOrNull(value);
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const branch = searchParams.get("branch") || searchParams.get("branch_id");
-    const productType = searchParams.get("productType") || searchParams.get("product_type_id");
-    const referenceNo = searchParams.get("referenceNo") || searchParams.get("reference_no");
-    const referenceId = searchParams.get("referenceId") || searchParams.get("reference_id");
-    const productId = searchParams.get("productId") || searchParams.get("product_id");
-    const lotId = searchParams.get("lotId") || searchParams.get("lot_id") || searchParams.get("lot");
-    const batchNo = searchParams.get("batchNo") || searchParams.get("batch_no") || searchParams.get("batch");
-    const direction = searchParams.get("direction") || searchParams.get("movementDirection");
-    const transactionType = searchParams.get("transactionType") || searchParams.get("transaction_type");
+    const branch = valueOrNull(searchParams.get("branch") || searchParams.get("branch_id"));
+    const productType = valueOrNull(searchParams.get("productType") || searchParams.get("product_type_id"));
+    const referenceNo = valueOrNull(searchParams.get("referenceNo") || searchParams.get("reference_no"));
+    const referenceId = valueOrNull(searchParams.get("referenceId") || searchParams.get("reference_id"));
+    const productId = valueOrNull(searchParams.get("productId") || searchParams.get("product_id"));
+    const lotId = valueOrNull(searchParams.get("lotId") || searchParams.get("lot_id") || searchParams.get("lot"));
+    const mmLotId = valueOrNull(searchParams.get("mmLotId") || searchParams.get("mm_lot_id"));
+    const inventoryLotId = valueOrNull(searchParams.get("inventoryLotId") || searchParams.get("inventory_lot_id"));
+    const batchNo = valueOrNull(searchParams.get("batchNo") || searchParams.get("batch_no") || searchParams.get("batch"));
+    const direction = valueOrNull(searchParams.get("direction") || searchParams.get("movementDirection"));
+    const transactionType = valueOrNull(searchParams.get("transactionType") || searchParams.get("transaction_type"));
+    const transactionTypeId = valueOrNull(searchParams.get("transactionTypeId") || searchParams.get("transaction_type_id"));
+    const movementId = valueOrNull(searchParams.get("movementId") || searchParams.get("movement_id"));
 
-    const query = new URLSearchParams();
-    if (branch && branch !== "ALL") query.append("branch", branch);
-    if (productType && productType !== "ALL") query.append("productType", productType);
-
-    let token: string | undefined;
-    try {
-      const cookieStore = await cookies();
-      token = cookieStore.get("vos_access_token")?.value;
-    } catch {
-      // ignore
-    }
-
-    const reqHeaders: Record<string, string> = {
-      Accept: "application/json",
-    };
-    if (token) {
-      reqHeaders["Authorization"] = `Bearer ${token}`;
-      reqHeaders["Cookie"] = `vos_access_token=${token}`;
-    }
-
-    // If query has branch or productType, call /api/mm-inventory-movements/filter?branch=&productType=
-    // Otherwise call /api/mm-inventory-movements/all
-    const queryString = query.toString();
-    const targetUrl = queryString
-      ? `${SPRING_API_BASE}/api/mm-inventory-movements/filter?${queryString}`
-      : `${SPRING_API_BASE}/api/mm-inventory-movements/all`;
-
-    console.log("=================================================");
-    console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Fetching from Spring Boot API");
-    console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Target URL:", targetUrl);
-    console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Query Params:", Object.fromEntries(searchParams.entries()));
-    console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Auth Token Present:", !!token);
-    console.log("=================================================");
-
-    const res = await fetch(targetUrl, {
-      headers: reqHeaders,
-      cache: "no-store",
+    const movements = await fetchMmInventoryMovements({
+      branch: numberOrNull(branch),
+      productType: numberOrNull(productType),
+      referenceId: numberOrNull(referenceId),
+      product: numberOrNull(productId),
+      lot: numberOrNull(lotId),
+      mmLot: numberOrNull(mmLotId),
+      inventoryLot: numberOrNull(inventoryLotId),
+      movementDirection: direction,
+      transactionType,
+      transactionTypeId: numberOrNull(transactionTypeId),
+      movementId: numberOrNull(movementId)
     });
 
-    console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Response Status:", res.status, res.statusText);
+    let filtered = movements;
+    const branchNumber = numberOrNull(branch);
+    const productTypeNumber = numberOrNull(productType);
+    const referenceNumber = numberOrNull(referenceId);
+    const productNumber = numberOrNull(productId);
+    const lotNumber = numberOrNull(lotId);
+    const mmLotNumber = numberOrNull(mmLotId);
+    const inventoryLotNumber = numberOrNull(inventoryLotId);
+    const transactionTypeNumber = numberOrNull(transactionTypeId);
+    const movementNumber = numberOrNull(movementId);
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.error(`[MM-INVENTORY-MOVEMENTS DEBUG] Spring Boot HTTP ${res.status} Error Body:`, errText);
-      return NextResponse.json(
-        { error: `Spring Boot Inventory Movements API error (HTTP ${res.status}): ${errText || res.statusText}` },
-        { status: res.status >= 400 && res.status < 600 ? res.status : 502 }
-      );
-    }
+    if (branchNumber) filtered = filtered.filter((movement) => Number(movement.branchId) === branchNumber);
+    if (productTypeNumber) filtered = filtered.filter((movement) => Number(movement.productTypeId) === productTypeNumber);
+    if (referenceNumber) filtered = filtered.filter((movement) => Number(movement.referenceId) === referenceNumber);
+    if (productNumber) filtered = filtered.filter((movement) => Number(movement.productId) === productNumber);
+    if (lotNumber) filtered = filtered.filter((movement) => Number(movement.lotId) === lotNumber);
+    if (mmLotNumber) filtered = filtered.filter((movement) => Number(movement.mmLotId) === mmLotNumber);
+    if (inventoryLotNumber) filtered = filtered.filter((movement) => Number(movement.inventoryLotId) === inventoryLotNumber);
+    if (transactionTypeNumber) filtered = filtered.filter((movement) => Number(movement.transactionTypeId) === transactionTypeNumber);
+    if (movementNumber) filtered = filtered.filter((movement) => Number(movement.movementId) === movementNumber);
 
-    const data = await res.json();
-    let list: MMInventoryMovement[] = Array.isArray(data) ? data : data?.data || [];
-
-    console.log(`[MM-INVENTORY-MOVEMENTS DEBUG] Successfully received ${list.length} records from Spring Boot.`);
-    if (list.length > 0) {
-      console.log("[MM-INVENTORY-MOVEMENTS DEBUG] Sample Item #1:", JSON.stringify(list[0], null, 2));
-    }
-
-    // Client/BFF level filtering for additional query parameters
-    if (branch && branch !== "ALL") {
-      const branchNum = Number(branch);
-      list = list.filter((m) => m.branchId && Number(m.branchId) === branchNum);
-    }
-    if (productType && productType !== "ALL") {
-      const pTypeNum = Number(productType);
-      list = list.filter((m) => m.productTypeId && Number(m.productTypeId) === pTypeNum);
-    }
     if (referenceNo) {
-      const refNoUpper = referenceNo.trim().toUpperCase();
-      list = list.filter((m) => m.referenceNo && m.referenceNo.trim().toUpperCase().includes(refNoUpper));
-    }
-    if (referenceId) {
-      const refIdNum = Number(referenceId);
-      list = list.filter((m) => Number(m.referenceId) === refIdNum);
-    }
-    if (productId && productId !== "ALL") {
-      const pIdNum = Number(productId);
-      list = list.filter((m) => Number(m.productId) === pIdNum);
-    }
-    if (lotId && lotId !== "ALL") {
-      const lotIdNum = Number(lotId);
-      list = list.filter((m) => Number(m.lotId) === lotIdNum);
+      const referenceSearch = referenceNo.toUpperCase();
+      filtered = filtered.filter((movement) => String(movement.referenceNo || "").toUpperCase().includes(referenceSearch));
     }
     if (batchNo) {
-      const batchLower = batchNo.trim().toLowerCase();
-      list = list.filter((m) => m.batchNo && m.batchNo.trim().toLowerCase().includes(batchLower));
+      const batchSearch = batchNo.toLowerCase();
+      filtered = filtered.filter((movement) => String(movement.batchNo || "").toLowerCase().includes(batchSearch));
     }
-    if (direction && direction !== "ALL") {
-      const dirUpper = direction.trim().toUpperCase();
-      list = list.filter((m) => m.movementDirection && m.movementDirection.toUpperCase() === dirUpper);
+    if (direction) {
+      const directionUpper = direction.toUpperCase();
+      filtered = filtered.filter((movement) => String(movement.movementDirection || "").toUpperCase() === directionUpper);
     }
-    if (transactionType && transactionType !== "ALL") {
-      const typeUpper = transactionType.trim().toUpperCase();
-      list = list.filter((m) => m.transactionType && m.transactionType.toUpperCase() === typeUpper);
+    if (transactionType) {
+      const transactionTypeUpper = transactionType.toUpperCase();
+      filtered = filtered.filter((movement) => String(movement.transactionType || "").toUpperCase() === transactionTypeUpper);
     }
 
-    console.log(`[MM-INVENTORY-MOVEMENTS DEBUG] Returning ${list.length} movements after query filters.`);
-
-    return NextResponse.json(list);
+    return NextResponse.json(filtered);
   } catch (error) {
-    console.error("[MM-INVENTORY-MOVEMENTS DEBUG] Network/Fetch Error:", error);
-    return NextResponse.json(
-      { error: `Spring Boot API connection failed: ${(error as Error).message || "Unable to reach Spring Boot server"}` },
-      { status: 502 }
-    );
+    const status = movementErrorStatus(error);
+    const message = error instanceof Error ? error.message : "Failed to load inventory movements.";
+    console.error("[MM Inventory Movements BFF] Read failed:", error);
+    return NextResponse.json({ error: message }, { status });
   }
 }

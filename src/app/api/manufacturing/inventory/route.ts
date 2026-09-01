@@ -4,6 +4,11 @@ import { canonicalBatchNumber } from "@/app/api/manufacturing/procurement/_domai
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "@/app/api/manufacturing/qa-receiving/_movement-stock";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { resolveJobOrderRelationship } from "./_job-order-relationships";
+import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError,
+    movementErrorStatus
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 
 interface InventoryLot {
@@ -88,9 +93,9 @@ interface DirectusYieldRaw {
 
 export async function GET() {
     try {
-        const [ledgerRes, movementsRes, productsRes, branchesRes, jobOrdersRes, finalQARes] = await Promise.all([
+        const [ledgerRes, movementsData, productsRes, branchesRes, jobOrdersRes, finalQARes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/product_ledger?limit=100&sort=-id`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=*,source_document_id,source_document_no,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.transaction_type_id,transaction_type_id.type_name&limit=-1`, { headers, cache: "no-store" }),
+            fetchMmInventoryMovements(),
             fetch(`${DIRECTUS_URL}/items/products?limit=500&fields=product_id,product_name,product_code,product_brand.brand_id,product_brand.brand_name,product_category.category_id,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,cost_per_unit,product_shelf_life,parent_id,product_type`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?fields=job_order_id,job_order_no&limit=-1`, { headers, cache: "no-store" }),
@@ -108,12 +113,11 @@ export async function GET() {
             console.warn("Directus product_ledger fetch failed, using fallback entries.");
         }
 
-        if (!movementsRes.ok) throw new Error("Failed to fetch inventory_movements from Directus");
         if (!productsRes.ok) throw new Error("Failed to fetch products from Directus");
         if (!branchesRes.ok) throw new Error("Failed to fetch branches from Directus");
         if (!jobOrdersRes.ok) throw new Error("Failed to fetch manufacturing_job_orders from Directus");
 
-        const rawMovements = (await movementsRes.json()).data || [];
+        const rawMovements = movementsData as unknown as DirectusMovementRaw[];
         const productsData = (await productsRes.json()).data || [];
         const branches = (await branchesRes.json()).data || [];
         const jobOrders = (await jobOrdersRes.json()).data as DirectusJobOrderRaw[] || [];
@@ -382,7 +386,8 @@ export async function GET() {
         });
     } catch (e) {
         console.error("[Inventory BFF GET] Error:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch inventory logs" }, { status: 500 });
+        const status = e instanceof MmInventoryMovementError ? movementErrorStatus(e) : 500;
+        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch inventory logs" }, { status });
     }
 }
 

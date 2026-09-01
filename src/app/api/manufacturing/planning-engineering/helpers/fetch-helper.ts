@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -29,6 +30,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const now = Date.now();
         const useCache = masterDataCache && masterDataCache.unitsList && (now - masterDataCache.timestamp < CACHE_TTL_MS);
 
+        const movementPromise = fetchMmInventoryMovements();
         const fetchList = [
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?limit=-1`, { headers: headersNoCache }),
@@ -37,8 +39,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,transaction_type_id,source_document_id,source_document_no,product_id,lot_id,branch_id,batch_no,quantity,expiry_date,manufacturing_date,created_at`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -62,7 +63,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const materialsList = responses[5].ok ? (await responses[5].json()).data || [] : [];
         const mfgYieldLedger = responses[6].ok ? (await responses[6].json()).data || [] : [];
         const mfgVersions = responses[7].ok ? (await responses[7].json()).data || [] : [];
-        const invMovements = responses[8].ok ? (await responses[8].json()).data || [] : [];
+        const invMovements = await movementPromise;
 
         let mfgRoutings = [];
         let mfgBoms = [];
@@ -79,12 +80,12 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             mfgRoutesBom = masterDataCache.mfgRoutesBom;
             unitsList = (masterDataCache as any).unitsList || [];
         } else {
-            const mfgRoutingsRes = responses[9];
-            const mfgBomsRes = responses[10];
-            const prodRes = responses[11];
-            const operationsRes = responses[12];
-            const mfgRoutesBomRes = responses[13];
-            const unitsRes = responses[14];
+            const mfgRoutingsRes = responses[8];
+            const mfgBomsRes = responses[9];
+            const prodRes = responses[10];
+            const operationsRes = responses[11];
+            const mfgRoutesBomRes = responses[12];
+            const unitsRes = responses[13];
 
             mfgRoutings = mfgRoutingsRes && mfgRoutingsRes.ok ? (await mfgRoutingsRes.json()).data || [] : [];
             mfgBoms = mfgBomsRes && mfgBomsRes.ok ? (await mfgBomsRes.json()).data || [] : [];
@@ -394,6 +395,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         });
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to fetch job orders:", e);
+        if (e instanceof MmInventoryMovementError) throw e;
         return [];
     }
 }

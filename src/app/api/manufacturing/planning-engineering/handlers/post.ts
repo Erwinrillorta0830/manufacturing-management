@@ -5,6 +5,7 @@ import { createJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 
@@ -276,14 +277,10 @@ export async function handlePOST(request: Request) {
                 }
 
                 // Fetch inventory movements to calculate the true ledger stock
-                const movFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { product_id: { _in: shortfallProductIds } },
-                        { branch_id: { _eq: branchId } }
-                    ]
-                }));
-                const movRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                const movements = (await fetchMmInventoryMovements({
+                    branch: branchId,
+                    product: shortfallProductIds.length === 1 ? shortfallProductIds[0] : null
+                })).filter((movement) => shortfallProductIds.includes(Number(movement.product_id || movement.productId || 0)));
                 movements.forEach((mov: any) => {
                     const productId = Number(mov.product_id?.product_id || mov.product_id);
                     const batchNo = mov.batch_no || "LOT-N/A";
@@ -659,14 +656,10 @@ export async function handlePOST(request: Request) {
             }
 
             // Fetch inventory movements to calculate the true ledger stock
-            const movFilter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _eq: Number(productId) } },
-                    { branch_id: { _eq: Number(branchId) } }
-                ]
-            }));
-            const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-            const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+            const movements = await fetchMmInventoryMovements({
+                branch: Number(branchId),
+                product: Number(productId)
+            });
             const movementStockMap = new Map<string, number>();
             movements.forEach((mov: any) => {
                 const batchNo = mov.batch_no || "LOT-N/A";
@@ -919,7 +912,10 @@ export async function handlePOST(request: Request) {
         if (e instanceof PlanningConflictError) {
             return NextResponse.json({ error: e.message }, { status: 409 });
         }
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create Job Order" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as { message?: string }).message || "Failed to create Job Order" },
+            { status: e instanceof MmInventoryMovementError ? e.status : 500 }
+        );
     }
 }
 
