@@ -386,6 +386,10 @@ export interface RawMaterial {
     isActive?: number;
     date_added?: string;
     last_updated?: string;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface LinkedProduct {
@@ -655,6 +659,10 @@ export interface BFFCatalogProduct {
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface PurchaseOrderPriceTypeRule {

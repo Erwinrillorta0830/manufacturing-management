@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { productCreationAuditFields, productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 import {
@@ -367,7 +368,7 @@ export async function POST(request: Request) {
             item_type: "regular", // Must be regular due to DB enum constraint
             date_added: productDetails.date_added || todayStr,
             created_by: userId ? Number(userId) : null,
-            created_at: createdAt
+            ...productCreationAuditFields(createdAt)
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -432,7 +433,7 @@ export async function POST(request: Request) {
                         item_type: "regular",
                         date_added: todayStr,
                         created_by: userId ? Number(userId) : null,
-                        created_at: createdAt
+                        ...productCreationAuditFields(createdAt)
                     };
 
                     const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -603,10 +604,7 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "A valid authenticated user is required to update raw materials." }, { status: 401 });
         }
         const operationTimestamp = formatPhtDateTime();
-        const auditFields = {
-            updated_by: userId,
-            updated_at: operationTimestamp
-        };
+        const auditFields = productUpdateAuditFields(userId);
 
         const hasWeightField = Object.prototype.hasOwnProperty.call(productDetails, "weight");
         const hasWeightUnitField = Object.prototype.hasOwnProperty.call(productDetails, "weight_unit_id");
@@ -745,7 +743,7 @@ export async function PATCH(request: Request) {
                                 isActive: variantHasActiveFlag ? variantActive : 1,
                                 date_added: await getTodayDateString(),
                                 created_by: userId,
-                                created_at: operationTimestamp
+                                ...productCreationAuditFields(operationTimestamp)
                             })
                         });
 
