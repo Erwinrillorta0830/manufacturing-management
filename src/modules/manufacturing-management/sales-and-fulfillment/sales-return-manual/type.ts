@@ -23,9 +23,16 @@ export interface SalesReturnItem {
   reason?: string;
   returnType?: string;
   rfidTags?: string[];
+  agreedPrice?: number;
+  priceVariance?: number;
   // 🟢 Fields for Price Type Recalculation
   availablePrices?: ProductPerPriceType[];
   unitMultiplier?: number;
+  priceA?: number;
+  priceB?: number;
+  priceC?: number;
+  priceD?: number;
+  priceE?: number;
 }
 
 export interface SalesReturn {
@@ -225,4 +232,19 @@ export interface InvoiceOption {
 export interface LotOption {
   lot_id: number;
   lot_name: string;
+}
+
+// --- QUOTATION DATA ---
+export interface QuotationHeader {
+  id: number;
+  quote_number: string;
+  customer_id: number;
+}
+
+export interface QuotationSnapshot {
+  snapshot_id: number;
+  quotation_id: number;
+  product_id: number;
+  unit_price: number;
+  agreed_price: number;
 }

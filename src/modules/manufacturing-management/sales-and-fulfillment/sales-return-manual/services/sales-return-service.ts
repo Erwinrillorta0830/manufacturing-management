@@ -185,6 +185,8 @@ export async function fetchReturnDetails(
       unit: unit ? unit.unit_shortcut : "Pcs",
       quantity: Number(detail.quantity),
       unitPrice: Number(detail.unit_price),
+      agreedPrice: detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : Number(detail.unit_price),
+      priceVariance: detail.price_variance ? Number(detail.price_variance) : 0,
       grossAmount: Number(detail.gross_amount),
       discountType: detail.discount_type ? Number(detail.discount_type) : "",
       discountAmount: (() => {
@@ -419,6 +421,22 @@ export async function fetchInvoices(
 }
 
 /**
+ * Fetches all quotations for Quotation Reference dropdown.
+ */
+export async function fetchQuotations() {
+  const result = await repo.getRawQuotations();
+  return (result.data || []) as any[];
+}
+
+/**
+ * Fetches snapshots for a specific quotation.
+ */
+export async function fetchQuotationSnapshots(quotationId: number) {
+  const result = await repo.getRawQuotationSnapshots(quotationId);
+  return (result.data || []) as any[];
+}
+
+/**
  * Fetches the status card data for a return.
  */
 export async function fetchStatusCard(
@@ -485,8 +503,10 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -518,7 +538,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     status: "Pending",
     return_date: formattedDate,
     price_type_id: payload.priceType ? Number(payload.priceType) : null,
-    branch_id: cleanId(payload.branchId),
+    branch_id: cleanId(payload.branchId) ?? null,
     remarks: payload.remarks || "Created via Web App",
     order_id: payload.orderNo || "",
     isThirdParty: payload.isThirdParty ? 1 : 0,
@@ -557,19 +577,23 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType && item.discountType !== ""
         ? Number(item.discountType)
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
     const detailPayload = {
       return_no: finalReturnNo,
       product_id: Number(item.productId || item.product_id || item.id),
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
@@ -614,8 +638,10 @@ export async function updateReturn(
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -734,7 +760,8 @@ export async function updateReturn(
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType &&
       item.discountType !== "No Discount" &&
@@ -743,10 +770,13 @@ export async function updateReturn(
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
     const detailPayload = {
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,

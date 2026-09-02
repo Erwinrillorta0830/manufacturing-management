@@ -136,6 +136,24 @@ export async function getRawLinkedInvoice(returnId: number) {
 }
 
 /**
+ * Fetches all quotations for the Quotation Reference dropdown.
+ */
+export async function getRawQuotations() {
+  const fields = "id,quote_number,customer_id";
+  const searchUrl = `/items/quotation_header?fields=${fields}&limit=-1&filter[status][_neq]=Draft`;
+  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
+}
+
+/**
+ * Fetches quotation snapshots given a quotation ID.
+ */
+export async function getRawQuotationSnapshots(quotationId: number) {
+  const fields = "snapshot_id,quotation_id,product_id,unit_price";
+  const searchUrl = `/items/quotation_snapshot?fields=${fields}&limit=-1&filter[quotation_id][_eq]=${quotationId}`;
+  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
+}
+
+/**
  * Fetches all reference data needed for dropdowns and forms.
  */
 export async function getRawReferences() {

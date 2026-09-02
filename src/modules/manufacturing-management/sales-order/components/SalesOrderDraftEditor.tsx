@@ -400,7 +400,7 @@ export function SalesOrderDraftEditor({
                     const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
                     const isFinishedGood = typeObj?.name === 'Finished Goods';
                     return {
-                        parent_product_id: item.parent_product_id || undefined,
+                        parent_product_id: item.parent_product_id as number,
                         product_id: item.product_id,
                         quantity: item.quantity,
                         unit_price: item.unit_price,
