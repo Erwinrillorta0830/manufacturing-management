@@ -372,6 +372,7 @@ export interface RawMaterial {
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
+    product_type_name?: string | null;
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
@@ -642,6 +643,7 @@ export interface BFFCatalogProduct {
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;
+    product_type_name?: string | null;
     product_class?: number | { class_id?: number; id?: number } | null;
     product_segment?: number | { segment_id?: number; id?: number } | null;
     product_section?: number | { section_id?: number; id?: number } | null;

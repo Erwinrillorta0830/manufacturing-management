@@ -159,6 +159,7 @@ export interface RawMaterialItem {
     product_brand?: number | string | { brand_id?: number; brand_name?: string } | null;
     brand_name?: string;
     product_type?: number | null;
+    product_type_name?: string | null;
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
