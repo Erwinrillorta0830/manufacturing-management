@@ -33,6 +33,20 @@ function emptyPurchaseQaConfig(): PurchaseQaConfig {
     return { inspectionRequired: false, specifications: [] };
 }
 
+function normalizeUomId(value: unknown): number | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return normalizeUomId(record.unit_id ?? record.id ?? record.value);
+    }
+
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function rawMaterialUomId(item: RawMaterialItem | null | undefined): number | null {
+    return normalizeUomId(item?.unit_of_measurement);
+}
+
 function getSelectedDensityRequirement(
     units: UnitOption[],
     uomId: number | ""
@@ -195,13 +209,21 @@ export function useRawMaterialForm(
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
     const [packagingVariants, setPackagingVariants] = useState<PackagingVariantFormState[]>([]);
 
+    const selectedParent = useMemo(
+        () => formParentId
+            ? rawMaterials.find(rm => String(rm.product_id) === String(formParentId))
+            : undefined,
+        [formParentId, rawMaterials]
+    );
+
     const uomOptions = useMemo(() => {
         return units.map(u => ({
             value: String(u.unit_id),
-            label: `${u.unit_name} (${u.unit_shortcut})`,
+            label: `${u.unit_name} (${u.unit_shortcut})${rawMaterialUomId(selectedParent) === u.unit_id ? " — same as parent (select another)" : ""}`,
+            disabled: rawMaterialUomId(selectedParent) === u.unit_id,
             requiresDensity: u.requiresDensity
         }));
-    }, [units]);
+    }, [units, selectedParent]);
 
     const weightUnitOptions = useMemo(() => {
         return weightUnits.map(u => ({
@@ -222,12 +244,6 @@ export function useRawMaterialForm(
             }));
     }, [rawMaterials, editingItem, formProductType]);
 
-    const selectedParent = useMemo(
-        () => formParentId
-            ? rawMaterials.find(rm => String(rm.product_id) === String(formParentId))
-            : undefined,
-        [formParentId, rawMaterials]
-    );
     const existingFamilyChildren = useMemo(
         () => editingItem
             ? rawMaterials.filter(rm => Number(rm.parent_id) === Number(editingItem.product_id))
@@ -247,8 +263,30 @@ export function useRawMaterialForm(
         if (Number(selectedParent.product_type) !== Number(formProductType)) {
             return "The parent material and Category Type must match.";
         }
+
+        const parentUomId = rawMaterialUomId(selectedParent);
+        const childUomId = normalizeUomId(formUom);
+        if (!parentUomId) return "The selected parent material has no valid Primary UOM. Refresh the material data before saving.";
+        if (childUomId && childUomId === parentUomId) {
+            return "A child material must use a different Primary UOM from its parent material.";
+        }
+
         return null;
-    }, [formParentId, formProductType, selectedParent]);
+    }, [formParentId, formProductType, formUom, selectedParent]);
+
+    const parentUomChangeError = useMemo(() => {
+        if (!editingItem || formParentId || existingFamilyChildren.length === 0) return null;
+
+        const parentUomId = normalizeUomId(formUom);
+        if (!parentUomId) return null;
+
+        const conflictingChild = existingFamilyChildren.find(child => rawMaterialUomId(child) === parentUomId);
+        return conflictingChild
+            ? `Primary UOM cannot match child material ${conflictingChild.product_name}. Select a different UOM before saving.`
+            : null;
+    }, [editingItem, existingFamilyChildren, formParentId, formUom]);
+
+    const effectiveParentRelationshipError = parentRelationshipError || parentUomChangeError;
     const classificationLocked = Boolean(formParentId || isEditingChild || existingFamilyChildren.length > 0);
     const inheritedProductType = selectedParent?.product_type
         ?? (isEditingChild
@@ -732,10 +770,10 @@ export function useRawMaterialForm(
         e.preventDefault();
         setSubmitError(null);
 
-        if (parentRelationshipError) {
+        if (effectiveParentRelationshipError) {
             setShowValidationErrors(true);
-            setSubmitError(parentRelationshipError);
-            toast.error(parentRelationshipError);
+            setSubmitError(effectiveParentRelationshipError);
+            toast.error(effectiveParentRelationshipError);
             return;
         }
 
@@ -1080,7 +1118,7 @@ export function useRawMaterialForm(
         classificationLockMessage,
         parentSelectionLocked,
         parentSelectionLockMessage,
-        parentRelationshipError,
+        parentRelationshipError: effectiveParentRelationshipError,
         formIsActive,
         setFormIsActive,
         formParentId,

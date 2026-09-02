@@ -127,7 +127,7 @@ async function fetchProduct(productId: number): Promise<ProductRecord> {
 async function fetchChildren(parentId: number): Promise<ProductRecord[]> {
     const params = new URLSearchParams({
         "filter[parent_id][_eq]": String(parentId),
-        fields: "product_id,product_type,parent_id,isActive",
+        fields: "product_id,product_type,unit_of_measurement.unit_id,parent_id,isActive",
         limit: "-1"
     });
     const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
@@ -148,6 +148,47 @@ function conflict(
     return new RawMaterialClassificationError(409, "PARENT_CLASSIFICATION_CONFLICT", message, details);
 }
 
+function ensureChildUomDiffersFromParent({
+    childId,
+    parentId,
+    childUomId,
+    parentUomId,
+    childUomRequiredMessage
+}: {
+    childId?: number;
+    parentId: number;
+    childUomId: number | null;
+    parentUomId: number | null;
+    childUomRequiredMessage: string;
+}): void {
+    if (!childUomId) {
+        throw new RawMaterialClassificationError(
+            400,
+            "PARENT_UOM_REQUIRED",
+            childUomRequiredMessage,
+            { productId: childId, parentId }
+        );
+    }
+
+    if (!parentUomId) {
+        throw new RawMaterialClassificationError(
+            503,
+            "INVALID_PRODUCT_DATA",
+            "The parent material does not have a valid Primary UOM. Refresh the material data before continuing.",
+            { productId: childId, parentId }
+        );
+    }
+
+    if (childUomId === parentUomId) {
+        throw new RawMaterialClassificationError(
+            409,
+            "PARENT_CHILD_UOM_CONFLICT",
+            "A child material must use a different Primary UOM from its parent material.",
+            { productId: childId, parentId, childUomId, parentUomId }
+        );
+    }
+}
+
 function ensureParentIsRoot(parent: ProductRecord, parentId: number): void {
     if (parentIdOf(parent)) {
         throw conflict("A child variant cannot be used as the parent of another raw-material family.", { parentId });
@@ -158,7 +199,8 @@ function ensureVariantsUseOuterUom(
     baseProduct: ProductRecord | null,
     productDetails: Record<string, unknown>,
     packagingVariants: Record<string, unknown>[],
-    productId?: number
+    productId?: number,
+    existingChildren: ProductRecord[] = []
 ): void {
     if (packagingVariants.length === 0) return;
 
@@ -172,7 +214,14 @@ function ensureVariantsUseOuterUom(
         );
     }
 
-    const conflictingVariant = packagingVariants.find(variant => unitIdOf(variant.unit_of_measurement) === baseUomId);
+    const conflictingVariant = packagingVariants.find(variant => {
+        const variantId = asPositiveId(variant.product_id);
+        const existingChild = variantId
+            ? existingChildren.find(child => productIdOf(child) === variantId)
+            : undefined;
+        const variantUomId = unitIdOf(variant.unit_of_measurement) ?? unitIdOf(existingChild?.unit_of_measurement);
+        return variantUomId === baseUomId;
+    });
     if (!conflictingVariant) return;
 
     throw new RawMaterialClassificationError(
@@ -321,7 +370,45 @@ export async function enforceClassificationIntegrity({
         };
     });
 
-    ensureVariantsUseOuterUom(currentProduct, productDetails, normalizedVariants, productId);
+    const effectiveProductUomId = unitIdOf(
+        hasField(productDetails, "unit_of_measurement")
+            ? productDetails.unit_of_measurement
+            : currentProduct?.unit_of_measurement
+    );
+
+    if (requestedParentId && requestedParent) {
+        ensureChildUomDiffersFromParent({
+            childId: productId,
+            parentId: requestedParentId,
+            childUomId: effectiveProductUomId,
+            parentUomId: unitIdOf(requestedParent.unit_of_measurement),
+            childUomRequiredMessage: "A child material with a parent must have a valid Primary UOM."
+        });
+    }
+
+    if (currentProduct && existingChildren.length > 0) {
+        const parentUomId = effectiveProductUomId;
+        if (!parentUomId) {
+            throw new RawMaterialClassificationError(
+                400,
+                "PARENT_UOM_REQUIRED",
+                "A parent material with child variants must have a valid Primary UOM.",
+                { productId }
+            );
+        }
+
+        for (const child of existingChildren) {
+            ensureChildUomDiffersFromParent({
+                childId: productIdOf(child),
+                parentId: productIdOf(currentProduct),
+                childUomId: unitIdOf(child.unit_of_measurement),
+                parentUomId,
+                childUomRequiredMessage: "An existing child material does not have a valid Primary UOM. Correct the child before updating this family."
+            });
+        }
+    }
+
+    ensureVariantsUseOuterUom(currentProduct, productDetails, normalizedVariants, productId, existingChildren);
 
     const normalizedProductDetails = hasParentField
         ? { ...productDetails, parent_id: requestedParentId }
