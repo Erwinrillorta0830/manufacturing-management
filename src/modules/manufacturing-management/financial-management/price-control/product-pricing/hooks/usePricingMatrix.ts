@@ -723,17 +723,8 @@ export function usePricingMatrix(args: {
                 const finalPrice = price.trim() === "" ? null : proposed;
                 
                 // Find the product_id for this version
-                let versionProductId = 0;
-                rows_loop: for (const row of rows) {
-                    if (row.display?.versions) {
-                        for (const v of row.display.versions) {
-                            if (v.version_id === vid) {
-                                versionProductId = v.product_id;
-                                break rows_loop;
-                            }
-                        }
-                    }
-                }
+                const versionProductId = 0;
+                // versions removed
 
                 if (finalPrice !== null && versionProductId > 0) {
                     pcrItems.push({

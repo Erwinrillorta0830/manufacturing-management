@@ -227,6 +227,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // INVOICE STATE
   const [invoiceNo, setInvoiceNo] = useState("");
   const [appliedInvoiceId, setAppliedInvoiceId] = useState<number | null>(null);
+  const [, setSelectedQuotationId] = useState<number | null>(null);
   const [remarks, setRemarks] = useState("");
 
   // --- 2. DATA LISTS ---
@@ -396,7 +397,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               const productInfo = catalog.products?.find((p: Product) => Number(p.product_id) === Number(item.productId));
               if (!productInfo) return item;
 
-              const newUnitPrice = resolvePrice(productInfo as Record<string, unknown>, priceType, catalog.productPrices);
+              const newUnitPrice = resolvePrice(productInfo as unknown as Record<string, unknown>, priceType, catalog.productPrices);
               const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
               const newGross = Math.round(item.quantity * agPrice * 100) / 100;
 

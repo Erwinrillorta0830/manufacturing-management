@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 
-import type { DirtyPreviewLine, SaveAllResult, Supplier } from "../types";
+import type { DirtyPreviewLine, SaveAllResult } from "../types";
 import { generateBatchReferenceNo } from "../../shared/batchReference";
 import { formatPHP } from "../utils/format";
 

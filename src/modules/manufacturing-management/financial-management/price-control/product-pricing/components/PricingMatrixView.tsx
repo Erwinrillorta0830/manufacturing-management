@@ -336,11 +336,6 @@ export default function PricingMatrixView() {
         }));
     }, [dirtySummary, matrix]);
 
-    const isFinishedGoodsActive = React.useMemo(() => {
-        const fg = lookups.productTypes?.find((t) => t.name.toLowerCase() === "finished goods");
-        return fg ? matrix.filters.product_type_ids[0] === fg.id : false;
-    }, [lookups.productTypes, matrix.filters.product_type_ids]);
-
     React.useEffect(() => {
         setLookupFilterInput({
             supplier_scope: matrix.filters.supplier_scope,
@@ -368,20 +363,6 @@ export default function PricingMatrixView() {
     const supplierScope: SupplierScope = matrix.filters.supplier_scope;
     const supplierFilterActive =
         selectedSupplierIds.length > 0 && supplierScope === "LINKED_ONLY";
-    const batchSupplierOptions = React.useMemo(() => {
-        if (!supplierFilterActive || selectedSupplierIds.length === 0) {
-            return lookups.suppliers;
-        }
-        const allowed = new Set(selectedSupplierIds.map(Number));
-        return lookups.suppliers.filter((supplier) => allowed.has(supplier.id));
-    }, [supplierFilterActive, selectedSupplierIds, lookups.suppliers]);
-
-    const defaultBatchSupplierId = React.useMemo(() => {
-        if (!supplierFilterActive || selectedSupplierIds.length !== 1) return null;
-        const id = Number(selectedSupplierIds[0]);
-        return Number.isFinite(id) && id > 0 ? id : null;
-    }, [supplierFilterActive, selectedSupplierIds]);
-
     const currentRows = React.useMemo<MatrixRow[]>(
         () => (Array.isArray(matrix.rows) ? matrix.rows : []),
         [matrix.rows],

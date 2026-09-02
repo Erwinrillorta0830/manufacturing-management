@@ -496,7 +496,7 @@ export function ListCostRequestManager({
             <CreatePriceChangeBatchDialog
                 open={creatingBatch}
                 onOpenChange={setCreatingBatch}
-                suppliers={suppliers}
+
                 onCreated={() => void inbox.refresh()}
             />
             </>

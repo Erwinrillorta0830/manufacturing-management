@@ -63,7 +63,7 @@ export function useLookups(filters?: Partial<PricingFilters>) {
                 setBrands(res.data.brands ?? []);
                 setUnits(res.data.units ?? []);
                 setSuppliers(res.data.suppliers ?? []);
-                setProductTypes(res.data.product_types ?? []);
+                setProductTypes(res.data.productTypes ?? []);
                 setUnauthorized(false);
             } catch (error: unknown) {
                 if (requestId !== requestIdRef.current) return;

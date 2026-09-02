@@ -341,11 +341,6 @@ export async function addActorNames(rows: UnifiedApprovalRow[]): Promise<Unified
     });
 }
 
-function supplierIdOf(value: unknown): number | null {
-    if (!isRecord(value)) return null;
-    return pickId(value.id) ?? null;
-}
-
 function pickProductId(value: unknown): number | null {
     if (isRecord(value)) return pickId(value.product_id);
     return pickId(value);
@@ -1081,7 +1076,6 @@ export async function fetchPriceBatchesPage(
         const summary = summaries.get(headerId);
         const costSummary = costSummaries.get(headerId);
         const isMixed = Boolean(costSummary && costSummary.lineCount > 0);
-        const supplierNames: string[] = [];
         const referenceNo = String(row.reference_no ?? "").trim();
         const remarks = String(row.remarks ?? "").trim();
         const proposedMin = summary?.proposedMin ?? null;

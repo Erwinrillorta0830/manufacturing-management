@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-import * as api from "../providers/pcrApi";
 import type { BatchImportPrefill } from "../types";
 import { BatchCatalogPanel } from "./BatchCatalogPanel";
 import { useCreateBatchState } from "./useCreateBatchState";

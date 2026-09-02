@@ -283,6 +283,7 @@ export function UpdateSalesReturnModal({
     API_SalesReturnType[]
   >([]);
   const [salesmenOptions, setSalesmenOptions] = useState<SalesmanOption[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<{value: string | number; label: string}[]>([]);
   const [lotOptions, setLotOptions] = useState<{ lot_id: number; lot_name: string; }[]>([]);
 
   const [isProductLookupOpen, setIsProductLookupOpen] = useState(false);
@@ -336,7 +337,7 @@ export function UpdateSalesReturnModal({
           discounts,
           retTypes,
           salesmen,
-          _customers,
+          customersData,
           lots,
           priceTypesData,
           quotations,
@@ -363,6 +364,7 @@ export function UpdateSalesReturnModal({
         setDiscountOptions(discounts);
         setReturnTypeOptions(retTypes);
         setSalesmenOptions(salesmen);
+        setCustomerOptions(customersData || []);
         setLotOptions(lots);
         setPriceTypeOptions(priceTypesData);
         setQuotationOptions(quotations);

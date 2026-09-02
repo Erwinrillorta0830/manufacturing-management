@@ -65,16 +65,7 @@ export function parseCostInput(value: string) {
     return parseDecimalInput(value, COST_MAX_DECIMAL_PLACES);
 }
 
-function summarizeCreated(result: {
-    created: number;
-    skipped_duplicates?: number;
-    skipped_existing_pending?: number;
-}) {
-    const details: string[] = [];
-    if (result.skipped_duplicates) details.push(`${result.skipped_duplicates} duplicate(s) skipped`);
-    if (result.skipped_existing_pending) details.push(`${result.skipped_existing_pending} already pending`);
-    return details.length ? ` ${details.join(", ")}.` : "";
-}
+
 
 function applyPendingRows(
     map: Map<string, number>,

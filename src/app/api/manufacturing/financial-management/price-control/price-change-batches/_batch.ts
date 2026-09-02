@@ -70,6 +70,7 @@ export type BatchHeaderRow = {
 export type BatchDetailRow = {
     request_id?: number | string | null;
     header_id?: number | string | BatchHeaderRow | null;
+    version_id?: number | string | null;
     product_id?:
         | number
         | string

@@ -9,10 +9,8 @@ import { fetchDirectusPricesByProductIds, type DirectusProductPriceRow } from ".
 import {
     fetchPaginatedProductGroups,
     resolveSupplierScopedProductIds,
-    pickId,
     type ProductRow,
 } from "./_productGroups";
-import { chunkArray, fetchAllPages } from "./_directusPaging";
 
 export type ProductsMeta = {
     page: number;
