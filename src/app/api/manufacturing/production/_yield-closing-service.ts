@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import {
     calculateIncrementalMaterialConsumption,
     loadYieldMaterials,
@@ -1130,6 +1130,7 @@ async function completeYieldClosingInternal(
         }
 
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
+        const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
         const finishedLotId = await resolveMasterLotId(lotNumber, 2, journal);
         const finishedMovement = await journal.create<any>(
@@ -1221,7 +1222,7 @@ async function completeYieldClosingInternal(
                         component_lot_id: consumedLotId,
                         component_batch_no: lot.lotNumber,
                         consumed_quantity: lot.quantity,
-                        created_at: new Date().toISOString()
+                        created_at: phtMovementTimestamp
                     },
                     `Create material genealogy for ${plan.material.productName}`
                 );

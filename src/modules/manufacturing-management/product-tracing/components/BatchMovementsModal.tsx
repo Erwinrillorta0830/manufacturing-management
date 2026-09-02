@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { format } from "date-fns";
 import {
     Dialog,
     DialogContent,
@@ -21,6 +20,7 @@ import {
     Eye
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatPhtDate, formatPhtTime } from "../../shared/pht-date";
 
 export interface BatchGroupData {
     key: string;
@@ -188,10 +188,10 @@ export function BatchMovementsModal({
                                                 >
                                                     <td className="py-3 pl-4">
                                                         <span className="font-bold text-foreground">
-                                                            {row.transactionDate ? format(new Date(row.transactionDate), "MMM dd, yyyy") : "N/A"}
+                                                            {formatPhtDate(row.transactionDate)}
                                                         </span>
                                                         <span className="text-[10px] text-muted-foreground block">
-                                                            {row.transactionDate ? format(new Date(row.transactionDate), "HH:mm:ss") : ""}
+                                                            {formatPhtTime(row.transactionDate)}
                                                         </span>
                                                     </td>
                                                     <td className="py-3 font-mono font-bold text-foreground">

@@ -4,6 +4,7 @@ import { Loader2, ClipboardCheck, AlertCircle, CheckCircle2, ChevronRight } from
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -198,7 +199,7 @@ export function DailyQAQueue({
                                         <TableCell className="font-mono font-bold text-xs">{entry.job_order_no || `JO #${entry.job_order_id}`}</TableCell>
                                         <TableCell className="text-xs font-medium text-muted-foreground">{entry.shift_name}</TableCell>
                                         <TableCell className="text-xs font-mono font-bold">{Number(entry.yield_quantity || 0).toLocaleString()} pcs</TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">{new Date(entry.logged_at).toLocaleString()}</TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">{formatPhtTimestamp(entry.logged_at)}</TableCell>
                                         <TableCell className="text-xs text-center">
                                             <div className="flex flex-wrap justify-center items-center gap-1">
                                                 {rowRoutes.length > 0 ? (
