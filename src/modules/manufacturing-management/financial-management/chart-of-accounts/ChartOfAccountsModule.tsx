@@ -7,7 +7,7 @@ import { useChartOfAccounts } from "./hooks/useChartOfAccounts";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+
 import { Separator } from "@/components/ui/separator";
 import ChartOfAccountsFilters from "./components/ChartOfAccountsFilters";
 import ChartOfAccountsTable from "./components/ChartOfAccountsTable";

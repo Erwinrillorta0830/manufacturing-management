@@ -51,7 +51,7 @@ export async function listAccountTitles(): Promise<string[]> {
   const res = await fetch(`${API}?resource=account_titles`, { cache: "no-store" });
   const data = await safeJson(res);
   if (!res.ok) throw new Error(errMsg(data));
-  return (data?.data ?? []).map((x: any) => x.account_title).filter(Boolean);
+  return (data?.data ?? []).map((x: { account_title?: string }) => x.account_title).filter(Boolean) as string[];
 }
 
 export async function createCOA(payload: COACreatePayload): Promise<DirectusSingleResponse<COARow>> {

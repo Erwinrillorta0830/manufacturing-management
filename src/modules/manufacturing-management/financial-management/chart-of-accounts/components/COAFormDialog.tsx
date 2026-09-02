@@ -273,7 +273,7 @@ export default function COAFormDialog(props: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={isEdit ? "max-w-5xl" : "max-w-xl"}>
+      <DialogContent className={isEdit ? "sm:max-w-5xl" : "sm:max-w-xl"}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>

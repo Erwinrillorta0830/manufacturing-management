@@ -69,7 +69,7 @@ export default function ChartOfAccountsFilters(props: {
         <label className="text-xs font-medium text-muted-foreground">Account Title</label>
         <Combobox
           value={accountTitle || "All"}
-          onValueChange={(val: any) => setAccountTitle(val === "All" ? "" : val)}
+          onValueChange={(val: string) => setAccountTitle(val === "All" ? "" : val)}
         >
           <ComboboxInput placeholder="Search title..." className="h-9 bg-background w-full" />
           <ComboboxContent>
