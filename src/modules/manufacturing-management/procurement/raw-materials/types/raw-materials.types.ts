@@ -73,6 +73,12 @@ export interface PackagingVariantFormState {
     purchaseQa: PurchaseQaConfig;
 }
 
+export interface RawMaterialValidationErrors {
+    base: Record<string, string>;
+    variants: Record<number, Record<string, string>>;
+    global?: string;
+}
+
 export interface PackagingVariantPayload {
     product_id?: number;
     product_name?: string;
