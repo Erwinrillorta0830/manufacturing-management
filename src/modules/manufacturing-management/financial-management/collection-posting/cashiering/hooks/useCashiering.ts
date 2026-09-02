@@ -264,7 +264,10 @@ export function useCashiering(
                         accountTitle: c.accountTitle || c.account_title,
                         glCode: c.glCode || c.gl_code,
                         isPayment: c.isPayment !== undefined ? c.isPayment : c.is_payment
-                    }) as unknown as COA).filter(c => c.isPayment),
+                    }) as unknown as COA).filter(c => {
+                        const p = c.isPayment as unknown as { data?: number[] } | boolean | number | string;
+                        return p === 1 || p === true || p === "1" || p === "true" || (typeof p === "object" && p && p.data && p.data[0] === 1) || (c as unknown as Record<string, unknown>).isPaymentDuplicate;
+                    }),
                     paymentMethods: (pmData || []).map((pm: Record<string, unknown>) => ({
                         ...pm,
                         methodId: pm.methodId || pm.method_id,
@@ -386,36 +389,52 @@ export function useCashiering(
             if (!pouch) throw new Error("Collection details were empty.");
             {
                 setEditingId(id);
-                setSalesmanId(pouch.salesmanId.toString());
+                const rawPouch = pouch as unknown as Record<string, unknown>;
+                
+                const getNestedId = (val: unknown) => {
+                    if (val === null || val === undefined) return "";
+                    if (typeof val === "object") {
+                        const obj = val as Record<string, unknown>;
+                        return obj.id || obj.salesman_id || obj.user_id || Object.values(obj)[0] || "";
+                    }
+                    return val;
+                };
+
+                const actualSalesmanId = getNestedId(rawPouch.salesmanId) || getNestedId(rawPouch.salesman_id) || getNestedId(rawPouch.salesman);
+                setSalesmanId(actualSalesmanId ? actualSalesmanId.toString() : "");
 
                 // 🚀 Hydrate the new fields if backend returns them
-                setCollectedBy(pouch.collectedBy ? pouch.collectedBy.toString() : "");
-                setCrNo(pouch.crNo || "");
+                const actualCollectedBy = getNestedId(rawPouch.collectedBy) || getNestedId(rawPouch.collected_by);
+                setCollectedBy(actualCollectedBy ? actualCollectedBy.toString() : "");
+                setCrNo(pouch.crNo || (pouch as unknown as Record<string, unknown>).cr_no as string || "");
 
                 setCollectionDate(pouch.collectionDate.split('T')[0]);
                 setRemarks(pouch.remarks || "");
 
                 const newDenoms: Record<number, number> = lookupData.denominationMaster.reduce<Record<number, number>>((acc, d) => ({ ...acc, [d.id]: 0 }), {});
 
-                pouch.cashBuckets?.filter((b) => b.coaId === 1).forEach((bucket) => {
-                    const denomId = bucket.denominationId || parseInt(bucket.tempId?.replace("cash-", "") || "");
+                pouch.cashBuckets?.filter((b) => (b.coaId || (b as unknown as Record<string, unknown>).coa_id) === 1).forEach((bucket) => {
+                    const actualTempId = bucket.tempId || (bucket as unknown as Record<string, unknown>).temp_id as string || "";
+                    const denomId = bucket.denominationId || (bucket as unknown as Record<string, unknown>).denomination_id as number || parseInt(actualTempId.replace("cash-", "") || "");
                     if (!isNaN(denomId) && bucket.quantity) newDenoms[denomId] = bucket.quantity;
                 });
 
                 setDenominations(newDenoms);
 
-                const mappedChecks = pouch.cashBuckets?.filter((b) => b.coaId !== 1).map((b) => {
-                    const custObj = lookupData.customers.find(c => (c.customerCode || c.code) === b.customerCode);
+                const bucketRecord = (b: unknown) => b as Record<string, unknown>;
+                const mappedChecks = pouch.cashBuckets?.filter((b) => (b.coaId || (b as unknown as Record<string, unknown>).coa_id) !== 1).map((b) => {
+                    const actualCustCode = bucketRecord(b).customerCode || bucketRecord(b).customer_code as string;
+                    const custObj = lookupData.customers.find(c => (c.customerCode || c.code) === actualCustCode);
                     return {
-                        tempId: b.tempId,
-                        paymentMethodId: b.paymentMethodId?.toString() || "",
-                        coaId: b.coaId?.toString() || "",
-                        bankId: b.bankId?.toString() || "",
+                        tempId: bucketRecord(b).tempId as string || bucketRecord(b).temp_id as string,
+                        paymentMethodId: (bucketRecord(b).paymentMethodId || bucketRecord(b).payment_method_id)?.toString() || "",
+                        coaId: (bucketRecord(b).coaId || bucketRecord(b).coa_id)?.toString() || "",
+                        bankId: (bucketRecord(b).bankId || bucketRecord(b).bank_id)?.toString() || "",
                         customerId: custObj ? custObj.id.toString() : "",
-                        invoiceId: b.invoiceId?.toString() || "",
-                        checkNo: String(b.referenceNo ?? ""),
-                        amount: b.amount.toString(),
-                        chequeDate: b.chequeDate ? b.chequeDate.split('T')[0] : ""
+                        invoiceId: (bucketRecord(b).invoiceId || bucketRecord(b).invoice_id)?.toString() || "",
+                        checkNo: String(bucketRecord(b).referenceNo ?? bucketRecord(b).reference_no ?? ""),
+                        amount: (bucketRecord(b).amount ?? bucketRecord(b).amount)?.toString() || "",
+                        chequeDate: bucketRecord(b).chequeDate || bucketRecord(b).cheque_date ? (bucketRecord(b).chequeDate as string || bucketRecord(b).cheque_date as string).split('T')[0] : ""
                     };
                 }) || [];
                 setChecks(mappedChecks);

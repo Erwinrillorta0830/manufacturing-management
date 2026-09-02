@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
+
     Lock, Loader2, Wallet, Receipt, Calculator, User,
     Calendar, Briefcase, MapPin, MessageSquare, ShieldAlert, CheckCircle2,
     Banknote, Percent, Undo2, FileSignature, Info
@@ -7,6 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { CompanyProfileHeader } from "./CompanyProfileHeader";
 import type { CompanyProfile, CompanyProfileStatus } from "../hooks/usePosting";
 
@@ -85,7 +88,7 @@ interface ReviewSheetProps {
     isLoading: boolean;
     pouch: TreasuryPouch | null;
     isPosting: boolean;
-    onPost: (id: number, docNo: string, shortageAmount: number) => void;
+    onPost: (id: number, docNo: string) => void;
     error?: string | null;
     companyProfile: CompanyProfile | null;
     companyProfileStatus: CompanyProfileStatus;
@@ -102,6 +105,8 @@ export function ReviewSheet({
     companyProfile,
     companyProfileStatus,
 }: ReviewSheetProps) {
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [confirmInput, setConfirmInput] = useState("");
 
     const reviewMath = useMemo(() => {
         if (!pouch) return { physical: 0, applied: 0, variance: 0, isShortage: false, isOverage: false, invoiceRows: [] as InvoiceReviewRow[], unallocatedInvoices: [] as InvoiceReviewRow[], totalRemainingOpenBalance: 0, totalCash: 0, totalChecks: 0, nonCashBuckets: [] as CashBucket[], cashDenominations: [] as CashBucket[], totalCredits: 0, expectedPhysicalCash: 0 };
@@ -588,7 +593,7 @@ export function ReviewSheet({
                                 </div>
                             )}
                             <Button
-                                onClick={() => onPost(pouch.id, pouch.docNo || "", reviewMath.isShortage ? reviewMath.variance : 0)}
+                                onClick={() => { setConfirmInput(""); setShowConfirmModal(true); }}
                                 disabled={!canPost}
                                 className={`w-full h-14 font-black uppercase tracking-widest text-sm shadow-xl transition-all active:scale-[0.99] ${reviewMath.isShortage ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-primary'}`}
                             >
@@ -599,6 +604,60 @@ export function ReviewSheet({
                     </>
                 ) : null}
             </SheetContent>
+
+            {pouch && (
+                <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+                    <DialogContent className="sm:max-w-[425px]">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2"><Lock size={18}/> Confirm General Ledger Posting</DialogTitle>
+                            <DialogDescription asChild>
+                                <div className="space-y-4 pt-2">
+                                    {reviewMath.isShortage ? (
+                                        <div className="text-red-800 font-bold bg-red-50 p-3 rounded-lg border border-red-200 flex gap-3 text-xs leading-relaxed">
+                                            <ShieldAlert size={20} className="shrink-0 text-red-600" />
+                                            <div>
+                                                WARNING: This pouch has a SHORTAGE of ₱{reviewMath.variance.toLocaleString()}.
+                                                <br/><br/>
+                                                Posting this will permanently lock the pouch AND automatically generate a Payroll Audit Finding for the Route Manager.
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm">
+                                            Are you sure you want to permanently POST and lock pouch <strong className="font-mono text-primary">{pouch.docNo}</strong>?
+                                        </div>
+                                    )}
+                                    <div className="text-sm">
+                                        To confirm, please type <strong className="font-mono text-primary tracking-widest">POST</strong> below.
+                                    </div>
+                                </div>
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-2">
+                            <Input
+                                value={confirmInput}
+                                onChange={(e) => setConfirmInput(e.target.value.toUpperCase())}
+                                placeholder="TYPE POST TO CONFIRM"
+                                className="font-mono uppercase text-center tracking-widest font-black h-12 text-lg"
+                                autoFocus
+                            />
+                        </div>
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setShowConfirmModal(false)}>Cancel</Button>
+                            <Button
+                                disabled={confirmInput !== "POST" || isPosting}
+                                variant={reviewMath.isShortage ? "destructive" : "default"}
+                                onClick={() => {
+                                    setShowConfirmModal(false);
+                                    onPost(pouch.id, pouch.docNo || "");
+                                }}
+                            >
+                                {isPosting ? <Loader2 size={16} className="animate-spin mr-2" /> : <CheckCircle2 size={16} className="mr-2" />}
+                                Confirm Post
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
         </Sheet>
     );
 }

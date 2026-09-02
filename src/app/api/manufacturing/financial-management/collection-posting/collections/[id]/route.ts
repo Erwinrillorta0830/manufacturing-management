@@ -56,13 +56,49 @@ export async function GET(
             };
         });
 
+        const invUrl = `${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_eq]=${id}`;
+        const invRes = await fetch(invUrl, { headers, cache: "no-store" });
+        let collInvoices = [];
+        if (invRes.ok) {
+            collInvoices = (await invRes.json()).data || [];
+        }
+
+        // Fetch related sales_invoices manually because Directus relation is not configured
+        const invoiceIds = [...new Set(collInvoices.map((ci: Record<string, unknown>) => ci.invoice_id).filter(Boolean))];
+        let salesInvoices: Record<string, unknown>[] = [];
+        if (invoiceIds.length > 0) {
+            const siUrl = `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}`;
+            const siRes = await fetch(siUrl, { headers, cache: "no-store" });
+            if (siRes.ok) {
+                salesInvoices = (await siRes.json()).data || [];
+            }
+        }
+
+        const allocations = collInvoices.map((ci: Record<string, unknown>) => {
+            const inv = salesInvoices.find((si: Record<string, unknown>) => si.invoice_id === ci.invoice_id) || {};
+            
+            return {
+                amountApplied: ci.amount,
+                allocationType: ci.type,
+                sourceTempId: ci.source_temp_id,
+                customerName: inv.customer_code || "Unknown",
+                invoiceNo: inv.invoice_no,
+                invoiceId: inv.invoice_id || ci.invoice_id,
+                grossAmount: inv.gross_amount,
+                originalAmount: inv.net_amount,
+                remainingBalance: inv.remaining_balance ?? null,
+                referenceNo: ci.source_temp_id,
+            };
+        });
+
         return NextResponse.json({
             ...data.data,
             salesmanId: data.data.salesman_id,
             collectedBy: data.data.collected_by,
             crNo: data.data.collection_receipt_no,
             collectionDate: data.data.collection_date,
-            cashBuckets: cashBuckets
+            cashBuckets: cashBuckets,
+            allocations: allocations
         });
     } catch (e) {
         console.error(`API Error fetching collection:`, e);
@@ -105,6 +141,18 @@ export async function PUT(
             }
         }
 
+        // Fetch existing invoices to delete them
+        const existingInvoicesRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_eq]=${id}`, { headers });
+        if (existingInvoicesRes.ok) {
+            const existingInvoices = (await existingInvoicesRes.json()).data || [];
+            if (existingInvoices.length > 0) {
+                const deleteInvKeys = existingInvoices.map((i: Record<string, unknown>) => i.id);
+                await fetch(`${DIRECTUS_URL}/items/collection_invoices`, {
+                    method: "DELETE", headers, body: JSON.stringify(deleteInvKeys)
+                });
+            }
+        }
+
         // Insert new details
         if (payload.cashBuckets && payload.cashBuckets.length > 0) {
             const detailsPromises = payload.cashBuckets.map(async (bucket: Record<string, unknown>) => {
@@ -137,6 +185,20 @@ export async function PUT(
                     await fetch(`${DIRECTUS_URL}/items/collection_details_denomination`, {
                         method: "POST", headers, body: JSON.stringify(denomData)
                     });
+                }
+
+                if (bucket.invoiceId) {
+                    const invoiceData = {
+                        collection_id: id,
+                        invoice_id: parseInt(bucket.invoiceId as string),
+                        amount: bucket.amount || 0,
+                        type: (bucket.paymentMethodId === 2 || String(bucket.tempId || "").startsWith("chk")) ? "CHECK" : "CASH",
+                        source_temp_id: bucket.tempId || "CASH_SUMMARY"
+                    };
+                    const invRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices`, {
+                        method: "POST", headers, body: JSON.stringify(invoiceData)
+                    });
+                    if (!invRes.ok) console.error(`Failed to create collection_invoice link:`, await invRes.text());
                 }
             });
             await Promise.all(detailsPromises);
