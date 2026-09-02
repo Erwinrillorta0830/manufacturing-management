@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, formatPhtDateTime, headers } from "@/app/api/manufacturing/directus-api";
 import { calculateRollupCost } from "./products-helper";
 import {
     ProductIdentityError,
@@ -263,6 +263,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
+        const createdAt = formatPhtDateTime();
         const body = await request.json();
         const { productDetails, versionName, supplierIds, expectedYield } = body || {};
 
@@ -309,6 +310,10 @@ export async function POST(request: Request) {
         delete productFields.product_name;
         delete productFields.parent_id;
         delete productFields.unit_of_measurement;
+        delete productFields.created_at;
+        delete productFields.created_by;
+        delete productFields.updated_at;
+        delete productFields.updated_by;
         const productPayload = {
             ...productFields,
             product_code: productCode,
@@ -332,6 +337,7 @@ export async function POST(request: Request) {
             product_type: 388,
             date_added: productDetails.date_added || todayStr,
             created_by: userId ? Number(userId) : null,
+            created_at: createdAt,
             updated_by: userId ? Number(userId) : null
         };
 
@@ -444,10 +450,18 @@ export async function PATCH(request: Request) {
             console.error("Error parsing user token in PATCH product route:", err);
         }
 
+        const editableFields = Object.fromEntries(
+            Object.entries(body).filter(([key]) => ![
+                "created_at",
+                "created_by",
+                "updated_at",
+                "updated_by"
+            ].includes(key))
+        );
         const updatePayload = {
-            ...body,
+            ...editableFields,
             updated_by: userId ? Number(userId) : undefined,
-            updated_at: new Date().toISOString()
+            updated_at: formatPhtDateTime()
         };
 
         const res = await fetch(`${DIRECTUS_URL}/items/products/${product_id}`, {

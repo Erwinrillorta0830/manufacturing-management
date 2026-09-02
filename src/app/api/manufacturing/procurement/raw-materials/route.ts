@@ -1,8 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { getManilaTimeString, getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 import {
     ProductIdentityError,
@@ -65,7 +65,14 @@ function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | un
 }
 
 function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unknown> {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa" && key !== "price_control"));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => ![
+        "purchaseQa",
+        "price_control",
+        "created_at",
+        "created_by",
+        "updated_at",
+        "updated_by"
+    ].includes(key)));
 }
 
 function buildWeightPayload(
@@ -336,6 +343,7 @@ export async function POST(request: Request) {
         }
 
         const todayStr = await getTodayDateString();
+        const createdAt = formatPhtDateTime();
 
         // Create Raw Material / Packaging Product with explicit null overrides for foreign keys to bypass invalid database defaults
         const productPayload = {
@@ -358,7 +366,8 @@ export async function POST(request: Request) {
             status: "Approved",
             item_type: "regular", // Must be regular due to DB enum constraint
             date_added: productDetails.date_added || todayStr,
-            created_by: userId ? Number(userId) : null
+            created_by: userId ? Number(userId) : null,
+            created_at: createdAt
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -422,7 +431,8 @@ export async function POST(request: Request) {
                         status: "Approved",
                         item_type: "regular",
                         date_added: todayStr,
-                        created_by: userId ? Number(userId) : null
+                        created_by: userId ? Number(userId) : null,
+                        created_at: createdAt
                     };
 
                     const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -592,10 +602,10 @@ export async function PATCH(request: Request) {
         if (!userId || !Number.isInteger(userId) || userId <= 0) {
             return NextResponse.json({ error: "A valid authenticated user is required to update raw materials." }, { status: 401 });
         }
-        const updatedAt = await getManilaTimeString();
+        const operationTimestamp = formatPhtDateTime();
         const auditFields = {
             updated_by: userId,
-            updated_at: updatedAt
+            updated_at: operationTimestamp
         };
 
         const hasWeightField = Object.prototype.hasOwnProperty.call(productDetails, "weight");
@@ -736,7 +746,7 @@ export async function PATCH(request: Request) {
                                 isActive: variantHasActiveFlag ? variantActive : 1,
                                 date_added: await getTodayDateString(),
                                 created_by: userId,
-                                created_at: updatedAt
+                                created_at: operationTimestamp
                             })
                         });
 
