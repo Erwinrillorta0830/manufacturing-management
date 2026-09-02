@@ -682,7 +682,7 @@ export function RawMaterialModal({
                                 )}
                                 {parentRelationshipError && (
                                     <p role="alert" className="text-[10px] font-semibold text-rose-700">
-                                        {parentRelationshipError} Clear the parent selection before saving.
+                                        {parentRelationshipError}
                                     </p>
                                 )}
                             </div>

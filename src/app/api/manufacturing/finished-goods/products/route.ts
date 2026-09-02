@@ -16,6 +16,12 @@ import {
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { fetchAllWeightUnits } from "../weight-units/weight-units-helper";
 import { fetchPurchaseOrderPriceTypeRules } from "@/app/api/manufacturing/purchase-orders/_price-type";
+import {
+    PACKAGING_MATERIAL_PRODUCT_TYPE,
+    RAW_MATERIAL_PRODUCT_TYPE,
+    enforceClassificationIntegrity,
+    RawMaterialClassificationError
+} from "@/app/api/manufacturing/procurement/raw-materials/_classification-integrity";
 
 interface DirectusProductCurrencyProfile {
     id: number;
@@ -416,6 +422,46 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "Missing product_id" }, { status: 400 });
         }
 
+        const hierarchyFields = ["parent_id", "unit_of_measurement", "product_type"];
+        if (hierarchyFields.some(field => Object.prototype.hasOwnProperty.call(body, field))) {
+            const currentProductResponse = await fetch(
+                `${DIRECTUS_URL}/items/products/${product_id}?fields=product_id,product_type,parent_id,unit_of_measurement.unit_id,isActive`,
+                { headers, cache: "no-store" }
+            );
+            if (!currentProductResponse.ok) {
+                throw new RawMaterialClassificationError(
+                    503,
+                    "CLASSIFICATION_LOOKUP_FAILED",
+                    "Unable to validate the product classification relationship."
+                );
+            }
+
+            const currentProduct = (await currentProductResponse.json()).data as {
+                product_type?: unknown;
+            };
+            const currentProductType = typeof currentProduct.product_type === "object" && currentProduct.product_type !== null
+                ? Number((currentProduct.product_type as Record<string, unknown>).id)
+                : Number(currentProduct.product_type);
+            const requestedProductType = typeof body.product_type === "object" && body.product_type !== null
+                ? Number((body.product_type as Record<string, unknown>).id)
+                : Number(body.product_type);
+
+            if (currentProductType === RAW_MATERIAL_PRODUCT_TYPE || currentProductType === PACKAGING_MATERIAL_PRODUCT_TYPE) {
+                const classification = await enforceClassificationIntegrity({
+                    operation: "update",
+                    productId: Number(product_id),
+                    productDetails: body,
+                    packagingVariants: Array.isArray(body.packagingVariants) ? body.packagingVariants : []
+                });
+                Object.assign(body, classification.productDetails);
+            } else if (requestedProductType === RAW_MATERIAL_PRODUCT_TYPE || requestedProductType === PACKAGING_MATERIAL_PRODUCT_TYPE) {
+                return NextResponse.json({
+                    error: "Raw materials and packaging materials must be updated through the raw-materials endpoint.",
+                    code: "INVALID_PRODUCT_TYPE"
+                }, { status: 400 });
+            }
+        }
+
         const userId = await getUserIdFromToken();
 
         const editableFields = Object.fromEntries(
@@ -445,6 +491,12 @@ export async function PATCH(request: Request) {
         const json = await res.json();
         return NextResponse.json({ success: true, data: json.data });
     } catch (e) {
+        if (e instanceof RawMaterialClassificationError) {
+            return NextResponse.json(
+                { error: e.message, code: e.code, ...e.details },
+                { status: e.status }
+            );
+        }
         console.error("API Error patching product:", e);
         return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update product" }, { status: 500 });
     }
