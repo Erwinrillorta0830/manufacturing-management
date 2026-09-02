@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { JobOrder, MaterialGenealogyRecord } from "../types";
 import { fetchGenealogyAndMovements } from "../services/production-api";
 import { toast } from "sonner";
+import { formatPhtTimestamp } from "../../shared/pht-date";
 
 interface GenealogyAuditModalProps {
     open: boolean;
@@ -68,7 +69,7 @@ export function GenealogyAuditModal({
                     <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: 600;">${g.raw_product_name}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; color: #0284c7; font-weight: bold;">${g.raw_batch_no}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #eee; font-family: monospace; text-align: right;">${Number(g.quantity_consumed).toLocaleString()} ${g.unit_shortcut || "units"}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 11px; color: #666;">${new Date(g.created_at).toLocaleString()}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 11px; color: #666;">${formatPhtTimestamp(g.created_at)}</td>
                 </tr>
             `).join("");
 
@@ -101,7 +102,7 @@ export function GenealogyAuditModal({
                     </div>
                     <div>
                         <div><strong>Target Quantity:</strong> ${selectedJobOrder.quantity.toLocaleString()} pcs</div>
-                        <div><strong>Audit Date:</strong> ${new Date().toLocaleString()}</div>
+                        <div><strong>Audit Date:</strong> ${formatPhtTimestamp(new Date())}</div>
                     </div>
                 </div>
                 <table>
@@ -222,7 +223,7 @@ export function GenealogyAuditModal({
                                                     {rec.created_by_name || "Operator"}
                                                 </td>
                                                 <td className="p-3 text-muted-foreground font-mono text-[11px]">
-                                                    {new Date(rec.created_at).toLocaleString()}
+                                                    {formatPhtTimestamp(rec.created_at)}
                                                 </td>
                                             </tr>
                                         ))}

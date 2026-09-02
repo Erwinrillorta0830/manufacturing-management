@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { format } from "date-fns";
 import {
     Dialog,
     DialogContent,
@@ -32,6 +31,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatPhtDate, formatPhtTimestamp } from "../../shared/pht-date";
 
 interface Props {
     movement: MMInventoryMovement | null;
@@ -131,21 +131,11 @@ export function MovementDetailModal({
     }, []);
 
     const formatDate = React.useCallback((d?: string | null) => {
-        if (!d) return "N/A";
-        try {
-            return format(new Date(d), "MMM dd, yyyy HH:mm:ss");
-        } catch {
-            return d;
-        }
+        return formatPhtTimestamp(d);
     }, []);
 
     const formatShortDate = React.useCallback((d?: string | null) => {
-        if (!d) return "N/A";
-        try {
-            return format(new Date(d), "MMM dd, yyyy");
-        } catch {
-            return d;
-        }
+        return formatPhtDate(d);
     }, []);
 
     if (!movement) return null;

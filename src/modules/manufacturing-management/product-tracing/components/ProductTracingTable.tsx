@@ -40,6 +40,7 @@ import {
     LotLookup
 } from "../types";
 import { UserLookup } from "../providers/fetchProvider";
+import { formatPhtDate, formatPhtTime, formatPhtTimestamp, phtTimestampToEpoch } from "../../shared/pht-date";
 
 function SortIcon({
     columnKey,
@@ -159,8 +160,8 @@ export function ProductTracingTable({
 
             switch (sortConfig.key) {
                 case "transactionDate":
-                    valA = new Date(a.transactionDate || a.postedAt || 0).getTime();
-                    valB = new Date(b.transactionDate || b.postedAt || 0).getTime();
+                    valA = phtTimestampToEpoch(a.transactionDate || a.postedAt);
+                    valB = phtTimestampToEpoch(b.transactionDate || b.postedAt);
                     break;
                 case "referenceNo":
                     valA = a.referenceNo || "";
@@ -550,10 +551,10 @@ export function ProductTracingTable({
                                                 <TableCell className="py-3.5 pl-5">
                                                     <div className="flex flex-col">
                                                         <span className="text-xs font-bold text-foreground">
-                                                            {row.transactionDate ? format(new Date(row.transactionDate), "MMM dd, yyyy") : "N/A"}
+                                                            {formatPhtDate(row.transactionDate)}
                                                         </span>
                                                         <span className="text-[10px] font-semibold text-muted-foreground opacity-70">
-                                                            {row.transactionDate ? format(new Date(row.transactionDate), "HH:mm:ss") : ""}
+                                                            {formatPhtTime(row.transactionDate)}
                                                         </span>
                                                     </div>
                                                 </TableCell>
@@ -726,7 +727,7 @@ export function ProductTracingTable({
                                         {group.items.length} Movement{group.items.length > 1 ? "s" : ""}
                                     </Badge>
                                     <span className="text-xs text-muted-foreground">
-                                        {group.lastDate ? format(new Date(group.lastDate), "MMM dd, yyyy HH:mm") : ""}
+                                        {formatPhtTimestamp(group.lastDate)}
                                     </span>
                                 </div>
                                 <div className="flex items-center gap-4 text-xs font-bold">
