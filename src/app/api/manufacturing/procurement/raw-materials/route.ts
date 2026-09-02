@@ -718,7 +718,6 @@ export async function PATCH(request: Request) {
                         ...(variantHasActiveFlag ? { isActive: variantActive } : {}),
                         status: "Approved",
                         item_type: "regular",
-                        ...auditFields,
                     };
 
                     if (variant.product_id) {
@@ -726,7 +725,7 @@ export async function PATCH(request: Request) {
                         const variantRes = await fetch(`${DIRECTUS_URL}/items/products/${variant.product_id}`, {
                             method: "PATCH",
                             headers,
-                            body: JSON.stringify(variantPayload)
+                            body: JSON.stringify({ ...variantPayload, ...auditFields })
                         });
                         if (!variantRes.ok) {
                             const errText = await variantRes.text();
