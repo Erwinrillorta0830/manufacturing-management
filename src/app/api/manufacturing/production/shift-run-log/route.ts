@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { movementLegacyLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
-import { DIRECTUS_URL, headers, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 // Helper to decode user ID from session cookie
@@ -154,6 +154,7 @@ export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
+        const phtMovementTimestamp = formatPhtDateTime();
         const sessionUserId = await getUserIdFromSession();
 
         const body = await request.json();
@@ -367,7 +368,7 @@ export async function POST(request: Request) {
             scrap_quantity: scrapUnits,
             lot_number: finalBatchNo,
             qa_status: qaStatus === "Passed" ? "Passed" : qaStatus,
-            logged_at: manilaTimestamp,
+            logged_at: phtMovementTimestamp,
             logged_by: effectiveEncoderId
         };
 
@@ -575,7 +576,7 @@ export async function POST(request: Request) {
                         component_lot_id: consumedLotId,
                         component_batch_no: batchNumber,
                         consumed_quantity: qty,
-                        created_at: manilaTimestamp
+                        created_at: phtMovementTimestamp
                     };
                     const existingGenealogy = persistedGenealogyRows.find((row: any) =>
                         Number(row.job_order_id) === Number(joId)

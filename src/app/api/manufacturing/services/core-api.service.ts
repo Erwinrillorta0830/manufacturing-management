@@ -127,6 +127,26 @@ export async function getTodayDateString(now = new Date()): Promise<string> {
     return `${values.year}-${values.month}-${values.day}`;
 }
 
+/**
+ * Formats a persisted manufacturing event timestamp as a Philippine-time
+ * wall-clock value. These fields are stored in MySQL DATETIME columns, so the
+ * value must not carry an offset or be left to a database/session timezone.
+ */
+export function formatPhtDateTime(now = new Date()): string {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+    }).formatToParts(now);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+}
+
 export async function getISOStringInConfiguredTimezone(d = new Date()): Promise<string> {
     const tz = await getConfiguredTimezone();
     
