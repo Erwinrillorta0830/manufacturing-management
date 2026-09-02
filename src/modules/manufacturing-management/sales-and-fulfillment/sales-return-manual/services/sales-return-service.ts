@@ -19,6 +19,7 @@ import type {
   API_LineDiscount,
   API_SalesReturnType,
   PriceTypeOption,
+  ProductPerPriceType,
 } from "../type";
 
 import * as repo from "../repositories/sales-return-repository";
@@ -184,6 +185,8 @@ export async function fetchReturnDetails(
       unit: unit ? unit.unit_shortcut : "Pcs",
       quantity: Number(detail.quantity),
       unitPrice: Number(detail.unit_price),
+      agreedPrice: detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : Number(detail.unit_price),
+      priceVariance: detail.price_variance ? Number(detail.price_variance) : 0,
       grossAmount: Number(detail.gross_amount),
       discountType: detail.discount_type ? Number(detail.discount_type) : "",
       discountAmount: (() => {
@@ -334,9 +337,10 @@ export async function fetchProductCatalog(
   connections: ProductSupplierConnection[];
   supplierCategoryDiscount: any[];
   products: Product[];
+  productPrices: ProductPerPriceType[];
 }> {
   const catalogData = await repo.getRawProductCatalog(includeInactive);
-  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes] = catalogData;
+  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes, productPricesRes] = catalogData;
 
   let scdpcRes = { data: [] as any[] };
 
@@ -362,6 +366,18 @@ export async function fetchProductCatalog(
     discount_type: item.discount_type,
   }));
 
+  const productPrices = ((productPricesRes?.data || []) as any[]).map((item: any) => ({
+    id: item.id,
+    price: item.price,
+    status: item.status,
+    price_type_id: typeof item.price_type_id === "object" && item.price_type_id !== null 
+      ? (item.price_type_id.price_type_id || item.price_type_id.id)
+      : item.price_type_id,
+    product_id: typeof item.product_id === "object" && item.product_id !== null
+      ? (item.product_id.product_id || item.product_id.id)
+      : item.product_id,
+  }));
+
   return {
     brands: (brandsRes.data || []) as unknown as Brand[],
     categories: (categoriesRes.data || []) as unknown as Category[],
@@ -370,6 +386,7 @@ export async function fetchProductCatalog(
     connections: connections as ProductSupplierConnection[],
     supplierCategoryDiscount,
     products: (productsRes.data || []) as unknown as Product[],
+    productPrices: productPrices as ProductPerPriceType[],
   };
 }
 
@@ -401,6 +418,22 @@ export async function fetchInvoices(
   });
 
   return Array.from(uniqueInvoices.values());
+}
+
+/**
+ * Fetches all quotations for Quotation Reference dropdown.
+ */
+export async function fetchQuotations() {
+  const result = await repo.getRawQuotations();
+  return (result.data || []) as any[];
+}
+
+/**
+ * Fetches snapshots for a specific quotation.
+ */
+export async function fetchQuotationSnapshots(quotationId: number) {
+  const result = await repo.getRawQuotationSnapshots(quotationId);
+  return (result.data || []) as any[];
 }
 
 /**
@@ -470,8 +503,10 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -503,7 +538,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     status: "Pending",
     return_date: formattedDate,
     price_type_id: payload.priceType ? Number(payload.priceType) : null,
-    branch_id: cleanId(payload.branchId),
+    branch_id: cleanId(payload.branchId) ?? null,
     remarks: payload.remarks || "Created via Web App",
     order_id: payload.orderNo || "",
     isThirdParty: payload.isThirdParty ? 1 : 0,
@@ -542,19 +577,23 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType && item.discountType !== ""
         ? Number(item.discountType)
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
     const detailPayload = {
       return_no: finalReturnNo,
       product_id: Number(item.productId || item.product_id || item.id),
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
@@ -564,6 +603,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
       created_at: nowPH(),
+      status: "Draft",
     };
 
     await repo.createReturnDetail(detailPayload);
@@ -598,8 +638,10 @@ export async function updateReturn(
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -718,7 +760,8 @@ export async function updateReturn(
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType &&
       item.discountType !== "No Discount" &&
@@ -727,10 +770,13 @@ export async function updateReturn(
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
     const detailPayload = {
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
@@ -748,6 +794,7 @@ export async function updateReturn(
         return_no: payload.returnNo,
         product_id: Number(item.productId || item.product_id),
         created_at: nowPH(),
+        status: "Draft",
       });
     } else {
       await repo.updateReturnDetail(item.id, detailPayload);
@@ -766,5 +813,22 @@ export async function updateStatus(
   isReceived?: number,
   received_at?: string,
 ): Promise<any> {
+  if (status === "Received") {
+    try {
+      const headerRes = await repo.getRawReturnById(id);
+      const returnNo = headerRes.data?.return_number;
+      if (returnNo) {
+        const detailsRes = await repo.getRawReturnDetails(returnNo as string);
+        const details = detailsRes.data || [];
+        const detailPromises = details.map((d: any) =>
+          repo.updateReturnDetail(d.detail_id, { status: "Returned" }),
+        );
+        await Promise.all(detailPromises);
+      }
+    } catch (e) {
+      console.error("Failed to update sales return details status to Returned:", e);
+    }
+  }
+
   return repo.updateReturnStatus(id, status, isReceived, received_at);
 }

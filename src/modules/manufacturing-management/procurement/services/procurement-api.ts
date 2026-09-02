@@ -226,18 +226,25 @@ export async function deleteLandedCostAttachment(purchaseOrderId: number, attach
     if (!res.ok) await handleResponse(res, "Failed to delete landed-cost document");
 }
 
-export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials"): Promise<RawMaterial[]> {
     const params = new URLSearchParams({
         limit: String(limit),
         excludeRollup: "true"
     });
+    if (productScope) params.set("productScope", productScope);
     const res = await fetchWithSessionRetry(`/api/manufacturing/finished-goods/products?${params.toString()}`);
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
-    // Keep PO-eligible raw materials, packaging items, and finished goods while
-    // retaining variants that inherit their classification from a supported parent.
+    // The raw-materials catalog is already scoped by the BFF. Keep this exact
+    // client-side guard so unsupported records cannot reach the page if a
+    // malformed response is returned.
     const rawItems = products.filter((p: BFFCatalogProduct) => {
         const ownType = Number(p.product_type);
+        if (productScope === "raw-materials") return ownType === 389 || ownType === 390;
+
+        // Keep PO-eligible raw materials, packaging items, and finished goods
+        // while retaining variants that inherit their classification from a
+        // supported parent.
         if (ownType === 388 || ownType === 389 || ownType === 390) return true;
         const parentId = normalizeProductRelationId(p.parent_id);
         const parent = parentId ? products.find(candidate => Number(candidate.product_id) === parentId) : null;
@@ -294,7 +301,9 @@ export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
             unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : null,
             cost_per_unit: Number(p.cost_per_unit || 0),
             estimated_unit_cost: Number(p.estimated_unit_cost || 0),
-            density_factor: Number(p.density_factor || 1.0),
+            density_factor: p.density_factor === null || p.density_factor === undefined
+                ? null
+                : Number(p.density_factor),
             weight: Number(p.weight || 0),
             net_weight: p.net_weight == null ? null : Number(p.net_weight),
             outer_carton_weight: p.outer_carton_weight == null ? null : Number(p.outer_carton_weight),
@@ -304,6 +313,9 @@ export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
             category_name: catName,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,
+            product_type_name: typeof p.product_type_name === "string" && p.product_type_name.trim()
+                ? p.product_type_name.trim()
+                : null,
             product_class: p.product_class ? Number(typeof p.product_class === "object" ? (p.product_class as { class_id?: number; id?: number }).class_id || (p.product_class as { class_id?: number; id?: number }).id : p.product_class) : null,
             product_segment: p.product_segment ? Number(typeof p.product_segment === "object" ? (p.product_segment as { segment_id?: number; id?: number }).segment_id || (p.product_segment as { segment_id?: number; id?: number }).id : p.product_segment) : null,
             product_section: p.product_section ? Number(typeof p.product_section === "object" ? (p.product_section as { section_id?: number; id?: number }).section_id || (p.product_section as { section_id?: number; id?: number }).id : p.product_section) : null,
@@ -321,9 +333,21 @@ export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
                 : null,
             isActive: p.isActive === false || p.isActive === 0 || String(p.isActive).trim().toLowerCase() === "false" || String(p.isActive).trim() === "0" ? 0 : 1,
             date_added: p.date_added,
-            last_updated: p.last_updated
+            last_updated: p.last_updated,
+            created_at: p.created_at ?? null,
+            created_by: p.created_by ?? null,
+            updated_at: p.updated_at ?? null,
+            updated_by: p.updated_by ?? null
         };
     });
+}
+
+export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+    return fetchCatalogProducts(limit);
+}
+
+export async function fetchRawMaterialCatalog(limit = 250): Promise<RawMaterial[]> {
+    return fetchCatalogProducts(limit, "raw-materials");
 }
 
 export async function fetchProductInventoryDetails(productId: number): Promise<Record<string, unknown>[]> {

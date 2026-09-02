@@ -725,7 +725,7 @@ export function UnifiedApprovalsManager({
                     priceExportImport.setCreatingBatch(open);
                     if (!open) priceExportImport.clearImportPrefill();
                 }}
-                suppliers={suppliers}
+
                 onCreated={feed.refresh}
                 importPrefill={priceExportImport.importPrefill}
             />

@@ -13,7 +13,6 @@ import { cellKey, formatCostMoney, formatMoney, parseCostInput, parsePriceInput,
 import { groupIdFor, isChildVariant } from "../utils/variantPropagation";
 
 type CatalogPanelProps = {
-    supplierId: string;
     saving: boolean;
     priceTypes: api.PriceTypeOption[];
     products: api.ProductSearchRow[];
@@ -85,7 +84,7 @@ export function BatchCatalogPanel(props: CatalogPanelProps) {
                 </div>
             </div>
 
-            {props.supplierId && !props.showingImportedView ? (
+            {!props.showingImportedView ? (
                 <div className="flex flex-col gap-2 border-b px-3 py-2 sm:flex-row sm:items-center">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                         <Search className="size-4 shrink-0 text-muted-foreground" />
@@ -101,8 +100,6 @@ export function BatchCatalogPanel(props: CatalogPanelProps) {
 
             {props.loadError ? (
                 <div className="px-3 py-3 text-sm text-destructive">{props.loadError}</div>
-            ) : !props.supplierId ? (
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">Select a supplier to load linked products.</div>
             ) : !props.showingImportedView && props.catalogLoading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-8 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading catalog

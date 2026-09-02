@@ -21,6 +21,8 @@ import type {
   API_SalesReturnType,
   PriceTypeOption,
   ProductCatalog,
+  QuotationHeader,
+  QuotationSnapshot,
 } from "../type";
 
 const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-manual";
@@ -126,6 +128,16 @@ export const SalesReturnProvider = {
   async getLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
     const res = await fetch(`${API_BASE}?action=lots`, { cache: "no-store" });
     return handleResponse<{ lot_id: number; lot_name: string; }[]>(res);
+  },
+
+  async getQuotations(): Promise<QuotationHeader[]> {
+    const res = await fetch(`${API_BASE}?action=quotations`, { cache: "no-store" });
+    return handleResponse<QuotationHeader[]>(res);
+  },
+
+  async getQuotationSnapshots(id: number | string): Promise<QuotationSnapshot[]> {
+    const res = await fetch(`${API_BASE}?action=quotation-snapshots&id=${id}`, { cache: "no-store" });
+    return handleResponse<QuotationSnapshot[]>(res);
   },
 
   // --- 4. PRODUCT LOOKUP HELPERS ---

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -258,7 +259,11 @@ export async function POST(request: Request) {
                 await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "Active", isActive: true })
+                    body: JSON.stringify({
+                        status: "Active",
+                        isActive: true,
+                        ...productUpdateAuditFields(userId)
+                    })
                 }).catch(() => {});
             }
 

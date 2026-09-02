@@ -7,9 +7,9 @@ import { useChartOfAccounts } from "./hooks/useChartOfAccounts";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 
+import { Separator } from "@/components/ui/separator";
+import ChartOfAccountsFilters from "./components/ChartOfAccountsFilters";
 import ChartOfAccountsTable from "./components/ChartOfAccountsTable";
 import COAFormDialog from "./components/COAFormDialog";
 
@@ -43,18 +43,29 @@ export default function ChartOfAccountsModule() {
 
       {/* ✅ Removed the small "Chart of Accounts" label/title */}
 
+      {/* Filters Card */}
+      <Card className="border-muted/60 bg-muted/20">
+        <CardContent className="pt-6">
+          <ChartOfAccountsFilters
+            glCode={coa.glCode}
+            setGlCode={coa.setGlCode}
+            accountTitle={coa.accountTitle}
+            setAccountTitle={coa.setAccountTitle}
+            accountType={coa.accountType}
+            setAccountType={coa.setAccountType}
+            balanceType={coa.balanceType}
+            setBalanceType={coa.setBalanceType}
+            accountTypes={coa.accountTypes}
+            balanceTypes={coa.balanceTypes}
+            accountTitlesLookup={coa.accountTitlesLookup}
+            applyFilters={coa.applyFilters}
+            clearFilters={coa.clearFilters}
+          />
+        </CardContent>
+      </Card>
+
       <Card className="border-muted/60 bg-muted/20">
         <CardContent className="space-y-3 pt-6">
-          {/* Search */}
-          <Input
-            value={coa.q}
-            onChange={(e) => {
-              coa.setQ(e.target.value);
-              coa.setPage(1);
-            }}
-            placeholder="Search by account title or GL code..."
-            className="bg-background"
-          />
 
           {/* Table */}
           <ChartOfAccountsTable
@@ -62,7 +73,6 @@ export default function ChartOfAccountsModule() {
             loading={coa.loading}
             accountTypes={coa.accountTypes}
             balanceTypes={coa.balanceTypes}
-            users={coa.users}
             onEdit={(row) => coa.openEdit(row)}
           />
 
@@ -132,7 +142,11 @@ export default function ChartOfAccountsModule() {
         balanceTypes={coa.balanceTypes}
         bsisTypes={coa.bsisTypes}
         lookupsLoading={coa.lookupsLoading}
-        addedByLabel={coa.currentUser?.name || "Loading..."}
+        addedByLabel={
+          coa.editState.row?.added_by && typeof coa.editState.row.added_by === "object"
+            ? `${coa.editState.row.added_by.user_fname || ""} ${coa.editState.row.added_by.user_lname || ""}`.trim()
+            : "Unknown"
+        }
         onCreate={async () => { }}
         onUpdate={async (id, payload) => {
           await coa.update(id, payload);

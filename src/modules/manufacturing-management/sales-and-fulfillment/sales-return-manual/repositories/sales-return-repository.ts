@@ -120,7 +120,7 @@ export async function getRawReturnDetails(returnNo: string) {
  * Fetches a single sales return header by ID (for status card).
  */
 export async function getRawReturnById(returnId: number) {
-  const fields = "return_id,isApplied,updated_at,status,isPosted,isReceived,order_id,received_at";
+  const fields = "return_id,return_number,isApplied,updated_at,status,isPosted,isReceived,order_id,received_at";
   return directusGet<{ data: Record<string, unknown> }>(
     `/items/sales_return/${returnId}?fields=${fields}`,
   );
@@ -133,6 +133,24 @@ export async function getRawLinkedInvoice(returnId: number) {
   return directusGet<{ data: Record<string, unknown>[] }>(
     `/items/sales_invoice_sales_return?filter[return_no][_eq]=${returnId}&fields=invoice_no.invoice_id,invoice_no.invoice_no,invoice_no.isPosted`,
   );
+}
+
+/**
+ * Fetches all quotations for the Quotation Reference dropdown.
+ */
+export async function getRawQuotations() {
+  const fields = "id,quote_number,customer_id";
+  const searchUrl = `/items/quotation_header?fields=${fields}&limit=-1&filter[status][_neq]=Draft`;
+  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
+}
+
+/**
+ * Fetches quotation snapshots given a quotation ID.
+ */
+export async function getRawQuotationSnapshots(quotationId: number) {
+  const fields = "snapshot_id,quotation_id,product_id,unit_price";
+  const searchUrl = `/items/quotation_snapshot?fields=${fields}&limit=-1&filter[quotation_id][_eq]=${quotationId}`;
+  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
 }
 
 /**
@@ -206,6 +224,9 @@ export async function getRawProductCatalog(includeInactive = false) {
     ),
     directusGet<{ data: Record<string, unknown>[] }>(
       `/items/products?limit=-1${includeInactive ? "" : "&filter[isActive][_eq]=1"}`,
+    ),
+    directusGet<{ data: Record<string, unknown>[] }>(
+      "/items/product_per_price_type?limit=-1&filter[status][_eq]=approved",
     ),
   ]);
 }

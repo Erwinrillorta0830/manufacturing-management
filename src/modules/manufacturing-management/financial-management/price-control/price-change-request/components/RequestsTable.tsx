@@ -88,7 +88,12 @@ function requestedByText(row: ApprovalRecordRow) {
 
 function supplierText(row: ApprovalRecordRow): string {
     if ("supplier_names" in row && Array.isArray(row.supplier_names)) {
-        const names = row.supplier_names.map((name) => String(name ?? "").trim()).filter(Boolean);
+        const rawNames = row.supplier_names.map((name) => String(name ?? "").trim()).filter(Boolean);
+        const names = Array.from(new Set(rawNames));
+
+        if (names.length > 2) {
+            return `${names.length} suppliers`;
+        }
         if (names.length > 0) {
             return names.join(", ");
         }

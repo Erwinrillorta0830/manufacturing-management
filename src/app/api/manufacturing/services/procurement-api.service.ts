@@ -1,6 +1,7 @@
 // VOS ERP - Procurement Directus API Service
 
 import { DIRECTUS_URL, headers } from "./core-api.service";
+import { productUpdateAuditFields } from "../product-audit";
 import type { DirectusProduct } from "./finished-goods-api.service";
 
 export interface DirectusProductPerSupplier {
@@ -129,7 +130,8 @@ export async function processShipmentLandedCosts(
     status: "Ordered" | "Approved" | "Receiving (QA)" | "Received",
     expenses: Array<Partial<DirectusShipmentExpense>>,
     allocationMethod: "Value" | "Weight" | "Volume",
-    _lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
+    _lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>,
+    userId?: number | null
 ): Promise<unknown> {
     try {
         void _lineItemUpdates;
@@ -237,7 +239,8 @@ export async function processShipmentLandedCosts(
                     headers,
                     body: JSON.stringify({
                         cost_per_unit: finalLandedUnitCost,
-                        estimated_unit_cost: finalLandedUnitCost
+                        estimated_unit_cost: finalLandedUnitCost,
+                        ...productUpdateAuditFields(userId)
                     })
                 });
             }
@@ -354,7 +357,8 @@ export async function createIncomingShipment(
  */
 export async function updateIncomingShipmentStatus(
     shipmentId: number, 
-    status: "Ordered" | "Approved" | "Receiving (QA)" | "Received"
+    status: "Ordered" | "Approved" | "Receiving (QA)" | "Received",
+    userId?: number | null
 ) {
     try {
         if (status === "Receiving (QA)" || status === "Received") {
@@ -369,7 +373,8 @@ export async function updateIncomingShipmentStatus(
                             headers,
                             body: JSON.stringify({
                                 cost_per_unit: finalLandedUnitCost,
-                                estimated_unit_cost: finalLandedUnitCost
+                                estimated_unit_cost: finalLandedUnitCost,
+                                ...productUpdateAuditFields(userId)
                             })
                         }).catch(err => console.error("Error updating product cost on status change:", err));
                     }

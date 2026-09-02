@@ -9,28 +9,8 @@ import { fetchDirectusPricesByProductIds, type DirectusProductPriceRow } from ".
 import {
     fetchPaginatedProductGroups,
     resolveSupplierScopedProductIds,
-    pickId,
     type ProductRow,
 } from "./_productGroups";
-import { chunkArray, fetchAllPages } from "./_directusPaging";
-
-export type VersionPriceEntry = {
-    price_type_id: number;
-    cost_per_unit: number;
-    price_per_unit: number;
-};
-
-export type ManufacturingVersion = {
-    version_id: number;
-    product_id: number;
-    version_name: string;
-    base_quantity: number;
-    uom_id: number;
-    expected_yield_percentage: number | null;
-    status: string;
-    is_primary: boolean;
-    prices: Record<number, VersionPriceEntry>;
-};
 
 export type ProductsMeta = {
     page: number;
@@ -41,7 +21,7 @@ export type ProductsMeta = {
 };
 
 export type MatrixPageResult = {
-    data: (ProductRow & { versions?: ManufacturingVersion[] })[];
+    data: ProductRow[];
     meta: ProductsMeta;
     prices: DirectusProductPriceRow[];
     pending_price_requests: PendingPcrRow[];
@@ -58,7 +38,7 @@ function uniqPositiveIds(ids: number[]): number[] {
 }
 
 export async function fetchMatrixPage(query: ParsedProductCatalogQuery): Promise<MatrixPageResult> {
-    const { filters, page, pageSize, supplierScope, supplierIdsRaw, pendingProductIds, show_versions } = query;
+    const { filters, page, pageSize, supplierScope, supplierIdsRaw, pendingProductIds } = query;
 
     const emptyMeta: ProductsMeta = {
         page,
@@ -111,85 +91,6 @@ export async function fetchMatrixPage(query: ParsedProductCatalogQuery): Promise
         fetchPendingCcrByProductIds(pendingScopeIds, "PENDING"),
     ]);
 
-    let finalPageVariants: (ProductRow & { versions?: ManufacturingVersion[] })[] = pageVariants;
-
-    if (show_versions && pageProductIds.length > 0) {
-        let versionRows: Record<string, unknown>[] = [];
-        let versionPriceRows: Record<string, unknown>[] = [];
-
-        const versionChunks = chunkArray(pageProductIds, 150);
-        const vRows = await Promise.all(versionChunks.map(chunk =>
-            fetchAllPages<Record<string, unknown>>("product_manufacturing_version", () => {
-                const sp = new URLSearchParams();
-                sp.set("fields", "version_id,product_id,version_name,base_quantity,uom_id,expected_yield_percentage,status,is_primary");
-                sp.set("filter[product_id][_in]", chunk.join(","));
-                return sp;
-            })
-        ));
-        versionRows = vRows.flat();
-
-        const versionIds = Array.from(new Set(versionRows.map(v => pickId(v.version_id)).filter((id): id is number => id !== null)));
-        if (versionIds.length > 0) {
-            const vpChunks = chunkArray(versionIds, 200);
-            const vpRows = await Promise.all(vpChunks.map(chunk =>
-                fetchAllPages<Record<string, unknown>>("product_version_prices", () => {
-                    const sp = new URLSearchParams();
-                    sp.set("fields", "version_price_id,version_id,price_type_id,cost_per_unit,price_per_unit");
-                    sp.set("filter[version_id][_in]", chunk.join(","));
-                    sp.set("filter[is_active][_eq]", "1");
-                    return sp;
-                })
-            ));
-            versionPriceRows = vpRows.flat();
-        }
-
-        const pricesByVersion = new Map<number, Record<number, VersionPriceEntry>>();
-        for (const vp of versionPriceRows) {
-            const vid = pickId(vp.version_id);
-            const ptid = pickId(vp.price_type_id);
-            if (vid === null || ptid === null) continue;
-
-            if (!pricesByVersion.has(vid)) pricesByVersion.set(vid, {});
-            pricesByVersion.get(vid)![ptid] = {
-                price_type_id: ptid,
-                cost_per_unit: Number(vp.cost_per_unit) || 0,
-                price_per_unit: Number(vp.price_per_unit) || 0,
-            };
-        }
-
-        const versionsByProduct = new Map<number, ManufacturingVersion[]>();
-        for (const v of versionRows) {
-            const pid = pickId(v.product_id);
-            const vid = pickId(v.version_id);
-            if (pid === null || vid === null) continue;
-
-            if (!versionsByProduct.has(pid)) versionsByProduct.set(pid, []);
-            versionsByProduct.get(pid)!.push({
-                version_id: vid,
-                product_id: pid,
-                version_name: String(v.version_name || ""),
-                base_quantity: Number(v.base_quantity) || 0,
-                uom_id: Number(v.uom_id) || 0,
-                expected_yield_percentage: v.expected_yield_percentage !== null ? Number(v.expected_yield_percentage) : null,
-                status: String(v.status || ""),
-                is_primary: Boolean(v.is_primary),
-                prices: pricesByVersion.get(vid) || {},
-            });
-        }
-
-        finalPageVariants = pageVariants.map(p => {
-            const pid = pickId(p.product_id);
-            const gid = pickId(p.parent_id) ?? pid;
-
-            const v1 = pid ? versionsByProduct.get(pid) || [] : [];
-            const v2 = (gid && gid !== pid) ? versionsByProduct.get(gid) || [] : [];
-
-            return {
-                ...p,
-                versions: [...v1, ...v2],
-            };
-        });
-    }
 
     const meta: ProductsMeta = {
         page: safePage,
@@ -200,7 +101,7 @@ export async function fetchMatrixPage(query: ParsedProductCatalogQuery): Promise
     };
 
     return {
-        data: finalPageVariants,
+        data: pageVariants,
         meta,
         prices,
         pending_price_requests,

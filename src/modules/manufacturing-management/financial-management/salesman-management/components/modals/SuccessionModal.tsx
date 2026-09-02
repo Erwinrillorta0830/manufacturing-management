@@ -87,16 +87,16 @@ export function SuccessionModal({
     return (
         <Dialog open={open} onOpenChange={(val) => !isProcessing && onOpenChange(val)}>
             <DialogContent className="sm:max-w-[440px] p-0 overflow-hidden border-none shadow-2xl rounded-2xl bg-white animate-in zoom-in-95 duration-200">
-                <DialogHeader className="p-8 border-b bg-slate-50/50">
+                <DialogHeader className="p-8 border-b bg-muted/50">
                     <div className="flex items-center gap-4">
                         <div className="h-12 w-12 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-600 shadow-inner shrink-0">
                             <AlertTriangle className="h-6 w-6" />
                         </div>
                         <div>
-                            <DialogTitle className="text-xl font-black text-slate-900 uppercase tracking-tighter">
+                            <DialogTitle className="text-xl font-black text-foreground uppercase tracking-tighter">
                                 Succession Handover
                             </DialogTitle>
-                            <DialogDescription className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1 leading-none">
+                            <DialogDescription className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em] mt-1 leading-none">
                                 Operational Continuity Protocol
                             </DialogDescription>
                         </div>
@@ -107,20 +107,20 @@ export function SuccessionModal({
                     {customerCount > 0 ? (
                         <>
                             <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1.5 p-4 rounded-xl bg-slate-50 border border-slate-100">
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                                <div className="space-y-1.5 p-4 rounded-xl bg-muted border border-border">
+                                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">
                                         Retiring Salesman
                                     </p>
-                                    <p className="text-[11px] font-black text-slate-900 uppercase truncate tracking-tight">
+                                    <p className="text-[11px] font-black text-foreground uppercase truncate tracking-tight">
                                         {selectedSalesman?.salesman_name}
                                     </p>
                                 </div>
-                                <div className="space-y-1.5 p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-lg shadow-slate-200">
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                                <div className="space-y-1.5 p-4 rounded-xl bg-primary border border-primary/20 shadow-sm">
+                                    <p className="text-[9px] font-black text-primary-foreground/70 uppercase tracking-widest leading-none">
                                         Impact Exposure
                                     </p>
                                     <div className="flex items-center gap-1.5">
-                                        <p className="text-[13px] font-black text-white tracking-tighter">
+                                        <p className="text-[13px] font-black text-primary-foreground tracking-tighter">
                                             {customerCount} ACCOUNTS
                                         </p>
                                     </div>
@@ -129,7 +129,7 @@ export function SuccessionModal({
 
                             <div className="space-y-3">
                                 <div className="flex items-center justify-between px-1">
-                                    <Label className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
+                                    <Label className="text-[10px] font-black uppercase tracking-[0.15em] text-muted-foreground">
                                         Assign New Handler
                                     </Label>
                                     <Badge
@@ -144,7 +144,7 @@ export function SuccessionModal({
                                     <PopoverTrigger asChild>
                                         <Button
                                             variant="outline"
-                                            className="w-full h-14 justify-between font-black uppercase text-[11px] tracking-widest border-2 border-slate-100 rounded-xl px-4 hover:bg-slate-50 hover:border-slate-200 transition-all shadow-sm"
+                                            className="w-full h-14 justify-between font-black uppercase text-[11px] tracking-widest border-2 border-border rounded-xl px-4 hover:bg-muted hover:border-muted-foreground/30 transition-all shadow-sm"
                                         >
                                             <div className="flex flex-col items-start min-w-0">
                         <span className="truncate opacity-50 text-[9px] font-bold tracking-normal leading-none mb-1">
@@ -164,29 +164,29 @@ export function SuccessionModal({
                                         </Button>
                                     </PopoverTrigger>
                                     <PopoverContent
-                                        className="w-[376px] p-0 shadow-2xl rounded-xl border-slate-100"
+                                        className="w-[376px] p-0 shadow-2xl rounded-xl border-border"
                                         align="start"
                                         sideOffset={8}
                                     >
                                         <Command className="rounded-xl overflow-hidden" onWheel={(e) => e.stopPropagation()}>
-                                            <div className="flex items-center border-b px-3 bg-slate-50/50">
+                                            <div className="flex items-center border-b px-3 bg-muted/50">
                                                 <Search className="mr-2 h-4 w-4 shrink-0 opacity-40" />
                                                 <CommandInput
                                                     placeholder="SEARCH ACTIVE SALESMEN..."
                                                     className="h-12 text-[11px] font-black uppercase tracking-widest bg-transparent border-none outline-none ring-0 focus:ring-0"
                                                 />
                                             </div>
-                                            <CommandList className="max-h-[280px] overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-slate-200">
+                                            <CommandList className="max-h-[280px] overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-border">
                                                 {loadingActive ? (
                                                     <div className="py-12 flex flex-col items-center gap-2">
                                                         <Loader2 className="w-5 h-5 animate-spin text-primary opacity-50" />
-                                                        <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                                                        <span className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">
                               Compiling active roster...
                             </span>
                                                     </div>
                                                 ) : (
                                                     <>
-                                                        <CommandEmpty className="py-12 text-[10px] font-black uppercase text-slate-300 tracking-[0.3em] text-center italic">
+                                                        <CommandEmpty className="py-12 text-[10px] font-black uppercase text-muted-foreground/50 tracking-[0.3em] text-center italic">
                                                             No operators identified.
                                                         </CommandEmpty>
                                                         <CommandGroup className="px-1 py-1">
@@ -197,19 +197,19 @@ export function SuccessionModal({
                                                                     onSelect={() =>
                                                                         setReassignmentSalesmanId(s.id.toString())
                                                                     }
-                                                                    className="flex items-center gap-3 py-3.5 px-3 rounded-lg font-black uppercase text-[11px] tracking-[0.1em] aria-selected:bg-slate-900 aria-selected:text-white transition-all cursor-pointer group"
+                                                                    className="flex items-center gap-3 py-3.5 px-3 rounded-lg font-black uppercase text-[11px] tracking-[0.1em] aria-selected:bg-primary aria-selected:text-primary-foreground transition-all cursor-pointer group"
                                                                 >
                                                                     <div
                                                                         className={cn(
                                                                             "h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
                                                                             reassignmentSalesmanId === s.id.toString()
-                                                                                ? "bg-white border-white"
-                                                                                : "border-slate-200 group-aria-selected:border-white/30"
+                                                                                ? "bg-primary-foreground border-primary-foreground"
+                                                                                : "border-border group-aria-selected:border-primary-foreground/30"
                                                                         )}
                                                                     >
                                                                         <Check
                                                                             className={cn(
-                                                                                "h-2.5 w-2.5 text-slate-900 transition-all",
+                                                                                "h-2.5 w-2.5 text-primary transition-all",
                                                                                 reassignmentSalesmanId ===
                                                                                 s.id.toString()
                                                                                     ? "opacity-100 scale-100"
@@ -223,8 +223,8 @@ export function SuccessionModal({
                                                                             className={cn(
                                                                                 "text-[8px] font-bold tracking-normal opacity-40 mt-0.5",
                                                                                 reassignmentSalesmanId === s.id.toString()
-                                                                                    ? "text-white"
-                                                                                    : "text-slate-500"
+                                                                                    ? "text-primary-foreground"
+                                                                                    : "text-muted-foreground"
                                                                             )}
                                                                         >
                                       CODE: {s.salesman_code}
@@ -247,10 +247,10 @@ export function SuccessionModal({
                                 <CheckCircle2 className="w-10 h-10" />
                             </div>
                             <div className="space-y-1">
-                                <p className="text-base font-black text-slate-900 uppercase tracking-tight">
+                                <p className="text-base font-black text-foreground uppercase tracking-tight">
                                     Direct Deactivation
                                 </p>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest max-w-[200px] leading-relaxed">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest max-w-[200px] leading-relaxed">
                                     Zero customer impact detected. Salesman can be retired immediately.
                                 </p>
                             </div>
@@ -261,14 +261,14 @@ export function SuccessionModal({
                 <DialogFooter className="p-8 pt-0 flex gap-3">
                     <Button
                         variant="ghost"
-                        className="flex-1 font-black uppercase text-[10px] tracking-widest h-12 rounded-xl text-slate-400 hover:text-slate-900 transition-all"
+                        className="flex-1 font-black uppercase text-[10px] tracking-widest h-12 rounded-xl text-muted-foreground hover:text-foreground transition-all"
                         onClick={() => onOpenChange(false)}
                         disabled={isProcessing}
                     >
                         Cancel
                     </Button>
                     <Button
-                        className="flex-[2] font-black uppercase text-[10px] tracking-widest h-12 rounded-xl shadow-2xl bg-slate-900 hover:bg-slate-800 disabled:opacity-20 transition-all"
+                        className="flex-[2] font-black uppercase text-[10px] tracking-widest h-12 rounded-xl shadow-2xl bg-foreground text-background hover:bg-foreground/90 disabled:opacity-20 transition-all"
                         onClick={confirmDeactivation}
                         disabled={
                             isProcessing || (customerCount > 0 && !reassignmentSalesmanId)

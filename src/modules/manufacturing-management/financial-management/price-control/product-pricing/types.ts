@@ -27,24 +27,6 @@ export type ProductType = {
     name: string;
 };
 
-export type VersionPriceEntry = {
-    price_type_id: number;
-    cost_per_unit: number;
-    price_per_unit: number;
-};
-
-export type ManufacturingVersion = {
-    version_id: number;
-    product_id: number;
-    version_name: string;
-    base_quantity: number;
-    uom_id: number;
-    expected_yield_percentage: number | null;
-    status: string;
-    is_primary: boolean;
-    prices: Record<number, VersionPriceEntry>;
-};
-
 export type ProductRow = {
     product_id?:
         | number
@@ -62,13 +44,11 @@ export type ProductRow = {
     barcode?: string | null;
     parent_id?: number | string | null;
     __group_id?: number | string | null;
-    version_id?: number | string | null;
     price_type_id?: number | null;
     unit_of_measurement: number | null;
     price_per_unit: number | null;
     cost_per_unit: number | null;
     isActive: number | null;
-    versions?: ManufacturingVersion[];
 };
 
 /** `"LIST"` or a numeric `price_type_id` string */
@@ -118,7 +98,6 @@ export type FilterState = {
     active_only: boolean;
     missing_tier: boolean;
     product_type_ids: number[];
-    show_versions: boolean;
     page: number;
     total_pages: number;
 };
@@ -144,7 +123,6 @@ export type PricingFilters = {
     show_list_price: boolean;
 
     product_type_ids: number[];
-    show_versions: boolean;
 };
 
 export type UpsertLine = {
@@ -176,7 +154,6 @@ export type PriceChangeBatchLineInput = {
 };
 
 export type SavePriceChangeBatchInput = {
-    supplier_id: number;
     reference_no?: string;
     remarks: string;
 };

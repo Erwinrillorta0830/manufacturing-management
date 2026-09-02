@@ -400,13 +400,13 @@ export function SalesOrderDraftEditor({
                     const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
                     const isFinishedGood = typeObj?.name === 'Finished Goods';
                     return {
-                        parent_product_id: item.parent_product_id,
+                        parent_product_id: item.parent_product_id as number,
                         product_id: item.product_id,
                         quantity: item.quantity,
                         unit_price: item.unit_price,
-                        discount_type: item.discount_type,
-                        discount_amount: item.discount_amount,
-                        discount_percent: item.discount_percent,
+                        discount_type: item.discount_type || null,
+                        discount_amount: item.discount_amount || 0,
+                        discount_percent: item.discount_percent || 0,
                         bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
                     };
                 }),

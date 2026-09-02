@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateGroupIndexCacheOnCatalogChange } from "../../_productGroupIndexCache";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
                 const url = `${DIRECTUS_URL}/items/${PRODUCTS_COLLECTION}/${item.product_id}`;
                 const payload = {
                     cost_per_unit: item.cost_per_unit,
-                    updated_by: userId,
+                    ...productUpdateAuditFields(userId),
                 };
 
                 const { ok, status, text } = await fetchDirectusRaw(url, {

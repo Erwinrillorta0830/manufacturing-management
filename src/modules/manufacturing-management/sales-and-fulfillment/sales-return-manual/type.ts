@@ -23,13 +23,16 @@ export interface SalesReturnItem {
   reason?: string;
   returnType?: string;
   rfidTags?: string[];
+  agreedPrice?: number;
+  priceVariance?: number;
   // 🟢 Fields for Price Type Recalculation
+  availablePrices?: ProductPerPriceType[];
+  unitMultiplier?: number;
   priceA?: number;
   priceB?: number;
   priceC?: number;
   priceD?: number;
   priceE?: number;
-  unitMultiplier?: number;
 }
 
 export interface SalesReturn {
@@ -120,6 +123,14 @@ export interface SupplierCategoryDiscount {
   discount_type: number | string | null;
 }
 
+export interface ProductPerPriceType {
+  id: number;
+  product_id: number;
+  price_type_id: number;
+  price: number;
+  status: string;
+}
+
 export interface ProductCatalog {
   brands: Brand[];
   categories: Category[];
@@ -128,6 +139,7 @@ export interface ProductCatalog {
   connections: ProductSupplierConnection[];
   products: Product[];
   supplierCategoryDiscount?: SupplierCategoryDiscount[];
+  productPrices: ProductPerPriceType[];
 }
 
 // --- API LOOKUPS ---
@@ -220,4 +232,19 @@ export interface InvoiceOption {
 export interface LotOption {
   lot_id: number;
   lot_name: string;
+}
+
+// --- QUOTATION DATA ---
+export interface QuotationHeader {
+  id: number;
+  quote_number: string;
+  customer_id: number;
+}
+
+export interface QuotationSnapshot {
+  snapshot_id: number;
+  quotation_id: number;
+  product_id: number;
+  unit_price: number;
+  agreed_price: number;
 }

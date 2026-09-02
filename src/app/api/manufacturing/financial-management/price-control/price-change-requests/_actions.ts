@@ -233,6 +233,10 @@ export async function applyProposedPrice(args: {
             createdBy ? { createdBy, updatedBy } : { updatedBy },
         );
     } else {
+        const createPayload = {
+            ...payload,
+            created_at: nowManila(),
+        };
         const response = await fetchDirectus<DirectusSingleResponse<{
             id?: number | string | null;
             created_by?: unknown;
@@ -240,7 +244,7 @@ export async function applyProposedPrice(args: {
         }>>(`${mustBase()}/items/${PRICES}?fields=id,created_by,updated_by`, {
             method: "POST",
             headers: directusHeaders(),
-            body: JSON.stringify(payload),
+            body: JSON.stringify(createPayload),
         });
         assertPriceAuditRecord(response.data, { createdBy, updatedBy });
     }
