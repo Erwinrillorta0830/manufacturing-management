@@ -411,6 +411,7 @@ export interface DirectusUnit {
     unit_id: number;
     unit_name: string;
     unit_shortcut: string;
+    density_required?: boolean | null;
 }
 
 export interface DirectusBOMComponent {

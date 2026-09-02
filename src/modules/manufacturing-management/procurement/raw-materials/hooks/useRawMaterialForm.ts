@@ -33,6 +33,29 @@ function emptyPurchaseQaConfig(): PurchaseQaConfig {
     return { inspectionRequired: false, specifications: [] };
 }
 
+function getSelectedDensityRequirement(
+    units: UnitOption[],
+    uomId: number | ""
+): boolean | null {
+    if (uomId === "") return null;
+    return units.find(unit => unit.unit_id === Number(uomId))?.requiresDensity ?? null;
+}
+
+function densityPolicyError(
+    units: UnitOption[],
+    uomId: number | "",
+    label: string
+): string | null {
+    if (uomId === "") return null;
+    if (!units.some(unit => unit.unit_id === Number(uomId))) {
+        return `${label} UOM is invalid or unavailable.`;
+    }
+    if (getSelectedDensityRequirement(units, uomId) === null) {
+        return `${label} UOM has no configured density policy.`;
+    }
+    return null;
+}
+
 function parseWeightForm(
     netWeight: string,
     outerCartonWeight: string,
@@ -175,7 +198,8 @@ export function useRawMaterialForm(
     const uomOptions = useMemo(() => {
         return units.map(u => ({
             value: String(u.unit_id),
-            label: `${u.unit_name} (${u.unit_shortcut})`
+            label: `${u.unit_name} (${u.unit_shortcut})`,
+            requiresDensity: u.requiresDensity
         }));
     }, [units]);
 
@@ -240,6 +264,11 @@ export function useRawMaterialForm(
 
     const handleProductTypeChange = (value: number) => {
         if (!classificationLocked) setFormProductType(value);
+    };
+
+    const handlePrimaryUomChange = (value: number | "") => {
+        if (String(formUom) !== String(value)) setFormDensity("");
+        setFormUom(value);
     };
 
     const resetChildSpecificFields = useCallback(() => {
@@ -362,7 +391,10 @@ export function useRawMaterialForm(
 
     const handleUpdateVariant = (index: number, field: string, value: unknown) => {
         const copy = [...packagingVariants];
-        copy[index] = { ...copy[index], [field]: value };
+        const current = copy[index];
+        copy[index] = field === "uomId" && String(current.uomId) !== String(value)
+            ? { ...current, uomId: value as number | "", density: "" }
+            : { ...current, [field]: value };
         setPackagingVariants(copy);
     };
 
@@ -381,6 +413,15 @@ export function useRawMaterialForm(
                 const meta = await fetchRawMaterialMetadata();
                 if (!isSubscribed) return;
                 setUnits(meta.units);
+                const initialUomId = editingItem?.unit_of_measurement?.unit_id || "";
+                if (meta.units.find(unit => unit.unit_id === Number(initialUomId))?.requiresDensity !== true) {
+                    setFormDensity("");
+                }
+                setPackagingVariants(previous => previous.map(variant => (
+                    meta.units.find(unit => unit.unit_id === Number(variant.uomId))?.requiresDensity === true
+                        ? variant
+                        : { ...variant, density: "" }
+                )));
                 setWeightUnits(meta.weightUnits);
                 setBrandsList(meta.brands);
                 setCategoriesList(meta.categories);
@@ -486,7 +527,7 @@ export function useRawMaterialForm(
         setPurchaseQaReady(false);
         setPurchaseQaError(null);
         setFormUom(item.unit_of_measurement?.unit_id || "");
-        setFormDensity(String(item.density_factor || "1.000"));
+        setFormDensity(item.density_factor != null ? String(item.density_factor) : "");
         setFormWeight(item.weight && Number(item.weight) > 0 ? String(item.weight) : "");
         setFormNetWeight(item.net_weight != null ? String(item.net_weight) : "");
         setFormOuterCartonWeight(item.outer_carton_weight != null ? String(item.outer_carton_weight) : "");
@@ -704,7 +745,10 @@ export function useRawMaterialForm(
         const isCodeEmpty = !formCode.trim();
         const isUomEmpty = !formUom;
         const isCategoryEmpty = !formCategory;
-        const isDensityInvalid = !formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0;
+        const densityRequirement = getSelectedDensityRequirement(units, formUom);
+        const primaryUomPolicyError = densityPolicyError(units, formUom, "Primary");
+        const isDensityInvalid = densityRequirement === true
+            && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0);
         const isUomCountInvalid = !formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0;
         const parsedWeight = formWeight.trim() !== "" ? Number(formWeight) : null;
         const parsedWeightUnitId = formWeightUnitId === "" ? null : Number(formWeightUnitId);
@@ -725,11 +769,14 @@ export function useRawMaterialForm(
         );
         const isWeightInvalid = Boolean(weightValidationError);
 
-        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || isDensityInvalid || isWeightInvalid || isUomCountInvalid) {
+        if (isNameEmpty || isCodeEmpty || isUomEmpty || isCategoryEmpty || primaryUomPolicyError || isDensityInvalid || isWeightInvalid || isUomCountInvalid) {
             setShowValidationErrors(true);
             toast.error(isPackagingMaterial
                 ? "Please fill out Net Weight, Outer Carton Weight, Pallet Weight, and Weight Unit. Gross Weight is calculated automatically."
-                : weightValidationError || "Please fill out all mandatory fields correctly.");
+                : primaryUomPolicyError
+                || (isDensityInvalid ? "Density is required and must be greater than 0." : null)
+                || weightValidationError
+                || "Please fill out all mandatory fields correctly.");
             return;
         }
 
@@ -795,6 +842,8 @@ export function useRawMaterialForm(
                 index,
                 variant,
                 usesParentUom: baseUomId !== null && Number(variant.uomId) === baseUomId,
+                densityRequirement: getSelectedDensityRequirement(units, variant.uomId),
+                densityPolicyError: densityPolicyError(units, variant.uomId, `Variant ${index + 1}`),
                 weightValidationError: validateProductWeightForProductType({
                     weight: variant.weight,
                     net_weight: variant.netWeight,
@@ -803,23 +852,30 @@ export function useRawMaterialForm(
                     weight_unit_id: variant.weightUnitId
                 }, formProductType)
             }))
-            .find(({ variant, usesParentUom, weightValidationError }) =>
+            .find(({ variant, usesParentUom, densityRequirement, densityPolicyError, weightValidationError }) =>
                 usesParentUom ||
                 !variant.uomId ||
                 !variant.count ||
                 !Number.isFinite(Number(variant.count)) ||
                 Number(variant.count) <= 0 ||
-                !variant.density ||
-                !Number.isFinite(Number(variant.density)) ||
-                Number(variant.density) <= 0 ||
+                Boolean(densityPolicyError) ||
+                (densityRequirement === true && (
+                    !variant.density ||
+                    !Number.isFinite(Number(variant.density)) ||
+                    Number(variant.density) <= 0
+                )) ||
                 Boolean(weightValidationError)
             );
         if (invalidVariant) {
             toast.error(invalidVariant.usesParentUom
                 ? `Variant ${invalidVariant.index + 1}: The parent Primary UOM cannot be used as an Outer Package UOM. Select a different UOM.`
+                : invalidVariant.densityPolicyError
+                ? invalidVariant.densityPolicyError
                 : !isPackagingMaterial && invalidVariant.weightValidationError
                 ? `Variant ${invalidVariant.index + 1}: ${invalidVariant.weightValidationError}`
-                : "Please fill out all variant UOM, conversion count, and density fields correctly.");
+                : invalidVariant.densityRequirement === true
+                ? `Variant ${invalidVariant.index + 1}: Density is required and must be greater than 0.`
+                : "Please fill out all variant UOM and conversion fields correctly.");
             return;
         }
 
@@ -843,7 +899,7 @@ export function useRawMaterialForm(
         const parsedOuterCartonWeight = weightForm.hasComponents ? Number(formOuterCartonWeight) : null;
         const parsedPalletWeight = weightForm.hasComponents ? Number(formPalletWeight) : null;
         const selectedWeightUnitIdNum = parsedWeightUnitId;
-        const parsedDensity = Number(formDensity);
+        const parsedDensity = densityRequirement === true ? Number(formDensity) : null;
         const parsedUomCount = Number(formUomCount);
 
         const variantsPayload = packagingVariants.map(v => {
@@ -859,7 +915,8 @@ export function useRawMaterialForm(
                 isPackagingMaterial
             );
             const variantWeightUnitId = v.weightUnitId === "" ? null : Number(v.weightUnitId);
-            const variantDensity = Number(v.density);
+            const variantDensityRequirement = getSelectedDensityRequirement(units, v.uomId);
+            const variantDensity = variantDensityRequirement === true ? Number(v.density) : null;
             return {
                 product_id: v.productId,
                 product_code: `${normalizedCode}-${cleanSuffix}`,
@@ -978,7 +1035,7 @@ export function useRawMaterialForm(
         formDesc,
         setFormDesc,
         formUom,
-        setFormUom,
+        setFormUom: handlePrimaryUomChange,
         formDensity,
         setFormDensity,
         formWeight,

@@ -7,6 +7,7 @@ import {
     PurchaseQaParameter,
     BatchItem
 } from "../types/raw-materials.types";
+import { getDensityRequirement } from "../density-policy";
 
 interface InventoryDetailsResponse {
     batches?: unknown;
@@ -61,7 +62,21 @@ export async function fetchRawMaterialMetadata(): Promise<{
         })
     ]);
 
-    const units: UnitOption[] = unitsRes || [];
+    const units: UnitOption[] = Array.isArray(unitsRes)
+        ? unitsRes.map((unit: {
+            unit_id: number;
+            unit_name: string;
+            unit_shortcut: string;
+            density_required?: boolean | null;
+        }) => ({
+            unit_id: unit.unit_id,
+            unit_name: unit.unit_name,
+            unit_shortcut: unit.unit_shortcut,
+            requiresDensity: typeof unit.density_required === "boolean"
+                ? unit.density_required
+                : getDensityRequirement(unit)
+        }))
+        : [];
     const weightUnits: WeightUnitOption[] = weightUnitsRes || [];
     const brands: SelectOption[] = (brandsData => (brandsData || []).map((b: { brand_id: number; brand_name: string }) => ({ value: String(b.brand_id), label: b.brand_name })))(brandsRes);
     const categories: SelectOption[] = (categoriesData => (categoriesData || []).map((c: { category_id: number; category_name: string }) => ({ value: String(c.category_id), label: c.category_name })))(categoriesRes);
