@@ -662,7 +662,7 @@ export function PriceTypeRequestManager({
                     priceExportImport.setCreatingBatch(open);
                     if (!open) priceExportImport.clearImportPrefill();
                 }}
-                suppliers={suppliers}
+
                 onCreated={() => void inbox.refresh()}
                 importPrefill={priceExportImport.importPrefill}
             />

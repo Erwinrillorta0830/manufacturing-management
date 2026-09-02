@@ -493,8 +493,8 @@ export function useQuotation() {
 
     const removeProductFromQuote = (lineIdOrProductId: number) => {
         setSelectedProductsList(prev => prev.filter(item => 
-            (item.line_id && item.line_id !== lineIdOrProductId) || 
-            (item.product?.product_id !== lineIdOrProductId)
+            item.line_id !== lineIdOrProductId && 
+            item.product?.product_id !== lineIdOrProductId
         ));
     };
 

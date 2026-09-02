@@ -27,6 +27,8 @@ import {
   Product,
   ProductSupplierConnection,
   API_LineDiscount,
+  PriceTypeOption,
+  ProductPerPriceType,
 } from "../type";
 import { SalesReturnProvider } from "../providers/fetchProviders";
 import { cn } from "@/lib/utils";
@@ -39,6 +41,7 @@ interface Props {
   customerCode?: string; // 🟢 NEW: Pass selected customer code
   lineDiscounts?: API_LineDiscount[]; // 🟢 NEW
   includeInactive?: boolean; // 🟢 NEW
+  priceTypeOptions: PriceTypeOption[]; // 🟢 NEW
 }
 
 export function ProductLookupModal({
@@ -48,6 +51,7 @@ export function ProductLookupModal({
   priceType = "A", // 🟢 NEW
   customerCode,
   includeInactive = false,
+  priceTypeOptions,
 }: Props) {
   // --- STATES ---
   const [searchCode, setSearchCode] = useState("");
@@ -65,6 +69,7 @@ export function ProductLookupModal({
     ProductSupplierConnection[]
   >([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productPrices, setProductPrices] = useState<ProductPerPriceType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const [selectedItems, setSelectedItems] = useState<SalesReturnItem[]>([]);
@@ -99,6 +104,7 @@ export function ProductLookupModal({
           setUnitsList(Array.isArray(catalog.units) ? catalog.units : []);
           setSupplierConnections(Array.isArray(catalog.connections) ? catalog.connections : []);
           setProducts(Array.isArray(catalog.products) ? catalog.products : []);
+          setProductPrices(Array.isArray(catalog.productPrices) ? catalog.productPrices : []);
         } catch (error) {
           console.error("Failed to load data", error);
         } finally {
@@ -254,12 +260,17 @@ export function ProductLookupModal({
   // --- HANDLERS ---
 
   /**
-   * Resolves the correct unit price based on the selected priceType.
+   * Helper to resolve the default price from productPrices state
    */
-  const resolvePrice = (product: Product, currentType: string): number => {
-    const key = `price${currentType}` as keyof Product;
-    const price = Number(product[key]) || Number(product.priceA) || 0;
-    return price;
+  const resolvePrice = (product: Product, currentType: string) => {
+    const pt = priceTypeOptions.find(p => p.price_type_name === currentType || p.price_type_id.toString() === currentType);
+    if (pt) {
+      const priceRecord = productPrices.find(p => Number(p.product_id) === Number(product.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+      if (priceRecord && priceRecord.price !== undefined) {
+        return Number(priceRecord.price);
+      }
+    }
+    return 0; // Fallback
   };
 
   const handleAddItem = (
@@ -291,7 +302,6 @@ export function ProductLookupModal({
       } else {
         const totalAmount = Math.round(selectedPrice * 100) / 100;
 
-        // 🟢 FIX: Added 'grossAmount'
         const newItem: SalesReturnItem = {
           tempId: `added-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           productId: product.product_id,
@@ -301,18 +311,13 @@ export function ProductLookupModal({
           unit: unitLabel,
           quantity: 1,
           unitPrice: selectedPrice,
-          grossAmount: selectedPrice, // 🟢 Added (1 * price)
-          discountType: null, // 🟢 Removed discount inside lookup
+          grossAmount: totalAmount,
+          discountType: null,
           discountAmount: 0,
           totalAmount: totalAmount,
-          returnType: "", // 🟢 Empty default as requested
+          availablePrices: productPrices.filter(p => p.product_id === product.product_id),
+          returnType: "",
           reason: "",
-          // 🟢 Store additional price info for recalculation
-          priceA: product.priceA,
-          priceB: product.priceB,
-          priceC: product.priceC,
-          priceD: product.priceD,
-          priceE: product.priceE,
           unitMultiplier: product.unit_of_measurement_count || 1,
         };
         return [...prevItems, newItem];

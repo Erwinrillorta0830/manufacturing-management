@@ -119,12 +119,12 @@ const CustomerCardView = ({ c, paymentTerms }: { c: Customer, paymentTerms: Paym
                     </div>
                 )}
                 {!!c.isVAT && (
-                    <div className="flex items-center gap-1 text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    <div className="flex items-center gap-1 text-[9px] font-black text-emerald-500 uppercase bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                         <Receipt className="w-3 h-3" /> VAT
                     </div>
                 )}
                 {!!c.isEWT && (
-                    <div className="flex items-center gap-1 text-[9px] font-black text-blue-600 uppercase bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                    <div className="flex items-center gap-1 text-[9px] font-black text-blue-500 uppercase bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
                         <Receipt className="w-3 h-3" /> EWT
                     </div>
                 )}

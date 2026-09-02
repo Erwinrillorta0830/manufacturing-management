@@ -92,11 +92,6 @@ export type PricingMatrixLike = {
     getError: (productId: number, tier: ProductTierKey) => string | null | undefined;
     setCell: (productId: number, tier: ProductTierKey, raw: unknown) => void;
 
-    getVersionCellValue: (versionId: number, priceTypeId: number, base: number | null) => number | string | null;
-    getVersionPendingRequest: (versionId: number, priceTypeId: number) => PendingCellRequest | null;
-    isVersionDirty: (versionId: number, priceTypeId: number) => boolean;
-    getVersionError: (versionId: number, priceTypeId: number) => string | null | undefined;
-    setVersionCell: (versionId: number, priceTypeId: number, versionName: string, base: number | null, raw: unknown) => void;
 
     priceTypes: PriceType[];
     filters: PricingFilters;
@@ -106,15 +101,13 @@ export type PricingMatrixLike = {
 type Props = {
     matrix: PricingMatrixLike;
     dirtyVersion?: number;
-    showVersions?: boolean;
     usedUnitIds: Set<number>;
 };
 
 
 export default function PricingMatrixTable({ 
     matrix, 
-    dirtyVersion = 0, 
-    showVersions = false,
+    dirtyVersion = 0,
     usedUnitIds
 }: Props) {
     const loading = Boolean(matrix.loading);
@@ -381,68 +374,6 @@ export default function PricingMatrixTable({
                                         );
                                     })}
                                 </TableRow>
-                                
-                                {/* Render Versions (Nested Rows) */}
-                                {showVersions && (row.display?.versions || []).map((v) => {
-                                    const version = v;
-                                    return (
-                                        <TableRow key={`v-${version.version_id}`} className="hover:bg-muted/40 transition-colors border-b border-border/80 bg-muted/30">
-                                            <TableCell className="sticky left-0 bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5 text-xs text-foreground/90 whitespace-nowrap">
-                                                <div className="flex items-center pl-3 relative">
-                                                    <div className="absolute left-1.5 top-0 bottom-1/2 w-3 border-l-2 border-b-2 border-border/70 rounded-bl-sm" />
-                                                    <span className="ml-3 font-medium">{version.version_name} {version.is_primary ? "(Primary)" : ""}</span>
-                                                </div>
-                                            </TableCell>
-
-                                            {showListCost && (
-                                                <React.Fragment key="list-cost-v-cells">
-                                                    {visibleUnits.length > 0 ? visibleUnits.map((u) => {
-                                                        const isMatchingUnit = Number(u.unit_id) === Number(version.uom_id);
-                                                        return (
-                                                            <TableCell key={`v-cell-list-${u.unit_id}`} className="border-r border-border/50 px-2 py-2">
-                                                                {isMatchingUnit ? (
-                                                                    <span className="text-muted-foreground text-xs text-center block w-full">—</span>
-                                                                ) : null}
-                                                            </TableCell>
-                                                        );
-                                                    }) : (
-                                                        <TableCell className="border-r border-border/50 bg-muted/20" />
-                                                    )}
-                                                </React.Fragment>
-                                            )}
-
-                                            {activePriceTypes.map((pt) => {
-                                                return (
-                                                    <React.Fragment key={`v-cells-${pt.price_type_id}`}>
-                                                        {visibleUnits.length > 0 ? visibleUnits.map((u) => {
-                                                            const isMatchingUnit = Number(u.unit_id) === Number(version.uom_id);
-                                                            
-                                                            if (!isMatchingUnit) {
-                                                                return <TableCell key={`v-cell-${pt.price_type_id}-${u.unit_id}`} className="border-r border-border/50 px-2 py-2" />;
-                                                            }
-
-                                                            const base = toNullableNumber(version.prices?.[pt.price_type_id]?.price_per_unit);
-
-                                                            return (
-                                                                <TableCell key={`v-cell-${pt.price_type_id}-${u.unit_id}`} className="border-r border-border/50 px-2 py-2">
-                                                                    <PriceCell
-                                                                        value={matrix.getVersionCellValue(version.version_id, pt.price_type_id, base)}
-                                                                        pendingRequest={matrix.getVersionPendingRequest(version.version_id, pt.price_type_id)}
-                                                                        dirty={matrix.isVersionDirty(version.version_id, pt.price_type_id)}
-                                                                        error={toErrorString(matrix.getVersionError(version.version_id, pt.price_type_id))}
-                                                                        onChange={(raw) => matrix.setVersionCell(version.version_id, pt.price_type_id, version.version_name, base, raw)}
-                                                                    />
-                                                                </TableCell>
-                                                            );
-                                                        }) : (
-                                                            <TableCell className="border-r border-border/50 bg-muted/20" />
-                                                        )}
-                                                    </React.Fragment>
-                                                );
-                                            })}
-                                        </TableRow>
-                                    );
-                                })}
                             </React.Fragment>
                         ))}
                     </TableBody>

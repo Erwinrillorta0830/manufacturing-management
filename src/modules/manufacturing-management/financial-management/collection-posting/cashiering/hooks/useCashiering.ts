@@ -222,8 +222,14 @@ export function useCashiering(
 
     useEffect(() => {
         let cancelled = false;
-        void fetchProvider.get<Salesman[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").then(data => {
-            if (!cancelled && data) setSalesmen(data);
+        void fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").then(data => {
+            if (!cancelled && data) {
+                setSalesmen(data.map((s: Record<string, unknown>) => ({
+                    ...s,
+                    salesmanCode: s.salesmanCode || s.salesman_code,
+                    salesmanName: s.salesmanName || s.salesman_name
+                } as unknown as Salesman)));
+            }
         });
         return () => {
             cancelled = true;
@@ -238,30 +244,50 @@ export function useCashiering(
             setIsLookupsLoading(true);
             try {
                 const [banksData, denomData, coasData, pmData, custData, usersData] = await Promise.all([
-                    fetchProvider.get<Bank[]>("/api/manufacturing/financial-management/collection-posting/master-data/banks"),
-                    fetchProvider.get<Denomination[]>("/api/manufacturing/financial-management/collection-posting/master-data/denominations"),
-                    fetchProvider.get<COA[]>("/api/manufacturing/financial-management/collection-posting/master-data/coas"),
-                    fetchProvider.get<PaymentMethod[]>("/api/manufacturing/financial-management/collection-posting/master-data/payment-methods"),
-                    fetchProvider.get<Customer[]>("/api/manufacturing/financial-management/collection-posting/master-data/customers"),
-                    fetchProvider.get<UserDto[]>("/api/manufacturing/financial-management/collection-posting/master-data/users"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/banks"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/denominations"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/coas"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/payment-methods"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/customers"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/users"),
                 ]);
 
                 const data: ModalLookupData = {
-                    banks: banksData || [],
-                    denominationMaster: denomData || [],
-                    coas: (coasData || []).filter(c =>
-                        c.isPayment === 1 || c.isPayment === true || c.isPaymentDuplicate
+                    banks: (banksData || []).map((b: Record<string, unknown>) => ({
+                        ...b,
+                        bankName: b.bankName || b.bank_name
+                    } as unknown as Bank)),
+                    denominationMaster: (denomData || []) as unknown as Denomination[],
+                    coas: (coasData || []).map((c: Record<string, unknown>) => ({
+                        ...c,
+                        coaId: c.coaId || c.coa_id,
+                        accountTitle: c.accountTitle || c.account_title,
+                        glCode: c.glCode || c.gl_code,
+                        isPayment: c.isPayment !== undefined ? c.isPayment : c.is_payment
+                    }) as unknown as COA).filter(c => c.isPayment),
+                    paymentMethods: (pmData || []).map((pm: Record<string, unknown>) => ({
+                        ...pm,
+                        methodId: pm.methodId || pm.method_id,
+                        methodName: pm.methodName || pm.method_name
+                    }) as unknown as PaymentMethod).filter(pm =>
+                        pm.methodId !== 1 && (pm.methodName || "").toLowerCase() !== "cash"
                     ),
-                    paymentMethods: (pmData || []).filter(pm =>
-                        pm.methodId !== 1 && pm.methodName.toLowerCase() !== "cash"
-                    ),
-                    customers: custData || [],
-                    users: (usersData || []).map(u => ({
-                        id: u.id,
-                        firstName: u.firstName,
-                        lastName: u.lastName,
-                        name: `${u.firstName || ""} ${u.lastName || ""}`.trim(),
-                    })),
+                    customers: (custData || []).map((c: Record<string, unknown>) => ({
+                        ...c,
+                        customerCode: c.customerCode || c.customer_code,
+                        customerName: c.customerName || c.customer_name
+                    } as unknown as Customer)),
+                    users: (usersData || []).map((u: Record<string, unknown>) => {
+                        const firstName = u.firstName || u.user_fname || "";
+                        const lastName = u.lastName || u.user_lname || "";
+                        return {
+                            ...u,
+                            id: u.id || u.user_id,
+                            firstName,
+                            lastName,
+                            name: `${firstName} ${lastName}`.trim(),
+                        };
+                    }) as unknown as UserDto[],
                 };
 
                 setBanks(data.banks);
@@ -306,12 +332,21 @@ export function useCashiering(
 
         setRouteInvoices([]);
         setSubmissionError(null);
-        void fetchProvider.getOrThrow<UnpaidInvoice[]>(
+        void fetchProvider.getOrThrow<Record<string, unknown>[]>(
             `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
             {signal: controller.signal, timeoutMs: 15_000},
         ).then(data => {
             if (!cancelled) {
-                setRouteInvoices(data || []);
+                const mapped = (data || []).map(inv => ({
+                    ...inv,
+                    id: inv.id || inv.invoice_id,
+                    invoiceNo: inv.invoiceNo || inv.invoice_no,
+                    customerName: inv.customerName || inv.customer_name,
+                    transactionDate: inv.transactionDate || inv.invoice_date,
+                    dueDate: inv.dueDate || inv.due_date,
+                    remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                } as unknown as UnpaidInvoice));
+                setRouteInvoices(mapped);
                 setSubmissionError(null);
             }
         }).catch(error => {
@@ -394,12 +429,21 @@ export function useCashiering(
                             customerId: String(cId),
                             currentPouchId: String(id),
                         });
-                        const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
+                        const data = await fetchProvider.getOrThrow<Record<string, unknown>[]>(
                             `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                             {signal: controller.signal, timeoutMs: 15_000},
                         );
                         if (!controller.signal.aborted && invoiceRequestVersion.current === requestVersion) {
-                            setCustomerInvoices(prev => ({...prev, [cId]: data || []}));
+                            const mapped = (data || []).map(inv => ({
+                                ...inv,
+                                id: inv.id || inv.invoice_id,
+                                invoiceNo: inv.invoiceNo || inv.invoice_no,
+                                customerName: inv.customerName || inv.customer_name,
+                                transactionDate: inv.transactionDate || inv.invoice_date,
+                                dueDate: inv.dueDate || inv.due_date,
+                                remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                            } as unknown as UnpaidInvoice));
+                            setCustomerInvoices(prev => ({...prev, [cId]: mapped}));
                         }
                     } catch (error) {
                         if (controller.signal.aborted || invoiceRequestVersion.current !== requestVersion) return;
@@ -460,11 +504,20 @@ export function useCashiering(
                     customerId,
                     ...(editingId ? { currentPouchId: String(editingId) } : {}),
                 });
-                const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
+                const data = await fetchProvider.getOrThrow<Record<string, unknown>[]>(
                     `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                     {timeoutMs: 15_000},
                 );
-                setCustomerInvoices(prev => ({ ...prev, [customerId]: data || [] }));
+                const mapped = (data || []).map(inv => ({
+                    ...inv,
+                    id: inv.id || inv.invoice_id,
+                    invoiceNo: inv.invoiceNo || inv.invoice_no,
+                    customerName: inv.customerName || inv.customer_name,
+                    transactionDate: inv.transactionDate || inv.invoice_date,
+                    dueDate: inv.dueDate || inv.due_date,
+                    remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                } as unknown as UnpaidInvoice));
+                setCustomerInvoices(prev => ({ ...prev, [customerId]: mapped }));
                 setSubmissionError(null);
             } catch (err) {
                 console.error("Failed to load customer invoices", err instanceof Error ? err.message : err);

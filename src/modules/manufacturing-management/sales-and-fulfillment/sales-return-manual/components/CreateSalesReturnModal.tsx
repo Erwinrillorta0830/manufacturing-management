@@ -22,9 +22,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 import {
@@ -33,6 +41,8 @@ import {
   API_SalesReturnType,
   InvoiceOption,
   PriceTypeOption,
+  ProductPerPriceType,
+  QuotationHeader,
 } from "../type";
 
 // Import Child Modal
@@ -60,7 +70,9 @@ interface SalesReturnGroup {
   unit: string;
   returnType: string;
   unitPrice: number;
+  agreedPrice: number;
   totalQty: number;
+  totalVariance: number;
   totalGross: number;
   totalDiscount: number;
   totalNet: number;
@@ -215,6 +227,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // INVOICE STATE
   const [invoiceNo, setInvoiceNo] = useState("");
   const [appliedInvoiceId, setAppliedInvoiceId] = useState<number | null>(null);
+  const [, setSelectedQuotationId] = useState<number | null>(null);
   const [remarks, setRemarks] = useState("");
 
   // --- 2. DATA LISTS ---
@@ -245,6 +258,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   const [orderError, setOrderError] = useState(false);
   const [invoiceError, setInvoiceError] = useState(false);
 
+  // QUOTATION STATE
+  const [quotationOptions, setQuotationOptions] = useState<QuotationHeader[]>([]);
+  const [quotationSearch, setQuotationSearch] = useState("");
+  const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+  const quotationWrapperRef = useRef<HTMLDivElement>(null);
+
   // --- RFID State ---
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
@@ -265,12 +284,28 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
    * Resolves the correct unit price based on the selected salesman's priceType.
    * Falls back to priceA if the specific price type is not available.
    */
-  const resolvePrice = (product: SalesReturnItem | Record<string, unknown>, currentPriceType: string): number => {
-    const key = `price${currentPriceType}`;
-    const productRecord = product as Record<string, unknown>;
-    const price = Number(productRecord[key]) || Number(productRecord.priceA) || Number(productRecord.unitPrice) || 0;
+  const resolvePrice = useCallback((item: SalesReturnItem | Record<string, unknown>, currentPriceType: string, catalogPrices?: ProductPerPriceType[]): number => {
+    const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
+
+    // For SalesReturnItem mapped structure
+    if (pt && Array.isArray((item as SalesReturnItem).availablePrices)) {
+      const priceRecord = (item as SalesReturnItem).availablePrices!.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
+      if (priceRecord && priceRecord.price !== undefined) {
+        return Math.round(Number(priceRecord.price) * 100) / 100;
+      }
+    }
+
+    // For raw Product data during updateDiscounts
+    if (pt && Array.isArray(catalogPrices)) {
+      const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number((item as Record<string, unknown>).product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+      if (priceRecord && priceRecord.price !== undefined) {
+        return Math.round(Number(priceRecord.price) * 100) / 100;
+      }
+    }
+
+    const price = Number((item as Record<string, unknown>).unitPrice) || 0;
     return Math.round(price * 100) / 100;
-  };
+  }, [priceTypeOptions]);
 
   // --- 5. INITIAL LOAD ---
   useEffect(() => {
@@ -285,6 +320,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             returnTypesData,
             priceTypesData,
             lotsData,
+            quotationsData,
           ] = await Promise.all([
             SalesReturnProvider.getFormSalesmen(),
             SalesReturnProvider.getFormCustomers(),
@@ -293,6 +329,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             SalesReturnProvider.getSalesReturnTypes(),
             SalesReturnProvider.getPriceTypes(),
             SalesReturnProvider.getLots(),
+            SalesReturnProvider.getQuotations(),
           ]);
           setSalesmen(salesmenData);
           setCustomers(customersData);
@@ -301,6 +338,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           setReturnTypeOptions(returnTypesData);
           setPriceTypeOptions(priceTypesData);
           setLotOptions(lotsData);
+          setQuotationOptions(quotationsData);
         } catch (error) {
           console.error("Failed to load form data", error);
         }
@@ -316,8 +354,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         prevItems.map((item) => {
           const basePrice = resolvePrice(item, priceType);
           const newUnitPrice = basePrice;
-          
-          const newGross = Math.round(item.quantity * newUnitPrice * 100) / 100;
+          const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
+
+          const newGross = Math.round(item.quantity * agPrice * 100) / 100;
           let newDiscountAmt = 0;
 
           if (item.discountType) {
@@ -330,9 +369,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             }
           }
 
+          const newVariance = Math.round((newUnitPrice - agPrice) * item.quantity * 100) / 100;
+
           return {
             ...item,
             unitPrice: newUnitPrice,
+            agreedPrice: agPrice,
+            priceVariance: newVariance,
             grossAmount: newGross,
             discountAmount: newDiscountAmt,
             totalAmount: Math.round((newGross - newDiscountAmt) * 100) / 100,
@@ -340,7 +383,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         })
       );
     }
-  }, [priceType, lineDiscountOptions, items.length]);
+  }, [priceType, lineDiscountOptions, items.length, resolvePrice]);
 
   // 🟢 NEW: Effect to automatically update discounts when Customer changes
   useEffect(() => {
@@ -351,8 +394,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
           setItems((prevItems) =>
             prevItems.map((item) => {
-              const productInfo = catalog.products?.find((p: Product) => p.product_id === Number(item.productId));
+              const productInfo = catalog.products?.find((p: Product) => Number(p.product_id) === Number(item.productId));
               if (!productInfo) return item;
+
+              const newUnitPrice = resolvePrice(productInfo as unknown as Record<string, unknown>, priceType, catalog.productPrices);
+              const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
+              const newGross = Math.round(item.quantity * agPrice * 100) / 100;
 
               const newDiscountType = resolveFinalDiscount(
                 productInfo,
@@ -367,15 +414,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 );
                 if (selectedOption) {
                   const percentage = parseFloat(selectedOption.total_percent) || 0;
-                  newDiscountAmt = Math.round((item.grossAmount || 0) * (percentage / 100) * 100) / 100;
+                  newDiscountAmt = Math.round(newGross * (percentage / 100) * 100) / 100;
                 }
               }
 
+              const newVariance = Math.round((newUnitPrice - agPrice) * item.quantity * 100) / 100;
+
               return {
                 ...item,
+                unitPrice: newUnitPrice,
+                agreedPrice: agPrice,
+                priceVariance: newVariance,
+                grossAmount: newGross,
                 discountType: newDiscountType,
                 discountAmount: newDiscountAmt,
-                totalAmount: Math.round(((item.grossAmount || 0) - newDiscountAmt) * 100) / 100,
+                totalAmount: Math.round((newGross - newDiscountAmt) * 100) / 100,
+                availablePrices: catalog.productPrices?.filter((p: ProductPerPriceType) => Number(p.product_id) === Number(productInfo.product_id)),
               };
             })
           );
@@ -385,13 +439,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       };
       updateDiscounts();
     }
-  }, [customerCode, customers, lineDiscountOptions, items.length]);
+  }, [customerCode, customers, lineDiscountOptions, items.length, priceType, resolvePrice]);
 
   const handleSelectSalesman = useCallback((salesman: SalesmanOption) => {
     setSelectedSalesmanId(salesman.id.toString());
     setSalesmanSearch(salesman.name);
     setSalesmanCode(salesman.code);
-    
+
     if (salesman.priceType) {
       const pt = priceTypeOptions.find(p => p.price_type_id.toString() === salesman.priceType.toString());
       if (pt) {
@@ -432,6 +486,41 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setInvoiceSearch("");
   }, [priceTypeOptions]);
 
+  const handleSelectQuotation = useCallback(async (quotationId: number, quoteNumber: string) => {
+    setSelectedQuotationId(quotationId);
+    setQuotationSearch(quoteNumber);
+    setIsQuotationOpen(false);
+
+    try {
+      const snapshots = await SalesReturnProvider.getQuotationSnapshots(quotationId);
+
+      // Update existing items if their product ID matches a snapshot
+      if (items.length > 0 && snapshots.length > 0) {
+        setItems(prevItems => prevItems.map(item => {
+          const snapshot = snapshots.find(s => Number(s.product_id) === Number(item.productId));
+          if (snapshot) {
+            const newAgreedPrice = Number(snapshot.unit_price);
+            const newVariance = Math.round((item.unitPrice - newAgreedPrice) * 100) / 100;
+            const newGross = Math.round((item.quantity * newAgreedPrice) * 100) / 100;
+            const newTotal = Math.round((newGross - (item.discountAmount || 0)) * 100) / 100;
+
+            return {
+              ...item,
+              agreedPrice: newAgreedPrice,
+              priceVariance: newVariance,
+              grossAmount: newGross,
+              totalAmount: newTotal
+            };
+          }
+          return item;
+        }));
+      }
+    } catch (error) {
+      console.error("Failed to load quotation snapshots", error);
+      toast.error("Failed to load quotation details.");
+    }
+  }, [items]);
+
   // --- 5b. FETCH INVOICES when salesman or customer changes ---
   useEffect(() => {
     if (selectedSalesmanId && customerCode) {
@@ -452,7 +541,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       setInvoiceOptions([]);
     }
   }, [selectedSalesmanId, customerCode, handleSelectSalesman, handleSelectCustomer]);
-  
+
   // --- 5c. PRE-FILL FROM CLEARANCE ---
   useEffect(() => {
     if (isOpen && fromClearance === "true" && customers.length > 0) {
@@ -553,6 +642,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       ) {
         setIsOrderOpen(false);
       }
+
+      if (
+        quotationWrapperRef.current &&
+        !quotationWrapperRef.current.contains(target)
+      ) {
+        setIsQuotationOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -575,12 +671,16 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setCustomerCode("");
     setBranchName("");
     setPriceType("A");
-    setRemarks("");
+    setCustomerCode("");
     setOrderNo("");
     setOrderSearch("");
     setInvoiceNo("");
     setInvoiceSearch("");
     setAppliedInvoiceId(null);
+    setRemarks("");
+    setSelectedQuotationId(null);
+    setQuotationSearch("");
+    setIsQuotationOpen(false);
     setIsThirdParty(false);
     setInvoiceOptions([]);
   };
@@ -617,7 +717,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setReturnTypeError(false);
     setOrderError(false);
     setInvoiceError(false);
-    
+
     if (!returnDate) {
       toast.error("Return Date is required.");
       return;
@@ -700,7 +800,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       newItems.forEach((item) => {
         const rawId = item.product_id || item.productId || item.id;
         const productId = Number(rawId);
-        
+
         // Strict mapping for unit checking to prevent different UOMs from merging
         const isRfidItem = !!item.rfidTags && item.rfidTags.length > 0;
         const existingIndex = updated.findIndex(
@@ -710,12 +810,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           }
         );
         const qty = item.quantity || 1;
-        
+
         if (existingIndex >= 0) {
           const existing = { ...updated[existingIndex] };
           existing.quantity += qty;
           existing.grossAmount = Math.round(existing.quantity * existing.unitPrice * 100) / 100;
-          
+
           if (existing.discountType) {
             const selectedOption = lineDiscountOptions.find(
               (d) => d.id.toString() === existing.discountType?.toString(),
@@ -725,7 +825,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               existing.discountAmount = Math.round((existing.grossAmount || 0) * (percentage / 100) * 100) / 100;
             }
           }
-          
+
           existing.totalAmount = Math.round(((existing.grossAmount || 0) - (existing.discountAmount || 0)) * 100) / 100;
           if (item.rfidTags) {
             existing.rfidTags = [...(existing.rfidTags || []), ...item.rfidTags];
@@ -736,8 +836,8 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           const priceKey = `price${priceType}`;
           const unitPrice =
             Math.round((Number(resultRecord[priceKey]) ||
-            Number(resultRecord.unitPrice) ||
-            0) * 100) / 100;
+              Number(resultRecord.unitPrice) ||
+              0) * 100) / 100;
 
           const incomingDiscountType = item.discountType || "";
           let initialDiscountAmt = 0;
@@ -763,6 +863,8 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             unit: item.unit || "Pcs",
             quantity: qty,
             unitPrice: unitPrice,
+            agreedPrice: unitPrice,
+            priceVariance: 0,
             grossAmount: initialGross,
             discountType: incomingDiscountType,
             discountAmount: initialDiscountAmt,
@@ -789,8 +891,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       const updated = [...prev];
       const item = { ...updated[index], [field]: value } as SalesReturnItem;
 
-      if (field === "quantity" || field === "unitPrice") {
-        item.grossAmount = Math.round(item.quantity * item.unitPrice * 100) / 100;
+      if (field === "quantity" || field === "unitPrice" || field === "agreedPrice") {
+        const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice;
+        item.grossAmount = Math.round(item.quantity * agPrice * 100) / 100;
+        item.priceVariance = Math.round(((item.unitPrice || 0) - agPrice) * item.quantity * 100) / 100;
         if (item.discountType) {
           const selectedOption = lineDiscountOptions.find(
             (d) => d.id.toString() === item.discountType?.toString(),
@@ -822,16 +926,19 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     });
   };
 
-  // --- 10. CALCULATIONS ---
   const totalGross = Math.round(items.reduce(
     (sum, item) => sum + (item.grossAmount || 0),
+    0,
+  ) * 100) / 100;
+  const totalVariance = Math.round(items.reduce(
+    (sum, item) => sum + (item.priceVariance || 0),
     0,
   ) * 100) / 100;
   const totalDiscount = Math.round(items.reduce(
     (sum, item) => sum + (item.discountAmount || 0),
     0,
   ) * 100) / 100;
-  const totalNet = Math.round(items.reduce((sum, item) => sum + item.totalAmount, 0) * 100) / 100;
+  const totalNet = Math.round(items.reduce((sum, item) => sum + (item.totalAmount || 0), 0) * 100) / 100;
 
   const filteredInvoices = invoiceOptions.filter((inv) =>
     !inv.isPosted && inv.invoice_no.toLowerCase().includes(invoiceSearch.toLowerCase()),
@@ -874,7 +981,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           <div className="bg-background p-5 rounded-lg border border-border shadow-sm relative">
             <div className="absolute top-0 left-0 w-1 h-full bg-primary rounded-l-lg"></div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-4">
-              
+
               <div className="space-y-1.5 relative" ref={salesmanWrapperRef}>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide truncate block">
                   Salesman <span className="text-destructive">*</span>
@@ -1070,11 +1177,11 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               </h3>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground mr-1">
-                    {items.length} {items.length === 1 ? "item" : "items"} total
-                  </span>
-                </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground mr-1">
+                      {items.length} {items.length === 1 ? "item" : "items"} total
+                    </span>
+                  </div>
                 </div>
                 <Button
                   size="sm"
@@ -1087,64 +1194,70 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             </div>
 
             <div className="overflow-x-auto relative pb-4">
-              <table className="w-full text-sm text-left min-w-[1500px]">
-                <thead>
-                  <tr className="bg-primary text-white">
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-28">
+              <Table className="min-w-[1600px]">
+                <TableHeader>
+                  <TableRow className="bg-primary hover:bg-primary! border-none">
+                    <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
                       Code
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
                       Description
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-20">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 w-[80px] uppercase text-xs">
                       Unit
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-28 text-center">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-center min-w-[100px] uppercase text-xs">
                       Qty
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32 text-right">
-                      Price
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32 text-right">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                      Unit Price
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                      Agreed Price
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                      Variance
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
                       Gross
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-40">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                       Disc. Type
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-36 text-right">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[140px] uppercase text-xs">
                       Disc. Amt
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-40 text-right">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[150px] uppercase text-xs">
                       Total
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Lot
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-32">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Batch
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-48">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
                       Reason
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-xs uppercase tracking-wider w-48">
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 w-[200px] uppercase text-xs">
                       Return Type
-                    </th>
-                    <th className="sticky right-0 z-10 px-2 py-3 w-12 bg-primary"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
+                    </TableHead>
+                    {/* 🟢 REVISED: Delete Column hidden if not Pending */}
+                    {true && (
+                      <TableHead className="text-white font-semibold h-11 w-[50px]"></TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="px-6 py-16 text-center text-muted-foreground bg-muted/30">
-                        <div className="flex flex-col items-center gap-2">
-                          <FileText className="h-8 w-8 text-muted-foreground mb-1" />
-                          <p>No items added yet.</p>
-                          <span className="text-xs">
-                            Click &quot;Add Product&quot; to browse catalog.
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
+                    <TableRow>
+                      <TableCell
+                        colSpan={12}
+                        className="h-24 text-center text-muted-foreground text-sm"
+                      >
+                        No products found.
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     <>
                       {/* 1. RENDER MANUAL ITEMS (No RFID) */}
@@ -1152,259 +1265,85 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                         const isManual = !item.rfidTags || item.rfidTags.length === 0;
                         if (!isManual) return null;
                         return (
-                          <tr key={idx} className="hover:bg-muted/20 transition-colors duration-200 border-b border-border">
-                            <td className="px-4 py-2 font-mono text-sm text-foreground font-bold">
+                          <TableRow
+                            key={item.id || idx}
+                            className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
+                          >
+                            <TableCell className="text-sm text-foreground font-bold align-middle font-mono">
                               {item.code}
-                            </td>
-                            <td className="px-4 py-2 text-foreground">
-                              <div className="text-sm text-foreground font-medium" title={item.description}>
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              <div
+                                className="text-sm text-foreground font-medium"
+                                title={item.description}
+                              >
                                 {item.description}
                               </div>
-                            </td>
-                            <td className="px-4 py-2">
-                              <span className="bg-background text-foreground px-2 py-0.5 rounded text-sm border border-border">
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground align-middle">
+                              <Badge
+                                variant="outline"
+                                className="text-foreground bg-background border-border font-normal"
+                              >
                                 {item.unit}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-center">
-                              <input
-                                type="number"
-                                min="1"
-                                className="w-full text-center border border-border rounded h-8 text-sm focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
-                                value={item.quantity}
-                                onChange={(e) => handleItemChange(idx, "quantity", parseFloat(e.target.value) || 0)}
-                              />
-                            </td>
-                            <td className="px-3 py-2 text-right text-sm whitespace-nowrap">
-                              ₱{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-3 py-2 text-right text-muted-foreground font-mono text-sm whitespace-nowrap">
-                              ₱{(item.grossAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-4 py-2">
-                              {(() => {
-                                const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
-                                const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "";
-                                const currentDiscVal = item.discountType?.toString() ? (
-                                  lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
-                                    ? item.discountType.toString()
-                                    : defaultVal
-                                ) : defaultVal;
-                                return (
-                                  <LocalSearchableSelect
-                                    value={currentDiscVal}
-                                    onValueChange={(val) => handleItemChange(idx, "discountType", val)}
-                                    options={lineDiscountOptions.map((opt) => ({
-                                      value: opt.id.toString(),
-                                      label: opt.discount_type,
-                                    }))}
-                                    placeholder="Select Discount..."
-                                    className="w-full h-8 text-xs"
-                                  />
-                                );
-                              })()}
-                            </td>
-                            <td className="px-4 py-2">
-                              <input
-                                type="number"
-                                readOnly
-                                disabled
-                                className="w-full text-right border border-border bg-muted/30 text-muted-foreground rounded h-8 text-sm outline-none cursor-not-allowed"
-                                value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""}
-                              />
-                            </td>
-                            <td className="px-3 py-2 text-right font-bold text-sm text-foreground whitespace-nowrap">
-                              ₱{item.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-2 py-2">
-                              <Select
-                                value={item.lot_id ? item.lot_id.toString() : ""}
-                                onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
-                              >
-                                <SelectTrigger className="w-full h-8 text-xs px-2 bg-background border-border">
-                                  <SelectValue placeholder="Select lot" />
-                                </SelectTrigger>
-                                <SelectContent className="bg-background">
-                                  {lotOptions.map((lot) => (
-                                    <SelectItem key={lot.lot_id} value={lot.lot_id.toString()}>
-                                      {lot.lot_name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </td>
-                            <td className="px-2 py-2">
-                              <input
-                                type="text"
-                                className="w-full text-left border border-border rounded h-8 text-sm px-2 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
-                                placeholder="Batch no."
-                                value={item.batch || ""}
-                                onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
-                              />
-                            </td>
-                             <td className="px-4 py-2">
-                               <ReasonInputSection
-                                 value={item.reason || ""}
-                                 onChange={(val) => handleItemChange(idx, "reason", val)}
-                               />
-                             </td>
-                            <td className="px-3 py-2">
-                              {/* 🟢 Implemented Shadcn Select for Return Type with Validation */}
-                              <SearchableSelect
-                                value={item.returnType || ""}
-                                onValueChange={(val) => {
-                                  handleItemChange(idx, "returnType", val);
-                                  setReturnTypeError(false);
-                                }}
-                                options={returnTypeOptions.length > 0 
-                                  ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
-                                  : [
-                                      { value: "Good Order", label: "Good Order" },
-                                      { value: "Bad Order", label: "Bad Order" }
-                                    ]
-                                }
-                                placeholder="Select type..."
-                                className={cn(
-                                  "h-8 text-sm px-2",
-                                  returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                )}
-                              />
-                            </td>
-                            <td className="sticky right-0 z-10 px-2 py-2 text-center bg-background border-l border-transparent group-hover:border-primary/20">
-                              <button
-                                onClick={() => handleRemoveItem(idx)}
-                                className="text-destructive/70 hover:text-destructive h-7 w-7 rounded-md flex items-center justify-center transition-colors"
-                                title="Remove Item"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-
-                      {/* 2. RENDER RFID ITEMS (Grouped) */}
-                      {Object.values(
-                        items.filter(i => i.rfidTags && i.rfidTags.length > 0).reduce((acc, item) => {
-                          const idx = items.findIndex(d => d === item);
-                          const rType = item.returnType || "Unassigned";
-                          const key = `${item.productId}-${item.unit}-${rType}`;
-                          if (!acc[key]) {
-                            acc[key] = {
-                              key,
-                              code: item.code,
-                              description: item.description,
-                              unit: item.unit,
-                              returnType: rType,
-                              unitPrice: item.unitPrice,
-                              totalQty: 0,
-                              totalGross: 0,
-                              totalDiscount: 0,
-                              totalNet: 0,
-                              children: [],
-                            };
-                          }
-                          acc[key].totalQty += Number(item.quantity) || 0;
-                          acc[key].totalGross += Number(item.grossAmount) || 0;
-                          acc[key].totalDiscount += Number(item.discountAmount) || 0;
-                          acc[key].totalNet += Number(item.totalAmount) || 0;
-                          acc[key].children.push({ item, idx });
-                          return acc;
-                        }, {} as Record<string, SalesReturnGroup>)
-                      ).map((group: SalesReturnGroup) => (
-                        <React.Fragment key={group.key}>
-                          {/* Parent Summary Row */}
-                          <tr className="bg-muted/10 font-semibold border-b border-border">
-                            <td className="px-4 py-2 font-mono text-sm text-foreground">
-                              <div className="flex items-center gap-2">
-                                {group.children.length > 0 ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedGroups(prev => ({ ...prev, [group.key]: !prev[group.key] }))}
-                                    className="p-1 hover:bg-muted rounded-md transition-colors text-foreground"
-                                  >
-                                    <ChevronDown className={`h-4 w-4 transition-transform ${expandedGroups[group.key] ? 'rotate-180' : ''}`} />
-                                  </button>
-                                ) : (
-                                  <div className="w-6" /> // spacer
-                                )}
-                                <span>{group.code}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-2 text-foreground">
-                              <div className="text-sm text-foreground font-medium" title={group.description}>
-                                {group.description}
-                              </div>
-                            </td>
-                            <td className="px-4 py-2">
-                              <span className="bg-background text-foreground px-2 py-0.5 rounded text-sm border border-border font-normal">
-                                {group.unit}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-center text-primary text-sm font-bold">
-                              {group.totalQty}
-                            </td>
-                            <td className="px-4 py-2 text-right text-muted-foreground">
-                              -
-                            </td>
-                            <td className="px-4 py-2 text-right text-muted-foreground font-mono text-sm">
-                              ₱{group.totalGross.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2 text-center text-muted-foreground">
-                              -
-                            </td>
-                            <td className="px-4 py-2 text-right text-muted-foreground font-mono text-sm">
-                              ₱{group.totalDiscount.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2 text-right font-bold text-primary text-sm">
-                              ₱{group.totalNet.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2 text-center text-muted-foreground">
-                              -
-                            </td>
-                            <td className="px-4 py-2 text-center text-muted-foreground">
-                              -
-                            </td>
-                            <td className="px-4 py-2 text-center text-muted-foreground">
-                              -
-                            </td>
-                            <td className="px-4 py-2">
-                              {group.returnType !== "Unassigned" ? (
-                                <span className="bg-primary/20 text-primary px-2 py-0.5 rounded text-xs font-medium">
-                                  {group.returnType}
-                                </span>
+                              </Badge>
+                            </TableCell>
+                            {/* Quantity */}
+                            <TableCell className="text-center align-middle p-2">
+                              {true ? (
+                                <Input
+                                  type="number"
+                                  className="h-9 w-full text-center text-sm border-border px-2"
+                                  value={item.quantity}
+                                  onChange={(e) =>
+                                    handleItemChange(idx, "quantity", e.target.value)
+                                  }
+                                />
                               ) : (
-                                <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
+                                <span className="text-sm font-semibold text-foreground">
+                                  {item.quantity}
+                                </span>
                               )}
-                            </td>
-                            <td></td>
-                          </tr>
-
-                          {/* Child Rows (Individual Scans/Additions) */}
-                          {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => (
-                            <tr key={item.id || idx} className="hover:bg-muted/20 transition-colors duration-200 border-b border-border">
-                              <td className="px-4 py-2 font-mono text-sm text-foreground font-bold pl-10" colSpan={2}>
-                                {item.rfidTags && item.rfidTags.length > 0 ? (
-                                  <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
-                                    <span className="text-primary truncate">{item.rfidTags[0]}</span>
-                                    <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
-                                  </div>
-                                ) : null}
-                              </td>
-                              <td className="px-4 py-2"></td>
-                              <td className="px-4 py-2">
-                                <div className="text-center font-semibold text-sm">{item.quantity}</div>
-                              </td>
-                              <td className="px-4 py-2 text-right text-sm">
-                                ₱{item.unitPrice.toLocaleString()}
-                              </td>
-                              <td className="px-4 py-2 text-right text-muted-foreground font-mono text-sm">
-                                ₱{(item.grossAmount || 0).toLocaleString()}
-                              </td>
-                              <td className="px-4 py-2">
-                                {(() => {
+                            </TableCell>
+                            {/* Unit Price */}
+                            <TableCell className="text-right align-middle p-2 bg-muted/10">
+                              <span className="text-sm text-foreground">
+                                {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </TableCell>
+                            {/* Agreed Price */}
+                            <TableCell className="text-center align-middle p-2">
+                              {true ? (
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  className="h-9 w-full text-right text-sm border-border px-2"
+                                  value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
+                                  onChange={(e) =>
+                                    handleItemChange(idx, "agreedPrice", e.target.value)
+                                  }
+                                />
+                              ) : (
+                                <span className="text-sm text-foreground">
+                                  {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                              )}
+                            </TableCell>
+                            {/* Variance */}
+                            <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                              {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            {/* Gross */}
+                            <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono whitespace-nowrap">
+                              {(Number(item.grossAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            {/* Discount */}
+                            <TableCell className="align-middle p-2">
+                              {true ? (
+                                (() => {
                                   const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
-                                  const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "";
+                                  const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
                                   const currentDiscVal = item.discountType?.toString() ? (
                                     lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
                                       ? item.discountType.toString()
@@ -1419,106 +1358,425 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                         label: opt.discount_type,
                                       }))}
                                       placeholder="Select Discount..."
-                                      className="w-full h-8 text-xs"
+                                      className="h-9 w-full text-xs"
                                     />
                                   );
-                                })()}
-                              </td>
-                              <td className="px-4 py-2">
-                                <input
-                                  type="number"
-                                  readOnly
-                                  disabled
-                                  className="w-full text-right border border-border bg-muted/30 text-muted-foreground rounded h-8 text-sm outline-none cursor-not-allowed"
-                                  value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""}
-                                />
-                              </td>
-                              <td className="px-4 py-2 text-right font-bold text-foreground text-sm">
-                                ₱{item.totalAmount.toLocaleString()}
-                              </td>
-                              <td className="px-2 py-2">
-                                <Select
+                                })()
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  {lineDiscountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right align-middle p-2">
+                              <Input type="number" readOnly className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""} />
+                            </TableCell>
+                            <TableCell className="text-right font-bold text-sm text-foreground align-middle whitespace-nowrap">
+                              ₱{(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {true ? (
+                                <LocalSearchableSelect
                                   value={item.lot_id ? item.lot_id.toString() : ""}
                                   onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
-                                >
-                                  <SelectTrigger className="w-full h-8 text-xs px-2 bg-background border-border">
-                                    <SelectValue placeholder="Select lot" />
-                                  </SelectTrigger>
-                                  <SelectContent className="bg-background">
-                                    {lotOptions.map((lot) => (
-                                      <SelectItem key={lot.lot_id} value={lot.lot_id.toString()}>
-                                        {lot.lot_name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                              <td className="px-2 py-2">
-                                <input
+                                  options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                  placeholder="Select lot"
+                                  className="h-9 text-xs"
+                                />
+                              ) : (
+                                <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {true ? (
+                                <Input
                                   type="text"
-                                  className="w-full text-left border border-border rounded h-8 text-sm px-2 focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
-                                  placeholder="Batch no."
+                                  className="h-9 w-full text-left text-sm border-border px-2"
                                   value={item.batch || ""}
                                   onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
+                                  placeholder="Batch no."
                                 />
-                              </td>
-                               <td className="px-4 py-2">
+                              ) : (
+                                <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
+                              )}
+                            </TableCell>
+                            {/* Reason */}
+                            <TableCell className="align-middle p-2">
+                              {true ? (
                                 <ReasonInputSection
                                   value={item.reason || ""}
                                   onChange={(val) => handleItemChange(idx, "reason", val)}
                                 />
-                              </td>
-                              <td className="px-3 py-2">
-                                {/* 🟢 Implemented Shadcn Select for Return Type with Validation */}
-                                <Select
+                              ) : (
+                                <span className="text-sm text-muted-foreground italic truncate block max-w-[120px]" title={item.reason || ""}>
+                                  {item.reason || "-"}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {true ? (
+                                <LocalSearchableSelect
                                   value={item.returnType || ""}
                                   onValueChange={(val) => {
                                     handleItemChange(idx, "returnType", val);
                                     setReturnTypeError(false);
                                   }}
-                                >
-                                  <SelectTrigger 
-                                    className={`w-full h-8 text-sm px-2 bg-background focus:ring-1 transition-colors shadow-sm ${
-                                      returnTypeError && (!item.returnType || item.returnType === "")
-                                        ? "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                        : "border-border focus:ring-primary"
-                                    }`}
-                                  >
-                                    <SelectValue placeholder="Select type..." />
-                                  </SelectTrigger>
-                                  <SelectContent className="bg-background z-50">
-                                    {returnTypeOptions.length > 0 ? (
-                                      returnTypeOptions.map((type) => (
-                                        <SelectItem key={type.type_id} value={type.type_name}>
-                                          {type.type_name}
-                                        </SelectItem>
-                                      ))
-                                    ) : (
-                                      <>
-                                        <SelectItem value="Good Order">Good Order</SelectItem>
-                                        <SelectItem value="Bad Order">Bad Order</SelectItem>
-                                      </>
-                                    )}
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                              <td className="sticky right-0 z-10 px-2 py-2 text-center bg-background border-l border-transparent group-hover:border-primary/20">
-                                <button
-                                  onClick={() => handleRemoveItem(idx)}
-                                  className="text-destructive/70 hover:text-destructive h-7 w-7 rounded-md flex items-center justify-center transition-colors"
-                                  title="Remove Item"
-                                >
+                                  options={returnTypeOptions.length > 0
+                                    ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
+                                    : [
+                                      { value: "Good Order", label: "Good Order" },
+                                      { value: "Bad Order", label: "Bad Order" }
+                                    ]
+                                  }
+                                  placeholder="Select type"
+                                  className={cn(
+                                    "h-9 text-xs",
+                                    returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                  )}
+                                />
+                              ) : (
+                                <Badge variant="outline" className="font-normal">{item.returnType || "Unassigned"}</Badge>
+                              )}
+                            </TableCell>
+                            {true && (
+                              <TableCell className="align-middle p-2 text-center">
+                                <button onClick={() => handleRemoveItem(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
                                   <Trash2 className="h-4 w-4" />
                                 </button>
-                              </td>
-                            </tr>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        );
+                      })}
+
+                      {Object.values(
+                        items.filter(i => i.rfidTags && i.rfidTags.length > 0).reduce((acc, item) => {
+                          // Find the true index in items
+                          const idx = items.findIndex(d => d === item);
+                          const rType = item.returnType || "Unassigned";
+                          const key = `${item.productId}-${item.unit}-${rType}`;
+                          if (!acc[key]) {
+                            acc[key] = {
+                              key,
+                              code: item.code,
+                              description: item.description,
+                              unit: item.unit,
+                              returnType: rType,
+                              unitPrice: item.unitPrice,
+                              agreedPrice: item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice,
+                              totalQty: 0,
+                              totalVariance: 0,
+                              totalGross: 0,
+                              totalDiscount: 0,
+                              totalNet: 0,
+                              children: [],
+                            };
+                          }
+                          acc[key].totalQty += Number(item.quantity) || 0;
+                          acc[key].totalVariance += Number(item.priceVariance) || 0;
+                          acc[key].totalGross += Number(item.grossAmount) || 0;
+                          acc[key].totalDiscount += Number(item.discountAmount) || 0;
+                          acc[key].totalNet += Number(item.totalAmount) || 0;
+                          acc[key].children.push({ item, idx });
+                          return acc;
+                        }, {} as Record<string, SalesReturnGroup>)
+                      ).map((group: SalesReturnGroup) => (
+                        <React.Fragment key={group.key}>
+                          {/* Parent Summary Row */}
+                          <TableRow className="bg-muted/10 font-semibold border-b border-border">
+                            {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
+                            <TableCell className="text-sm text-foreground align-middle font-mono">
+                              <div className="flex items-center gap-2">
+                                {group.children.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedGroups(prev => ({ ...prev, [group.key]: !prev[group.key] }))}
+                                    className="p-1 hover:bg-muted rounded-md transition-colors text-foreground"
+                                  >
+                                    <ChevronDown className={`h-4 w-4 transition-transform ${expandedGroups[group.key] ? 'rotate-180' : ''}`} />
+                                  </button>
+                                ) : (
+                                  <div className="w-6" /> // spacer
+                                )}
+                                <span>{group.code}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              <div
+                                className="text-sm text-foreground font-medium"
+                                title={group.description}
+                              >
+                                {group.description}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground align-middle">
+                              <Badge
+                                variant="outline"
+                                className="text-foreground bg-background border-border font-normal"
+                              >
+                                {group.unit}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-center align-middle p-2 text-primary text-sm font-bold">
+                              {group.totalQty}
+                            </TableCell>
+                            <TableCell className="text-right align-middle p-2 text-muted-foreground bg-muted/10">
+                              -
+                            </TableCell>
+                            <TableCell className="text-right align-middle p-2 text-muted-foreground">
+                              -
+                            </TableCell>
+                            <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(group.totalVariance || 0) > 0 ? "text-green-600" : (group.totalVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                              {(group.totalVariance || 0) > 0 ? "+" : ""}{(group.totalVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
+                              {(
+                                Number(group.totalGross)
+                              ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                              -
+                            </TableCell>
+                            <TableCell className="text-right align-middle p-2 text-muted-foreground font-mono">
+                              {group.totalDiscount.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-bold text-sm text-primary align-middle">
+                              {group.totalNet.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                              -
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                              -
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
+                              -
+                            </TableCell>
+                            <TableCell className="align-middle p-2">
+                              {group.returnType !== "Unassigned" ? (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-primary/20 text-primary hover:bg-primary/20 hover:text-primary font-medium"
+                                >
+                                  {group.returnType}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
+                              )}
+                            </TableCell>
+                            <TableCell />
+                          </TableRow>
+
+                          {/* Child Rows (Individual Scans/Additions) */}
+                          {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => (
+                            <TableRow
+                              key={item.id || idx}
+                              className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
+                            >
+                              {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
+                              <TableCell colSpan={2} className="text-sm text-foreground font-bold align-middle pl-10 font-mono">
+                                {item.rfidTags && item.rfidTags.length > 0 ? (
+                                  <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
+                                    <span className="text-primary truncate">{item.rfidTags[0]}</span>
+                                    <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground align-middle">
+                              </TableCell>
+                              <TableCell className="text-center align-middle p-2">
+                                {true ? (
+                                  item.rfidTags && item.rfidTags.length > 0 ? (
+                                    <div className="text-center font-semibold text-sm">{item.quantity}</div>
+                                  ) : (
+                                    <Input
+                                      type="number"
+                                      className="h-9 w-full text-center text-sm border-border px-2"
+                                      value={item.quantity}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          idx,
+                                          "quantity",
+                                          e.target.value,
+                                        )
+                                      }
+                                    />
+                                  )
+                                ) : (
+                                  <span className="text-sm font-semibold text-foreground">
+                                    {item.quantity}
+                                  </span>
+                                )}
+                              </TableCell>
+                              {/* Unit Price */}
+                              <TableCell className="text-right align-middle p-2 bg-muted/10">
+                                <span className="text-sm text-foreground">
+                                  {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                              </TableCell>
+                              {/* Agreed Price */}
+                              <TableCell className="text-center align-middle p-2">
+                                {true ? (
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="h-9 w-full text-right text-sm border-border px-2"
+                                    value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
+                                    onChange={(e) =>
+                                      handleItemChange(
+                                        idx,
+                                        "agreedPrice",
+                                        e.target.value,
+                                      )
+                                    }
+                                  />
+                                ) : (
+                                  <span className="text-sm text-foreground">
+                                    {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                              </TableCell>
+                              {/* Variance */}
+                              <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                                {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              {/* Gross */}
+                              <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
+                                {(
+                                  Number(item.grossAmount) || 0
+                                ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  (() => {
+                                    const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
+                                    const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
+                                    const currentDiscVal = item.discountType?.toString() ? (
+                                      lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
+                                        ? item.discountType.toString()
+                                        : defaultVal
+                                    ) : defaultVal;
+                                    return (
+                                      <LocalSearchableSelect
+                                        value={currentDiscVal}
+                                        onValueChange={(val) => handleItemChange(idx, "discountType", val)}
+                                        options={lineDiscountOptions.map((opt) => ({
+                                          value: opt.id.toString(),
+                                          label: opt.discount_type,
+                                        }))}
+                                        placeholder="Select Discount..."
+                                        className="h-9 w-full text-xs"
+                                      />
+                                    );
+                                  })()
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">
+                                    {lineDiscountOptions.find(
+                                      (d) => d.id.toString() == item.discountType,
+                                    )?.discount_type || "None"}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right align-middle p-2">
+                                <Input
+                                  type="number"
+                                  readOnly
+                                  className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed"
+                                  value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""}
+                                />
+                              </TableCell>
+                              <TableCell className="text-right font-bold text-sm text-foreground align-middle">
+                                {(Number(item.totalAmount) || 0).toLocaleString()}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <LocalSearchableSelect
+                                    value={item.lot_id ? item.lot_id.toString() : ""}
+                                    onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
+                                    options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                    placeholder="Select lot"
+                                    className="h-9 text-xs"
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <Input
+                                    type="text"
+                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    value={item.batch || ""}
+                                    onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
+                                    placeholder="Batch no."
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <ReasonInputSection
+                                    value={item.reason || ""}
+                                    onChange={(val) => handleItemChange(idx, "reason", val)}
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground italic">
+                                    {item.reason || "-"}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <LocalSearchableSelect
+                                    value={item.returnType || ""}
+                                    onValueChange={(val) => {
+                                      handleItemChange(idx, "returnType", val);
+                                      setReturnTypeError(false);
+                                    }}
+                                    options={returnTypeOptions.length > 0
+                                      ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
+                                      : [
+                                        { value: "Good Order", label: "Good Order" },
+                                        { value: "Bad Order", label: "Bad Order" }
+                                      ]
+                                    }
+                                    placeholder="Select type"
+                                    className={cn(
+                                      "h-9 text-sm",
+                                      returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                  />
+                                ) : (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[10px] font-normal"
+                                  >
+                                    {item.returnType as React.ReactNode}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              {true && (
+                                <TableCell className="text-center align-middle">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
+                                    onClick={() => handleRemoveItem(idx)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              )}
+                            </TableRow>
                           ))}
                         </React.Fragment>
                       ))}
                     </>
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           </div>
 
@@ -1529,6 +1787,52 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 Additional Information
               </h4>
               <div className="grid grid-cols-2 gap-4">
+                {/* QUOTATION REFERENCE */}
+                <div className="space-y-1.5 col-span-2" ref={quotationWrapperRef}>
+                  <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wide">
+                    Quotation Reference
+                  </label>
+                  <div className="relative group">
+                    <input
+                      type="text"
+                      className="w-full h-9 border rounded-md text-sm px-3 pr-8 bg-background border-border focus:ring-2 focus:border-primary outline-none transition-all shadow-sm"
+                      placeholder="Search Quotation No..."
+                      value={quotationSearch}
+                      onChange={(e) => {
+                        setQuotationSearch(e.target.value);
+                        setIsQuotationOpen(true);
+                        setSelectedQuotationId(null);
+                      }}
+                      onFocus={() => setIsQuotationOpen(true)}
+                    />
+                    <ChevronDown className="h-3 w-3 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    {isQuotationOpen && (
+                      <div className="absolute bottom-[calc(100%+4px)] left-0 w-full z-50 bg-background border border-border rounded-md shadow-xl max-h-48 overflow-y-auto divide-y">
+                        <div
+                          className="px-3 py-2 text-xs font-medium cursor-pointer hover:bg-destructive/10 text-destructive flex items-center gap-2"
+                          onClick={() => {
+                            setSelectedQuotationId(null);
+                            setQuotationSearch("");
+                            setIsQuotationOpen(false);
+                          }}
+                        >
+                          <X className="h-3 w-3" /> Clear Selection
+                        </div>
+                        {quotationOptions
+                          .filter(q => (!selectedCustomerId || Number(q.customer_id) === Number(selectedCustomerId)) && (q.quote_number || "").toLowerCase().includes(quotationSearch.toLowerCase()))
+                          .map((q) => (
+                            <div
+                              key={`quote-${q.id}`}
+                              className="px-3 py-2 text-sm cursor-pointer hover:bg-primary/10 text-foreground"
+                              onClick={() => handleSelectQuotation(Number(q.id), String(q.quote_number))}
+                            >
+                              <span className="font-medium">{q.quote_number}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="space-y-1.5" ref={orderWrapperRef}>
                   <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wide">
                     Order No. <span className="text-destructive">*</span>
@@ -1536,11 +1840,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                   <div className="relative group">
                     <input
                       type="text"
-                      className={`w-full h-9 border rounded-md text-sm px-3 pr-8 bg-background outline-none transition-all shadow-sm ${
-                        orderError
-                          ? "border-destructive bg-destructive/5 ring-1 ring-destructive"
-                          : "border-border focus:ring-2 focus:border-primary"
-                      }`}
+                      className={`w-full h-9 border rounded-md text-sm px-3 pr-8 bg-background outline-none transition-all shadow-sm ${orderError
+                        ? "border-destructive bg-destructive/5 ring-1 ring-destructive"
+                        : "border-border focus:ring-2 focus:border-primary"
+                        }`}
                       placeholder="Search Order No..."
                       value={orderSearch || orderNo}
                       onChange={(e) => {
@@ -1604,11 +1907,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                   <div className="relative group">
                     <input
                       type="text"
-                      className={`w-full h-9 border rounded-md text-sm px-3 pr-8 bg-background outline-none transition-all shadow-sm ${
-                        invoiceError
-                          ? "border-destructive bg-destructive/5 ring-1 ring-destructive"
-                          : "border-border focus:ring-2 focus:border-primary"
-                      }`}
+                      className={`w-full h-9 border rounded-md text-sm px-3 pr-8 bg-background outline-none transition-all shadow-sm ${invoiceError
+                        ? "border-destructive bg-destructive/5 ring-1 ring-destructive"
+                        : "border-border focus:ring-2 focus:border-primary"
+                        }`}
                       placeholder="Search Invoice No..."
                       value={invoiceSearch || invoiceNo}
                       onChange={(e) => {
@@ -1685,6 +1987,16 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     })}
                   </span>
                 </div>
+                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-green-600" : totalVariance < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                  <span>Price Variance</span>
+                  <span className="font-medium tabular-nums">
+                    {totalVariance > 0 ? "+" : ""}
+                    ₱
+                    {totalVariance.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
                 <div className="flex justify-between items-center text-sm text-destructive">
                   <span>Total Discount</span>
                   <span className="font-medium tabular-nums">
@@ -1738,6 +2050,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         priceType={priceType}
         customerCode={customerCode}
         lineDiscounts={lineDiscountOptions}
+        priceTypeOptions={priceTypeOptions}
       />
 
       {/* SUCCESS MODAL */}

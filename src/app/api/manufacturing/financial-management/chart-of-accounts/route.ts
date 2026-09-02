@@ -73,7 +73,11 @@ async function directusFetch(path: string, init?: RequestInit) {
 function buildCOAListQuery(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
 
-  const q = (sp.get("q") || "").trim();
+  const glCode = (sp.get("glCode") || "").trim();
+  const accountTitle = (sp.get("accountTitle") || "").trim();
+  const accountType = (sp.get("accountType") || "").trim();
+  const balanceType = (sp.get("balanceType") || "").trim();
+
   const page = Math.max(1, Number(sp.get("page") || "1") || 1);
   const pageSize = Math.min(100, Math.max(1, Number(sp.get("pageSize") || "20") || 20));
 
@@ -97,20 +101,27 @@ function buildCOAListQuery(req: NextRequest) {
       "bsis_code",
       "memo_type",
       "description",
-      "added_by",
+      "added_by.*",
       "date_added",
       "is_payment",
       "isPayment",
     ].join(",")
   );
 
-  if (q) {
-    // Directus OR filter
-    params.set("filter[_or][0][account_title][_icontains]", q);
-    params.set("filter[_or][1][gl_code][_icontains]", q);
+  if (glCode) {
+    params.set("filter[gl_code][_icontains]", glCode);
+  }
+  if (accountTitle) {
+    params.set("filter[account_title][_eq]", accountTitle);
+  }
+  if (accountType) {
+    params.set("filter[account_type][_eq]", accountType);
+  }
+  if (balanceType) {
+    params.set("filter[balance_type][_eq]", balanceType);
   }
 
-  return { q, page, pageSize, offset, params };
+  return { page, pageSize, offset, params };
 }
 
 export async function GET(req: NextRequest) {
@@ -119,6 +130,14 @@ export async function GET(req: NextRequest) {
 
     // Lookups: return whole list
     if (resource !== "chart_of_accounts") {
+      if (resource === "account_titles") {
+        const res = await directusFetch(`/items/chart_of_accounts?limit=-1&fields=account_title`);
+        if (!res.ok) return json(res.json, { status: res.status });
+        const rows = (res.json as Record<string, unknown>)?.data as Array<{ account_title?: string }> || [];
+        const unique = Array.from(new Set(rows.map((r) => r.account_title).filter(Boolean)));
+        return json({ data: unique.map((title) => ({ account_title: title })) });
+      }
+
       const res = await directusFetch(`/items/${resource}?limit=-1`);
       if (!res.ok) return json(res.json, { status: res.status });
       return json(res.json);
