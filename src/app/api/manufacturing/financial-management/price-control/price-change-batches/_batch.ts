@@ -46,13 +46,7 @@ export type DirectusFlagValue =
 export type BatchHeaderRow = {
     id?: number | string | null;
     header_id?: number | string | null;
-    supplier_id?: number | string | {
-        id?: number | string | null;
-        supplier_name?: string | null;
-        supplier_shortcut?: string | null;
-        isActive?: DirectusFlagValue;
-        nonBuy?: DirectusFlagValue;
-    } | null;
+
     reference_no?: string | null;
     remarks?: string | null;
     status?: string | null;
@@ -560,15 +554,7 @@ export async function assertPriceSnapshotCurrent(args: {
     if (conflicts[0]) throw new PriceSnapshotConflictError(conflicts[0]);
 }
 
-function supplierIdOf(value: unknown): number | null {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value === "string") {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : null;
-    }
-    if (isRecord(value)) return pickId(value.id);
-    return null;
-}
+
 
 function supplierFlag(value: unknown): number | null {
     if (value === true) return 1;
@@ -750,11 +736,10 @@ export async function createPriceBatchHeader(args: {
 export async function createPriceBatchDetails(args: {
     userId: number;
     headerId: number;
-    supplierId: number;
     linesToCreate: NormalizedBatchCreateLine[];
     requestedAt?: string;
 }) {
-    const { userId, headerId, supplierId, linesToCreate } = args;
+    const { userId, headerId, linesToCreate } = args;
     if (linesToCreate.length === 0) {
         return { created: 0, detailRows: [] as BatchDetailRow[] };
     }
@@ -765,13 +750,16 @@ export async function createPriceBatchDetails(args: {
         current_price: liveSnapshots.get(batchLineKey(line.product_id, line.price_type_id, line.version_id)) ?? null,
     }));
 
+    const productIds = snapshottedLines.map((line) => line.product_id);
+    const supplierIdByProduct = await resolveSupplierIdPerProduct(productIds);
+
     const requestedAt = args.requestedAt ?? nowManila();
     const detailPayload = snapshottedLines.map((line) => ({
         header_id: headerId,
         product_id: line.product_id,
-        supplier_id: supplierId,
         version_id: line.version_id,
         price_type_id: line.price_type_id,
+        supplier_id: supplierIdByProduct.get(line.product_id) ?? null,
         current_price: line.current_price,
         proposed_price: line.proposed_price,
         status: "PENDING",
@@ -798,12 +786,11 @@ export async function createPriceBatchDetails(args: {
 
 export async function createPendingPriceBatch(args: {
     userId: number;
-    supplierId: number;
     referenceNo: string;
     remarks: string;
     linesToCreate: NormalizedBatchCreateLine[];
 }) {
-    const { userId, supplierId, referenceNo, remarks, linesToCreate } = args;
+    const { userId, referenceNo, remarks, linesToCreate } = args;
 
     if (linesToCreate.length === 0) {
         throw new Error("linesToCreate must be non-empty");
@@ -813,7 +800,6 @@ export async function createPendingPriceBatch(args: {
     const details = await createPriceBatchDetails({
         userId,
         headerId: header.headerId,
-        supplierId,
         linesToCreate,
         requestedAt: header.requestedAt,
     });
@@ -1494,4 +1480,43 @@ export async function resolveBatchDecisionUserNames(header: {
             rejectedFromRelation ??
             resolveUserDisplayName(normalizeStoredUserId(header.rejected_by), namesById),
     };
+}
+
+export async function resolveSupplierIdPerProduct(
+    productIds: number[]
+): Promise<Map<number, number | null>> {
+    const ids = Array.from(new Set(productIds.filter((id) => Number.isFinite(id) && id > 0)));
+    const map = new Map<number, number | null>();
+    if (ids.length === 0) return map;
+
+    for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        const params = new URLSearchParams();
+        params.set("limit", "1000");
+        params.set("fields", "product_id,supplier_id");
+        params.set("filter[supplier_id][isActive][_eq]", "1");
+        params.set("filter[supplier_id][nonBuy][_eq]", "0");
+        params.set("filter[product_id][_in]", chunk.join(","));
+        params.set("sort", "supplier_id"); // smallest supplier_id first
+
+        const url = `${mustBase()}/items/product_per_supplier?${params.toString()}`;
+        try {
+            const json = await fetchDirectus<{ data?: { product_id: unknown; supplier_id: unknown }[] }>(url, {
+                headers: directusHeaders(),
+            });
+
+            for (const row of json.data ?? []) {
+                const pId = pickId(row.product_id);
+                const sId = pickId(row.supplier_id);
+                // Set only if not already set (since we want the first one due to ASC sort)
+                if (pId !== null && sId !== null && !map.has(pId)) {
+                    map.set(pId, sId);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch product_per_supplier", error);
+        }
+    }
+
+    return map;
 }

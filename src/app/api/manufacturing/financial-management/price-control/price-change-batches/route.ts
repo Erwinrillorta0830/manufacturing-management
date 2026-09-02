@@ -135,20 +135,15 @@ export async function POST(req: NextRequest) {
         if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
         const body = (await req.json()) as Partial<{
-            supplier_id: number;
             reference_no: string;
             remarks: string;
             lines: BatchCreateLineInput[];
         }>;
 
-        const supplierId = Number(body.supplier_id);
         const lines = Array.isArray(body.lines) ? body.lines : [];
         const remarks = String(body.remarks ?? "").trim();
         const referenceNo = String(body.reference_no ?? "").trim();
 
-        if (!Number.isFinite(supplierId) || supplierId <= 0) {
-            return NextResponse.json({ error: "supplier_id is required" }, { status: 400 });
-        }
         if (!remarks) {
             return NextResponse.json({ error: "remarks is required" }, { status: 400 });
         }
@@ -171,7 +166,6 @@ export async function POST(req: NextRequest) {
 
         const result = await createPendingPriceBatch({
             userId,
-            supplierId,
             referenceNo,
             remarks,
             linesToCreate: plan.linesToCreate,

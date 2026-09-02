@@ -12,14 +12,12 @@ const PRODUCT_ID_CHUNK_SIZE = 200;
 
 export type CostBulkItemInput = {
     product_id: number;
-    supplier_id?: number | null;
     proposed_cost: number;
     current_cost?: number | null;
 };
 
 export type NormalizedCostBulkItem = {
     product_id: number;
-    supplier_id: number | null;
     proposed_cost: number;
     current_cost: number | null;
 };
@@ -96,7 +94,6 @@ export function normalizeCostBulkItems(rawItems: CostBulkItemInput[]): {
         seen.add(productId);
         normalizedItems.push({
             product_id: productId,
-            supplier_id: item.supplier_id ? Number(item.supplier_id) : null,
             proposed_cost: proposedCost,
             current_cost: Number.isFinite(currentCost) ? currentCost : null,
         });
@@ -124,14 +121,12 @@ export async function planCostBulkCreate(rawItems: CostBulkItemInput[]): Promise
 export async function createPendingCostRequests(args: {
     userId: number;
     itemsToCreate: NormalizedCostBulkItem[];
-    supplierId?: number | null;
     referenceNo?: string;
     remarks?: string;
 }) {
     return createPendingCostBatch({
         userId: args.userId,
         itemsToCreate: args.itemsToCreate,
-        supplierId: args.supplierId,
         referenceNo: args.referenceNo,
         remarks: args.remarks,
     });

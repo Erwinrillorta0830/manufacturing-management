@@ -176,7 +176,6 @@ export type PriceChangeBatchLineInput = {
 };
 
 export type SavePriceChangeBatchInput = {
-    supplier_id: number;
     reference_no?: string;
     remarks: string;
 };

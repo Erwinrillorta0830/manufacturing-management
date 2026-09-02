@@ -44,7 +44,6 @@ function costBatchStorageSetupResponse(details: string, rolledBack = false) {
 }
 
 type MixedSaveBatchInput = {
-    supplier_id: number;
     reference_no?: string;
     remarks: string;
 };
@@ -65,7 +64,6 @@ export async function POST(req: NextRequest) {
         const priceLines = Array.isArray(body.price_lines) ? body.price_lines : [];
         const costItems = Array.isArray(body.cost_items) ? body.cost_items : [];
         const batch = body.batch;
-        const supplierId = Number(batch?.supplier_id);
         const remarks = String(batch?.remarks ?? "").trim();
         const referenceNo = String(batch?.reference_no ?? "").trim();
 
@@ -79,9 +77,6 @@ export async function POST(req: NextRequest) {
         const isMixed = priceLines.length > 0 && costItems.length > 0;
 
         if (priceLines.length > 0 || costItems.length > 0) {
-            if (!Number.isFinite(supplierId) || supplierId <= 0) {
-                return NextResponse.json({ error: "supplier_id is required" }, { status: 400 });
-            }
             if (!remarks) {
                 return NextResponse.json({ error: "remarks is required" }, { status: 400 });
             }
@@ -131,7 +126,6 @@ export async function POST(req: NextRequest) {
                 const priceCreated = await createPriceBatchDetails({
                     userId,
                     headerId: sharedHeaderId,
-                    supplierId,
                     linesToCreate: pricePlan!.linesToCreate,
                     requestedAt: sharedHeader.requestedAt,
                 });
@@ -230,7 +224,6 @@ export async function POST(req: NextRequest) {
             } else {
                 const created = await createPendingPriceBatch({
                     userId,
-                    supplierId,
                     referenceNo,
                     remarks,
                     linesToCreate: pricePlan.linesToCreate,
@@ -278,7 +271,6 @@ export async function POST(req: NextRequest) {
                     const created = await createPendingCostRequests({
                         userId,
                         itemsToCreate: costPlan.itemsToCreate,
-                        supplierId,
                         referenceNo,
                         remarks: remarks || "List cost change request",
                     });

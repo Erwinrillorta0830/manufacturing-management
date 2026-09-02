@@ -949,9 +949,6 @@ export default function PricingMatrixView() {
                 <PriceChangeBatchDialog
                     open={batchDialogOpen}
                     onOpenChange={setBatchDialogOpen}
-                    suppliers={lookups.suppliers}
-                    batchSupplierOptions={batchSupplierOptions}
-                    defaultSupplierId={defaultBatchSupplierId}
                     priceLineCount={dirtySummary.priceDirtyCount}
                     costLineCount={dirtySummary.costDirtyCount}
                     offPageDirtyCount={dirtySummary.offPageDirtyCount}
@@ -965,7 +962,6 @@ export default function PricingMatrixView() {
                         setCreateBatchOpen(open);
                         if (!open) setImportPrefill(null);
                     }}
-                    suppliers={lookups.suppliers}
                     onCreated={() => void matrix.refresh()}
                     importPrefill={importPrefill}
                 />

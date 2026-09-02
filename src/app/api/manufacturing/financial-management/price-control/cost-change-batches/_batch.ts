@@ -15,8 +15,7 @@ import {
     pickId,
     resolveBatchDecisionUserNames,
     resolveUserDisplayName,
-    supplierNameOf,
-    type DirectusFlagValue,
+    resolveSupplierIdPerProduct,
 } from "../price-change-batches/_batch";
 
 import type { NormalizedCostBulkItem } from "../cost-change-requests/_bulk";
@@ -214,11 +213,14 @@ export async function createCostBatchDetails(args: {
         ),
     }));
 
+    const productIds = validatedItems.map((item) => item.product_id);
+    const supplierIdByProduct = await resolveSupplierIdPerProduct(productIds);
+
     const requestedAt = args.requestedAt ?? nowManila();
     const detailPayload = validatedItems.map((item) => ({
         header_id: headerId,
         product_id: item.product_id,
-        supplier_id: item.supplier_id ?? null,
+        supplier_id: supplierIdByProduct.get(item.product_id) ?? null,
         current_cost: item.current_cost,
         proposed_cost: item.proposed_cost,
         status: "PENDING",
@@ -266,7 +268,6 @@ export async function createCostBatchDetails(args: {
 export async function createPendingCostBatch(args: {
     userId: number;
     itemsToCreate: NormalizedCostBulkItem[];
-    supplierId?: number | null;
     referenceNo?: string;
     remarks?: string;
 }) {
@@ -321,12 +322,7 @@ export async function getCostHeader(headerId: number) {
         "fields",
         [
             "header_id",
-            "supplier_id",
-            "supplier_id.id",
-            "supplier_id.supplier_name",
-            "supplier_id.supplier_shortcut",
-            "supplier_id.isActive",
-            "supplier_id.nonBuy",
+
             "reference_no",
             "remarks",
             "status",

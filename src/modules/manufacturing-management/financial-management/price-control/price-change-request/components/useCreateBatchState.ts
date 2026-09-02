@@ -96,19 +96,16 @@ const DEFAULT_CATALOG_PAGE_SIZE = 50;
 type Props = {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    suppliers: api.SupplierOption[];
     onCreated: () => void;
-    importPrefill?: BatchImportPrefill | null;
+    importPrefill: BatchImportPrefill | null;
 };
 
 export function useCreateBatchState({
     open,
     onOpenChange,
-    suppliers,
     onCreated,
-    importPrefill = null,
+    importPrefill,
 }: Props) {
-    const [supplierId, setSupplierId] = React.useState("");
     const [referenceNo, setReferenceNo] = React.useState("");
     const [remarks, setRemarks] = React.useState("");
     const [errors, setErrors] = React.useState<FieldErrors>({});
@@ -175,7 +172,6 @@ export function useCreateBatchState({
 
     React.useEffect(() => {
         if (!open) {
-            setSupplierId("");
             setReferenceNo("");
             setRemarks("");
             setErrors({});
@@ -191,7 +187,6 @@ export function useCreateBatchState({
 
     React.useEffect(() => {
         if (!open || !importPrefill) return;
-        setSupplierId(String(importPrefill.supplierId));
         setRemarks(importPrefill.remarks);
         setReferenceNo(generateBatchReferenceNo());
         setErrors({});
@@ -240,12 +235,12 @@ export function useCreateBatchState({
     }, [open]);
 
     React.useEffect(() => {
-        if (!open || !supplierId) return;
+        if (!open) return;
         let alive = true;
         setLoadingProducts(true);
         setLoadError(null);
         api.getProductsPage({
-            supplier_ids: supplierId, supplier_scope: "LINKED_ONLY", active_only: "1",
+            active_only: "1",
             page: String(catalogPage), page_size: String(catalogPageSize), q: catalogQuery || undefined,
         })
             .then(async (result) => {
@@ -289,13 +284,7 @@ export function useCreateBatchState({
             })
             .finally(() => { if (alive) setLoadingProducts(false); });
         return () => { alive = false; };
-    }, [open, supplierId, catalogPage, catalogPageSize, catalogQuery]);
-
-    const handleSupplierChange = React.useCallback((value: string) => {
-        setSupplierId(value);
-        setErrors((prev) => ({ ...prev, supplier_id: undefined }));
-        resetCatalogState();
-    }, [resetCatalogState]);
+    }, [open, catalogPage, catalogPageSize, catalogQuery]);
 
     const applyCatalogSearch = React.useCallback(() => {
         setCatalogQuery(localCatalogQ.trim());
@@ -314,10 +303,7 @@ export function useCreateBatchState({
     const canCatalogPrev = catalogPage > 1;
     const canCatalogNext = catalogTotalPages > 0 ? catalogPage < catalogTotalPages : false;
 
-    const supplierOptions = React.useMemo(
-        () => suppliers.map((s) => ({ value: String(s.id), label: supplierText(s) })),
-        [suppliers],
-    );
+
 
     const priceTypesById = React.useMemo(() => {
         const map = new Map<number, api.PriceTypeOption>();
@@ -425,14 +411,12 @@ export function useCreateBatchState({
     const catalogLoading = loadingPriceTypes || loadingProducts;
 
     const canSubmit =
-        !saving && !catalogLoading && Boolean(supplierId) && Boolean(remarks.trim()) &&
+        !saving && !catalogLoading && Boolean(remarks.trim()) &&
         validation.validCount > 0 && validation.invalidPriceKeys.size === 0 && validation.invalidCostIds.size === 0;
 
     const handleSubmit = React.useCallback(async () => {
         const nextErrors: FieldErrors = {};
-        const selectedSupplierId = Number(supplierId);
         const trimmedRemarks = remarks.trim();
-        if (!Number.isFinite(selectedSupplierId) || selectedSupplierId <= 0) nextErrors.supplier_id = "Supplier is required.";
         if (!trimmedRemarks) nextErrors.remarks = "Remarks is required.";
         if (validation.invalidPriceKeys.size > 0 || validation.invalidCostIds.size > 0) nextErrors.lines = "Fix invalid proposed prices or list costs before submitting.";
         setErrors(nextErrors);
@@ -443,34 +427,25 @@ export function useCreateBatchState({
             const priceLines = buildLines();
             const costItems = buildCostLines();
             if (priceLines.length === 0 && costItems.length === 0) { setErrors({ lines: "Enter at least one proposed price or list cost." }); return; }
-            const bp = { supplier_id: selectedSupplierId, reference_no: referenceNo.trim() || undefined, remarks: trimmedRemarks };
-            if (priceLines.length > 0 && costItems.length > 0) {
-                const r = await api.saveMixedPricingChanges({ batch: bp, price_lines: priceLines, cost_items: costItems });
-                if (Number(r.created ?? 0) > 0) { toast.success(`Created ${r.price.created ?? 0} price line(s) and ${r.cost.created ?? 0} list cost line(s).`); onCreated(); onOpenChange(false); }
-                else { toast.info("No pending records were created."); }
-                return;
-            }
-            if (priceLines.length > 0) {
-                const r = await api.createPriceChangeBatch({ ...bp, lines: priceLines });
-                if (Number(r.created ?? 0) > 0) { toast.success(`Created price change batch with ${r.created} line(s).${summarizeCreated(r)}`); onCreated(); onOpenChange(false); }
-                else { toast.info(`No batch was created.${summarizeCreated(r)}`); }
-                return;
-            }
-            const r = await api.createBulkCostChangeRequests({
-                items: costItems,
-                supplier_id: selectedSupplierId,
-                reference_no: bp.reference_no,
-                remarks: trimmedRemarks,
+            
+            const result = await api.saveMixedPricingChanges({
+                price_lines: priceLines,
+                cost_items: costItems,
+                batch: {
+                    reference_no: referenceNo || undefined,
+                    remarks: trimmedRemarks,
+                },
             });
-            if (Number(r.created ?? 0) > 0) { toast.success(`Created list cost batch with ${r.created} line(s).${summarizeCreated(r)}`); onCreated(); onOpenChange(false); }
-            else { toast.info(`No list cost batch was created.${summarizeCreated(r)}`); }
+            toast.success(`Created ${result.price.created} price line(s) and ${result.cost.created} list cost line(s).`);
+            onCreated();
+            onOpenChange(false);
         } catch (error: unknown) {
             toast.error(error instanceof Error ? error.message : "Failed to create price change batch");
         } finally { setSaving(false); }
-    }, [buildCostLines, buildLines, onCreated, onOpenChange, referenceNo, remarks, supplierId, validation.invalidCostIds.size, validation.invalidPriceKeys.size]);
+    }, [buildCostLines, buildLines, onCreated, onOpenChange, referenceNo, remarks, validation.invalidCostIds.size, validation.invalidPriceKeys.size]);
 
     return {
-        supplierId, referenceNo, remarks, errors, setErrors, setRemarks,
+        referenceNo, remarks, errors, setErrors, setRemarks,
         priceTypes, unitLabelMap, products, productCatalog, tierPriceMap,
         draftPrices, draftCosts, currentCostMap, pendingValues,
         catalogPage, setCatalogPage, catalogPageSize, setCatalogPageSize,
@@ -478,10 +453,10 @@ export function useCreateBatchState({
         catalogQuery, localCatalogQ, setLocalCatalogQ,
         loadingPriceTypes, loadingProducts,
         loadError, saving, importedProductIds, catalogViewMode, setCatalogViewMode,
-        handleSupplierChange, applyCatalogSearch,
+        applyCatalogSearch,
         gridProducts, showingImportedView,
         catalogStartIndex, catalogEndIndex, canCatalogPrev, canCatalogNext,
-        supplierOptions, currentPriceFor, unitLabelFor, currentCostFor, setDraftCost, setDraftPrice,
+        currentPriceFor, unitLabelFor, currentCostFor, setDraftCost, setDraftPrice,
         validation, gridNav, catalogLoading, canSubmit, handleSubmit,
     };
 }
