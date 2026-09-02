@@ -191,14 +191,19 @@ export interface SupplierItem {
 }
 
 export interface BatchItem {
+    product_id?: number | null;
     lot_number?: string;
     expiration_date?: string | null;
     quantity_received?: number | string;
+    branch_name?: string | null;
+    branch_code?: string | null;
+    created_on?: string | null;
+    source_reference?: string | null;
     shipment_id?: {
         date_received?: string;
         reference_number?: string;
     } | null;
-    branch_id?: {
+    branch_id?: number | {
         branch_name?: string;
         branch_code?: string;
     } | null;

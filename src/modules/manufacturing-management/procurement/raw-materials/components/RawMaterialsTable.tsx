@@ -15,6 +15,8 @@ interface RawMaterialsTableProps {
     weightUnits: WeightUnitOption[];
     categoriesList?: SelectOption[];
     loadingBatches: boolean;
+    inventoryDetailsError: string | null;
+    onRetryInventoryDetails: () => void;
     groupedByBranch: BranchGroupedBatches[];
     familyGroups?: FamilyGroup[];
     page: number;
@@ -34,6 +36,8 @@ export function RawMaterialsTable({
     weightUnits,
     categoriesList,
     loadingBatches,
+    inventoryDetailsError,
+    onRetryInventoryDetails,
     groupedByBranch,
     familyGroups,
     page,
@@ -247,6 +251,8 @@ export function RawMaterialsTable({
                                                 <BatchLocationsTree
                                                     material={m}
                                                     loadingBatches={loadingBatches}
+                                                    inventoryDetailsError={inventoryDetailsError}
+                                                    onRetry={onRetryInventoryDetails}
                                                     groupedByBranch={groupedByBranch}
                                                 />
                                             </td>

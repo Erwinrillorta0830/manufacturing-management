@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { RawMaterialItem, TypeFilter, BranchGroupedBatches, BatchItem } from "../types/raw-materials.types";
 import { fetchProductInventoryDetails } from "../services/raw-materials.service";
@@ -14,7 +14,9 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
     const [expandedProductId, setExpandedProductId] = useState<number | null>(null);
     const [loadingBatches, setLoadingBatches] = useState(false);
+    const [inventoryDetailsError, setInventoryDetailsError] = useState<string | null>(null);
     const [productBatches, setProductBatches] = useState<BatchItem[]>([]);
+    const inventoryRequestId = useRef(0);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
 
@@ -82,23 +84,47 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
         return result;
     }, [familyGroups]);
 
+    const loadProductInventory = async (productId: number) => {
+        const requestId = ++inventoryRequestId.current;
+        setLoadingBatches(true);
+        setInventoryDetailsError(null);
+
+        try {
+            const data = await fetchProductInventoryDetails(productId);
+            if (requestId !== inventoryRequestId.current) return;
+            setProductBatches(data);
+        } catch {
+            if (requestId !== inventoryRequestId.current) return;
+            const message = "Unable to load inventory data at this time. Please retry.";
+            setProductBatches([]);
+            setInventoryDetailsError(message);
+            toast.error(message);
+        } finally {
+            if (requestId === inventoryRequestId.current) {
+                setLoadingBatches(false);
+            }
+        }
+    };
+
     const handleToggleExpand = async (productId: number) => {
         if (expandedProductId === productId) {
+            inventoryRequestId.current += 1;
             setExpandedProductId(null);
             setProductBatches([]);
+            setInventoryDetailsError(null);
+            setLoadingBatches(false);
             return;
         }
 
         setExpandedProductId(productId);
-        setLoadingBatches(true);
-        try {
-            const data = await fetchProductInventoryDetails(productId);
-            setProductBatches(data);
-        } catch (e) {
-            console.error(e);
-            toast.error(e instanceof Error ? e.message : "Failed to load inventory details");
-        } finally {
-            setLoadingBatches(false);
+        setProductBatches([]);
+        setInventoryDetailsError(null);
+        await loadProductInventory(productId);
+    };
+
+    const retryInventoryDetails = () => {
+        if (expandedProductId !== null) {
+            void loadProductInventory(expandedProductId);
         }
     };
 
@@ -107,9 +133,9 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
         const branchesMap: Record<string, BranchGroupedBatches> = {};
 
         productBatches.forEach((item: BatchItem) => {
-            const branch = item.branch_id || { branch_name: "Unassigned Warehouse", branch_code: "N/A" };
-            const branchName = branch.branch_name || "Unassigned Warehouse";
-            const branchCode = branch.branch_code || "N/A";
+            const branch = item.branch_id && typeof item.branch_id === "object" ? item.branch_id : null;
+            const branchName = item.branch_name || branch?.branch_name || "Unassigned Warehouse";
+            const branchCode = item.branch_code || branch?.branch_code || "N/A";
 
             if (!branchesMap[branchName]) {
                 branchesMap[branchName] = {
@@ -124,8 +150,8 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
                 lot_number: item.lot_number || "BATCH-N/A",
                 expiration_date: item.expiration_date,
                 qty: Number(item.quantity_received || 0),
-                reception_date: item.shipment_id?.date_received || "N/A",
-                shipment_ref: item.shipment_id?.reference_number || "N/A"
+                reception_date: item.created_on || item.shipment_id?.date_received || "N/A",
+                shipment_ref: item.source_reference || item.shipment_id?.reference_number || "N/A"
             });
 
             branchesMap[branchName].totalQty += Number(item.quantity_received || 0);
@@ -141,9 +167,11 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
         setTypeFilter,
         expandedProductId,
         loadingBatches,
+        inventoryDetailsError,
         familyGroups,
         sortedFiltered,
         handleToggleExpand,
+        retryInventoryDetails,
         groupedByBranch,
         page,
         setPage,

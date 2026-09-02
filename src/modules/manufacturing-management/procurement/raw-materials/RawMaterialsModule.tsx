@@ -55,6 +55,8 @@ export default function RawMaterialsModule({
                 weightUnits={formHook.weightUnits}
                 categoriesList={formHook.categoriesList}
                 loadingBatches={dataHook.loadingBatches}
+                inventoryDetailsError={dataHook.inventoryDetailsError}
+                onRetryInventoryDetails={dataHook.retryInventoryDetails}
                 groupedByBranch={dataHook.groupedByBranch}
                 familyGroups={dataHook.familyGroups}
                 page={dataHook.page}
