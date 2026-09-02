@@ -14,6 +14,7 @@ import {
     UserLookup
 } from "./providers/fetchProvider";
 import { computeMovementSummary, computeRunningBalances } from "./service";
+import { phtDateBoundaryToEpoch, phtTimestampToEpoch } from "../shared/pht-date";
 import {
     ProductTracingFiltersType,
     MMInventoryMovement,
@@ -140,17 +141,17 @@ export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLA
         let list = movements;
 
         if (filters.startDate) {
-            const start = new Date(filters.startDate).getTime();
+            const start = phtDateBoundaryToEpoch(filters.startDate);
             list = list.filter(m => {
-                const itemTime = new Date(m.transactionDate || m.postedAt || 0).getTime();
+                const itemTime = phtTimestampToEpoch(m.transactionDate || m.postedAt);
                 return itemTime >= start;
             });
         }
 
         if (filters.endDate) {
-            const end = new Date(filters.endDate).getTime();
+            const end = phtDateBoundaryToEpoch(filters.endDate, true);
             list = list.filter(m => {
-                const itemTime = new Date(m.transactionDate || m.postedAt || 0).getTime();
+                const itemTime = phtTimestampToEpoch(m.transactionDate || m.postedAt);
                 return itemTime <= end;
             });
         }

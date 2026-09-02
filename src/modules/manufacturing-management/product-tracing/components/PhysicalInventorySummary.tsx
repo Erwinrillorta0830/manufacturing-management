@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { format } from "date-fns";
 import { MMInventoryMovement } from "../types";
 import { Card, CardContent } from "@/components/ui/card";
 import { PackageSearch as PHIcon } from "lucide-react";
+import { formatPhtDate } from "../../shared/pht-date";
 
 interface Props {
     movements: MMInventoryMovement[];
@@ -58,7 +58,7 @@ export const PhysicalInventorySummary: React.FC<Props> = ({
                                     <tr key={idx} className="hover:bg-muted/20">
                                         <td className="py-2.5 font-mono font-bold">{row.referenceNo}</td>
                                         <td className="py-2.5 text-muted-foreground">
-                                            {row.transactionDate ? format(new Date(row.transactionDate), "MMM dd, yyyy") : "N/A"}
+                                            {formatPhtDate(row.transactionDate)}
                                         </td>
                                         <td className="py-2.5">{row.productName || "Product"}</td>
                                         <td className="py-2.5 font-mono">{row.batchNo || "—"}</td>

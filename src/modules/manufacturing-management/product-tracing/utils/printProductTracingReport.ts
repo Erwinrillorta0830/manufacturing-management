@@ -1,5 +1,5 @@
 import type { MMInventoryMovement } from "../types";
-import { format } from "date-fns";
+import { formatPhtDate, formatPhtTimestamp } from "../../shared/pht-date";
 
 export type PrintProductTracingArgs = {
     movements: MMInventoryMovement[];
@@ -34,8 +34,8 @@ export function generateProductTracingHtml(args: PrintProductTracingArgs): strin
         endDate
     } = args;
 
-    const startStr = startDate ? format(new Date(startDate), "MMM dd, yyyy") : "Earliest";
-    const endStr = endDate ? format(new Date(endDate), "MMM dd, yyyy") : "Present";
+    const startStr = startDate ? formatPhtDate(startDate) : "Earliest";
+    const endStr = endDate ? formatPhtDate(endDate) : "Present";
 
     let totalIn = 0;
     let totalOut = 0;
@@ -53,9 +53,7 @@ export function generateProductTracingHtml(args: PrintProductTracingArgs): strin
         totalInVal += qIn * cost;
         totalOutVal += qOut * cost;
 
-        const dateStr = m.transactionDate
-            ? format(new Date(m.transactionDate), "MM/dd/yyyy HH:mm")
-            : "N/A";
+        const dateStr = formatPhtTimestamp(m.transactionDate);
 
         return `
             <tr>
@@ -146,7 +144,7 @@ export function generateProductTracingHtml(args: PrintProductTracingArgs): strin
         </div>
         <div class="text-right">
             <p style="margin:0; font-weight:800; color:#2563eb;">MANUFACTURING AUDIT</p>
-            <p style="margin:2px 0 0; color:#64748b;">Generated on ${format(new Date(), "PPpp")}</p>
+            <p style="margin:2px 0 0; color:#64748b;">Generated on ${formatPhtTimestamp(new Date())}</p>
         </div>
     </div>
 

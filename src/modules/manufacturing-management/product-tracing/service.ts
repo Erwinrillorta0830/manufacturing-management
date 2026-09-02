@@ -10,6 +10,7 @@ import {
     fetchProducts,
     fetchLots
 } from "./providers/fetchProvider";
+import { phtTimestampToEpoch } from "../shared/pht-date";
 
 const DIRECTUS_URL = getDirectusBase();
 
@@ -89,8 +90,8 @@ export function computeMovementSummary(movements: MMInventoryMovement[]): Moveme
 export function computeRunningBalances(movements: MMInventoryMovement[]): MMInventoryMovement[] {
     // Sort chronologically ascending
     const sorted = [...movements].sort((a, b) => {
-        const timeA = new Date(a.transactionDate || a.postedAt || 0).getTime();
-        const timeB = new Date(b.transactionDate || b.postedAt || 0).getTime();
+        const timeA = phtTimestampToEpoch(a.transactionDate || a.postedAt);
+        const timeB = phtTimestampToEpoch(b.transactionDate || b.postedAt);
         return timeA - timeB;
     });
 
