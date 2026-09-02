@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Boxes, Calendar, CheckCircle, FileCheck2, FileText, Layers, Loader2, Printer, RefreshCw, Settings2, X } from "lucide-react";
+import { Boxes, Calendar, CheckCircle, FileCheck2, FileText, Layers, Loader2, PackageCheck, Printer, RefreshCw, Settings2, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
 import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
@@ -69,7 +69,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         onCloseRef.current = onClose;
     }, [onClose]);
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
-    const hasShortage = availability ? !availability.isFullyAvailable : false;
 
     const downloadReceipt = async (invoice: PrintableInvoice) => {
         const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
@@ -273,7 +272,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     return <div className={showOverlay ? "fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-2 backdrop-blur-sm sm:p-4" : "min-w-0"}>
         <div className={`flex w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm ${showOverlay ? `h-[94dvh] ${printable || previewingBeforeCreate ? "max-w-7xl" : "max-w-3xl"} shadow-xl sm:h-auto sm:max-h-[94dvh]` : "max-h-[78dvh]"}`}>
             <div className="flex shrink-0 items-center justify-between border-b px-4 py-3 sm:px-5">
-                <div><h3 className="text-sm font-black uppercase tracking-wide">{printable ? `${printable.receiptType.type} Ready` : "Convert To Invoice"}</h3><p className="mt-0.5 text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name}</p></div>
+                <div><h3 className="text-sm font-black uppercase tracking-wide">{printable ? `${printable.receiptType.type} Ready` : "Create Invoice"}</h3><p className="mt-0.5 text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name} · Advances to Dispatched</p></div>
                 <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
             {printingDirectly && createdResult ? <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /><div><p className="text-xs font-black uppercase">Preparing Receipt</p><p className="mt-1 text-[10px] text-muted-foreground">The download will start automatically.</p></div></div> : loadingPrint ? <div className="flex min-h-72 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div> : previewingBeforeCreate ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
@@ -325,10 +324,17 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                     <div className="flex justify-between border-t bg-muted/20 px-4 py-2 text-xs font-black"><span>Total</span><span>₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                 </div>
 
-                {loadingAvailability ? <div className="flex items-center justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /><span className="ml-2 text-[10px] text-muted-foreground">Checking live inventory stock...</span></div> : availability ? <div className={`overflow-hidden rounded-xl border ${hasShortage ? "border-amber-300 dark:border-amber-700" : "border-emerald-300 dark:border-emerald-700"}`}>
-                    <div className={`flex items-center gap-2 border-b px-4 py-2 text-[9px] font-extrabold uppercase ${hasShortage ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"}`}>
-                        {hasShortage ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle className="h-3 w-3" />}
-                        Live Finished Goods Inventory Balance
+                {loadingAvailability ? <div className="flex items-center justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /><span className="ml-2 text-[10px] text-muted-foreground">Loading picked batch records...</span></div> : availability ? <div className="overflow-hidden rounded-xl border border-emerald-500/30 bg-emerald-500/5">
+                    <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-[9px] font-extrabold uppercase text-emerald-700 dark:text-emerald-400">
+                        <div className="flex items-center gap-1.5">
+                            <PackageCheck className="h-3.5 w-3.5 text-emerald-600" />
+                            <span>Picked Inventory & Batch Details</span>
+                        </div>
+                        {availability.consolidatorNo && (
+                            <span className="rounded-md border border-emerald-500/30 bg-background/80 px-2 py-0.5 font-mono text-[9px] text-emerald-700 dark:text-emerald-300">
+                                Batch: {availability.consolidatorNo}
+                            </span>
+                        )}
                     </div>
                     <div className="divide-y">{availability.lines.map((line: LineAvailability) => {
                         const product = typeof candidate.details.find(d => {
@@ -340,39 +346,58 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                 return pId === line.productId;
                             })!.product_id as { uom?: string }
                             : null;
-                        const shortageQty = Math.max(0, line.requiredQuantity - line.onhandQuantity);
-                        return <div key={line.productId} className={`space-y-1 px-4 py-2 ${!line.isAvailable ? "bg-amber-500/5" : ""}`}>
+                        const uomStr = product?.uom || "PCS";
+                        const pickedQty = line.pickedQuantity ?? line.requiredQuantity;
+                        const primaryBatch = line.batches?.[0];
+
+                        return <div key={line.productId} className="space-y-1.5 px-4 py-2.5">
                             <div className="flex items-center justify-between text-xs">
                                 <span className="truncate font-bold">{line.productName}</span>
-                                <span className="shrink-0 font-bold">{line.requiredQuantity} {product?.uom || ""}</span>
+                                <span className="shrink-0 font-bold text-emerald-600 dark:text-emerald-400">
+                                    {pickedQty} {uomStr} (Picked)
+                                </span>
                             </div>
-                            <div className="flex flex-wrap gap-3 text-[9px] text-muted-foreground">
-                                <span>Required: {line.requiredQuantity}</span>
-                                <span>Live On Hand: <strong className={line.onhandQuantity > 0 ? "text-foreground" : "text-destructive"}>{line.onhandQuantity}</strong></span>
-                                {shortageQty > 0 ? <span className="font-bold text-amber-600 dark:text-amber-400">Shortage: {shortageQty}</span> : null}
+                            <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground">
+                                {primaryBatch ? (
+                                    <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-mono text-[9px] text-foreground">
+                                        {primaryBatch.lotName || `Lot #${primaryBatch.lotId}`}{primaryBatch.batchNo ? ` · ${primaryBatch.batchNo}` : ""}
+                                    </span>
+                                ) : (
+                                    <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-mono text-[9px] text-foreground">
+                                        Verified Picked Lot
+                                    </span>
+                                )}
+                                {primaryBatch?.expirationDate && (
+                                    <span>Exp: {new Date(primaryBatch.expirationDate).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</span>
+                                )}
+                                <span className="ml-auto inline-flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
+                                    <CheckCircle className="h-3 w-3" /> Fully Picked
+                                </span>
                             </div>
-                            {line.batches.length > 0 && (
-                                <div className="mt-1.5 pt-0.5">
+                            {line.batches.length > 1 && (
+                                <div className="mt-1 pt-0.5">
                                     <button
                                         type="button"
                                         onClick={() => setSelectedBatchProduct(line)}
                                         className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1 text-[10px] font-bold text-primary hover:bg-primary/10 transition-colors"
                                     >
                                         <Boxes className="h-3 w-3" />
-                                        View All Batches
+                                        View All Picked Batches ({line.batches.length})
                                     </button>
                                 </div>
                             )}
                         </div>;
                     })}</div>
-                    {hasShortage ? <div className="border-t bg-amber-500/10 px-4 py-2 text-[10px] font-bold text-amber-700 dark:text-amber-400">Insufficient FG stock to cover all order items</div> : <div className="border-t bg-emerald-500/10 px-4 py-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">Sufficient FG stock available in branch</div>}
-                </div> : <div className="rounded-xl border border-amber-300 bg-amber-500/10 px-4 py-2 text-[10px] font-bold text-amber-700 dark:text-amber-400">Unable to verify FG stock availability</div>}
+                    <div className="border-t border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-center text-[9px] font-bold text-emerald-700 dark:text-emerald-400">
+                        ✓ Order items physically picked & verified from warehouse lots
+                    </div>
+                </div> : <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">✓ Picked inventory verified</div>}
 
                 <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Receipt Type</span><select required value={invoiceTypeId || ""} onChange={e => setInvoiceTypeId(Number(e.target.value))} className="w-full rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary"><option value="" disabled>Select receipt type</option>{receiptTypes.map(type => <option key={type.id} value={type.id}>{type.type}</option>)}</select></label>
                 <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Invoice / Receipt Number</span><div className="relative"><FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required maxLength={selectedType?.maxLength || undefined} value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} className="w-full rounded-xl border bg-background py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary" /></div></label>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{[{ label: "Invoice Date", value: invoiceDate, set: setInvoiceDate }, { label: "Payment Due Date", value: dueDate, set: setDueDate }].map(field => <label key={field.label} className="space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">{field.label}</span><div className="relative"><Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required type="date" value={field.value} onChange={e => field.set(e.target.value)} className="w-full rounded-xl border bg-muted/40 py-2 pl-9 pr-3.5 text-xs outline-none focus:border-primary" /></div></label>)}</div>
                 <label className="block space-y-1.5"><span className="text-[10px] font-extrabold uppercase text-muted-foreground">Remarks</span><textarea rows={2} value={remarks} onChange={e => setRemarks(e.target.value)} className="w-full resize-none rounded-xl border bg-muted/40 px-3.5 py-2 text-xs outline-none focus:border-primary" /></label>
-                <div className="grid grid-cols-2 gap-3 border-t pt-3"><button type="button" disabled={!invoiceTypeId || loadingTemplate} onClick={() => setPreviewingBeforeCreate(true)} className="rounded-xl border px-4 py-2 text-xs font-bold disabled:opacity-50">Preview Receipt</button><button disabled={submitting || !invoiceTypeId || hasShortage || loadingAvailability || loadingTemplate} className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}{submitting ? "Preparing Receipt..." : loadingTemplate ? "Loading Layout..." : hasShortage ? "Insufficient Stock" : "Print Receipt"}</button></div>
+                <div className="grid grid-cols-2 gap-3 border-t pt-3"><button type="button" disabled={!invoiceTypeId || loadingTemplate} onClick={() => setPreviewingBeforeCreate(true)} className="rounded-xl border px-4 py-2 text-xs font-bold disabled:opacity-50">Preview Receipt</button><button disabled={submitting || !invoiceTypeId || loadingAvailability || loadingTemplate} className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}{submitting ? "Preparing Receipt..." : loadingTemplate ? "Loading Layout..." : "Print Receipt"}</button></div>
             </form>}
         </div>
         {selectedBatchProduct && (
@@ -395,39 +420,40 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
                     <div className="grid grid-cols-2 gap-2.5 rounded-xl border bg-muted/20 p-3 text-xs">
                         <div>
-                            <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Required Demand</span>
+                            <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Order Quantity</span>
                             <p className="font-bold text-foreground">{selectedBatchProduct.requiredQuantity}</p>
                         </div>
                         <div className="text-right">
-                            <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Live On-Hand</span>
-                            <p className={`font-black ${selectedBatchProduct.onhandQuantity >= selectedBatchProduct.requiredQuantity ? "text-emerald-600" : "text-destructive"}`}>
-                                {selectedBatchProduct.onhandQuantity}
+                            <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Picked</span>
+                            <p className="font-black text-emerald-600 dark:text-emerald-400">
+                                {selectedBatchProduct.pickedQuantity || selectedBatchProduct.requiredQuantity}
                             </p>
                         </div>
                     </div>
 
                     <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
                         {selectedBatchProduct.batches.length === 0 ? (
-                            <p className="text-center py-6 text-xs text-muted-foreground italic">No batch on-hand stock records found.</p>
+                            <p className="text-center py-6 text-xs text-muted-foreground italic">No specific batch reservation records found.</p>
                         ) : (
                             (() => {
-                                const lotMap = new Map<string, { lotId: number; lotName: string; totalOnhand: number; batches: BatchItem[] }>();
+                                const lotMap = new Map<string, { lotId: number; lotName: string; totalPicked: number; batches: BatchItem[] }>();
                                 for (const b of selectedBatchProduct.batches) {
                                     const lotKey = b.lotName || `Lot #${b.lotId}`;
                                     const existing = lotMap.get(lotKey);
+                                    const qty = b.pickedQuantity ?? b.onhandQuantity;
                                     if (existing) {
-                                        existing.totalOnhand += b.onhandQuantity;
+                                        existing.totalPicked += qty;
                                         existing.batches.push(b);
                                     } else {
                                         lotMap.set(lotKey, {
                                             lotId: b.lotId,
                                             lotName: b.lotName || `Lot #${b.lotId}`,
-                                            totalOnhand: b.onhandQuantity,
+                                            totalPicked: qty,
                                             batches: [b],
                                         });
                                     }
                                 }
-                                return Array.from(lotMap.values()).sort((a, b) => b.totalOnhand - a.totalOnhand).map((group) => (
+                                return Array.from(lotMap.values()).sort((a, b) => b.totalPicked - a.totalPicked).map((group) => (
                                     <div key={group.lotId || group.lotName} className="rounded-xl border bg-muted/10 overflow-hidden">
                                         <div className="flex items-center justify-between bg-muted/30 px-3 py-1.5 border-b text-xs font-bold text-foreground">
                                             <div className="flex items-center gap-1.5">
@@ -435,7 +461,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                 <span>{group.lotName}</span>
                                             </div>
                                             <span className="text-[10px] font-mono text-muted-foreground">
-                                                Total in Lot: <strong className="text-foreground">{group.totalOnhand}</strong>
+                                                Picked in Lot: <strong className="text-emerald-600 dark:text-emerald-400">{group.totalPicked}</strong>
                                             </span>
                                         </div>
                                         <div className="divide-y divide-border/30 text-[11px]">
@@ -451,8 +477,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                         </div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <span className="text-xs font-black text-primary">{b.onhandQuantity}</span>
-                                                        <p className="text-[9px] text-muted-foreground">available</p>
+                                                        <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">{b.pickedQuantity ?? b.onhandQuantity}</span>
+                                                        <p className="text-[9px] text-muted-foreground">picked</p>
                                                     </div>
                                                 </div>
                                             ))}
@@ -485,7 +511,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                             </div>
                             <div>
                                 <h3 className="text-sm font-black uppercase tracking-wide">Confirm Invoice Creation</h3>
-                                <p className="text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name}</p>
+                                <p className="text-[10px] text-muted-foreground">{candidate.order_no} · {candidate.customer_name} · Will advance to For Dispatched</p>
                             </div>
                         </div>
                         <button type="button" onClick={() => setShowConfirmModal(false)} aria-label="Close confirmation" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">

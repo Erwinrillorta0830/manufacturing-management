@@ -82,7 +82,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     doc.text(new Date(data.createdAt).toLocaleDateString(), 124, 26);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`Invoices:`, 8, 31);
+    doc.text(`Orders:`, 8, 31);
     doc.setFont("helvetica", "normal");
     doc.text(`${data.totalInvoices}`, 27, 31);
 
@@ -163,7 +163,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     const extDoc = doc as unknown as { lastAutoTable: { finalY: number } };
     let currentY = extDoc.lastAutoTable.finalY + 6;
 
-    // ── Invoice Summary Section ──
+    // ── Order Summary Section ──
     currentY = currentY + 2;
 
     if (currentY > 165) {
@@ -172,7 +172,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     }
 
     doc.setFontSize(8).setFont("helvetica", "bold").setTextColor(0, 0, 0);
-    doc.text("INVOICE SUMMARY", 8, currentY);
+    doc.text("ORDER SUMMARY", 8, currentY);
     currentY += 2;
 
     const invoiceRows = data.invoices.flatMap((invoice) => {
@@ -192,7 +192,7 @@ export async function generateConsolidationPDF(data: PrintData) {
     autoTable(doc, {
         startY: currentY,
         margin: { left: 8, right: 8, bottom: 10 },
-        head: [["INVOICE", "CUSTOMER", "PRODUCT", "CODE", "QTY"]],
+        head: [["ORDER", "CUSTOMER", "PRODUCT", "CODE", "QTY"]],
         body: invoiceRows,
         theme: "grid",
         headStyles: {

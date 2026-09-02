@@ -2,6 +2,7 @@
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
 
 
 export async function createJobOrder(
@@ -178,14 +179,10 @@ export async function createJobOrder(
                         const branchId = Number(joData.branch_id);
 
                         // Fetch inventory movements to calculate the true ledger stock
-                        const movFilter = encodeURIComponent(JSON.stringify({
-                            _and: [
-                                { product_id: { _eq: compProductId } },
-                                { branch_id: { _eq: branchId } }
-                            ]
-                        }));
-                        const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                        const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                        const movements = await fetchMmInventoryMovements({
+                            branch: branchId,
+                            product: compProductId
+                        });
                         const movementStockMap = new Map<string, number>();
                         movements.forEach((mov: any) => {
                             const batchNo = mov.batch_no || "LOT-N/A";
@@ -457,14 +454,10 @@ export async function createJobOrder(
                                   });
 
                                   // Fetch inventory movements to calculate the true ledger stock
-                                  const movFilter = encodeURIComponent(JSON.stringify({
-                                      _and: [
-                                          { product_id: { _eq: compProductId } },
-                                          { branch_id: { _eq: branchId } }
-                                      ]
-                                  }));
-                                  const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                                  const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                                  const movements = await fetchMmInventoryMovements({
+                                      branch: branchId,
+                                      product: compProductId
+                                  });
                                   const movementStockMap = new Map<string, number>();
                                   movements.forEach((mov: any) => {
                                       const batchNo = mov.batch_no || "LOT-N/A";
@@ -534,14 +527,10 @@ export async function createJobOrder(
                                      throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                                  }
                                  const branchId = Number(joData.branch_id);
-                                 const movFilter = encodeURIComponent(JSON.stringify({
-                                     _and: [
-                                         { product_id: { _eq: compProductId } },
-                                         { branch_id: { _eq: branchId } }
-                                     ]
-                                 }));
-                                 const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                                 const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                                 const movements = await fetchMmInventoryMovements({
+                                     branch: branchId,
+                                     product: compProductId
+                                 });
                                  const movementStockMap = new Map<string, number>();
                                  movements.forEach((mov: any) => {
                                      const batchNo = mov.batch_no || "LOT-N/A";

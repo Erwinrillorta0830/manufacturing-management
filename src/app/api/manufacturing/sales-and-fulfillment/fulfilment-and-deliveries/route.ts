@@ -71,7 +71,6 @@ export async function GET(req: NextRequest) {
         }
 
         const qs = new URLSearchParams();
-        qs.set("filter[consolidator_no][_starts_with]", "CLINV-");
         qs.set("filter[is_delete][_eq]", "0");
         qs.set("filter[branch_id][_eq]", branchId);
         qs.set("sort", "-updated_at");

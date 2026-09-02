@@ -2,6 +2,7 @@
 import { DIRECTUS_URL, headers } from "./shared";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 export async function getProductInventoryAndSafetyStock(productIds: number[], branchId: number) {
     if (!branchId) {
@@ -26,13 +27,6 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         // Fetch all batch data in parallel
         const recFilter = allProductIds.length > 0 ? `filter[product_id][_in]=${allProductIds.join(",")}&` : "";
         const yieldFilter = allProductIds.length > 0 ? `filter[job_order_id][product_id][_in]=${allProductIds.join(",")}&` : "";
-        const movFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                ...(allProductIds.length > 0 ? [{ product_id: { _in: allProductIds } }] : []),
-                { branch_id: { _eq: bId } }
-            ]
-        }));
-
         const validReceiptsFilter = encodeURIComponent(JSON.stringify({
             _and: [
                 ...(allProductIds.length > 0 ? [{ product_id: { _in: allProductIds } }] : []),
@@ -47,10 +41,21 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             product_id: { _in: versionCheckProductIds.length > 0 ? versionCheckProductIds : [0] }
         }));
 
-        const [recRes, yieldRes, movRes, versionsRes, validReceiptsRes, unitsRes] = await Promise.all([
+        const productTypeIds = new Set<number>(
+            products
+                .map((product: any) => Number(product.product_type?.id || product.product_type || 0))
+                .filter((productTypeId: number) => productTypeId > 0)
+        );
+        const movementProductType = productTypeIds.size === 1 ? [...productTypeIds][0] : null;
+
+        const [recRes, yieldRes, movements, versionsRes, validReceiptsRes, unitsRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" }),
+            fetchMmInventoryMovements({
+                branch: bId,
+                product: allProductIds.length === 1 ? allProductIds[0] : null,
+                productType: movementProductType
+            }),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter=${validReceiptsFilter}&sort=expiry_date&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
@@ -58,7 +63,6 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
 
         const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
         const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
-        const movements = movRes.ok ? (await movRes.json()).data || [] : [];
         const versionData = versionsRes.ok ? (await versionsRes.json()).data || [] : [];
         const validReceipts = validReceiptsRes.ok ? (await validReceiptsRes.json()).data || [] : [];
         const unitsData = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
@@ -132,7 +136,9 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         });
         
         const movementStockMap = new Map<string, number>(); // "productId:batchNo" -> sum of quantity
-        movements.forEach((mov: any) => {
+        movements
+            .filter((movement) => allProductIds.length === 0 || allProductIds.includes(Number(movement.product_id || movement.productId || 0)))
+            .forEach((mov: any) => {
             const pId = Number(mov.product_id?.product_id || mov.product_id);
             const batchNo = mov.batch_no || "LOT-N/A";
             const qty = Number(mov.quantity || 0);
@@ -141,7 +147,7 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                 const key = `${pId}:${batchNo}`;
                 movementStockMap.set(key, (movementStockMap.get(key) || 0) + qty);
             }
-        });
+            });
 
         // Compute onHand stock per product (summing only Passed / Partially Accepted batches using ledger quantities)
         const onHandMap: Record<number, number> = {};
@@ -233,6 +239,7 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         return enrichedProducts;
     } catch (e) {
         console.error("Error in getProductInventoryAndSafetyStock:", e);
+        if (e instanceof MmInventoryMovementError) throw e;
         return [];
     }
 }

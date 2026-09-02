@@ -90,6 +90,23 @@ export function useInvoiceConsolidation() {
     const loadCandidates = useCallback(async (bId: number) => {
         try {
             const data = await fetchCandidates(bId);
+            console.log(
+                `[Consolidation UI] Candidate Orders loaded for Branch ${bId} (${data.length} candidate(s)):`,
+                data.map((c) => ({
+                    orderNo: c.orderNo,
+                    customer: c.customerName,
+                    orderStatus: c.orderStatus,
+                    documentType: c.documentType,
+                    products: c.products.map((p) => ({
+                        productId: p.productId,
+                        productName: p.productName,
+                        orderedQty: (p as { orderedQuantity?: number }).orderedQuantity,
+                        allocatedQty: (p as { allocatedQuantity?: number }).allocatedQuantity,
+                        consolidatedQty: (p as { consolidatedQuantity?: number }).consolidatedQuantity,
+                        remainingQty: (p as { remainingQuantity?: number }).remainingQuantity ?? p.quantity,
+                    })),
+                }))
+            );
             setCandidates(data);
         } catch (e) {
             const err = e as Error;

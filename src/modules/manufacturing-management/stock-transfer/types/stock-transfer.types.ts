@@ -13,6 +13,7 @@ export interface BranchRow {
   name?: string;
   branch_description?: string;
   branch_head?: number | null;
+  isActive?: number | boolean | string;
 }
 
 /** Resolved unit-of-measurement object from Directus relational expansion. */

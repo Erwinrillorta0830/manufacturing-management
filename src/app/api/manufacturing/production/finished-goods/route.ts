@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 
 interface LedgerEntry {
@@ -123,10 +124,14 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const requestedJobOrder = searchParams.get("joId")?.trim() || "";
-        const movements = await readDirectusCollection<FinishedGoodsMovement>(
-            `${DIRECTUS_URL}/items/inventory_movements?filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&limit=-1&sort=-created_at`,
-            "Finished-goods movement lookup"
-        );
+        const requestedJobOrderId = Number(requestedJobOrder);
+        const movements = await fetchMmInventoryMovements({
+            transactionTypeId: 2,
+            movementDirection: "IN",
+            referenceId: Number.isSafeInteger(requestedJobOrderId) && requestedJobOrderId > 0
+                ? requestedJobOrderId
+                : null
+        });
         const [products, yields, jobOrders, ledgerEntries] = await Promise.all([
             readOptionalDirectusCollection<Product>(
                 `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,cost_per_unit`,
@@ -186,7 +191,7 @@ export async function GET(request: Request) {
                 manufacturing_date: dateOnly(movement.manufacturing_date) || dateOnly(matchedYield?.manufacturing_date),
                 expiration_date: dateOnly(movement.expiry_date) || dateOnly(matchedYield?.expiry_date),
                 unit_cost: Number(matchedProduct?.cost_per_unit || 0),
-                date_received: movement.created_at || movement.created_on || null,
+                date_received: movement.created_at || null,
                 legacy_source: false
             };
         });
@@ -239,7 +244,10 @@ export async function GET(request: Request) {
         return NextResponse.json([...movementReceiptRows, ...legacyRows]);
     } catch (e) {
         console.error("API Error in production finished-goods GET:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch finished goods receipts" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as { message?: string }).message || "Failed to fetch finished goods receipts" },
+            { status: e instanceof MmInventoryMovementError ? e.status : 500 }
+        );
     }
 }
 
@@ -456,16 +464,30 @@ export async function POST(request: Request) {
         let skipStockOperations = false;
         try {
             // Check if there is already a positive finished goods movement for this lot and job order in inventory_movements
-            const existingMvtRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[_and][0][product_id][_eq]=${pId}&filter[_and][1][batch_no][_eq]=${encodeURIComponent(finalLotNo)}&filter[_and][2][source_document_no][_eq]=${encodeURIComponent(joId)}&filter[_and][3][transaction_type_id][_eq]=2&limit=1`, { headers, cache: "no-store" });
-            if (existingMvtRes.ok) {
-                const existingMvts = (await existingMvtRes.json()).data || [];
-                if (existingMvts.length > 0) {
-                    skipStockOperations = true;
-                    console.log(`[BFF Finished Goods] Prior yield movement found for JO ${joId} and Lot ${finalLotNo}. Skipping stock operations to prevent duplicates.`);
-                }
+            let existingMvts = await fetchMmInventoryMovements({
+                product: pId,
+                batchNo: finalLotNo,
+                transactionTypeId: 2,
+                movementDirection: "IN",
+                referenceId: sourceDocumentId > 0 ? sourceDocumentId : null,
+                referenceNo: sourceDocumentId > 0 ? null : String(joId)
+            });
+            if (existingMvts.length === 0 && sourceDocumentId > 0) {
+                existingMvts = await fetchMmInventoryMovements({
+                    product: pId,
+                    batchNo: finalLotNo,
+                    transactionTypeId: 2,
+                    movementDirection: "IN",
+                    referenceNo: String(joId)
+                });
+            }
+            if (existingMvts.length > 0) {
+                skipStockOperations = true;
+                console.log(`[BFF Finished Goods] Prior yield movement found for JO ${joId} and Lot ${finalLotNo}. Skipping stock operations to prevent duplicates.`);
             }
         } catch (checkErr) {
             console.error("[BFF Finished Goods] Error checking for prior yield movements:", checkErr);
+            if (checkErr instanceof MmInventoryMovementError) throw checkErr;
         }
 
         if (!skipStockOperations) {
@@ -564,14 +586,10 @@ export async function POST(request: Request) {
                             });
 
                             // Fetch inventory movements to calculate the true ledger stock
-                            const movFilter = encodeURIComponent(JSON.stringify({
-                                _and: [
-                                    { product_id: { _eq: compId } },
-                                    { branch_id: { _eq: bId } }
-                                ]
-                            }));
-                            const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                            const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                            const movements = await fetchMmInventoryMovements({
+                                branch: bId,
+                                product: compId
+                            });
                             const movementStockMap = new Map<string, number>();
                             movements.forEach((mov: any) => {
                                 const batchNo = mov.batch_no || "LOT-N/A";
@@ -644,6 +662,7 @@ export async function POST(request: Request) {
                             }
                         } catch (lotDeductErr) {
                             console.error(`[BFF Finished Goods] Error during inventory movements deduction for component ${compId}:`, lotDeductErr);
+                            if (lotDeductErr instanceof MmInventoryMovementError) throw lotDeductErr;
                         }
                     }
                 }
@@ -740,7 +759,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, data: newReceipt });
     } catch (e) {
         console.error("API Error in production finished-goods POST:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to create finished goods receipt" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as { message?: string }).message || "Failed to create finished goods receipt" },
+            { status: e instanceof MmInventoryMovementError ? e.status : 500 }
+        );
     }
 }
 

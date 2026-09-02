@@ -1,9 +1,23 @@
 import { getManilaTimeString, getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import {
+    positiveInteger,
+    trimmedString,
+    validateCustomerProfileFields
+} from "@/modules/manufacturing-management/clients/customer-profile-validation";
 import { DIRECTUS_URL, headers } from "./core-api.service";
 
 const CUSTOMER_COLLECTION = "customer";
 const CUSTOMER_READ_FIELDS = [
     "*",
+    "store_signage",
+    "tel_number",
+    "bank_details",
+    "price_type_id",
+    "price_type_id.price_type_id",
+    "price_type_id.price_type_name",
+    "price_type_id.is_active",
+    "price_type",
+    "otherDetails",
     "updated_by",
     "updated_at",
     "updated_by.user_id",
@@ -17,9 +31,13 @@ const CUSTOMER_PROFILE_FIELDS = [
     "customer_code",
     "customer_name",
     "customer_tin",
-    "contact_number",
     "customer_email",
     "store_name",
+    "store_signage",
+    "tel_number",
+    "bank_details",
+    "price_type_id",
+    "otherDetails",
     "store_type",
     "payment_term",
     "brgy",
@@ -39,9 +57,13 @@ export interface CustomerProfilePayload {
     customer_code?: string;
     customer_name?: string;
     customer_tin?: string | null;
-    contact_number?: string | null;
     customer_email?: string | null;
     store_name?: string | null;
+    store_signage?: string | null;
+    tel_number?: string | null;
+    bank_details?: string | null;
+    price_type_id?: number | string | null;
+    otherDetails?: string | null;
     store_type?: number | null;
     payment_term?: number | null;
     brgy?: string | null;
@@ -59,20 +81,70 @@ export class CustomerUnauthorizedError extends Error {
     }
 }
 
+export class CustomerNotFoundError extends Error {
+    constructor() {
+        super("Customer was not found.");
+        this.name = "CustomerNotFoundError";
+    }
+}
+
+export class CustomerProfileValidationError extends Error {
+    readonly fields: Record<string, string>;
+
+    constructor(fields: Record<string, string>) {
+        super("Customer profile validation failed.");
+        this.name = "CustomerProfileValidationError";
+        this.fields = fields;
+    }
+}
+
 type UnknownRecord = Record<string, unknown>;
+
+export const CUSTOMER_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+export const CUSTOMER_PAGE_SIZE_DEFAULT = CUSTOMER_PAGE_SIZE_OPTIONS[0];
+export const CUSTOMER_LOOKUP_LIMIT_DEFAULT = 10;
+export const CUSTOMER_LOOKUP_LIMIT_MAX = 25;
+
+export type CustomerStatusFilter = "all" | "active" | "inactive";
+
+export interface CustomerPageQuery {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: CustomerStatusFilter;
+}
+
+export interface CustomerPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+}
+
+export interface CustomerPageResponse {
+    data: UnknownRecord[];
+    pagination: CustomerPagination;
+}
+
+export interface CustomerLookupQuery {
+    search?: string;
+    customerId?: number | string;
+    customerCode?: string;
+    limit?: number;
+}
+
+export class CustomerPaginationValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CustomerPaginationValidationError";
+    }
+}
 
 function asRecord(value: unknown): UnknownRecord | null {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? value as UnknownRecord
-        : null;
-}
-
-function positiveInteger(value: unknown): number | null {
-    const parsed = typeof value === "string" && value.trim() !== ""
-        ? Number(value.trim())
-        : value;
-    return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed > 0
-        ? parsed
         : null;
 }
 
@@ -108,9 +180,16 @@ export function normalizeCustomer(value: unknown): UnknownRecord {
     const customer = asRecord(value) || {};
     const updatedBy = relationUserId(customer.updated_by);
     const updatedAt = typeof customer.updated_at === "string" ? customer.updated_at : null;
+    const priceTypeRelation = asRecord(customer.price_type_id);
+    const priceTypeId = relationUserId(priceTypeRelation?.price_type_id ?? customer.price_type_id);
+    const priceTypeName = nonEmptyString(priceTypeRelation?.price_type_name)
+        || nonEmptyString(customer.price_type)
+        || null;
 
     return {
         ...customer,
+        price_type_id: priceTypeId,
+        price_type_name: priceTypeName,
         updated_by: updatedBy,
         updated_at: updatedAt,
         updated_by_name: relationUserName(customer.updated_by, updatedBy)
@@ -124,6 +203,95 @@ function pickProfilePayload(value: CustomerProfilePayload | UnknownRecord): Unkn
             .filter(field => Object.prototype.hasOwnProperty.call(input, field))
             .map(field => [field, input[field]])
     );
+}
+
+const STRING_PROFILE_FIELDS = [
+    "customer_code",
+    "customer_name",
+    "customer_tin",
+    "customer_email",
+    "store_name",
+    "store_signage",
+    "tel_number",
+    "bank_details",
+    "otherDetails",
+    "brgy",
+    "city",
+    "province"
+] as const;
+
+function normalizeProfilePayload(value: CustomerProfilePayload | UnknownRecord): UnknownRecord {
+    const profile = pickProfilePayload(value);
+    for (const field of STRING_PROFILE_FIELDS) {
+        if (typeof profile[field] === "string") profile[field] = profile[field].trim();
+    }
+    return profile;
+}
+
+function customerValidationErrors(profile: UnknownRecord): Record<string, string> {
+    const errors = validateCustomerProfileFields(profile);
+    if (!trimmedString(profile.customer_code)) errors.customer_code = "Customer Code is required.";
+    if (!trimmedString(profile.customer_name)) errors.customer_name = "Customer Name is required.";
+    return errors;
+}
+
+function throwIfInvalidCustomerProfile(profile: UnknownRecord): void {
+    const errors = customerValidationErrors(profile);
+    if (Object.keys(errors).length > 0) throw new CustomerProfileValidationError(errors);
+}
+
+type ResolvedPriceType = { price_type_id: number; price_type_name: string };
+
+async function resolveActivePriceType(value: unknown): Promise<ResolvedPriceType> {
+    const priceTypeId = positiveInteger(value);
+    if (!priceTypeId) {
+        throw new CustomerProfileValidationError({
+            price_type_id: "Price Type must be a valid active price-template ID."
+        });
+    }
+
+    const params = new URLSearchParams({
+        "filter[price_type_id][_eq]": String(priceTypeId),
+        "filter[is_active][_eq]": "1",
+        fields: "price_type_id,price_type_name,is_active",
+        limit: "1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/price_types?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+
+    if (!response.ok) {
+        throw new Error(`Unable to verify the selected Price Type (${response.status}).`);
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const row = Array.isArray(body?.data) ? asRecord(body.data[0]) : null;
+    const activeValue = row?.is_active;
+    const isActive = activeValue === true || activeValue === 1 || activeValue === "1"
+        || (typeof activeValue === "string" && activeValue.trim().toLowerCase() === "true");
+    const name = nonEmptyString(row?.price_type_name);
+    if (!row || !isActive || !name || positiveInteger(row.price_type_id) !== priceTypeId) {
+        throw new CustomerProfileValidationError({
+            price_type_id: "Select an active Price Type template."
+        });
+    }
+
+    return { price_type_id: priceTypeId, price_type_name: name };
+}
+
+async function fetchCustomerById(id: number | string): Promise<UnknownRecord> {
+    const response = await fetch(
+        `${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}/${encodeURIComponent(String(id))}?fields=${encodeURIComponent(CUSTOMER_READ_FIELDS)}`,
+        { headers, cache: "no-store" }
+    );
+    if (response.status === 404) throw new CustomerNotFoundError();
+    if (!response.ok) throw new Error(`Unable to load the customer profile (${response.status}).`);
+
+    const body = await response.json().catch(() => ({}));
+    const customer = asRecord(body?.data);
+    if (!customer) throw new CustomerNotFoundError();
+    return normalizeCustomer(customer);
 }
 
 function validAuditTimestamp(value: string): boolean {
@@ -198,28 +366,190 @@ async function directusMutation(pathname: string, method: "POST" | "PATCH", body
     return responseBody.data;
 }
 
-export async function fetchCustomers(search?: string, includeInactive = false): Promise<UnknownRecord[]> {
-    try {
-        const params = new URLSearchParams({
-            limit: "250",
-            sort: "customer_name",
-            fields: CUSTOMER_READ_FIELDS
-        });
-        if (!includeInactive) params.set("filter[isActive][_eq]", "true");
-        if (search && search.trim()) params.set("search", search.trim());
-
-        const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
-            headers,
-            cache: "no-store"
-        });
-        if (!response.ok) return [];
-
-        const body = await response.json().catch(() => ({}));
-        return Array.isArray(body?.data) ? body.data.map(normalizeCustomer) : [];
-    } catch (error) {
-        console.error("[Manufacturing Directus API] Failed to fetch customers:", error);
-        return [];
+function normalizeCustomerPage(value: number | undefined, fallback: number, label: string): number {
+    if (value === undefined) return fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new CustomerPaginationValidationError(`${label} must be a positive integer.`);
     }
+    return value;
+}
+
+function normalizeCustomerPageSize(value: number | undefined): number {
+    if (value === undefined) return CUSTOMER_PAGE_SIZE_DEFAULT;
+    if (!CUSTOMER_PAGE_SIZE_OPTIONS.includes(value as typeof CUSTOMER_PAGE_SIZE_OPTIONS[number])) {
+        throw new CustomerPaginationValidationError(
+            `pageSize must be one of ${CUSTOMER_PAGE_SIZE_OPTIONS.join(", ")}.`
+        );
+    }
+    return value;
+}
+
+function normalizeCustomerStatus(value: CustomerStatusFilter | undefined): CustomerStatusFilter {
+    const status = value || "active";
+    if (status !== "all" && status !== "active" && status !== "inactive") {
+        throw new CustomerPaginationValidationError("status must be all, active, or inactive.");
+    }
+    return status;
+}
+
+function directusFilterCount(value: unknown): number {
+    const body = asRecord(value);
+    const meta = asRecord(body?.meta);
+    const total = Number(meta?.filter_count);
+    if (!Number.isSafeInteger(total) || total < 0) {
+        throw new Error("Directus did not return a valid customer filter count.");
+    }
+    return total;
+}
+
+function applyCustomerFilters(
+    params: URLSearchParams,
+    search: string,
+    status: CustomerStatusFilter
+): void {
+    if (status !== "all") {
+        params.set("filter[isActive][_eq]", status === "active" ? "true" : "false");
+    }
+
+    const normalizedSearch = search.trim();
+    if (!normalizedSearch) return;
+
+    const searchableFields = [
+        "customer_name",
+        "customer_code",
+        "customer_tin",
+        "customer_email",
+        "province",
+        "city",
+        "brgy"
+    ];
+    searchableFields.forEach((field, index) => {
+        params.set(`filter[_or][${index}][${field}][_icontains]`, normalizedSearch);
+    });
+}
+
+async function fetchCustomerPageFromDirectus(
+    page: number,
+    pageSize: number,
+    search: string,
+    status: CustomerStatusFilter
+): Promise<{ data: UnknownRecord[]; total: number }> {
+    const params = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String((page - 1) * pageSize),
+        sort: "customer_name,id",
+        fields: CUSTOMER_READ_FIELDS,
+        meta: "filter_count"
+    });
+    applyCustomerFilters(params, search, status);
+
+    const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load customers (${response.status}).`);
+    }
+
+    const body: unknown = await response.json().catch(() => ({}));
+    const record = asRecord(body);
+    if (!Array.isArray(record?.data)) {
+        throw new Error("Directus returned an invalid customer page.");
+    }
+
+    return {
+        data: record.data.map(normalizeCustomer),
+        total: directusFilterCount(body)
+    };
+}
+
+export async function fetchCustomersPage(query: CustomerPageQuery = {}): Promise<CustomerPageResponse> {
+    const requestedPage = normalizeCustomerPage(query.page, 1, "page");
+    const pageSize = normalizeCustomerPageSize(query.pageSize);
+    const search = query.search || "";
+    const status = normalizeCustomerStatus(query.status);
+
+    let page = requestedPage;
+    let result = await fetchCustomerPageFromDirectus(page, pageSize, search, status);
+    let totalPages = result.total === 0 ? 0 : Math.ceil(result.total / pageSize);
+
+    if (totalPages === 0) {
+        page = 1;
+    } else if (page > totalPages) {
+        page = totalPages;
+        result = await fetchCustomerPageFromDirectus(page, pageSize, search, status);
+        totalPages = Math.ceil(result.total / pageSize);
+    }
+
+    return {
+        data: result.data,
+        pagination: {
+            page,
+            pageSize,
+            total: result.total,
+            totalPages,
+            hasPreviousPage: page > 1,
+            hasNextPage: totalPages > 0 && page < totalPages
+        }
+    };
+}
+
+function normalizeCustomerLookupLimit(value: number | undefined): number {
+    if (value === undefined) return CUSTOMER_LOOKUP_LIMIT_DEFAULT;
+    if (!Number.isSafeInteger(value) || value <= 0 || value > CUSTOMER_LOOKUP_LIMIT_MAX) {
+        throw new CustomerPaginationValidationError(
+            `limit must be a positive integer no greater than ${CUSTOMER_LOOKUP_LIMIT_MAX}.`
+        );
+    }
+    return value;
+}
+
+export async function fetchCustomerLookup(query: CustomerLookupQuery = {}): Promise<UnknownRecord[]> {
+    const limit = normalizeCustomerLookupLimit(query.limit);
+    const params = new URLSearchParams({
+        limit: String(limit),
+        sort: "customer_name,id",
+        fields: CUSTOMER_READ_FIELDS
+    });
+    params.set("filter[isActive][_eq]", "true");
+
+    const customerId = query.customerId === undefined ? "" : String(query.customerId).trim();
+    if (customerId) params.set("filter[id][_eq]", customerId);
+
+    const customerCode = query.customerCode?.trim();
+    if (customerCode) params.set("filter[customer_code][_eq]", customerCode);
+
+    applyCustomerFilters(params, query.search || "", "all");
+
+    const response = await fetch(`${DIRECTUS_URL}/items/${CUSTOMER_COLLECTION}?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load customer lookup results (${response.status}).`);
+    }
+
+    const body: unknown = await response.json().catch(() => ({}));
+    const record = asRecord(body);
+    if (!Array.isArray(record?.data)) {
+        throw new Error("Directus returned an invalid customer lookup response.");
+    }
+
+    return record.data.map(normalizeCustomer);
+}
+
+/**
+ * Backward-compatible bounded helper for server consumers that still expect an array.
+ * Directory callers must use fetchCustomersPage instead.
+ */
+export async function fetchCustomers(search?: string, includeInactive = false): Promise<UnknownRecord[]> {
+    const result = await fetchCustomersPage({
+        page: 1,
+        pageSize: CUSTOMER_PAGE_SIZE_OPTIONS[CUSTOMER_PAGE_SIZE_OPTIONS.length - 1],
+        search,
+        status: includeInactive ? "all" : "active"
+    });
+    return result.data;
 }
 
 export async function createCustomer(
@@ -227,14 +557,18 @@ export async function createCustomer(
     context?: CustomerAuditContext
 ): Promise<UnknownRecord> {
     const audit = await requireAuditContext(context);
-    const profile = pickProfilePayload(payload);
+    const profile = normalizeProfilePayload(payload);
     if (profile.isActive === undefined) profile.isActive = 1;
+    throwIfInvalidCustomerProfile(profile);
+    const priceType = await resolveActivePriceType(profile.price_type_id);
 
     const created = await directusMutation(
         `/items/${CUSTOMER_COLLECTION}?fields=${encodeURIComponent(CUSTOMER_READ_FIELDS)}`,
         "POST",
         {
             ...profile,
+            price_type_id: priceType.price_type_id,
+            price_type: priceType.price_type_name,
             encoder_id: audit.userId,
             updated_by: audit.userId,
             updated_at: audit.updatedAt
@@ -249,11 +583,24 @@ export async function updateCustomer(
     context?: CustomerAuditContext
 ): Promise<UnknownRecord> {
     const audit = await requireAuditContext(context);
-    const profile = pickProfilePayload(payload);
+    const profile = normalizeProfilePayload(payload);
+    const current = await fetchCustomerById(id);
+    const mergedProfile = {
+        ...pickProfilePayload(current),
+        ...profile
+    };
+    throwIfInvalidCustomerProfile(mergedProfile);
+    const priceType = await resolveActivePriceType(mergedProfile.price_type_id);
     const updated = await directusMutation(
         `/items/${CUSTOMER_COLLECTION}/${encodeURIComponent(String(id))}?fields=${encodeURIComponent(CUSTOMER_READ_FIELDS)}`,
         "PATCH",
-        { ...profile, updated_by: audit.userId, updated_at: audit.updatedAt }
+        {
+            ...mergedProfile,
+            price_type_id: priceType.price_type_id,
+            price_type: priceType.price_type_name,
+            updated_by: audit.userId,
+            updated_at: audit.updatedAt
+        }
     );
     return normalizeCustomer(updated);
 }

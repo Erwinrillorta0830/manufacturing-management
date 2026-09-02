@@ -128,7 +128,7 @@ export default function InvoiceConsolidationModule() {
             eyebrow="Batch Operations"
             title="Consolidation"
             accent="Creation"
-            description="Create and manage invoice consolidation batches for each branch."
+            description="Create and manage sales order and job order consolidation batches for each branch."
             controls={
                 <div className="grid w-full gap-3 sm:grid-cols-2 lg:w-auto lg:grid-cols-[240px_240px_auto]">
                     <FilterField label="Branch">
@@ -202,8 +202,8 @@ export default function InvoiceConsolidationModule() {
     );
 
     const confirmLabels: Record<string, { title: string; description: string }> = {
-        audit: { title: "Audit this batch?", description: "This will mark the batch as audited and dispatch all linked invoices." },
-        revert: { title: "Revert this batch?", description: "This will reset the batch to Pending status and undispatch all linked invoices." },
+        audit: { title: "Audit this batch?", description: "This will mark the batch as audited and finalize order fulfillment." },
+        revert: { title: "Revert this batch?", description: "This will reset the batch to Pending status." },
         "start-picking": { title: "Start picking this batch?", description: "This will move the batch to Picking status so quantities can be recorded." },
     };
 
@@ -255,7 +255,7 @@ export default function InvoiceConsolidationModule() {
             </AlertDialog>
 
             {/* Main Table */}
-            <ConsolidationSection eyebrow="Batch Register" title="Consolidation Batches" className="relative min-h-[420px]" >
+            <ConsolidationSection eyebrow="Batch Register" title="Consolidation Batches" className="relative " >
                 {loading && (
                         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-5 bg-background/70 backdrop-blur-sm">
                             <div className="rounded-xl border bg-card p-5 shadow-2xl"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
@@ -264,11 +264,11 @@ export default function InvoiceConsolidationModule() {
                 )}
 
                 {consolidations.length === 0 && !loading ? (
-                    <ConsolidationEmptyState icon={Package} title="No Consolidation Batches" description={<>Click &quot;Create Batch&quot; to create an invoice consolidation batch for <strong>{selectedBranch.branchName}</strong>.</>} />
+                    <ConsolidationEmptyState icon={Package} title="No Consolidation Batches" description={<>Click &quot;Create Batch&quot; to create a consolidation batch for <strong>{selectedBranch.branchName}</strong>.</>} />
                 ) : (
                     <div className="min-h-0 flex-1 overflow-auto custom-scrollbar">
                         <Table className="min-w-[760px]">
-                            <TableHeader className="sticky top-0 z-10 bg-muted/80"><TableRow><TableHead className="pl-5 md:pl-7">Batch</TableHead><TableHead>Branch</TableHead><TableHead>Invoices</TableHead><TableHead className="text-right">Total Amount</TableHead><TableHead>Created</TableHead><TableHead className="pr-5 text-center md:pr-7">Status</TableHead></TableRow></TableHeader>
+                            <TableHeader className="sticky top-0 z-10 bg-muted/80"><TableRow><TableHead className="pl-5 md:pl-7">Batch</TableHead><TableHead>Branch</TableHead><TableHead>Orders</TableHead><TableHead className="text-right">Total Amount</TableHead><TableHead>Created</TableHead><TableHead className="pr-5 text-center md:pr-7">Status</TableHead></TableRow></TableHeader>
                             <TableBody>
                                 {consolidations.map((c) => (
                                     <React.Fragment key={c.id}>
@@ -279,14 +279,14 @@ export default function InvoiceConsolidationModule() {
                                             className="group cursor-pointer border-border/30 transition-all hover:bg-primary/[0.02] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30"
                                         >
                                              <TableCell className="pl-5 font-mono font-black md:pl-7">{c.consolidatorNo}</TableCell>
-                                            <TableCell className="text-muted-foreground">{c.branchName || selectedBranch.branchName}</TableCell>
-                                            <TableCell className="text-muted-foreground">
+                                             <TableCell className="text-muted-foreground">{c.branchName || selectedBranch.branchName}</TableCell>
+                                             <TableCell className="text-muted-foreground">
                                                 <button
                                                     onClick={(e) => toggleExpand(e, c.id)}
                                                     className="text-primary font-semibold hover:underline cursor-pointer"
                                                     suppressHydrationWarning
                                                 >
-                                                    {c.invoices?.length || 0} invoice(s)
+                                                    {c.invoices?.length || 0} order(s)
                                                 </button>
                                             </TableCell>
                                             <TableCell className="text-right font-black tabular-nums">
@@ -303,8 +303,8 @@ export default function InvoiceConsolidationModule() {
                                                     <table className="w-full text-left border-collapse text-[10px]">
                                                         <thead>
                                                             <tr className="border-t border-b bg-muted/10">
-                                                                <th className="p-2 pl-12 font-semibold text-muted-foreground uppercase">Invoice No</th>
-                                                                <th className="p-2 font-semibold text-muted-foreground uppercase">Invoice ID</th>
+                                                                <th className="p-2 pl-12 font-semibold text-muted-foreground uppercase">Order No</th>
+                                                                <th className="p-2 font-semibold text-muted-foreground uppercase">Order ID</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>

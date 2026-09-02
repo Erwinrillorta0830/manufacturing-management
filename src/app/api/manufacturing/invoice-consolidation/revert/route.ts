@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
 import { getUserIdFromToken } from "../_auth";
+import { getPhTimestamp } from "../_time-utils";
 
 export async function POST(req: NextRequest) {
     try {
@@ -43,25 +44,23 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ message: "Failed to load batch invoices" }, { status: 502 });
         }
         const junctions = (await invRes.json()).data || [];
+        const phNow = getPhTimestamp();
 
         if (junctions.length > 0) {
-            const invoiceIds = junctions.map((j: { invoice_id: number }) => j.invoice_id);
-            const bulkRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
-                method: "PATCH",
-                headers: directusHeaders,
-                body: JSON.stringify({
-                    query: { filter: { invoice_id: { _in: invoiceIds } } },
-                    data: { isDispatched: false },
-                }),
-            });
-            if (!bulkRes.ok) {
-                return NextResponse.json({ message: `Failed to unrevert invoices (HTTP ${bulkRes.status})` }, { status: bulkRes.status });
+            const invoiceIds = junctions.map((j: { invoice_id: number }) => Number(j.invoice_id)).filter(Boolean);
+            for (const orderId of invoiceIds) {
+                await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                    method: "PATCH",
+                    headers: directusHeaders,
+                    body: JSON.stringify({ order_status: "For Consolidation", updated_at: phNow }),
+                });
             }
         }
 
         const updateBody: Record<string, unknown> = {
             status: "Pending",
             checked_by: null,
+            updated_at: phNow,
         };
         const patchRes = await fetch(`${DIRECTUS_URL}/items/consolidator/${batchId}`, {
             method: "PATCH",

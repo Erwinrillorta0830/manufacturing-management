@@ -122,7 +122,9 @@ export default function StockTransferSummaryView() {
 
   const branchOptions = React.useMemo(() => [
     { value: 'all', label: 'All Branches' },
-    ...branches.map(b => ({ value: String(b.id), label: b.branch_name || b.name || `Branch ${b.id}` }))
+    ...branches
+      .filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
+      .map(b => ({ value: String(b.id), label: b.branch_name || b.name || `Branch ${b.id}` }))
   ], [branches]);
 
   const statusOptions = React.useMemo(() => [

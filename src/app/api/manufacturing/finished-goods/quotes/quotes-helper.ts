@@ -17,7 +17,7 @@ export async function fetchQuotations(): Promise<unknown[]> {
         const promises: Promise<void>[] = [];
         
         if (custIds.length > 0) {
-            const custUrl = `${DIRECTUS_URL}/items/customer?filter[id][_in]=${custIds.join(",")}&limit=-1`;
+            const custUrl = `${DIRECTUS_URL}/items/customer?filter[id][_in]=${custIds.join(",")}&limit=-1&fields=id,customer_code,customer_name,price_type_id,price_type_id.price_type_id,price_type_id.price_type_name,price_type`;
             promises.push(
                 fetch(custUrl, { headers, cache: "no-store" }).then(async (custRes) => {
                     if (custRes.ok) {

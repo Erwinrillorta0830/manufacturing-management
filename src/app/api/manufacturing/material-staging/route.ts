@@ -6,6 +6,7 @@ import {
     branchProductLotBatchKey,
     normalizeBatchNo
 } from "./_stock";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,7 +94,9 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_id&fields=work_center_id,work_center_name,is_active`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&limit=-1&sort=branch_name&fields=id,branch_name,branch_code`, { headers, cache: "no-store" }).catch(() => null),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?limit=-1&sort=-movement_id`, { headers, cache: "no-store" }).catch(() => null),
+            fetchMmInventoryMovements({
+                branch: branchFilter && branchFilter !== "all" ? Number(branchFilter) : null
+            }),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,expiry_date,received_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=*,job_order_id.product_id,job_order_id.job_order_no`, { headers, cache: "no-store" }).catch(() => null)
         ]);
@@ -102,7 +105,6 @@ export async function GET(request: Request) {
         requireDirectusResponse(materialsRes, "Job Order materials");
         requireDirectusResponse(reservationsRes, "Job Order material reservations");
         requireDirectusResponse(productsRes, "Products");
-        requireDirectusResponse(movementsRes, "Inventory movements");
 
         const rawJOs = joRes.ok ? (await joRes.json()).data || [] : [];
         const rawMaterials: DirectusMaterial[] = materialsRes && materialsRes.ok ? (await materialsRes.json()).data || [] : [];
@@ -110,7 +112,7 @@ export async function GET(request: Request) {
         const rawProducts = productsRes.ok ? (await productsRes.json()).data || [] : [];
         const rawWorkCenters = workCentersRes && workCentersRes.ok ? (await workCentersRes.json()).data || [] : [];
         const rawBranches = branchesRes && branchesRes.ok ? (await branchesRes.json()).data || [] : [];
-        const rawMovements = movementsRes && movementsRes.ok ? (await movementsRes.json()).data || [] : [];
+        const rawMovements = movementsRes;
         const rawReceiving = receivingRes && receivingRes.ok ? (await receivingRes.json()).data || [] : [];
         const rawYields = yieldsRes && yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
 
@@ -160,14 +162,8 @@ export async function GET(request: Request) {
         }>();
         const lotIdsByBranchProductBatch = new Map<string, Set<number>>();
 
-        rawMovements.forEach((m: {
-            product_id?: number | { product_id?: number };
-            branch_id?: number;
-            lot_id?: number;
-            batch_no?: string;
-            quantity?: number;
-        }) => {
-            const pId = typeof m.product_id === "object" ? Number(m.product_id?.product_id) : Number(m.product_id);
+        rawMovements.forEach((m) => {
+            const pId = Number(m.product_id || 0);
             const batchNo = String(m.batch_no || "LOT-N/A").trim() || "LOT-N/A";
             const normalizedBatchNo = normalizeBatchNo(batchNo) || "lot-n/a";
             const qty = Number(m.quantity || 0);
@@ -199,7 +195,7 @@ export async function GET(request: Request) {
         // Older rows may contain FLOOR-STAGING-WC01, so only the current explicit work-center
         // audit format is trusted as an override of the resolved Job Order destination.
         const stagedDestinationByMaterialBatch = new Map<string, string>();
-        rawMovements.forEach((m: { batch_no?: string; quantity?: number; remarks?: string }) => {
+        rawMovements.forEach((m) => {
             if (Number(m.quantity || 0) <= 0) return;
             const remarks = String(m.remarks || "");
             const workCenterMatch = remarks.match(/work_center_id=(\d+)/i);
@@ -297,20 +293,9 @@ export async function GET(request: Request) {
         });
 
         const stagingMovementByKey = new Map<string, { quantity: number; lotId: number; stagingBin: string | null; negativeOverride: boolean }>();
-        rawMovements.forEach((movement: {
-            source_document_id?: number;
-            branch_id?: number;
-            product_id?: number | { product_id?: number };
-            lot_id?: number;
-            batch_no?: string;
-            transaction_type_id?: number;
-            quantity?: number;
-            remarks?: string;
-        }) => {
+        rawMovements.forEach((movement) => {
             const remarks = String(movement.remarks || "");
-            const productId = typeof movement.product_id === "object"
-                ? Number(movement.product_id?.product_id)
-                : Number(movement.product_id);
+            const productId = Number(movement.product_id || 0);
             const lotId = Number(movement.lot_id || 0);
             const jobOrderId = Number(movement.source_document_id || 0);
             const branchId = Number(movement.branch_id || 0);
@@ -648,7 +633,13 @@ export async function GET(request: Request) {
         console.error("[Material Staging GET API] Error:", e);
         return NextResponse.json(
             { success: false, error: (e as Error).message || "Failed to fetch material staging data" },
-            { status: e instanceof MaterialStagingReadError ? e.status : 500 }
+            {
+                status: e instanceof MaterialStagingReadError
+                    ? e.status
+                    : e instanceof MmInventoryMovementError
+                        ? e.status
+                        : 500
+            }
         );
     }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { LayoutGrid, Warehouse, Layers, Plus, RefreshCw, ArrowLeftRight } from "lucide-react";
+import { LayoutGrid, Warehouse, Layers, RefreshCw, ArrowLeftRight, Search, X, RotateCcw } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
 import { useInventoryMovements } from "./hooks/useInventoryMovements";
@@ -10,13 +10,14 @@ import WarehouseRackView from "./components/WarehouseRackView";
 import LotTable from "./components/LotTable";
 import BatchTable from "./components/BatchTable";
 import InventoryMovementTable from "./components/InventoryMovementTable";
-import LotFormDialog from "./components/LotFormDialog";
-import BatchFormDialog from "./components/BatchFormDialog";
 import BatchMovementsDialog from "./components/BatchMovementsDialog";
 import { SearchableProductSelect } from "./components/SearchableProductSelect";
+import { SearchableLotSelect } from "./components/SearchableLotSelect";
+import { SearchableBatchSelect } from "./components/SearchableBatchSelect";
 import { Batch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function LotManagementModule() {
     const [mounted, setMounted] = useState(false);
@@ -30,58 +31,46 @@ export default function LotManagementModule() {
         lots,
         filteredLots,
         loading: loadingLots,
-        saving: savingLot,
         searchQuery: lotSearchQuery,
         setSearchQuery: setLotSearchQuery,
-        uoms,
-        branches,
-        isFormOpen: isLotFormOpen,
-        editingLot,
-        formData: lotFormData,
-        formErrors: lotFormErrors,
-        isDuplicateLotName,
-        openCreateDialog: openCreateLotDialog,
-        openEditDialog: openEditLotDialog,
-        closeDialog: closeLotDialog,
-        handleFormChange: handleLotFormChange,
-        handleCreate: handleCreateLot,
-        handleUpdate: handleUpdateLot,
+        // uoms,
         loadLots
     } = useLotManagement();
 
+    // Global Filter States
     const [selectedProductId, setSelectedProductId] = useState<number | "ALL">("ALL");
+    const [selectedLotId, setSelectedLotId] = useState<number | "ALL">("ALL");
+    const [selectedBatchId, setSelectedBatchId] = useState<number | "ALL">("ALL");
+    const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
     const {
         batches,
         products,
         loadingBatches,
-        savingBatch,
         selectedLotFilter,
         setSelectedLotFilter,
         statusFilter,
         setStatusFilter,
         batchSearchQuery,
         setBatchSearchQuery,
-        isBatchFormOpen,
-        editingBatch,
-        batchFormData,
-        batchFormErrors,
-        openCreateBatchDialog,
-        closeBatchDialog,
-        handleBatchFormChange,
-        handleCreateBatch,
-        handleUpdateBatch,
         handleDeleteBatch,
         filteredBatches,
         kpiMetrics,
         loadBatches
-    } = useBatchRegistration(lots, selectedProductId);
+    } = useBatchRegistration(
+        lots,
+        selectedProductId,
+        selectedLotId,
+        selectedBatchId,
+        globalSearchQuery
+    );
 
-    // Inventory Movements Hook (/api/mm-inventory-movements/all)
+    // Inventory Movements Hook
     const {
         movements,
         filteredMovements,
         loadingMovements,
+        movementError,
         movementSearchQuery,
         setMovementSearchQuery,
         directionFilter,
@@ -96,7 +85,12 @@ export default function LotManagementModule() {
         movementStats,
         loadMovements,
         resetFilters: resetMovementFilters
-    } = useInventoryMovements(selectedProductId);
+    } = useInventoryMovements(
+        selectedProductId,
+        selectedLotId,
+        selectedBatchId,
+        globalSearchQuery
+    );
 
     const [activeTab, setActiveTab] = useState<"rack-view" | "storage-lots" | "batch-table" | "movement-history">("rack-view");
 
@@ -125,15 +119,77 @@ export default function LotManagementModule() {
         loadMovements();
     };
 
-    const displayedLotsForTable = useMemo(() => {
-        if (selectedProductId === "ALL") return filteredLots;
+    // Cascaded available options for Lot & Batch dropdowns
+    const availableLotsForSelect = useMemo(() => {
+        if (selectedProductId === "ALL") return lots;
         const relevantLotIds = new Set(
             batches
                 .filter((b) => Number(b.productId) === Number(selectedProductId))
                 .map((b) => b.lotId)
         );
-        return filteredLots.filter((l) => relevantLotIds.has(l.lotId));
-    }, [filteredLots, batches, selectedProductId]);
+        return lots.filter((l) => relevantLotIds.has(l.lotId));
+    }, [lots, batches, selectedProductId]);
+
+    const availableBatchesForSelect = useMemo(() => {
+        return batches.filter((b) => {
+            if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
+                return false;
+            }
+            if (selectedLotId !== "ALL" && Number(b.lotId) !== Number(selectedLotId)) {
+                return false;
+            }
+            return true;
+        });
+    }, [batches, selectedProductId, selectedLotId]);
+
+    const hasAnyFilterActive =
+        selectedProductId !== "ALL" ||
+        selectedLotId !== "ALL" ||
+        selectedBatchId !== "ALL" ||
+        globalSearchQuery.trim() !== "";
+
+    const handleResetAllFilters = () => {
+        setSelectedProductId("ALL");
+        setSelectedLotId("ALL");
+        setSelectedBatchId("ALL");
+        setGlobalSearchQuery("");
+    };
+
+    const displayedLotsForTable = useMemo(() => {
+        let baseLots = filteredLots;
+        if (selectedLotId !== "ALL") {
+            baseLots = baseLots.filter((l) => Number(l.lotId) === Number(selectedLotId));
+        }
+        if (selectedProductId !== "ALL") {
+            const relevantLotIds = new Set(
+                batches
+                    .filter((b) => Number(b.productId) === Number(selectedProductId))
+                    .map((b) => b.lotId)
+            );
+            baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));
+        }
+        if (selectedBatchId !== "ALL") {
+            const batch = batches.find((b) => Number(b.batchId) === Number(selectedBatchId));
+            if (batch) {
+                baseLots = baseLots.filter((l) => Number(l.lotId) === Number(batch.lotId));
+            }
+        }
+        if (globalSearchQuery.trim()) {
+            const q = globalSearchQuery.toLowerCase().trim();
+            baseLots = baseLots.filter((l) => {
+                const nameMatches = l.lotName?.toLowerCase().includes(q);
+                const hasMatchingBatch = batches.some(
+                    (b) =>
+                        Number(b.lotId) === Number(l.lotId) &&
+                        (b.batchNumber?.toLowerCase().includes(q) ||
+                            b.productName?.toLowerCase().includes(q) ||
+                            b.itemCode?.toLowerCase().includes(q))
+                );
+                return nameMatches || hasMatchingBatch;
+            });
+        }
+        return baseLots;
+    }, [filteredLots, batches, selectedProductId, selectedLotId, selectedBatchId, globalSearchQuery]);
 
     if (!mounted) {
         return (
@@ -160,69 +216,131 @@ export default function LotManagementModule() {
                 onValueChange={(val) => setActiveTab(val as "rack-view" | "storage-lots" | "batch-table" | "movement-history")}
                 className="space-y-4"
             >
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-card p-2 rounded-xl border border-border shadow-xs">
-                    <TabsList className="bg-muted/60 p-1 rounded-lg">
-                        <TabsTrigger
-                            value="rack-view"
-                            className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
-                        >
-                            <LayoutGrid className="h-4 w-4 text-primary" />
-                            Visual Rack Grid
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="storage-lots"
-                            className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
-                        >
-                            <Warehouse className="h-4 w-4 text-primary" />
-                            Storage Racks ({displayedLotsForTable.length})
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="batch-table"
-                            className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
-                        >
-                            <Layers className="h-4 w-4 text-primary" />
-                            Registered Batches ({filteredBatches.length})
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="movement-history"
-                            className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
-                        >
-                            <ArrowLeftRight className="h-4 w-4 text-primary" />
-                            Movement History ({filteredMovements.length})
-                        </TabsTrigger>
-                    </TabsList>
+                <div className="flex flex-col gap-3 bg-card p-3 rounded-xl border border-border shadow-xs">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+                        <TabsList className="bg-muted/60 p-1 rounded-lg shrink-0 flex-wrap">
+                            <TabsTrigger
+                                value="rack-view"
+                                className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
+                            >
+                                <LayoutGrid className="h-4 w-4 text-primary" />
+                                Visual Rack Grid
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="storage-lots"
+                                className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
+                            >
+                                <Warehouse className="h-4 w-4 text-primary" />
+                                Storage Racks ({displayedLotsForTable.length})
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="batch-table"
+                                className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
+                            >
+                                <Layers className="h-4 w-4 text-primary" />
+                                Registered Batches ({filteredBatches.length})
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="movement-history"
+                                className="gap-2 text-xs font-bold data-[state=active]:bg-background data-[state=active]:shadow-xs px-3.5 h-8"
+                            >
+                                <ArrowLeftRight className="h-4 w-4 text-primary" />
+                                Movement History ({filteredMovements.length})
+                            </TabsTrigger>
+                        </TabsList>
 
-                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-                        {/* Global Product FEFO Searchable Dropdown */}
-                        <div className="w-[300px] sm:w-[300px]">
+                        <div className="flex items-center gap-2 w-full lg:w-auto justify-end">
+                            {/* Global Searchbar */}
+                            <div className="relative flex-1 lg:w-[240px]">
+                                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                                <Input
+                                    type="text"
+                                    placeholder="Search batch, SKU, lot..."
+                                    value={globalSearchQuery}
+                                    onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                                    className="pl-8 pr-7 h-8.5 text-xs bg-background shadow-2xs"
+                                />
+                                {globalSearchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setGlobalSearchQuery("")}
+                                        className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
+                            </div>
+
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={handleRefreshAll}
+                                className="h-8.5 w-8.5 shrink-0"
+                                title="Refresh Data"
+                            >
+                                <RefreshCw className="h-4 w-4" />
+                            </Button>
+
+                            {hasAnyFilterActive && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={handleResetAllFilters}
+                                    className="h-8.5 px-2.5 text-xs text-muted-foreground hover:text-foreground shrink-0 gap-1 font-medium"
+                                    title="Reset all filters"
+                                >
+                                    <RotateCcw className="h-3 w-3" />
+                                    Reset
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Filter Dropdowns Row: Product, Lot, Batch */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-border/50">
+                        {/* 1. Global Product Select */}
+                        <div className="w-full">
                             <SearchableProductSelect
                                 products={products}
                                 value={selectedProductId}
-                                onValueChange={setSelectedProductId}
+                                onValueChange={(val) => {
+                                    setSelectedProductId(val);
+                                }}
                                 allowAll={true}
                                 allLabel="All Products (Global FEFO)"
                                 placeholder="All Products (Global FEFO)"
-                                className="h-8.5 bg-background shadow-2xs"
+                                className="h-8.5 bg-background shadow-2xs w-full"
                             />
                         </div>
 
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={handleRefreshAll}
-                            className="h-8.5 w-8.5 shrink-0"
-                            title="Refresh Data"
-                        >
-                            <RefreshCw className="h-4 w-4" />
-                        </Button>
-                        <Button
-                            variant="outline"
-                            onClick={openCreateLotDialog}
-                            className="h-8.5 gap-1.5 text-xs shrink-0"
-                        >
-                            <Plus className="h-3.5 w-3.5" />
-                            Add Rack / Lot
-                        </Button>
+                        {/* 2. Global Storage Lot Select */}
+                        <div className="w-full">
+                            <SearchableLotSelect
+                                lots={availableLotsForSelect}
+                                value={selectedLotId}
+                                onValueChange={(val) => {
+                                    setSelectedLotId(val);
+                                }}
+                                allowAll={true}
+                                placeholder="All Storage Racks / Lots"
+                                className="h-8.5 bg-background shadow-2xs w-full"
+                            />
+                        </div>
+
+                        {/* 3. Global Batch Select */}
+                        <div className="w-full">
+                            <SearchableBatchSelect
+                                batches={availableBatchesForSelect}
+                                value={selectedBatchId}
+                                onValueChange={(val) => {
+                                    setSelectedBatchId(val);
+                                }}
+                                allowAll={true}
+                                allLabel="All Batches"
+                                placeholder="All Batches"
+                                className="h-8.5 bg-background shadow-2xs w-full"
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -233,7 +351,9 @@ export default function LotManagementModule() {
                         batches={batches}
                         loading={loadingLots || loadingBatches}
                         selectedProductId={selectedProductId}
-                        onEditLot={openEditLotDialog}
+                        selectedLotId={selectedLotId}
+                        selectedBatchId={selectedBatchId}
+                        searchQuery={globalSearchQuery}
                         onViewBatchMovements={handleOpenBatchAudit}
                         onViewLotMovements={handleViewLotMovements}
                     />
@@ -246,9 +366,7 @@ export default function LotManagementModule() {
                         loading={loadingLots}
                         searchQuery={lotSearchQuery}
                         onSearchChange={setLotSearchQuery}
-                        onEdit={openEditLotDialog}
                         onRefresh={loadLots}
-                        onAddClick={openCreateLotDialog}
                     />
                 </TabsContent>
 
@@ -267,7 +385,6 @@ export default function LotManagementModule() {
                         selectedProductId={selectedProductId}
                         onDelete={handleDeleteBatch}
                         onRefresh={loadBatches}
-                        onAddClick={() => openCreateBatchDialog()}
                         onViewMovements={handleOpenBatchAudit}
                     />
                 </TabsContent>
@@ -279,6 +396,7 @@ export default function LotManagementModule() {
                         lots={lots}
                         products={products}
                         loading={loadingMovements}
+                        error={movementError}
                         searchQuery={movementSearchQuery}
                         onSearchChange={setMovementSearchQuery}
                         directionFilter={directionFilter}
@@ -297,36 +415,6 @@ export default function LotManagementModule() {
                 </TabsContent>
             </Tabs>
 
-            {/* Storage Lot Dialog */}
-            <LotFormDialog
-                isOpen={isLotFormOpen}
-                onClose={closeLotDialog}
-                onSubmit={editingLot ? handleUpdateLot : handleCreateLot}
-                editingLot={editingLot}
-                formData={lotFormData}
-                formErrors={lotFormErrors}
-                isDuplicateLotName={isDuplicateLotName}
-                onFormChange={handleLotFormChange}
-                uoms={uoms}
-                branches={branches}
-                saving={savingLot}
-            />
-
-            {/* Batch Registration Dialog */}
-            <BatchFormDialog
-                isOpen={isBatchFormOpen}
-                onClose={closeBatchDialog}
-                onSubmit={editingBatch ? handleUpdateBatch : handleCreateBatch}
-                editingBatch={editingBatch}
-                formData={batchFormData}
-                formErrors={batchFormErrors}
-                onFormChange={handleBatchFormChange}
-                lots={lots}
-                uoms={uoms}
-                products={products}
-                saving={savingBatch}
-            />
-
             {/* Batch Movement History Audit Dialog */}
             <BatchMovementsDialog
                 isOpen={isAuditDialogOpen}
@@ -338,4 +426,5 @@ export default function LotManagementModule() {
         </div>
     );
 }
+
 
