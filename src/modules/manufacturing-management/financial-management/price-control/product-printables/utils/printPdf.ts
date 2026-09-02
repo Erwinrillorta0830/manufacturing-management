@@ -305,43 +305,7 @@ export async function generateProductMatrixPdf(rows: MatrixRow[], options: Matri
                 },
             });
         }
-        
-        const versionRows = (row.versions || []).map((v) => {
-            const vCells: (string | PdfCell)[] = [
-                { content: "", styles: { overflow: "ellipsize" } },
-                { content: "", styles: { overflow: "ellipsize" } },
-                {
-                    content: `   |_  ${v.version.version_name}`,
-                    styles: { fontStyle: "normal", overflow: "ellipsize" },
-                },
-            ];
-
-            for (const tier of activeTiers) {
-                const priceLines = unitsForRow(row, usedUnits)
-                    .map((unit) => {
-                        const isMatchingUnit = Number(unit.unit_id) === Number(v.version.uom_id);
-                        const price = isMatchingUnit ? v.tiers[tier.key] : null;
-                        return price != null ? `${unitLabel(unit)}: ${money(price)}` : null;
-                    })
-                    .filter((line): line is string => line != null);
-
-                vCells.push({
-                    content: priceLines.length > 0 ? priceLines.join("\n") : "-",
-                    styles: {
-                        halign: "left",
-                        valign: "middle",
-                        fillColor: groupColors[tier.key],
-                        textColor: groupTextColors[tier.key],
-                        cellWidth: matrixLayout.priceW,
-                        minCellWidth: matrixLayout.priceW,
-                        overflow: "linebreak",
-                    },
-                });
-            }
-            return vCells;
-        });
-
-        return [baseCells, ...versionRows];
+        return [baseCells];
     });
 
 

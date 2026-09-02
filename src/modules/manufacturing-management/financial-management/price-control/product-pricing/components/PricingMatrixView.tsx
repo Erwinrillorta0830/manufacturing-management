@@ -843,7 +843,6 @@ export default function PricingMatrixView() {
                         units={scopedUnits}
                         suppliers={lookups.suppliers}
                         priceTypes={pt.priceTypes}
-                        showVersionsEnabled={isFinishedGoodsActive}
                     />
                 </div>
 
@@ -901,7 +900,6 @@ export default function PricingMatrixView() {
                     <PricingMatrixTable 
                         matrix={matrix} 
                         dirtyVersion={dirtySummary.dirtyVersion} 
-                        showVersions={matrix.filters.show_versions && isFinishedGoodsActive} 
                         usedUnitIds={new Set((matrix.usedUnits ?? []).map((u) => Number(u.unit_id)))}
                     />
                 </div>

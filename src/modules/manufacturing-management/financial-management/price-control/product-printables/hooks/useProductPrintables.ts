@@ -116,45 +116,10 @@ export function useProductPrintables(
                     };
                 }
 
-                const allVersions = variants.flatMap(v => v.versions || []);
-                const uniqueVersions = [];
-                const seenVids = new Set<number>();
-                for (const ver of allVersions) {
-                    const vid = Number(ver.version_id);
-                    if (!seenVids.has(vid)) {
-                        seenVids.add(vid);
-                        uniqueVersions.push(ver);
-                    }
-                }
-
-                const versionRows = uniqueVersions.map(v => {
-                    const uomId = Number(v.uom_id);
-                    if (Number.isFinite(uomId)) unitIds.add(uomId);
-                    
-                    const vTiers: Record<string, number | null> = { ...emptyTierValues };
-                    if (v.prices) {
-                        for (const pt of priceTypes) {
-                            const pId = pt.price_type_id;
-                            if (v.prices[pId]) {
-                                vTiers[String(pId)] = v.prices[pId].price_per_unit;
-                            }
-                        }
-                        if (v.prices[priceTypes[0]?.price_type_id]) {
-                            vTiers["LIST"] = v.prices[priceTypes[0]?.price_type_id]?.cost_per_unit ?? null;
-                        }
-                    }
-
-                    return {
-                        version: v,
-                        tiers: vTiers,
-                    };
-                });
-
                 assembled.push({
                     group_id: groupId,
                     display,
                     variantsByUnitId,
-                    versions: versionRows,
                     category_name: catMap.get(Number(display.product_category)) || "—",
                     brand_name: brandMap.get(Number(display.product_brand)) || "—",
                 });

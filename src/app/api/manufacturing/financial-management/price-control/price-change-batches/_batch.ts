@@ -80,14 +80,6 @@ export type BatchDetailRow = {
             barcode?: string | null;
         }
         | null;
-    version_id?:
-        | number
-        | string
-        | {
-            version_id?: number | string | null;
-            version_name?: string | null;
-        }
-        | null;
     price_type_id?:
         | number
         | string

@@ -64,7 +64,6 @@ const defaultFilters: PricingFilters = {
     price_type_ids: [],
     show_list_price: false,
     product_type_ids: [],
-    show_versions: false,
 };
 
 export function usePricingMatrix(args: {
@@ -123,7 +122,6 @@ export function usePricingMatrix(args: {
                 unit_ids: filters.unit_ids ?? [],
                 supplier_ids: filters.supplier_ids ?? [],
                 product_type_ids: filters.product_type_ids ?? [],
-                show_versions: filters.show_versions,
             }),
         [
             filters.q,
@@ -135,7 +133,6 @@ export function usePricingMatrix(args: {
             filters.unit_ids,
             filters.supplier_ids,
             filters.product_type_ids,
-            filters.show_versions,
         ],
     );
 
@@ -162,7 +159,6 @@ export function usePricingMatrix(args: {
                 active_only: filters.active_only ? "1" : "0",
                 missing_tier: filters.missing_tier ? "1" : "0",
                 product_type_ids: filters.product_type_ids.length ? filters.product_type_ids.join(",") : undefined,
-                show_versions: filters.show_versions ? "1" : "0",
                 page: String(page),
                 page_size: String(pageSize),
                 pending_product_ids:

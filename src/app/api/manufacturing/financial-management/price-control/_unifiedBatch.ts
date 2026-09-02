@@ -70,8 +70,7 @@ export type UnifiedBatchLine = {
     product_id: number;
     product_name: string;
     product_code: string;
-    version_id?: number | null;
-    version_name?: string | null;
+
     unit_name: string;
     price_type_id?: number;
     price_type_name?: string;
@@ -160,9 +159,8 @@ function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): Un
     const proposed = numberOrNull(line.proposed_price);
     const delta = current !== null && proposed !== null ? proposed - current : null;
     
-    const versionName = productValue(line.version_id, "version_name");
     const productName = productValue(line.product_id, "product_name");
-    const displayName = versionName ? `${productName} (${versionName})` : productName;
+    const displayName = productName;
 
     let product_type_id: number | null = null;
     if (isRecord(line.product_id) && 'product_type' in line.product_id) {
@@ -179,8 +177,7 @@ function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): Un
         product_id: detailProductId(line),
         product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
-        version_id: numberOrNull(productValue(line.version_id, "version_id")) ?? null,
-        version_name: versionName || null,
+
         unit_name: productUom(line.product_id),
         price_type_id: detailPriceTypeId(line),
         price_type_name: productValue(line.price_type_id, "price_type_name"),
@@ -207,9 +204,8 @@ function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): Uni
     const proposed = numberOrNull(line.proposed_cost);
     const delta = current !== null && proposed !== null ? proposed - current : null;
 
-    const versionName = productValue(line.version_id, "version_name");
     const productName = productValue(line.product_id, "product_name");
-    const displayName = versionName ? `${productName} (${versionName})` : productName;
+    const displayName = productName;
 
     let product_type_id: number | null = null;
     if (isRecord(line.product_id) && 'product_type' in line.product_id) {
@@ -226,8 +222,7 @@ function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): Uni
         product_id: detailProductId(line),
         product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
-        version_id: numberOrNull(productValue(line.version_id, "version_id")) ?? null,
-        version_name: versionName || null,
+
         unit_name: productUom(line.product_id),
         product_type_id,
         product_type_name,

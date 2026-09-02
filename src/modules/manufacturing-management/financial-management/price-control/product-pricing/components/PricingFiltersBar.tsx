@@ -40,8 +40,6 @@ type Props = {
     units: Unit[];
     suppliers: Supplier[];
     priceTypes: PriceType[];
-
-    showVersionsEnabled: boolean;
 };
 
 type FilterArrayKey = "category_ids" | "brand_ids" | "unit_ids" | "supplier_ids" | "price_type_ids";
@@ -93,7 +91,7 @@ function sortPriceTypes(priceTypes: PriceType[]): PriceType[] {
 }
 
 export function PricingFiltersBar(props: Props) {
-    const { filters, setFilters, resetFilters, categories, brands, units, suppliers, priceTypes, showVersionsEnabled } = props;
+    const { filters, setFilters, resetFilters, categories, brands, units, suppliers, priceTypes } = props;
 
     const selectedSupplierIds = React.useMemo(
         () => getIds(filters, "supplier_ids"),
@@ -513,13 +511,6 @@ export function PricingFiltersBar(props: Props) {
         });
     }
 
-    if (filters.show_versions) {
-        chips.push({
-            key: "show_versions",
-            label: "Showing versions",
-            onRemove: () => setFilters((prev) => ({ ...prev, show_versions: false })),
-        });
-    }
 
     const hasNonDefaultFilters =
         chips.length > 0 ||
@@ -657,20 +648,6 @@ export function PricingFiltersBar(props: Props) {
                                     Missing tier
                                 </Label>
                             </div>
-                            {showVersionsEnabled && (
-                                <div className="flex items-center gap-2">
-                                    <Switch
-                                        id="filter-show-versions"
-                                        checked={filters.show_versions}
-                                        onCheckedChange={(checked) =>
-                                            setFilters((prev) => ({ ...prev, show_versions: checked }))
-                                        }
-                                    />
-                                    <Label htmlFor="filter-show-versions" className="cursor-pointer text-sm font-medium">
-                                        Show versions
-                                    </Label>
-                                </div>
-                            )}
                         </div>
                     </FilterField>
                 </div>

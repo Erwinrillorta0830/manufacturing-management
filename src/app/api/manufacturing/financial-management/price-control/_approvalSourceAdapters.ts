@@ -1063,6 +1063,15 @@ export async function fetchPriceBatchesPage(
         if (!isCostHeaderAccessError(error)) throw error;
     }
 
+    const allProductIds = new Set<number>();
+    for (const s of summaries.values()) {
+        for (const pid of s.productIds) allProductIds.add(pid);
+    }
+    for (const s of costSummaries.values()) {
+        for (const pid of s.productIds) allProductIds.add(pid);
+    }
+    const supplierByProductId = await fetchSupplierByProductIds(Array.from(allProductIds));
+
     const rows: UnifiedApprovalRow[] = [];
     for (const row of headerRows) {
         const headerId = normalizeHeaderId(row);
@@ -1079,6 +1088,15 @@ export async function fetchPriceBatchesPage(
         const proposedMax = summary?.proposedMax ?? null;
         const approvedBy = Number(row.approved_by);
         const rejectedBy = Number(row.rejected_by);
+
+        const priceProductIds = summary?.productIds ?? [];
+        const costProductIds = costSummary?.productIds ?? [];
+        const combinedProductIds = Array.from(new Set([...priceProductIds, ...costProductIds]));
+        
+        const batchSupplierInfos = combinedProductIds
+            .flatMap((pid) => supplierByProductId.get(pid) ?? []);
+        const batchSupplierNames = uniqueSupplierNamesFromInfos(batchSupplierInfos);
+        const batchSupplierName = resolveSupplierName(batchSupplierInfos);
 
         rows.push({
             row_key: `batch:${headerId}`,
@@ -1118,8 +1136,8 @@ export async function fetchPriceBatchesPage(
             remarks: remarks || null,
             reference_no: referenceNo || null,
             supplier_id: null,
-            supplier_name: null,
-            supplier_names: [],
+            supplier_name: batchSupplierName !== "-" ? batchSupplierName : null,
+            supplier_names: batchSupplierNames,
         });
     }
 

@@ -31,8 +31,6 @@ export type ProductRef = {
     priceD?: number | string | null;
     priceE?: number | string | null;
     cost_per_unit?: number | string | null;
-    version_id?: number | string | null;
-    version_name?: string | null;
 };
 
 export type PriceChangeRequestRow = {
@@ -73,7 +71,6 @@ export type PriceChangeRequestRow = {
     remarks?: string | null;
     reference_no?: string | null;
     current_price?: number | null;
-    version_id?: number | null;
 };
 
 export type PriceChangeBatchStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -83,7 +80,6 @@ export type PriceChangeBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_name?: string | null;
     price_type_id: number;
     price_type_name: string;
     current_price: number | null;
@@ -154,7 +150,6 @@ export type CostChangeRequestRow = {
     applied_at?: string | null;
     applied_by?: number | string | null;
     applied_by_name?: string | null;
-    version_id?: number | null;
 };
 
 export type ListCostBatchStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -164,7 +159,6 @@ export type ListCostBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_name?: string | null;
     current_cost: number | null;
     proposed_cost: number | null;
     delta: number | null;
@@ -215,8 +209,6 @@ export type UnifiedBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_id?: number | null;
-    version_name?: string | null;
     unit_name?: string;
     supplier_id?: number | null;
     supplier_name?: string | null;
