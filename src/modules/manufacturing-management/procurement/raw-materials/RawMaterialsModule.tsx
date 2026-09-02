@@ -74,6 +74,7 @@ export default function RawMaterialsModule({
                 loadingUnits={formHook.loadingUnits}
                 suppliers={suppliers}
                 showValidationErrors={formHook.showValidationErrors}
+                validationErrors={formHook.validationErrors}
                 formName={formHook.formName}
                 setFormName={formHook.setFormName}
                 formCode={formHook.formCode}
@@ -116,7 +117,6 @@ export default function RawMaterialsModule({
                 setFormPurchaseQa={formHook.setFormPurchaseQa}
                 purchaseQaParameters={formHook.purchaseQaParameters}
                 loadingPurchaseQa={formHook.loadingPurchaseQa}
-                purchaseQaReady={formHook.purchaseQaReady}
                 purchaseQaError={formHook.purchaseQaError}
                 formProductType={formHook.formProductType}
                 setFormProductType={formHook.setFormProductType}
@@ -154,6 +154,7 @@ export default function RawMaterialsModule({
                 handleCreateBrand={formHook.handleCreateBrand}
                 handleCreateCategory={formHook.handleCreateCategory}
                 onSubmit={formHook.handleFormSubmit}
+                onSaveClick={formHook.handleSaveClick}
             />
         </div>
     );
