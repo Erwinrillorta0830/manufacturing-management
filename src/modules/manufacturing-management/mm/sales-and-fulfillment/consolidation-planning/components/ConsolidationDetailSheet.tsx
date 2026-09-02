@@ -12,7 +12,6 @@ import {
     Clock,
     FileText,
     Layers,
-    MapPin,
     Package,
     PackageCheck,
     Play,
@@ -30,6 +29,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
+import { motion } from "framer-motion";
 import type { InvoiceConsolidation } from "../types";
 import { generateConsolidationPDF } from "../utils/ConsolidationSummaryPrint";
 import { fetchAllocations, type LotAllocation } from "../services/invoice-consolidation-api";
@@ -107,33 +107,11 @@ export default function ConsolidationDetailSheet({
 }: Props) {
     const [search, setSearch] = useState("");
     const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
-    const [lotMap, setLotMap] = useState<Map<number, string>>(new Map());
     const [allocationState, setAllocationState] = useState<{
         batchId: number;
         allocations: LotAllocation[];
         error: string | null;
     } | null>(null);
-
-    useEffect(() => {
-        let active = true;
-        fetch("/api/manufacturing/lot-registry")
-            .then((res) => (res.ok ? res.json() : []))
-            .then((data: Array<{ lot_id?: number; id?: number; lot_name?: string; name?: string }> | { data?: Array<{ lot_id?: number; id?: number; lot_name?: string; name?: string }> }) => {
-                if (!active) return;
-                const map = new Map<number, string>();
-                const list = Array.isArray(data) ? data : data?.data || [];
-                for (const item of list) {
-                    const id = Number(item.lot_id || item.id);
-                    const name = String(item.lot_name || item.name || "").trim();
-                    if (id && name) map.set(id, name);
-                }
-                setLotMap(map);
-            })
-            .catch(() => null);
-        return () => {
-            active = false;
-        };
-    }, []);
 
     useEffect(() => {
         if (!consolidation) return;
@@ -155,7 +133,6 @@ export default function ConsolidationDetailSheet({
         () => (allocationState && allocationState.batchId === consolidation?.id ? allocationState.allocations : []),
         [allocationState, consolidation?.id]
     );
-    const allocationsLoading = !allocationState || allocationState.batchId !== consolidation?.id;
 
     // Group allocations by productId
     const allocationsByProduct = useMemo(() => {
@@ -351,8 +328,11 @@ export default function ConsolidationDetailSheet({
                                     consolidation.invoices.map((inv, invIdx) => {
                                         const isExpanded = expandedOrderId === inv.id;
                                         return (
-                                            <div
+                                            <motion.div
                                                 key={inv.id ? `inv-${inv.id}` : `inv-no-${inv.invoiceNo || invIdx}`}
+                                                initial={{ opacity: 0, y: -8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ duration: 0.2, delay: Math.min(invIdx * 0.03, 0.3) }}
                                                 className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-xs transition-all"
                                             >
                                                 <button
@@ -415,7 +395,7 @@ export default function ConsolidationDetailSheet({
                                                         )}
                                                     </div>
                                                 )}
-                                            </div>
+                                            </motion.div>
                                         );
                                     })
                                 )}
@@ -462,7 +442,7 @@ export default function ConsolidationDetailSheet({
                                     </p>
                                 </div>
                             ) : (
-                                filteredDetails.map((detail) => {
+                                filteredDetails.map((detail, pIdx) => {
                                     const productLots = allocationsByProduct.get(detail.productId) || [];
                                     const totalAllocatedForProduct = productLots.reduce((sum, a) => sum + (a.quantity || 0), 0);
                                     const allocProgress =
@@ -480,8 +460,11 @@ export default function ConsolidationDetailSheet({
                                         consolidation.status !== "Pending";
 
                                     return (
-                                        <div
+                                        <motion.div
                                             key={`consolidated-prod-${detail.productId}`}
+                                            initial={{ opacity: 0, y: -10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ duration: 0.2, delay: Math.min(pIdx * 0.03, 0.3) }}
                                             className={`rounded-2xl border bg-card p-4 space-y-3.5 shadow-sm transition-all ${shortage
                                                     ? "border-amber-500/40 bg-amber-500/[0.02]"
                                                     : "border-border/70 hover:border-primary/40"
@@ -518,9 +501,9 @@ export default function ConsolidationDetailSheet({
                                                             {isPickedOrAudited ? "Picked:" : "Allocated:"}
                                                         </span>
                                                         <span
-                                                            className={`text-sm font-black ${currentProgress >= 100
+                                                            className={`text-sm font-black ${totalAllocatedForProduct >= detail.orderedQuantity
                                                                     ? "text-emerald-500"
-                                                                    : "text-primary"
+                                                                    : "text-amber-500"
                                                                 }`}
                                                         >
                                                             {isPickedOrAudited
@@ -528,80 +511,77 @@ export default function ConsolidationDetailSheet({
                                                                 : totalAllocatedForProduct}
                                                         </span>
                                                         <span className="text-xs font-bold text-muted-foreground">
-                                                            {" "}
-                                                            / {detail.orderedQuantity}
-                                                        </span>
-                                                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 ml-1">
-                                                            {detail.unit || "Pieces"}
+                                                            / {detail.orderedQuantity} {detail.unit || "pcs"}
                                                         </span>
                                                     </div>
+                                                    {shortage && (
+                                                        <span className="text-[9px] font-bold text-amber-500 flex items-center gap-1 mt-0.5">
+                                                            Shortage: {detail.orderedQuantity - totalAllocatedForProduct} pcs
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
 
                                             {/* Product Demand Progress Bar */}
-                                            <div className="h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
-                                                <div
-                                                    className={`h-full transition-all duration-300 ${currentProgress >= 100 ? "bg-emerald-500" : "bg-primary"
-                                                        }`}
-                                                    style={{ width: `${Math.min(100, currentProgress)}%` }}
-                                                />
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[9px] font-bold text-muted-foreground">
+                                                    <span>{isPickedOrAudited ? "Pick Progress" : "Allocation Progress"}</span>
+                                                    <span>{currentProgress.toFixed(0)}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
+                                                    <div
+                                                        className={`h-full transition-all duration-300 ${currentProgress >= 100 ? "bg-emerald-500" : "bg-primary"
+                                                            }`}
+                                                        style={{ width: `${Math.min(100, currentProgress)}%` }}
+                                                    />
+                                                </div>
                                             </div>
 
                                             {/* ── Grouped Allocated Lots Subsection ── */}
-                                            <div className="rounded-xl border border-border/40 bg-muted/[0.07] p-3 space-y-2.5">
-                                                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <MapPin className="h-3.5 w-3.5 text-primary" />
-                                                        <span>Allocated Storage Lots</span>
-                                                    </div>
-                                                    <span>
-                                                        {productLots.length} lot{productLots.length === 1 ? "" : "s"}
+                                            <div className="space-y-2 pt-1 border-t border-border/40">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">
+                                                        Allocated Batches & Lots ({productLots.length})
                                                     </span>
                                                 </div>
 
-                                                {allocationsLoading ? (
-                                                    <div className="flex items-center gap-2 py-2 text-[10px] font-bold text-muted-foreground">
-                                                        <Clock className="h-3.5 w-3.5 animate-pulse text-primary" />
-                                                        Loading lot allocations...
-                                                    </div>
-                                                ) : productLots.length === 0 ? (
-                                                    <div className="rounded-lg border border-dashed border-border/60 bg-background/50 py-2.5 px-3 text-center text-[10px] font-bold text-muted-foreground/60">
-                                                        No lot allocations recorded for this product yet.
+                                                {productLots.length === 0 ? (
+                                                    <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-3 text-center text-[10px] italic text-muted-foreground">
+                                                        No batch allocations recorded for this SKU.
                                                     </div>
                                                 ) : (
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                                         {productLots.map((alloc, aIdx) => {
-                                                            const resolvedBadgeLotName =
-                                                                (alloc.lotName && alloc.lotName !== "Unknown")
-                                                                    ? alloc.lotName
-                                                                    : (lotMap.get(alloc.lotId) || alloc.lotName || "Unknown");
-
                                                             return (
                                                                 <div
-                                                                    key={`alloc-${alloc.productId}-${alloc.lotId}-${alloc.batchNo}-${aIdx}`}
-                                                                    className="flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-card/90 p-3 shadow-xs"
+                                                                    key={`alloc-lot-${alloc.productId}-${alloc.lotId}-${alloc.batchNo}-${aIdx}`}
+                                                                    className="flex items-center justify-between gap-2.5 rounded-xl border border-border/50 bg-background/80 p-2.5 text-xs shadow-2xs hover:border-primary/30 transition-colors"
                                                                 >
-                                                                    <div className="min-w-0 space-y-1">
-                                                                        <div className="flex flex-wrap items-center gap-1.5">
-                                                                            <Badge className="border-none bg-primary/10 text-primary px-2 py-0.5 text-[9px] font-black uppercase tracking-wider">
-                                                                                {resolvedBadgeLotName}
+                                                                    <div className="min-w-0 flex-1 space-y-0.5">
+                                                                        <div className="flex items-center gap-1.5">
+                                                                            <Badge
+                                                                                variant="secondary"
+                                                                                className="font-mono text-[9px] font-bold px-1.5 py-0"
+                                                                            >
+                                                                                {alloc.lotName}
                                                                             </Badge>
-                                                                            <span className="font-mono text-[11px] font-bold text-foreground truncate">
+                                                                            <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
                                                                                 {alloc.batchNo}
                                                                             </span>
                                                                         </div>
-                                                                    <p className="text-[9px] font-medium text-muted-foreground">
-                                                                        {alloc.expiryDate
-                                                                            ? `Expiry: ${new Date(
-                                                                                alloc.expiryDate
-                                                                            ).toLocaleDateString()}`
-                                                                            : "No expiration"}
-                                                                    </p>
-                                                                </div>
-                                                                <div className="shrink-0 text-right font-mono bg-primary/5 rounded-lg px-2.5 py-1 border border-primary/10">
-                                                                    <span className="text-sm font-black text-primary">
-                                                                        {alloc.quantity}
-                                                                    </span>
+                                                                        <p className="text-[9px] text-muted-foreground flex items-center gap-1 font-medium">
+                                                                            <Clock className="h-2.5 w-2.5 text-muted-foreground/60" />
+                                                                            {alloc.expiryDate
+                                                                                ? `Expiry: ${new Date(
+                                                                                    alloc.expiryDate
+                                                                                ).toLocaleDateString()}`
+                                                                                : "No expiration"}
+                                                                        </p>
+                                                                    </div>
+                                                                    <div className="shrink-0 text-right font-mono bg-primary/5 rounded-lg px-2.5 py-1 border border-primary/10">
+                                                                        <span className="text-sm font-black text-primary">
+                                                                            {alloc.quantity}
+                                                                        </span>
                                                                         <p className="text-[7px] font-black uppercase tracking-widest text-muted-foreground/70">
                                                                             Allocated
                                                                         </p>
@@ -612,7 +592,7 @@ export default function ConsolidationDetailSheet({
                                                     </div>
                                                 )}
                                             </div>
-                                        </div>
+                                        </motion.div>
                                     );
                                 })
                             )}

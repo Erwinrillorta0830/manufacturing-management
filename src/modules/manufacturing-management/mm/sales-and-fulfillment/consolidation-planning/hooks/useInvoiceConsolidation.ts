@@ -37,6 +37,7 @@ export function useInvoiceConsolidation() {
     }, [searchQuery]);
     const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
     const [selectedConsolidation, setSelectedConsolidation] = useState<InvoiceConsolidation | null>(null);
+    const [loadingDetailId, setLoadingDetailId] = useState<number | null>(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
 
     const branchId = selectedBranch?.id;
@@ -115,11 +116,15 @@ export function useInvoiceConsolidation() {
     }, []);
 
     const openDetail = useCallback(async (c: InvoiceConsolidation) => {
+        setSelectedConsolidation(c);
+        setLoadingDetailId(c.id);
         try {
             const fresh = await fetchConsolidationByNo(c.consolidatorNo);
             setSelectedConsolidation(fresh);
         } catch {
             setSelectedConsolidation(c);
+        } finally {
+            setLoadingDetailId(null);
         }
     }, []);
 
@@ -254,6 +259,7 @@ export function useInvoiceConsolidation() {
         searchQuery,
         branchId,
         selectedConsolidation,
+        loadingDetailId,
         showCreateModal,
         setPage,
         setStatusFilter,

@@ -19,6 +19,7 @@ import {
     ListOrdered,
     ArrowUpRight,
     RefreshCw,
+    ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -61,6 +62,7 @@ export default function InvoiceConsolidationModule() {
         searchQuery,
         branchId,
         selectedConsolidation,
+        loadingDetailId,
         showCreateModal,
         setPage,
         setStatusFilter,
@@ -270,33 +272,59 @@ export default function InvoiceConsolidationModule() {
                         <Table className="min-w-[760px]">
                             <TableHeader className="sticky top-0 z-10 bg-muted/80"><TableRow><TableHead className="pl-5 md:pl-7">Batch</TableHead><TableHead>Branch</TableHead><TableHead>Orders</TableHead><TableHead className="text-right">Total Amount</TableHead><TableHead>Created</TableHead><TableHead className="pr-5 text-center md:pr-7">Status</TableHead></TableRow></TableHeader>
                             <TableBody>
-                                {consolidations.map((c) => (
-                                    <React.Fragment key={c.id}>
-                                        <TableRow
-                                            onClick={() => handleRowClick(c)}
-                                            onKeyDown={(e) => handleRowKeyDown(e, c)}
-                                            tabIndex={0}
-                                            className="group cursor-pointer border-border/30 transition-all hover:bg-primary/[0.02] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30"
-                                        >
-                                             <TableCell className="pl-5 font-mono font-black md:pl-7">{c.consolidatorNo}</TableCell>
-                                             <TableCell className="text-muted-foreground">{c.branchName || selectedBranch.branchName}</TableCell>
-                                             <TableCell className="text-muted-foreground">
-                                                <button
-                                                    onClick={(e) => toggleExpand(e, c.id)}
-                                                    className="text-primary font-semibold hover:underline cursor-pointer"
-                                                    suppressHydrationWarning
-                                                >
-                                                    {c.invoices?.length || 0} order(s)
-                                                </button>
-                                            </TableCell>
-                                            <TableCell className="text-right font-black tabular-nums">
-                                                P{Number(c.totalSalesOrderAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                            </TableCell>
-                                            <TableCell className="text-muted-foreground">
-                                                {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "—"}
-                                            </TableCell>
-                                            <TableCell className="pr-5 text-center md:pr-7"><ConsolidationStatusBadge status={c.status} /></TableCell>
-                                        </TableRow>
+                                {consolidations.map((c) => {
+                                    const isSelected = selectedConsolidation?.id === c.id || loadingDetailId === c.id;
+                                    const isExpanded = expandedId === c.id;
+
+                                    return (
+                                        <React.Fragment key={c.id}>
+                                            <TableRow
+                                                onClick={() => handleRowClick(c)}
+                                                onKeyDown={(e) => handleRowKeyDown(e, c)}
+                                                tabIndex={0}
+                                                className={cn(
+                                                    "group cursor-pointer border-border/30 transition-all focus:outline-none",
+                                                    isSelected
+                                                        ? "bg-primary/10 dark:bg-primary/20 border-l-4 border-l-primary font-medium text-foreground shadow-xs"
+                                                        : isExpanded
+                                                            ? "bg-muted/40 border-l-4 border-l-muted-foreground/50 hover:bg-muted/60"
+                                                            : "hover:bg-primary/[0.04] hover:border-primary/20"
+                                                )}
+                                            >
+                                                <TableCell className="pl-5 font-mono font-black md:pl-7">
+                                                    <div className="flex items-center gap-2">
+                                                        {loadingDetailId === c.id ? (
+                                                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                                                        ) : isSelected ? (
+                                                            <div className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
+                                                        ) : null}
+                                                        <span>{c.consolidatorNo}</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="text-muted-foreground">{c.branchName || selectedBranch.branchName}</TableCell>
+                                                <TableCell className="text-muted-foreground">
+                                                    <button
+                                                        onClick={(e) => toggleExpand(e, c.id)}
+                                                        className="inline-flex items-center gap-1.5 text-primary font-semibold hover:underline cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors"
+                                                        suppressHydrationWarning
+                                                    >
+                                                        <span>{c.invoices?.length || 0} order(s)</span>
+                                                        <ChevronDown
+                                                            className={cn(
+                                                                "h-3.5 w-3.5 text-primary transition-transform duration-200",
+                                                                isExpanded && "rotate-180"
+                                                            )}
+                                                        />
+                                                    </button>
+                                                </TableCell>
+                                                <TableCell className="text-right font-black tabular-nums">
+                                                    P{Number(c.totalSalesOrderAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </TableCell>
+                                                <TableCell className="text-muted-foreground">
+                                                    {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "—"}
+                                                </TableCell>
+                                                <TableCell className="pr-5 text-center md:pr-7"><ConsolidationStatusBadge status={c.status} /></TableCell>
+                                            </TableRow>
                                         {expandedId === c.id && (
                                             <tr className="bg-muted/5">
                                                 <td colSpan={6} className="p-0">
@@ -319,8 +347,9 @@ export default function InvoiceConsolidationModule() {
                                                 </td>
                                             </tr>
                                         )}
-                                    </React.Fragment>
-                                ))}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                     </div>
