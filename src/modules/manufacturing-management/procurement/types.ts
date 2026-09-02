@@ -363,7 +363,7 @@ export interface RawMaterial {
     unit_of_measurement_count?: number | null;
     cost_per_unit: number;
     estimated_unit_cost: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -455,7 +455,7 @@ export interface RegisterRawMaterialPayload {
     description?: string;
     barcode?: string;
     cost_per_unit?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -564,7 +564,7 @@ export interface PackagingVariant {
     product_code?: string;
     unit_of_measurement?: number;
     unit_of_measurement_count?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -638,7 +638,7 @@ export interface BFFCatalogProduct {
     unit_of_measurement_count?: number | string | null;
     cost_per_unit?: number | string;
     estimated_unit_cost?: number | string;
-    density_factor?: number | string;
+    density_factor?: number | string | null;
     weight?: number | string | null;
     net_weight?: number | string | null;
     outer_carton_weight?: number | string | null;

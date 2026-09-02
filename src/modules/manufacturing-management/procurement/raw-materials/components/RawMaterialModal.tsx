@@ -205,6 +205,12 @@ export function RawMaterialModal({
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
     const baseUomId = formUom === "" ? null : Number(formUom);
+    const selectedPrimaryUom = uomOptions.find(option => option.value === String(formUom));
+    const primaryDensityRequirement = selectedPrimaryUom?.requiresDensity ?? null;
+    const showPrimaryDensity = primaryDensityRequirement === true;
+    const primaryDensityPolicyUnknown = formUom !== "" && primaryDensityRequirement === null;
+    const primaryDensityInvalid = showPrimaryDensity
+        && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0);
     const eligibleVariantUomOptions = uomOptions.filter(option =>
         baseUomId === null || Number(option.value) !== baseUomId
     );
@@ -504,7 +510,7 @@ export function RawMaterialModal({
                             <CreatableSelect
                                 options={uomOptions}
                                 value={String(formUom)}
-                                onValueChange={(val: string) => setFormUom(Number(val))}
+                                onValueChange={(val: string) => setFormUom(val ? Number(val) : "")}
                                 placeholder="UOM..."
                                 className={`h-8 text-xs ${showValidationErrors && !formUom ? "border-red-500" : ""}`}
                             />
@@ -524,19 +530,27 @@ export function RawMaterialModal({
                             />
                         </div>
 
-                        <div className="space-y-1">
-                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Density (g/mL) <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="number"
-                                step="any"
-                                value={formDensity}
-                                onChange={e => setFormDensity(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0) ? "border-red-500" : ""}`}
-                                required
-                            />
-                        </div>
+                        {showPrimaryDensity && (
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Density (g/mL) <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={formDensity}
+                                    onChange={e => setFormDensity(e.target.value)}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && primaryDensityInvalid ? "border-red-500" : ""}`}
+                                    required
+                                />
+                                <p className="text-[10px] text-muted-foreground">Required for volumetric and gravimetric UOMs.</p>
+                            </div>
+                        )}
+                        {primaryDensityPolicyUnknown && (
+                            <p className="text-[10px] font-medium text-destructive self-end">
+                                Density rules are not configured for this UOM. Select a configured UOM before saving.
+                            </p>
+                        )}
 
                         <div className="col-span-2 sm:col-span-6 grid grid-cols-2 sm:grid-cols-5 gap-2.5 border-t pt-2">
                             <div className="space-y-1">
@@ -825,6 +839,9 @@ export function RawMaterialModal({
                                             ]
                                             : eligibleVariantUomOptions;
                                         const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
+                                        const variantDensityRequirement = matchedUom?.requiresDensity ?? null;
+                                        const showVariantDensity = variantDensityRequirement === true;
+                                        const variantDensityPolicyUnknown = v.uomId !== "" && variantDensityRequirement === null;
                                         const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
                                         const variantNamePreview = formName.trim() || "Material";
@@ -897,17 +914,25 @@ export function RawMaterialModal({
                                                         />
                                                     </div>
 
-                                                    <div>
-                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Density (g/mL) *</label>
-                                                        <input
-                                                            type="number"
-                                                            step="any"
-                                                            placeholder="e.g. 1.00"
-                                                            value={v.density}
-                                                            onChange={e => handleUpdateVariant(vIdx, "density", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
-                                                        />
-                                                    </div>
+                                                    {showVariantDensity && (
+                                                        <div>
+                                                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Density (g/mL) *</label>
+                                                            <input
+                                                                type="number"
+                                                                step="any"
+                                                                placeholder="e.g. 1.00"
+                                                                value={v.density}
+                                                                onChange={e => handleUpdateVariant(vIdx, "density", e.target.value)}
+                                                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!v.density || !Number.isFinite(Number(v.density)) || Number(v.density) <= 0) ? "border-red-500" : ""}`}
+                                                                required
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    {variantDensityPolicyUnknown && (
+                                                        <p className="text-[10px] font-medium text-destructive self-end">
+                                                            Density rules are not configured for this UOM.
+                                                        </p>
+                                                    )}
 
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">SKU Suffix *</label>

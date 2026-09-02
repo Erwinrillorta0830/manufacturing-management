@@ -301,7 +301,9 @@ async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials")
             unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : null,
             cost_per_unit: Number(p.cost_per_unit || 0),
             estimated_unit_cost: Number(p.estimated_unit_cost || 0),
-            density_factor: Number(p.density_factor || 1.0),
+            density_factor: p.density_factor === null || p.density_factor === undefined
+                ? null
+                : Number(p.density_factor),
             weight: Number(p.weight || 0),
             net_weight: p.net_weight == null ? null : Number(p.net_weight),
             outer_carton_weight: p.outer_carton_weight == null ? null : Number(p.outer_carton_weight),

@@ -2,6 +2,7 @@ export interface UnitOption {
     unit_id: number;
     unit_name: string;
     unit_shortcut: string;
+    requiresDensity: boolean | null;
 }
 
 export interface WeightUnitOption {
@@ -14,6 +15,7 @@ export interface SelectOption {
     value: string;
     label: string;
     disabled?: boolean;
+    requiresDensity?: boolean | null;
 }
 
 export interface TaxRateOption {
@@ -77,7 +79,7 @@ export interface PackagingVariantPayload {
     product_code: string;
     unit_of_measurement: number;
     unit_of_measurement_count: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -108,7 +110,7 @@ export interface RegisterRawMaterialPayload {
     barcode?: string;
     unit_of_measurement: number;
     unit_of_measurement_count: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -148,7 +150,7 @@ export interface RawMaterialItem {
     unit_of_measurement_count?: number | null;
     cost_per_unit: number;
     estimated_unit_cost?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;

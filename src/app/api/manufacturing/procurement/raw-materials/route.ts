@@ -26,6 +26,12 @@ import {
     resolveProductWeightBreakdown,
     validateProductWeightForProductType
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import {
+    getDensityRequirement,
+    normalizeDensityForRequirement,
+    validateDensityForRequirement,
+    type DensityRequirement
+} from "@/modules/manufacturing-management/procurement/raw-materials/density-policy";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
 
 function isPositiveNumber(value: unknown): boolean {
@@ -36,6 +42,101 @@ function isPositiveNumber(value: unknown): boolean {
 
 function hasProvidedValue(value: unknown): boolean {
     return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
+}
+
+function resolveUomId(value: unknown): number | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return resolveUomId(record.unit_id ?? record.id);
+    }
+
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+type DensityUnitRecord = {
+    unit_id: number | string;
+    unit_name?: string | null;
+    unit_shortcut?: string | null;
+};
+
+async function loadDensityPolicies(unitIds: number[]): Promise<Map<number, DensityRequirement>> {
+    const uniqueIds = [...new Set(unitIds)];
+    const params = new URLSearchParams({
+        fields: "unit_id,unit_name,unit_shortcut",
+        limit: String(uniqueIds.length)
+    });
+    params.set("filter[unit_id][_in]", uniqueIds.join(","));
+
+    const response = await fetch(`${DIRECTUS_URL}/items/units?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new RawMaterialQaError(503, "Unable to load UOM density policies.");
+    }
+
+    const body = await response.json().catch(() => null) as { data?: unknown } | null;
+    if (!Array.isArray(body?.data)) {
+        throw new RawMaterialQaError(503, "UOM density policies returned an invalid response.");
+    }
+
+    return new Map((body.data as DensityUnitRecord[]).map(unit => {
+        const id = resolveUomId(unit.unit_id);
+        return id === null ? null : [id, getDensityRequirement(unit)] as const;
+    }).filter((entry): entry is readonly [number, DensityRequirement] => entry !== null));
+}
+
+type CurrentVariantMeasurement = {
+    unit_of_measurement?: unknown;
+    density_factor?: unknown;
+};
+
+async function loadCurrentVariantMeasurements(productIds: number[]): Promise<Map<number, CurrentVariantMeasurement>> {
+    const uniqueIds = [...new Set(productIds)];
+    if (uniqueIds.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        fields: "product_id,unit_of_measurement.unit_id,density_factor",
+        limit: String(uniqueIds.length)
+    });
+    params.set("filter[product_id][_in]", uniqueIds.join(","));
+
+    const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new RawMaterialQaError(503, "Unable to load current packaging variant measurements.");
+    }
+
+    const body = await response.json().catch(() => null) as { data?: unknown } | null;
+    if (!Array.isArray(body?.data)) {
+        throw new RawMaterialQaError(503, "Packaging variant measurements returned an invalid response.");
+    }
+
+    return new Map((body.data as Array<{ product_id?: unknown }>)
+        .map(row => {
+            const productId = resolveUomId(row.product_id);
+            return productId === null ? null : [productId, row as CurrentVariantMeasurement] as const;
+        })
+        .filter((entry): entry is readonly [number, CurrentVariantMeasurement] => entry !== null));
+}
+
+function requireUomId(value: unknown, label: string): number {
+    const id = resolveUomId(value);
+    if (id === null) throw new RawMaterialQaError(400, `${label} UOM is required and must be valid.`);
+    return id;
+}
+
+function normalizeDensityForUom(
+    value: unknown,
+    uomId: number,
+    policies: Map<number, DensityRequirement>,
+    label: string
+): number | null {
+    const requirement = policies.get(uomId);
+    if (requirement === undefined) {
+        throw new RawMaterialQaError(400, `${label} UOM is invalid or unavailable.`);
+    }
+
+    const validationError = validateDensityForRequirement(value, requirement, label);
+    if (validationError) throw new RawMaterialQaError(400, validationError);
+    return normalizeDensityForRequirement(value, requirement);
 }
 
 function normalizeBarcode(value: unknown, defaultNull: boolean): string | null | undefined {
@@ -153,8 +254,7 @@ function normalizeActiveFlag(value: unknown, fallback = 1): number {
 function validateMeasurementFields(productDetails: Record<string, unknown>, requireAll: boolean): string | null {
     const fields: Array<{ name: string; label: string }> = [
         { name: "unit_of_measurement", label: "UOM is required." },
-        { name: "unit_of_measurement_count", label: "UOM ratio is required and must be greater than 0." },
-        { name: "density_factor", label: "Density is required and must be greater than 0." }
+        { name: "unit_of_measurement_count", label: "UOM ratio is required and must be greater than 0." }
     ];
 
     for (const field of fields) {
@@ -177,8 +277,7 @@ function validatePackagingVariants(packagingVariants: unknown, productType: unkn
         if (!variant || typeof variant !== "object") return true;
         const item = variant as Record<string, unknown>;
         const invalidMeasurements = !isPositiveNumber(item.unit_of_measurement) ||
-            !isPositiveNumber(item.unit_of_measurement_count) ||
-            !isPositiveNumber(item.density_factor);
+            !isPositiveNumber(item.unit_of_measurement_count);
         if (invalidMeasurements) return true;
 
         weightValidationError = validateProductWeightForProductType(item, productType);
@@ -189,7 +288,7 @@ function validatePackagingVariants(packagingVariants: unknown, productType: unkn
         ? !requireWeightComponents && weightValidationError
             ? `Variant weight: ${weightValidationError}`
             : requireWeightComponents
-            ? "Packaging variants require valid UOM, conversion count, density, net weight, outer carton weight, pallet weight, and weight unit values."
+            ? "Packaging variants require valid UOM, conversion count, net weight, outer carton weight, pallet weight, and weight unit values."
             : "Variants require valid UOM, conversion count, and any supplied weight components must be complete."
             : null;
 }
@@ -302,6 +401,24 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
 
+        const primaryUomId = requireUomId(productDetails.unit_of_measurement, "Primary");
+        const variantUomIds = classifiedVariants.map((variant, index) =>
+            requireUomId((variant as Record<string, unknown>).unit_of_measurement, `Variant ${index + 1}`)
+        );
+        const densityPolicies = await loadDensityPolicies([primaryUomId, ...variantUomIds]);
+        const normalizedDensity = normalizeDensityForUom(
+            productDetails.density_factor,
+            primaryUomId,
+            densityPolicies,
+            "Density"
+        );
+        const normalizedVariantDensities = variantUomIds.map((uomId, index) => normalizeDensityForUom(
+            (classifiedVariants[index] as Record<string, unknown>).density_factor,
+            uomId,
+            densityPolicies,
+            `Variant ${index + 1} density`
+        ));
+
         if (classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
@@ -350,6 +467,7 @@ export async function POST(request: Request) {
         const productPayload = {
             ...withoutPurchaseQa(productDetails),
             ...weightPayload,
+            density_factor: normalizedDensity,
             weight_unit_id: verifiedWeightUnitId,
             barcode: normalizedProductBarcode,
             maintaining_quantity: normalizedSafetyStock,
@@ -410,7 +528,7 @@ export async function POST(request: Request) {
 
         // Create child packaging variants if passed
         if (resolvedVariants.length > 0) {
-            for (const { variant, identity } of resolvedVariants) {
+            for (const [variantIndex, { variant, identity }] of resolvedVariants.entries()) {
                     const variantWeightPayload = buildWeightPayload(variant, isPackagingMaterial);
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
@@ -418,6 +536,7 @@ export async function POST(request: Request) {
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
                         ...variantWeightPayload,
+                        density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
@@ -558,14 +677,21 @@ export async function PATCH(request: Request) {
         const classifiedVariants = classification.packagingVariants;
 
         const currentProductResponse = await fetch(
-            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_type,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
+            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
             { headers, cache: "no-store" }
         );
         if (!currentProductResponse.ok) {
             throw new RawMaterialQaError(503, "Unable to load the current product weight specification.");
         }
         const currentProduct = (await currentProductResponse.json()).data as Record<string, unknown>;
-        const effectiveWeightDetails = { ...currentProduct, ...productDetails };
+        const effectiveUomId = hasProvidedValue(productDetails.unit_of_measurement)
+            ? requireUomId(productDetails.unit_of_measurement, "Primary")
+            : requireUomId(currentProduct.unit_of_measurement, "Primary");
+        const effectiveWeightDetails = {
+            ...currentProduct,
+            ...productDetails,
+            unit_of_measurement: effectiveUomId
+        };
 
         const measurementError = validateMeasurementFields(effectiveWeightDetails, false);
         if (measurementError) {
@@ -577,6 +703,41 @@ export async function PATCH(request: Request) {
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
+
+        const currentVariantIds = classifiedVariants
+            .map(variant => variant && typeof variant === "object" ? resolveUomId((variant as Record<string, unknown>).product_id) : null)
+            .filter((id): id is number => id !== null);
+        const currentVariantMeasurements = await loadCurrentVariantMeasurements(currentVariantIds);
+        const variantUomIds = classifiedVariants.map((variant, index) => {
+            const record = variant as Record<string, unknown>;
+            const current = currentVariantMeasurements.get(resolveUomId(record.product_id) || 0);
+            const submittedUom = hasProvidedValue(record.unit_of_measurement)
+                ? record.unit_of_measurement
+                : current?.unit_of_measurement;
+            return requireUomId(submittedUom, `Variant ${index + 1}`);
+        });
+        const densityPolicies = await loadDensityPolicies([effectiveUomId, ...variantUomIds]);
+        const normalizedDensity = normalizeDensityForUom(
+            Object.prototype.hasOwnProperty.call(productDetails, "density_factor")
+                ? productDetails.density_factor
+                : currentProduct.density_factor,
+            effectiveUomId,
+            densityPolicies,
+            "Density"
+        );
+        const normalizedVariantDensities = variantUomIds.map((uomId, index) => {
+            const record = classifiedVariants[index] as Record<string, unknown>;
+            const current = currentVariantMeasurements.get(resolveUomId(record.product_id) || 0);
+            const densityInput = Object.prototype.hasOwnProperty.call(record, "density_factor")
+                ? record.density_factor
+                : current?.density_factor;
+            return normalizeDensityForUom(
+                densityInput,
+                uomId,
+                densityPolicies,
+                `Variant ${index + 1} density`
+            );
+        });
 
         if (!isValidActiveFlag(productDetails.isActive) || classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
@@ -627,6 +788,7 @@ export async function PATCH(request: Request) {
         const productPayload = {
             ...withoutPurchaseQa(productDetails),
             ...(shouldPersistWeight ? buildWeightPayload(effectiveWeightDetails, isPackagingMaterial) : {}),
+            density_factor: normalizedDensity,
             ...(hasWeightUnitField ? { weight_unit_id: verifiedWeightUnitId ?? null } : {}),
             ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
             ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
@@ -693,7 +855,7 @@ export async function PATCH(request: Request) {
 
         // Handle packaging variants (update existing ones if product_id is provided, create new ones if not)
         if (resolvedVariants.length > 0) {
-            for (const { variant, identity } of resolvedVariants) {
+            for (const [variantIndex, { variant, identity }] of resolvedVariants.entries()) {
                     const variantHasActiveFlag = hasProvidedActiveFlag(variant.isActive);
                     const variantActive = normalizeActiveFlag(variant.isActive);
                     const variantWeightPayload = buildWeightPayload(variant, isPackagingMaterial);
@@ -703,6 +865,7 @@ export async function PATCH(request: Request) {
                         description: identity.descriptionKey,
                         short_description: identity.descriptionKey,
                         ...variantWeightPayload,
+                        density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
