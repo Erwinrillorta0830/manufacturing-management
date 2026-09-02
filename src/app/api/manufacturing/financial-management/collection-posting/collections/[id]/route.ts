@@ -41,18 +41,21 @@ export async function GET(
             const denom = denominations.find((x: Record<string, unknown>) => x.collection_detail_id === d.id);
             return {
                 tempId: denom ? `cash-${denom.denomination_id}` : `detail-${d.id}`,
+                detailId: d.id,
                 coaId: d.type,
                 paymentMethodId: d.payment_method,
                 bankId: d.bank,
                 customerCode: d.customer_code,
                 checkNo: d.check_no,
-                referenceNo: d.check_no,
+                referenceNo: d.check_no || d.remarks, // Fallback to remarks for EWT/Adjustments
                 chequeDate: d.chequeDate,
                 amount: d.amount,
                 remarks: d.remarks,
                 invoiceId: d.invoice_id,
                 denominationId: denom?.denomination_id,
-                quantity: denom?.quantity
+                quantity: denom?.quantity,
+                findingId: d.finding,
+                balanceTypeId: d.balance_type_id
             };
         });
 

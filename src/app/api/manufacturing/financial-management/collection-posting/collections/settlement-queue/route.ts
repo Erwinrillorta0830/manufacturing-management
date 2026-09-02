@@ -14,6 +14,16 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         
+        const page = parseInt(searchParams.get("page") || "1");
+        const size = parseInt(searchParams.get("size") || "25");
+        
+        searchParams.delete("page");
+        searchParams.delete("size");
+        
+        searchParams.append("page", String(page));
+        searchParams.append("limit", String(size));
+        searchParams.append("meta", "filter_count");
+        
         searchParams.append("fields", "*.*");
         const url = `${DIRECTUS_URL}/items/collection?${searchParams.toString()}`;
         const res = await fetch(url, { headers, cache: "no-store" });
@@ -36,12 +46,15 @@ export async function GET(request: Request) {
             encoderName: item.encoder_id ? `${item.encoder_id.user_fname || item.encoder_id.first_name || ""} ${item.encoder_id.user_lname || item.encoder_id.last_name || ""}`.trim() : "ENCODER FALLBACK"
         }));
         
+        const totalElements = data.meta?.filter_count || mappedItems.length;
+        const totalPages = Math.ceil(totalElements / size);
+
         return NextResponse.json({
             content: mappedItems,
-            totalElements: data.meta?.filter_count || mappedItems.length,
-            totalPages: 1,
-            currentPage: 0,
-            size: mappedItems.length || 50
+            totalElements,
+            totalPages,
+            currentPage: page,
+            size
         });
     } catch (e) {
         console.error("API Error fetching settlement queue:", e);
