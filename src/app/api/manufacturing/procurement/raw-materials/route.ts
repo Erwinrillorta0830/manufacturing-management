@@ -288,7 +288,7 @@ function validatePackagingVariants(packagingVariants: unknown, productType: unkn
         ? !requireWeightComponents && weightValidationError
             ? `Variant weight: ${weightValidationError}`
             : requireWeightComponents
-            ? "Packaging variants require valid UOM, conversion count, density, net weight, outer carton weight, pallet weight, and weight unit values."
+            ? "Packaging variants require valid UOM, conversion count, net weight, outer carton weight, pallet weight, and weight unit values."
             : "Variants require valid UOM, conversion count, and any supplied weight components must be complete."
             : null;
 }
