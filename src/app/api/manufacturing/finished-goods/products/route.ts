@@ -46,7 +46,8 @@ interface DirectusProduct {
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;
     has_cogs?: boolean;
-    product_type?: number | string | { id?: number | string; name?: string } | null;
+    product_type?: number | string | { id?: number | string; name?: string; type_name?: string } | null;
+    product_type_name?: string | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_category?: number | { category_id?: number; id?: number; category_name?: string } | null;
     product_class?: number | { class_id?: number; id?: number } | null;
@@ -59,16 +60,51 @@ interface DirectusProduct {
     price_control?: { priceTypeId: number; priceTypeName: string } | null;
 }
 
+const DEFAULT_PRODUCT_TYPE_NAMES = new Map<number, string>([
+    [388, "Finished Goods"],
+    [389, "Raw Materials"],
+    [390, "Packaging Items"]
+]);
+
+async function fetchProductTypeNames(): Promise<Map<number, string>> {
+    const urls = [
+        `${DIRECTUS_URL}/items/product_type?limit=-1&sort=id&fields=id,name,type_name`,
+        `${DIRECTUS_URL}/items/product_type?limit=-1&sort=id&fields=id,name`
+    ];
+
+    for (const url of urls) {
+        try {
+            const response = await fetch(url, { headers, cache: "no-store" });
+            if (!response.ok) continue;
+
+            const json = await response.json();
+            const names = new Map(DEFAULT_PRODUCT_TYPE_NAMES);
+            for (const row of (json.data || []) as Array<{ id?: number | string; name?: string | null; type_name?: string | null }>) {
+                const id = Number(row.id);
+                const name = String(row.name || row.type_name || "").trim();
+                if (Number.isFinite(id) && name) names.set(id, name);
+            }
+            return names;
+        } catch (error) {
+            console.warn("Unable to load product-type names for product catalog:", error);
+        }
+    }
+
+    return new Map(DEFAULT_PRODUCT_TYPE_NAMES);
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const search = searchParams.get("search") || "";
         const limit = parseInt(searchParams.get("limit") || "-1");
         const excludeRollup = searchParams.get("excludeRollup") === "true";
+        const rawMaterialsScope = searchParams.get("productScope") === "raw-materials";
+        const productScopeFilter = rawMaterialsScope ? "&filter[product_type][_in]=389,390" : "";
 
         const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes";
         const legacyFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type";
-        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}`;
+        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}${productScopeFilter}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }
@@ -76,16 +112,17 @@ export async function GET(request: Request) {
         const fetchProducts = async () => {
             const response = await fetch(url, { headers, cache: "no-store" });
             if (response.ok) return response;
-            const legacyUrl = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${legacyFields}${search && search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`;
+            const legacyUrl = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${legacyFields}${productScopeFilter}${search && search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`;
             console.warn("Product shared-attribute fields are not available; using the legacy product projection.");
             return fetch(legacyUrl, { headers, cache: "no-store" });
         };
 
-        const [prodResult, versionsResult, profilesResult, weightUnitsResult] = await Promise.allSettled([
+        const [prodResult, versionsResult, profilesResult, weightUnitsResult, productTypeNamesResult] = await Promise.allSettled([
             fetchProducts(),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,status,base_quantity,expected_yield_percentage`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/product_currency_profiles?limit=-1`, { headers, cache: "no-store" }),
-            fetchAllWeightUnits()
+            fetchAllWeightUnits(),
+            fetchProductTypeNames()
         ]);
 
         if (prodResult.status === "rejected") throw prodResult.reason;
@@ -93,6 +130,14 @@ export async function GET(request: Request) {
         if (!prodRes.ok) throw new Error(`Directus failed to fetch products: ${prodRes.status}`);
         const prodJson = await prodRes.json();
         const products: DirectusProduct[] = prodJson.data || [];
+        const catalogProducts = rawMaterialsScope
+            ? products.filter(product => {
+                const typeId = typeof product.product_type === "object" && product.product_type !== null
+                    ? Number(product.product_type.id)
+                    : Number(product.product_type);
+                return typeId === 389 || typeId === 390;
+            })
+            : products;
 
         const versionProductIds = new Set<number>();
         if (versionsResult.status === "fulfilled" && versionsResult.value.ok) {
@@ -124,6 +169,9 @@ export async function GET(request: Request) {
 
         const weightUnitsData = weightUnitsResult.status === "fulfilled" ? weightUnitsResult.value : [];
         const weightUnitsMap = new Map((weightUnitsData || []).map(w => [w.id, w]));
+        const productTypeNames = productTypeNamesResult.status === "fulfilled"
+            ? productTypeNamesResult.value
+            : new Map(DEFAULT_PRODUCT_TYPE_NAMES);
 
         let priceTypeRules: Awaited<ReturnType<typeof fetchPurchaseOrderPriceTypeRules>> = [];
         try {
@@ -146,7 +194,7 @@ export async function GET(request: Request) {
         });
 
         // Compute resolved products
-        const resolvedProducts = await Promise.all(products.map(async (p: DirectusProduct) => {
+        const resolvedProducts = await Promise.all(catalogProducts.map(async (p: DirectusProduct) => {
             const productCopy = { ...p };
             productCopy.has_versions = versionProductIds.has(Number(p.product_id));
             productCopy.currency_profile = profilesMap.get(Number(p.product_id)) || null;
@@ -157,8 +205,14 @@ export async function GET(request: Request) {
             const productTypeId = typeof productCopy.product_type === "object" && productCopy.product_type !== null
                 ? Number(productCopy.product_type.id)
                 : Number(productCopy.product_type);
+            const directusProductTypeName = typeof productCopy.product_type === "object" && productCopy.product_type !== null
+                ? productCopy.product_type.name || productCopy.product_type.type_name
+                : productCopy.product_type_name;
             const priceType = priceTypeByProductType.get(productTypeId);
             productCopy.product_type = Number.isFinite(productTypeId) ? productTypeId : null;
+            productCopy.product_type_name = typeof directusProductTypeName === "string" && directusProductTypeName.trim()
+                ? directusProductTypeName.trim()
+                : productTypeNames.get(productTypeId) || null;
             productCopy.price_control = priceType?.priceTypeId && priceType.priceTypeName
                 ? { priceTypeId: priceType.priceTypeId, priceTypeName: priceType.priceTypeName }
                 : null;

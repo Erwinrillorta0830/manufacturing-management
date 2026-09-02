@@ -101,6 +101,19 @@ export function RawMaterialsTable({
                         paginatedItems.map(m => {
                             const isExpanded = expandedProductId === m.product_id;
                             const isPkg = isItemPkg(m);
+                            const productTypeId = Number(m.product_type);
+                            const productTypeLabel = productTypeId === 389
+                                ? "Raw Material"
+                                : productTypeId === 390
+                                    ? "Packaging Item"
+                                    : productTypeId === 388
+                                        ? "Finished Goods"
+                                        : "Unclassified";
+                            const productTypeBadgeClass = isPkg
+                                ? "text-purple-600 bg-purple-500/10"
+                                : productTypeId === 389
+                                    ? "text-amber-600 bg-amber-500/10"
+                                    : "text-muted-foreground bg-muted";
                             const isChild = !!m.parent_id;
 
                             // Compute category name string
@@ -159,8 +172,8 @@ export function RawMaterialsTable({
                                                         {m.product_name}
                                                     </span>
                                                     <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                                        <span className={`text-[8px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded ${isPkg ? "text-purple-600 bg-purple-500/10" : "text-amber-600 bg-amber-500/10"}`}>
-                                                            {isPkg ? "Packaging Item" : "Raw Material"}
+                                                        <span className={`text-[8px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded ${productTypeBadgeClass}`}>
+                                                            {productTypeLabel}
                                                         </span>
                                                         {isChild && (
                                                             <span className="text-[8px] font-bold uppercase tracking-wider text-blue-600 bg-blue-500/10 px-1.5 py-0.5 rounded">

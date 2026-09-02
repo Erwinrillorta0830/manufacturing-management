@@ -34,10 +34,10 @@ export function useRawMaterialsData(rawMaterials: RawMaterialItem[]) {
 
             if (!matchesSearch) return false;
 
-            const isPkg = isItemPkg(m);
-            if (typeFilter === "raw") return !isPkg;
-            if (typeFilter === "pkg") return isPkg;
-            return true;
+            const productTypeId = Number(m.product_type);
+            if (typeFilter === "raw") return productTypeId === 389;
+            if (typeFilter === "pkg") return productTypeId === 390;
+            return productTypeId === 389 || productTypeId === 390;
         });
     }, [rawMaterials, search, typeFilter]);
 

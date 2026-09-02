@@ -226,18 +226,25 @@ export async function deleteLandedCostAttachment(purchaseOrderId: number, attach
     if (!res.ok) await handleResponse(res, "Failed to delete landed-cost document");
 }
 
-export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials"): Promise<RawMaterial[]> {
     const params = new URLSearchParams({
         limit: String(limit),
         excludeRollup: "true"
     });
+    if (productScope) params.set("productScope", productScope);
     const res = await fetchWithSessionRetry(`/api/manufacturing/finished-goods/products?${params.toString()}`);
     const products: BFFCatalogProduct[] = await handleResponse(res, "Failed to fetch raw materials");
 
-    // Keep PO-eligible raw materials, packaging items, and finished goods while
-    // retaining variants that inherit their classification from a supported parent.
+    // The raw-materials catalog is already scoped by the BFF. Keep this exact
+    // client-side guard so unsupported records cannot reach the page if a
+    // malformed response is returned.
     const rawItems = products.filter((p: BFFCatalogProduct) => {
         const ownType = Number(p.product_type);
+        if (productScope === "raw-materials") return ownType === 389 || ownType === 390;
+
+        // Keep PO-eligible raw materials, packaging items, and finished goods
+        // while retaining variants that inherit their classification from a
+        // supported parent.
         if (ownType === 388 || ownType === 389 || ownType === 390) return true;
         const parentId = normalizeProductRelationId(p.parent_id);
         const parent = parentId ? products.find(candidate => Number(candidate.product_id) === parentId) : null;
@@ -304,6 +311,9 @@ export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
             category_name: catName,
             product_brand: p.product_brand ? (typeof p.product_brand === "object" ? Number((p.product_brand as { brand_id?: number; id?: number }).brand_id || (p.product_brand as { brand_id?: number; id?: number }).id) : Number(p.product_brand)) : null,
             product_type: p.product_type ? Number(p.product_type) : null,
+            product_type_name: typeof p.product_type_name === "string" && p.product_type_name.trim()
+                ? p.product_type_name.trim()
+                : null,
             product_class: p.product_class ? Number(typeof p.product_class === "object" ? (p.product_class as { class_id?: number; id?: number }).class_id || (p.product_class as { class_id?: number; id?: number }).id : p.product_class) : null,
             product_segment: p.product_segment ? Number(typeof p.product_segment === "object" ? (p.product_segment as { segment_id?: number; id?: number }).segment_id || (p.product_segment as { segment_id?: number; id?: number }).id : p.product_segment) : null,
             product_section: p.product_section ? Number(typeof p.product_section === "object" ? (p.product_section as { section_id?: number; id?: number }).section_id || (p.product_section as { section_id?: number; id?: number }).id : p.product_section) : null,
@@ -324,6 +334,14 @@ export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
             last_updated: p.last_updated
         };
     });
+}
+
+export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
+    return fetchCatalogProducts(limit);
+}
+
+export async function fetchRawMaterialCatalog(limit = 250): Promise<RawMaterial[]> {
+    return fetchCatalogProducts(limit, "raw-materials");
 }
 
 export async function fetchProductInventoryDetails(productId: number): Promise<Record<string, unknown>[]> {
