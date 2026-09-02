@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { DIRECTUS_URL, formatPhtDateTime, headers } from "@/app/api/manufacturing/directus-api";
+import { productCreationAuditFields, productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { calculateRollupCost } from "./products-helper";
 import {
     ProductIdentityError,
@@ -57,6 +58,10 @@ interface DirectusProduct {
     tax_rate_id?: number | { TaxID?: number; tax_id?: number; id?: number; VATRate?: number | string; WithholdingRate?: number | string } | null;
     regulatory_code?: string | null;
     regulatory_notes?: string | null;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
     price_control?: { priceTypeId: number; priceTypeName: string } | null;
 }
 
@@ -102,8 +107,8 @@ export async function GET(request: Request) {
         const rawMaterialsScope = searchParams.get("productScope") === "raw-materials";
         const productScopeFilter = rawMaterialsScope ? "&filter[product_type][_in]=389,390" : "";
 
-        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes";
-        const legacyFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,created_at,created_by,updated_at,updated_by";
+        const legacyFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,created_at,created_by,updated_at,updated_by";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}${productScopeFilter}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
@@ -281,25 +286,7 @@ export async function POST(request: Request) {
 
         await ensureProductIdentityAvailable(identity);
 
-        // Get logged in user ID from secure access token cookie
-        let userId: number | null = null;
-        try {
-            const cookieStore = await cookies();
-            const token = cookieStore.get("vos_access_token")?.value;
-            if (token) {
-                const parts = token.split(".");
-                if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                    while (base64.length % 4) base64 += "=";
-                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    userId = payload?.id || payload?.user_id || payload?.sub || null;
-                }
-            }
-        } catch (err) {
-            console.error("Error parsing user token in POST product route:", err);
-        }
+        const userId = await getUserIdFromToken();
 
         // 1. Create Product
         const productFields = { ...productDetails };
@@ -337,8 +324,7 @@ export async function POST(request: Request) {
             product_type: 388,
             date_added: productDetails.date_added || todayStr,
             created_by: userId ? Number(userId) : null,
-            created_at: createdAt,
-            updated_by: userId ? Number(userId) : null
+            ...productCreationAuditFields(createdAt)
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -430,25 +416,7 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: "Missing product_id" }, { status: 400 });
         }
 
-        // Get logged in user ID from secure access token cookie
-        let userId: number | null = null;
-        try {
-            const cookieStore = await cookies();
-            const token = cookieStore.get("vos_access_token")?.value;
-            if (token) {
-                const parts = token.split(".");
-                if (parts.length >= 2) {
-                    const base64Url = parts[1];
-                    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-                    while (base64.length % 4) base64 += "=";
-                    const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-                    const payload = JSON.parse(jsonPayload);
-                    userId = payload?.id || payload?.user_id || payload?.sub || null;
-                }
-            }
-        } catch (err) {
-            console.error("Error parsing user token in PATCH product route:", err);
-        }
+        const userId = await getUserIdFromToken();
 
         const editableFields = Object.fromEntries(
             Object.entries(body).filter(([key]) => ![
@@ -460,8 +428,7 @@ export async function PATCH(request: Request) {
         );
         const updatePayload = {
             ...editableFields,
-            updated_by: userId ? Number(userId) : undefined,
-            updated_at: formatPhtDateTime()
+            ...productUpdateAuditFields(userId)
         };
 
         const res = await fetch(`${DIRECTUS_URL}/items/products/${product_id}`, {

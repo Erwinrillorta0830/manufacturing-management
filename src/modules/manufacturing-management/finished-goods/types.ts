@@ -75,6 +75,10 @@ export interface Product {
     has_versions?: boolean;
     versions?: ProductVersion[];
     selectedVersion?: ProductVersion;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 
@@ -327,6 +331,10 @@ export interface BFFCatalogProduct {
     status?: string | null;
     isActive?: boolean | number | string | null;
     has_versions?: boolean;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface OperationType {

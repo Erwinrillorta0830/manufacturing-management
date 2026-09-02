@@ -266,6 +266,18 @@ export function RawMaterialModal({
 
                 {/* Single Page Form Container */}
                 <form onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
+                    {editingItem && (
+                        <div className="rounded-xl border border-border/80 bg-muted/15 px-3 py-2.5">
+                            <div className="flex items-center gap-2 font-semibold text-foreground">
+                                <Layers className="h-3.5 w-3.5 text-primary/80" /> Audit timestamps
+                            </div>
+                            <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2 text-[10px] text-muted-foreground">
+                                <span>Created: <strong className="font-mono text-foreground">{editingItem.created_at || editingItem.date_added || "Unavailable"}</strong></span>
+                                <span>Last modified: <strong className="font-mono text-foreground">{editingItem.updated_at || editingItem.last_updated || "Not modified since creation"}</strong></span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Item Classification Pill Buttons */}
                     <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/20 border p-2 rounded-xl">
                         <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider pl-1">Classification:</span>

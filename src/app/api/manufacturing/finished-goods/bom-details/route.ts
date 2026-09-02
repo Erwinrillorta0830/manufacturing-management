@@ -194,8 +194,7 @@ export async function POST(request: Request) {
             product_image: details.productImage ? details.productImage : null,
 
             unit_of_measurement: identity.unitId,
-            parent_id: identity.parentId,
-            updated_by: userId ? Number(userId) : undefined
+            parent_id: identity.parentId
         };
 
         if (details.status !== undefined) {
@@ -210,7 +209,7 @@ export async function POST(request: Request) {
             prodPayload.product_category = categoryToUpdate;
         }
 
-        const prodOk = await updateProductDetails(numericProductId, prodPayload);
+        const prodOk = await updateProductDetails(numericProductId, prodPayload, userId ? Number(userId) : null);
         if (!prodOk.ok) {
             if (prodOk.status === 409 || /unique/i.test(prodOk.error || "")) {
                 throw new ProductIdentityError(
@@ -264,7 +263,7 @@ export async function POST(request: Request) {
         // 4. Run standard rollup costing recalculation and save to product standard cost field
         const rollupResult = await calculateRollupCost(numericProductId, new Set(), undefined, 58, undefined, numericVersionId);
         if (rollupResult.bomId && rollupResult.costTree.length > 0) {
-            const standardCostUpdated = await updateProductStandardCost(numericProductId, rollupResult.unitCost);
+            const standardCostUpdated = await updateProductStandardCost(numericProductId, rollupResult.unitCost, userId ? Number(userId) : null);
             if (!standardCostUpdated) {
                 throw new Error("Failed to update product standard cost in Directus.");
             }
