@@ -24,7 +24,6 @@ import {
     Layers,
     Maximize2,
     Minimize2,
-    ShieldOff,
 } from "lucide-react";
 import {
     CandidateInvoice,
