@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Branch, Unit, MmLot } from "../types";
-import { createMmLot, fetchMasterUnits } from "../services/physical-inventory-manufacturing-api";
+import { fetchMasterUnits } from "../services/physical-inventory-manufacturing-api";
 import SearchableSelect from "./SearchableSelect";
 import { X, AlertTriangle } from "lucide-react";
 
@@ -82,17 +82,19 @@ export default function CreateLotModal({
 
         try {
             setSubmitting(true);
-            const created = await createMmLot({
+            const draftLot: MmLot = {
+                lot_id: -Math.floor(Date.now() + Math.random() * 1000),
                 lot_name: cleanName,
                 branch_id: branchId,
                 unit_id: unitId,
                 max_batch_capacity: capNum,
                 description: description.trim(),
-            });
-            onLotCreated(created);
+                isActive: 0,
+            };
+            onLotCreated(draftLot);
             onClose();
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "Failed to create lot";
+            const msg = err instanceof Error ? err.message : "Failed to create draft lot";
             setError(msg);
         } finally {
             setSubmitting(false);

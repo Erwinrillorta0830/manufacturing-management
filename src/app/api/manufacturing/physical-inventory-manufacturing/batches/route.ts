@@ -20,15 +20,41 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ success: false, error: "lot_id and product_id are required." }, { status: 400 });
         }
 
-        const url = `${DIRECTUS_URL}/items/mm_inventory_lots?filter[lot_id][_eq]=${encodeURIComponent(lotId)}&filter[product_id][_eq]=${encodeURIComponent(productId)}&sort=-inventory_lot_id&limit=-1&fields=*,lot_id.*,product_id.*`;
-        const res = await fetch(url, { headers, cache: "no-store" });
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`Directus failed to list batches: ${errText}`);
+        const masterUrl = `${DIRECTUS_URL}/items/mm_inventory_lots?filter[lot_id][_eq]=${encodeURIComponent(lotId)}&filter[product_id][_eq]=${encodeURIComponent(productId)}&sort=-inventory_lot_id&limit=-1&fields=*,lot_id.*,product_id.*`;
+        const masterRes = await fetch(masterUrl, { headers, cache: "no-store" });
+        const masterBatches = masterRes.ok ? (await masterRes.json()).data || [] : [];
+
+        // Check if there are draft batches in mm_physical_inventory_draft_batches
+        let draftBatches: unknown[] = [];
+        const draftUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_draft_batches?filter[lot_id][_eq]=${encodeURIComponent(lotId)}&filter[product_id][_eq]=${encodeURIComponent(productId)}&limit=-1&fields=*,lot_id.*,product_id.*`;
+        const draftRes = await fetch(draftUrl, { headers, cache: "no-store" });
+        if (draftRes.ok) {
+            const draftJson = await draftRes.json();
+            draftBatches = (draftJson.data || []).map((d: Record<string, unknown>) => {
+                const dbId = extractId(d.draft_batch_id || d.id);
+                return {
+                    ...d,
+                    inventory_lot_id: dbId,
+                    id: dbId,
+                    draft_batch_id: dbId,
+                    is_draft: true,
+                };
+            });
         }
 
-        const json = await res.json();
-        return NextResponse.json({ success: true, data: json.data || [] });
+        // Combine and dedup by batch_no
+        const combined = [...draftBatches, ...masterBatches];
+        const seenBatchNos = new Set();
+        const merged = combined.filter((b) => {
+            const bObj = b as Record<string, unknown>;
+            const bNo = String(bObj.batch_no || "").trim().toUpperCase();
+            if (!bNo) return true;
+            if (seenBatchNos.has(bNo)) return false;
+            seenBatchNos.add(bNo);
+            return true;
+        });
+
+        return NextResponse.json({ success: true, data: merged });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";
         return NextResponse.json({ success: false, error: msg }, { status: 500 });
@@ -175,7 +201,13 @@ export async function POST(request: NextRequest) {
             throw new Error(`Directus failed to create batch: ${errText}`);
         }
 
-        const created = (await res.json()).data;
+        const rawCreated = (await res.json()).data;
+        const bId = extractId(rawCreated.inventory_lot_id || rawCreated.id);
+        const created = {
+            ...rawCreated,
+            inventory_lot_id: bId,
+            id: bId,
+        };
         return NextResponse.json({ success: true, data: created }, { status: 201 });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";

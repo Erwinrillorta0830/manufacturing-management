@@ -83,7 +83,7 @@ export interface MmPhysicalInventoryDetail {
     expiration_date?: string | null;
     inventory_condition: string;
     system_count: number;
-    physical_count: number;
+    physical_count: number | null;
     variance?: number;
     unit_cost: number;
     difference_cost?: number;

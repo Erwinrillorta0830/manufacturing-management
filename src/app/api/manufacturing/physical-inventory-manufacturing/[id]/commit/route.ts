@@ -53,7 +53,7 @@ export async function POST(request: NextRequest, context: RouteParams) {
             return NextResponse.json({ success: false, error: "Cannot commit a Physical Inventory sheet with no detail rows." }, { status: 400 });
         }
 
-        // 4. Revalidate all line items
+        // 4. Validate all line items & promote batch status
         for (const d of details) {
             const batchId = extractId(d.inventory_lot_id, "inventory_lot_id");
             const lotId = extractId(d.lot_id, "lot_id");
@@ -76,24 +76,81 @@ export async function POST(request: NextRequest, context: RouteParams) {
                 return NextResponse.json({ success: false, error: `Product UOM mismatch for detail batch ${d.batch_no || batchId}.` }, { status: 400 });
             }
 
-            // 5. For REGULAR Physical Inventory: Verify system count is NOT stale
-            if (!isOpening) {
+            // Ensure batch status is ACTIVE in mm_inventory_lots upon commit
+            let activeBatchId = batchId;
+            let isNewDraftBatch = false;
+
+            const draftBatchRes = await fetch(`${DIRECTUS_URL}/items/mm_physical_inventory_draft_batches/${batchId}`, { headers, cache: "no-store" });
+            if (draftBatchRes.ok) {
+                const draftData = (await draftBatchRes.json()).data;
+                if (draftData) {
+                    isNewDraftBatch = true;
+                    const masterRes = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            lot_id: lotId,
+                            branch_id: piBranchId,
+                            product_id: productId,
+                            batch_no: draftData.batch_no,
+                            manufacturing_date: draftData.manufacturing_date || null,
+                            expiry_date: draftData.expiry_date || draftData.expiration_date || null,
+                            expiration_date: draftData.expiry_date || draftData.expiration_date || null,
+                            unit_cost: draftData.unit_cost || 0,
+                            qa_status: draftData.qa_status || "GOOD",
+                            status: "ACTIVE",
+                            source_type: "PHYSICAL_INVENTORY",
+                            source_reference: sheet.pi_no || `PI-#${sheetId}`,
+                        }),
+                    });
+                    if (masterRes.ok) {
+                        const newMaster = (await masterRes.json()).data;
+                        activeBatchId = extractId(newMaster.inventory_lot_id || newMaster.id);
+                        await fetch(`${DIRECTUS_URL}/items/mm_physical_inventory_details/${d.physical_inventory_detail_id || d.id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ inventory_lot_id: activeBatchId }),
+                        });
+                    }
+                }
+            } else {
+                const batchRes = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${batchId}`, { headers, cache: "no-store" });
+                if (batchRes.ok) {
+                    const batchData = (await batchRes.json()).data;
+                    if (batchData && (batchData.status !== "ACTIVE" || batchData.source_type === "PHYSICAL_INVENTORY_DRAFT")) {
+                        isNewDraftBatch = true;
+                        await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots/${batchId}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({ status: "ACTIVE" }),
+                        });
+                    }
+                }
+            }
+
+            // 5. For REGULAR Physical Inventory: Verify system count is NOT stale for existing batches with live movement history
+            if (!isOpening && !isNewDraftBatch) {
+                let hasMovementRecord = false;
                 let currentOnhand = 0;
-                const onhandUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?filter[branch_id][_eq]=${piBranchId}&filter[inventory_lot_id][_eq]=${batchId}&filter[lot_id][_eq]=${lotId}&filter[product_id][_eq]=${productId}&filter[inventory_condition][_eq]=${encodeURIComponent(conditionStr)}&limit=1`;
+                const onhandUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?filter[branch_id][_eq]=${piBranchId}&filter[inventory_lot_id][_eq]=${activeBatchId}&filter[lot_id][_eq]=${lotId}&filter[product_id][_eq]=${productId}&filter[inventory_condition][_eq]=${encodeURIComponent(conditionStr)}&limit=1`;
                 const onhandRes = await fetch(onhandUrl, { headers, cache: "no-store" });
                 if (onhandRes.ok) {
                     const onhandJson = await onhandRes.json();
                     if (onhandJson.data && onhandJson.data.length > 0) {
+                        hasMovementRecord = true;
                         currentOnhand = roundQty(onhandJson.data[0].onhand_quantity || 0);
                     }
                 }
 
-                const savedSysCount = roundQty(d.system_count);
-                if (Math.abs(currentOnhand - savedSysCount) > 0.000001) {
-                    return NextResponse.json({
-                        success: false,
-                        error: `System count for batch ${d.batch_no || batchId} is stale (Saved: ${savedSysCount}, Current On-hand: ${currentOnhand}). Please refresh system counts before committing.`,
-                    }, { status: 409 });
+                // Only reject if an active movement record exists in the ledger AND on-hand stock has changed since sheet creation
+                if (hasMovementRecord) {
+                    const savedSysCount = roundQty(d.system_count);
+                    if (Math.abs(currentOnhand - savedSysCount) > 0.000001) {
+                        return NextResponse.json({
+                            success: false,
+                            error: `System count for batch ${d.batch_no || batchId} is stale (Saved: ${savedSysCount}, Current On-hand: ${currentOnhand}). Please refresh system counts before committing.`,
+                        }, { status: 409 });
+                    }
                 }
             }
         }
