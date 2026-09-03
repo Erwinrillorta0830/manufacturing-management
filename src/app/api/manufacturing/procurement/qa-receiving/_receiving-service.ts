@@ -129,6 +129,29 @@ function relationValueId(value: unknown, keys: string[]): number | null {
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function isPreQaRfidAnchor(row: Record<string, unknown>, productId: number, branchId: number) {
+    const receivingMethod = String(row.receiving_method || "").trim().toLowerCase();
+    return relationValueId(row.product_id, ["product_id", "id"]) === productId
+        && relationValueId(row.branch_id, ["branch_id", "id"]) === branchId
+        && (!receivingMethod || receivingMethod === "rfid")
+        && Number(row.isPosted) !== 1
+        && Number(row.received_quantity || 0) === 0
+        && !String(row.receipt_no || "").trim()
+        && !String(row.receipt_date || "").trim()
+        && !String(row.received_date || "").trim();
+}
+
+function preQaRfidAnchorSnapshot(row: Record<string, unknown>) {
+    const fields = [
+        "purchase_order_line_id", "receiving_header_id", "product_id", "batch_no", "mm_lot_id", "lot_id",
+        "expiry_date", "received_quantity", "unit_price", "discounted_amount", "discount_type", "total_amount",
+        "allocated_expense_php", "final_landed_unit_cost", "branch_id", "receipt_no", "received_date", "receipt_date",
+        "isPosted", "qa_status", "quantity_rejected", "rejection_reason", "receipt_type", "quarantine_disposition_id",
+        "is_replacement", "is_over_received", "over_delivery_quantity"
+    ];
+    return Object.fromEntries(fields.map(field => [field, row[field] ?? null]));
+}
+
 function movementTypeId(movementTypes: DirectusMovementType[], typeName: string): number {
     const matches = movementTypes.filter(type =>
         type.type_name === typeName
@@ -509,13 +532,29 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
         const receiptNumbers = lineItemUpdates.map(item => receiptNumberForLine(referenceNumber, item.line_id));
-        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,received_quantity,quantity_rejected,is_replacement&limit=-1`, { headers, cache: "no-store" });
+        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity&limit=-1`, { headers, cache: "no-store" });
         if (!receiptsRes.ok) {
-            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,received_quantity,quantity_rejected,is_replacement&limit=-1`, { headers, cache: "no-store" });
+            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity&limit=-1`, { headers, cache: "no-store" });
         }
         if (!receiptsRes.ok) throw new Error("Failed to validate previous receiving attempts.");
-        const allExistingReceipts = (await receiptsRes.json()).data || [];
+        const allExistingReceipts = ((await receiptsRes.json()).data || []) as Record<string, unknown>[];
         const existingReceipts = allExistingReceipts.filter((row: Record<string, unknown>) => receiptNumbers.includes(String(row.receipt_no)));
+        const existingReceiptIds = allExistingReceipts
+            .map(row => Number(row.purchase_order_product_id))
+            .filter(id => Number.isSafeInteger(id) && id > 0);
+        const preQaRfidAnchorIds = new Set<number>();
+        if (existingReceiptIds.length > 0) {
+            const rfidItemsRes = await fetch(
+                `${DIRECTUS_URL}/items/purchase_order_receiving_items?filter[purchase_order_product_id][_in]=${encodeURIComponent(existingReceiptIds.join(","))}&fields=purchase_order_product_id&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            if (!rfidItemsRes.ok) throw new ReceivingError("Failed to resolve RFID receiving records.", 503);
+            const rfidItems = ((await rfidItemsRes.json()).data || []) as Array<Record<string, unknown>>;
+            for (const item of rfidItems) {
+                const receivingId = Number(item.purchase_order_product_id);
+                if (Number.isSafeInteger(receivingId) && receivingId > 0) preQaRfidAnchorIds.add(receivingId);
+            }
+        }
         if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.REJECTED) {
             throw new ReceivingError("Rejected purchase orders cannot continue to receiving.", 409);
         }
@@ -761,6 +800,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         }), expenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0), allocationMethod);
 
         const receiptIds: number[] = [];
+        const createdReceiptIds: number[] = [];
+        const updatedPreQaRfidRows: Array<{ id: number; snapshot: Record<string, unknown> }> = [];
         const pendingMovements: PendingMovement[] = [];
         const allocationChanges: AllocationChange[] = [];
         let finalMovements: FinalReceivingMovement[] = [];
@@ -786,7 +827,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             });
             if (!headerRestore.ok) return false;
             for (const change of [...lineChanges].reverse()) await mutate("purchase_order_products", change.id, "PATCH", { received: change.received });
-            for (const id of [...receiptIds].reverse()) await mutate("purchase_order_receiving", id, "DELETE");
+            for (const id of [...createdReceiptIds].reverse()) await mutate("purchase_order_receiving", id, "DELETE");
+            for (const updated of [...updatedPreQaRfidRows].reverse()) {
+                const response = await mutate("purchase_order_receiving", updated.id, "PATCH", updated.snapshot);
+                if (!response.ok) return false;
+            }
             return true;
         };
 
@@ -862,7 +907,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
                 const primaryLotMapping = mappingByMmLot.get(primaryAllocation.storageLotId);
                 if (!primaryLotMapping) throw new ReceivingError(`Storage lot ${primaryAllocation.storageLotId} has no approved legacy mapping.`, 409);
-                const receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, { method: "POST", headers, body: JSON.stringify({
+                const receiptPayload = {
                     purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: primaryLotMapping.legacy_lot_id,
                     expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCostPhp,
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
@@ -875,9 +920,37 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     is_replacement: Boolean(replacementDispositionId),
                     is_over_received: line.isOverReceived,
                     over_delivery_quantity: line.overDeliveryQuantity
-                }) });
+                };
+                const preQaRfidAnchor = allExistingReceipts.find(row =>
+                    isPreQaRfidAnchor(row, line.productId, branchId)
+                    && preQaRfidAnchorIds.has(Number(row.purchase_order_product_id))
+                );
+                let receiptId: number;
+                let receiptRes: Response;
+                if (preQaRfidAnchor) {
+                    receiptId = Number(preQaRfidAnchor.purchase_order_product_id);
+                    updatedPreQaRfidRows.push({
+                        id: receiptId,
+                        snapshot: preQaRfidAnchorSnapshot(preQaRfidAnchor)
+                    });
+                    receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${receiptId}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify(receiptPayload)
+                    });
+                } else {
+                    receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(receiptPayload)
+                    });
+                    const receiptData = receiptRes.ok
+                        ? (await receiptRes.json()).data as Record<string, unknown>
+                        : null;
+                    receiptId = Number(receiptData?.purchase_order_product_id);
+                    if (receiptId) createdReceiptIds.push(receiptId);
+                }
                 if (!receiptRes.ok) throw new Error(`Failed to create receiving record for product ${line.productId}: ${await receiptRes.text()}`);
-                const receiptId = Number((await receiptRes.json()).data.purchase_order_product_id);
                 if (!receiptId) throw new Error("Directus did not return the created receiving-record ID.");
                 receiptIds.push(receiptId);
                 await ensureQaResults({
