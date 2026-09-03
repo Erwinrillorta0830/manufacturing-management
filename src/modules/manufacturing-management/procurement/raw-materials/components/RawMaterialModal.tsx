@@ -1,8 +1,9 @@
 import React from "react";
 import { X, Plus, Trash2, Loader2, Layers } from "lucide-react";
-import { 
+import {
     RawMaterialItem, 
     SupplierItem, 
+    UnitOption,
     SelectOption,
     PackagingVariantFormState,
     PurchaseQaConfig,
@@ -14,7 +15,9 @@ import {
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
 import { PurchaseQaEditor } from "./PurchaseQaEditor";
+import { SupplierMultiSelect } from "./SupplierMultiSelect";
 import { isPackagingMaterialProductType } from "../../packaging-weight";
+import { formatRawMaterialDescription } from "../description-format";
 
 interface RawMaterialModalProps {
     isOpen: boolean;
@@ -23,6 +26,7 @@ interface RawMaterialModalProps {
     saving: boolean;
     submitError: string | null;
     loadingUnits: boolean;
+    units: UnitOption[];
     suppliers: SupplierItem[];
     showValidationErrors: boolean;
     validationErrors: RawMaterialValidationErrors;
@@ -30,8 +34,8 @@ interface RawMaterialModalProps {
     setFormName: (v: string) => void;
     formCode: string;
     setFormCode: (v: string) => void;
-    formDesc: string;
-    setFormDesc: (v: string) => void;
+    generatedDescription: string;
+    descriptionProductName: string;
     formUom: number | "";
     setFormUom: (v: number | "") => void;
     formDensity: string;
@@ -86,8 +90,6 @@ interface RawMaterialModalProps {
     setFormUomCount: (v: string) => void;
     selectedSupplierIds: number[];
     handleToggleSupplier: (id: number) => void;
-    supplierSearch: string;
-    setSupplierSearch: (v: string) => void;
     packagingVariants: PackagingVariantFormState[];
     handleAddVariant: () => void;
     handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
@@ -108,12 +110,27 @@ interface RawMaterialModalProps {
     onSaveClick: () => void;
 }
 
+function haveSameSupplierIds(left: number[], right: number[]): boolean {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every(id => rightSet.has(id));
+}
+
+function supplierLabel(suppliers: SupplierItem[], supplierId: number): string {
+    const supplier = suppliers.find(item => Number(item.id) === supplierId);
+    if (!supplier) return `Supplier #${supplierId}`;
+    return supplier.supplier_shortcut
+        ? `${supplier.supplier_name} (${supplier.supplier_shortcut})`
+        : supplier.supplier_name;
+}
+
 export function RawMaterialModal({
     isOpen,
     onClose,
     editingItem,
     saving,
     submitError,
+    units,
     suppliers,
     showValidationErrors,
     validationErrors,
@@ -121,8 +138,8 @@ export function RawMaterialModal({
     setFormName,
     formCode,
     setFormCode,
-    formDesc,
-    setFormDesc,
+    generatedDescription,
+    descriptionProductName,
     formUom,
     setFormUom,
     formDensity,
@@ -177,8 +194,6 @@ export function RawMaterialModal({
     setFormUomCount,
     selectedSupplierIds,
     handleToggleSupplier,
-    supplierSearch,
-    setSupplierSearch,
     packagingVariants,
     handleAddVariant,
     handleAddPresetVariant,
@@ -200,10 +215,6 @@ export function RawMaterialModal({
 }: RawMaterialModalProps) {
     if (!isOpen) return null;
 
-    const filteredSuppliers = suppliers.filter(s =>
-        s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-        s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
-    );
     const isPackagingMaterial = isPackagingMaterialProductType(formProductType);
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
@@ -706,46 +717,32 @@ export function RawMaterialModal({
                             </div>
 
                             <div className="space-y-1">
-                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Notes & Description</label>
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Generated Description
+                                </label>
                                 <input
                                     type="text"
-                                    placeholder="Add safety notes, storage instructions, or chemical details..."
-                                    value={formDesc}
-                                    onChange={e => setFormDesc(e.target.value)}
-                                    className="w-full p-1.5 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary"
+                                    value={generatedDescription}
+                                    placeholder="Select a material name and UOM"
+                                    readOnly
+                                    aria-readonly="true"
+                                    data-testid="raw-material-generated-description"
+                                    className="w-full p-1.5 border rounded-lg text-xs font-semibold uppercase bg-muted/40 text-foreground outline-none"
                                 />
+                                <p className="text-[10px] text-muted-foreground">
+                                    Automatically generated as Product Name - UOM. Use Regulatory Notes for additional details.
+                                </p>
                             </div>
                         </div>
 
                         {/* Right Column: Approved Suppliers Picker */}
                         <div className="space-y-1 bg-muted/10 p-2.5 rounded-xl border flex flex-col justify-between">
-                            <div className="flex items-center justify-between">
-                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Linked Approved Suppliers ({selectedSupplierIds.length})</label>
-                                <input
-                                    type="text"
-                                    placeholder="Filter suppliers..."
-                                    value={supplierSearch}
-                                    onChange={e => setSupplierSearch(e.target.value)}
-                                    className="p-1 px-2 border rounded-md text-[10px] bg-background outline-none w-36"
-                                />
-                            </div>
-                            <div className="max-h-24 overflow-y-auto border rounded-lg p-1.5 bg-card space-y-0.5 mt-1">
-                                {filteredSuppliers.map(s => {
-                                    const isChecked = selectedSupplierIds.includes(s.id);
-                                    return (
-                                        <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted/40 rounded cursor-pointer text-[10px]">
-                                            <input
-                                                type="checkbox"
-                                                checked={isChecked}
-                                                onChange={() => handleToggleSupplier(s.id)}
-                                                className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
-                                            />
-                                            <span className="font-bold text-foreground truncate">{s.supplier_name}</span>
-                                            {s.supplier_shortcut && <span className="text-muted-foreground font-mono">({s.supplier_shortcut})</span>}
-                                        </label>
-                                    );
-                                })}
-                            </div>
+                            <SupplierMultiSelect
+                                suppliers={suppliers}
+                                selectedSupplierIds={selectedSupplierIds}
+                                onToggleSupplier={handleToggleSupplier}
+                                disabled={Boolean(formParentId)}
+                            />
                         </div>
                     </div>
 
@@ -864,12 +861,22 @@ export function RawMaterialModal({
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
                                         const variantNamePreview = formName.trim() || "Material";
                                         const variantIdentityPreview = `${variantNamePreview} - ${uomShortcut.toUpperCase()}`;
+                                        const variantUom = units.find(unit => unit.unit_id === Number(v.uomId));
+                                        const variantDescription = formatRawMaterialDescription(descriptionProductName, variantUom);
                                         const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
                                         const variantComponentsComplete = v.netWeight.trim() !== "" && v.outerCartonWeight.trim() !== "" && v.palletWeight.trim() !== "";
                                         const calculatedWeight = variantComponentsComplete
                                             ? (Number(v.netWeight) + Number(v.outerCartonWeight) + Number(v.palletWeight)).toFixed(3)
                                             : null;
                                         const weightUnitName = weightUnitOptions.find(w => w.value === String(v.weightUnitId))?.label.split("(")[0]?.trim() || "";
+                                        const variantSupplierIds = Array.isArray(v.supplierIds) ? v.supplierIds : [];
+                                        const suppliersInherited = v.suppliersInherited && haveSameSupplierIds(variantSupplierIds, selectedSupplierIds);
+                                        const variantSupplierNames = variantSupplierIds.map(supplierId => supplierLabel(suppliers, supplierId));
+                                        const supplierStatus = variantSupplierIds.length === 0
+                                            ? "empty"
+                                            : suppliersInherited
+                                                ? "inherited"
+                                                : "mismatch";
 
                                         return (
                                             <div key={vIdx} className="p-3 rounded-xl border border-border bg-background space-y-2 shadow-2xs">
@@ -891,6 +898,9 @@ export function RawMaterialModal({
 
                                                 <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
                                                     <span>Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span></span>
+                                                    <span data-testid={`raw-material-variant-description-${vIdx}`}>
+                                                        Generated description: <span className="font-semibold text-foreground">{variantDescription || "Select an Outer UOM"}</span>
+                                                    </span>
                                                     <span className="font-semibold text-foreground">Classification: {classificationLabel} <span className="font-normal text-muted-foreground">(inherited)</span></span>
                                                     <label className={`flex items-center gap-1.5 px-2 py-1 rounded-md border font-bold cursor-pointer ${v.isActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
                                                         <input
@@ -901,6 +911,31 @@ export function RawMaterialModal({
                                                         />
                                                         {v.isActive ? "Active SKU" : "Inactive SKU"}
                                                     </label>
+                                                </div>
+
+                                                <div
+                                                    className={`rounded-lg border px-2.5 py-2 text-[10px] ${supplierStatus === "inherited" ? "border-emerald-500/25 bg-emerald-500/5" : "border-amber-500/35 bg-amber-500/10"}`}
+                                                    data-testid={`raw-material-variant-suppliers-${vIdx}`}
+                                                >
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-bold uppercase tracking-wider text-muted-foreground">Approved suppliers</span>
+                                                        <span className={`rounded px-1.5 py-0.5 font-bold ${supplierStatus === "inherited" ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>
+                                                            {supplierStatus === "inherited"
+                                                                ? "Inherited from Parent"
+                                                                : supplierStatus === "empty"
+                                                                    ? "No suppliers linked"
+                                                                    : "Review supplier mismatch"}
+                                                        </span>
+                                                    </div>
+                                                    {variantSupplierNames.length > 0 ? (
+                                                        <p className="mt-1 font-semibold text-foreground">
+                                                            {variantSupplierNames.join(", ")}
+                                                        </p>
+                                                    ) : (
+                                                        <p className="mt-1 font-medium text-amber-700">
+                                                            No approved suppliers are linked to the parent material.
+                                                        </p>
+                                                    )}
                                                 </div>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">

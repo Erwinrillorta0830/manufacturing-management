@@ -351,7 +351,8 @@ export interface RawMaterial {
     parent_name?: string | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     product_image?: string | null;
     maintaining_quantity?: number | null;
@@ -399,7 +400,7 @@ export interface LinkedProduct {
         product_id: number;
         product_code?: string;
         product_name?: string;
-        description?: string;
+        description?: string | null;
         parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
@@ -626,7 +627,8 @@ export interface BFFCatalogProduct {
     parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     product_image?: string | null;
     maintaining_quantity?: number | string | null;

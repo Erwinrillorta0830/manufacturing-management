@@ -71,6 +71,10 @@ export interface PackagingVariantFormState {
     maintainingQuantity: string;
     productImage: string | null;
     purchaseQa: PurchaseQaConfig;
+    /** UI-only snapshot of the approved suppliers linked to this family member. */
+    supplierIds: number[];
+    /** True when the variant supplier snapshot matches the current parent selection. */
+    suppliersInherited: boolean;
 }
 
 export interface RawMaterialValidationErrors {
@@ -146,7 +150,8 @@ export interface RawMaterialItem {
     parent_name?: string | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     unit_of_measurement?: {
         unit_id: number;
@@ -199,7 +204,7 @@ export interface SupplierItem {
     supplier_shortcut?: string;
     phone_number?: string;
     email_address?: string;
-    isActive?: number;
+    isActive?: number | boolean;
 }
 
 export interface BatchItem {

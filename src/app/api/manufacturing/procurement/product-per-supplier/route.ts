@@ -6,11 +6,15 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const supplierId = searchParams.get("supplierId");
         const productId = searchParams.get("productId");
-        const productIdsParam = searchParams.get("productIds") || searchParams.get("product_ids");
-        const productIds = (productIdsParam || "")
-            .split(",")
-            .map(value => Number(value.trim()))
-            .filter(value => Number.isSafeInteger(value) && value > 0);
+        const productIdsParam = searchParams.has("productIds")
+            ? searchParams.get("productIds")
+            : searchParams.get("product_ids");
+        const productIds = productIdsParam === null
+            ? []
+            : [...new Set(productIdsParam.split(",").map(value => Number(value.trim())))];
+        if (productIds.some(value => !Number.isSafeInteger(value) || value <= 0)) {
+            return NextResponse.json({ error: "productIds must contain only positive integer IDs" }, { status: 400 });
+        }
 
         const filters: string[] = [];
         if (supplierId) filters.push(`filter[supplier_id][_eq]=${supplierId}`);

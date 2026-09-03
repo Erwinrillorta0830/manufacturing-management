@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
@@ -17,6 +16,15 @@ import {
     syncProductQaSpecifications
 } from "./_purchase-qa";
 import {
+    normalizeSupplierIds,
+    resolvePositiveInteger,
+    readProductSupplierLinks,
+    supplierIdsFromLinks,
+    synchronizeProductSupplierLinks,
+    synchronizeFamilySupplierLinks,
+    validateSupplierSelection
+} from "./_supplier-links";
+import {
     enforceClassificationIntegrity,
     RawMaterialClassificationError
 } from "./_classification-integrity";
@@ -33,6 +41,7 @@ import {
     type DensityRequirement
 } from "@/modules/manufacturing-management/procurement/raw-materials/density-policy";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
+import { formatRawMaterialDescription } from "@/modules/manufacturing-management/procurement/raw-materials/description-format";
 
 function isPositiveNumber(value: unknown): boolean {
     if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
@@ -170,6 +179,8 @@ function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unkno
     return Object.fromEntries(Object.entries(value).filter(([key]) => ![
         "purchaseQa",
         "price_control",
+        "description",
+        "short_description",
         "created_at",
         "created_by",
         "updated_at",
@@ -328,6 +339,28 @@ async function resolvePackagingVariantIdentities(
     }));
 }
 
+async function cleanupCreatedProducts(productIds: number[]): Promise<void> {
+    for (const productId of [...new Set(productIds)].reverse()) {
+        try {
+            const cleanupResponse = await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
+                method: "DELETE",
+                headers
+            });
+            if (!cleanupResponse.ok) {
+                console.error("Failed to clean up product after an unsuccessful raw-material mutation:", {
+                    productId,
+                    status: cleanupResponse.status
+                });
+            }
+        } catch (cleanupError) {
+            console.error("Failed to clean up product after an unsuccessful raw-material mutation:", {
+                productId,
+                error: cleanupError
+            });
+        }
+    }
+}
+
 
 export async function GET(request: Request) {
     try {
@@ -338,13 +371,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
         }
 
-        const res = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${productId}&fields=supplier_id&limit=-1`, { headers, cache: "no-store" });
-        if (!res.ok) {
-            throw new Error(`Directus failed to fetch suppliers for product: ${res.status}`);
+        const numericProductId = resolvePositiveInteger(productId);
+        if (numericProductId === null) {
+            return NextResponse.json({ error: "productId must be a positive integer" }, { status: 400 });
         }
-        const json = await res.json();
-        const links = json.data || [];
-        const supplierIds = links.map((l: { supplier_id: number }) => l.supplier_id);
+
+        const links = await readProductSupplierLinks(numericProductId);
+        const supplierIds = supplierIdsFromLinks(links, numericProductId);
         return NextResponse.json(supplierIds);
     } catch (e) {
         console.error("API Error fetching product suppliers:", e);
@@ -353,6 +386,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    let createdProductId: number | null = null;
+    const createdChildProductIds: number[] = [];
+
     try {
         const body = await request.json();
         const { productDetails, supplierIds, packagingVariants } = body;
@@ -363,6 +399,15 @@ export async function POST(request: Request) {
 
         if (!isValidActiveFlag(productDetails.isActive)) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
+        }
+
+        const requestedSupplierIds = normalizeSupplierIds(supplierIds);
+        const parentProductId = resolvePositiveInteger(productDetails.parent_id);
+        const normalizedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : requestedSupplierIds || [];
+        if (!parentProductId) {
+            await validateSupplierSelection(normalizedSupplierIds);
         }
 
         const purchaseQa = await normalizePurchaseQaConfig(productDetails.purchaseQa);
@@ -419,6 +464,17 @@ export async function POST(request: Request) {
             `Variant ${index + 1} density`
         ));
 
+        const baseIdentity = await resolveProductIdentity({
+            productName: productDetails.product_name,
+            parentId: parentProductId,
+            unitId: primaryUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity);
+
         if (classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
@@ -472,6 +528,8 @@ export async function POST(request: Request) {
             barcode: normalizedProductBarcode,
             maintaining_quantity: normalizedSafetyStock,
             product_image: normalizedProductImage,
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -505,26 +563,9 @@ export async function POST(request: Request) {
         if (!productId) {
             throw new Error("Directus did not return the created raw material ID.");
         }
+        createdProductId = Number(productId);
 
         await syncProductQaSpecifications(Number(productId), purchaseQa);
-
-        // Link selected suppliers in product_per_supplier junction table
-        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-            try {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: productId,
-                            supplier_id: Number(supId)
-                        })
-                    });
-                }
-            } catch (err) {
-                console.error("Error linking suppliers to raw material:", err);
-            }
-        }
 
         // Create child packaging variants if passed
         if (resolvedVariants.length > 0) {
@@ -533,8 +574,8 @@ export async function POST(request: Request) {
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
                         density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
@@ -568,25 +609,13 @@ export async function POST(request: Request) {
                         if (!childId) {
                             throw new Error("Directus did not return the created packaging variant ID.");
                         }
+                        createdChildProductIds.push(Number(childId));
 
                         await syncProductQaSpecifications(
                             Number(childId),
                             variant.purchaseQa as PurchaseQaConfig | undefined
                         );
 
-                        // Link child to the same suppliers
-                        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                            for (const supId of supplierIds) {
-                                await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify({
-                                        product_id: childId,
-                                        supplier_id: Number(supId)
-                                    })
-                                }).catch(() => { });
-                            }
-                        }
                     } else {
                         const errText = await varRes.text();
                         throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
@@ -594,8 +623,17 @@ export async function POST(request: Request) {
             }
         }
 
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, normalizedSupplierIds);
+        } else if (supplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(Number(productId), normalizedSupplierIds);
+        }
+
         return NextResponse.json({ success: true, productId });
     } catch (e) {
+        if (createdProductId !== null) {
+            await cleanupCreatedProducts([...createdChildProductIds, createdProductId]);
+        }
         if (e instanceof RawMaterialClassificationError) {
             return NextResponse.json(
                 { error: e.message, code: e.code, ...e.details },
@@ -617,9 +655,13 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+    const createdChildProductIds: number[] = [];
+
     try {
         const body = await request.json();
         const { productId, productDetails, supplierIds, packagingVariants } = body;
+        const hasSupplierIds = Object.prototype.hasOwnProperty.call(body, "supplierIds");
+        const normalizedSupplierIds = hasSupplierIds ? (normalizeSupplierIds(supplierIds) || []) : undefined;
 
         if (!productId) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
@@ -677,13 +719,23 @@ export async function PATCH(request: Request) {
         const classifiedVariants = classification.packagingVariants;
 
         const currentProductResponse = await fetch(
-            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
+            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=parent_id,product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
             { headers, cache: "no-store" }
         );
         if (!currentProductResponse.ok) {
             throw new RawMaterialQaError(503, "Unable to load the current product weight specification.");
         }
         const currentProduct = (await currentProductResponse.json()).data as Record<string, unknown>;
+        const parentProductId = resolvePositiveInteger(currentProduct.parent_id);
+        const supplierSyncRootProductId = parentProductId || numericProductId;
+        const inheritedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : undefined;
+        if (!parentProductId && normalizedSupplierIds !== undefined) {
+            const existingParentLinks = await readProductSupplierLinks(supplierSyncRootProductId);
+            const existingParentSupplierIds = supplierIdsFromLinks(existingParentLinks, supplierSyncRootProductId);
+            await validateSupplierSelection(normalizedSupplierIds, existingParentSupplierIds);
+        }
         const effectiveUomId = hasProvidedValue(productDetails.unit_of_measurement)
             ? requireUomId(productDetails.unit_of_measurement, "Primary")
             : requireUomId(currentProduct.unit_of_measurement, "Primary");
@@ -739,6 +791,21 @@ export async function PATCH(request: Request) {
             );
         });
 
+        const effectiveParentId = Object.prototype.hasOwnProperty.call(productDetails, "parent_id")
+            ? resolvePositiveInteger(productDetails.parent_id)
+            : parentProductId;
+        const baseIdentity = await resolveProductIdentity({
+            productId: numericProductId,
+            productName: productDetails.product_name,
+            parentId: effectiveParentId,
+            unitId: effectiveUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity, numericProductId);
+
         if (!isValidActiveFlag(productDetails.isActive) || classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
@@ -793,6 +860,8 @@ export async function PATCH(request: Request) {
             ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
             ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
             ...(hasProductImageField ? { product_image: normalizedProductImage } : {}),
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -862,8 +931,8 @@ export async function PATCH(request: Request) {
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
                         density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
@@ -918,24 +987,13 @@ export async function PATCH(request: Request) {
                                 throw new Error("Directus did not return the created packaging variant ID.");
                             }
 
+                            createdChildProductIds.push(Number(childId));
+
                             await syncProductQaSpecifications(
                                 Number(childId),
                                 variant.purchaseQa as PurchaseQaConfig | undefined
                             );
 
-                            // Link child to the same suppliers
-                            if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                                for (const supId of supplierIds) {
-                                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify({
-                                            product_id: childId,
-                                            supplier_id: Number(supId)
-                                        })
-                                    }).catch(() => { });
-                                }
-                            }
                         } else {
                             const errText = await varRes.text();
                             throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
@@ -944,41 +1002,25 @@ export async function PATCH(request: Request) {
             }
         }
 
-        // Update supplier links: delete old ones first, then create new ones for parent and all children
-        if (supplierIds && Array.isArray(supplierIds)) {
-            // 1. Get all child products of this parent
-            const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
-            const children = childrenRes.ok ? (await childrenRes.json()).data || [] : [];
-            const allProductIdsToSync = [Number(productId), ...children.map((c: any) => Number(c.product_id))];
-
-            // 2. Delete old links
-            for (const pid of allProductIdsToSync) {
-                const oldLinksRes = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${pid}&limit=-1`, { headers });
-                if (oldLinksRes.ok) {
-                    const oldLinks = (await oldLinksRes.json()).data || [];
-                    for (const link of oldLinks) {
-                        await fetch(`${DIRECTUS_URL}/items/product_per_supplier/${link.id}`, { method: "DELETE", headers }).catch(() => { });
-                    }
-                }
-            }
-
-            // 3. Create new links
-            for (const pid of allProductIdsToSync) {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: pid,
-                            supplier_id: Number(supId)
-                        })
-                    }).catch(() => { });
-                }
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, inheritedSupplierIds || []);
+        } else if (normalizedSupplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(supplierSyncRootProductId, normalizedSupplierIds);
+        } else if (createdChildProductIds.length > 0) {
+            const persistedParentSupplierIds = supplierIdsFromLinks(
+                await readProductSupplierLinks(supplierSyncRootProductId),
+                supplierSyncRootProductId
+            );
+            for (const childProductId of createdChildProductIds) {
+                await synchronizeProductSupplierLinks(childProductId, persistedParentSupplierIds);
             }
         }
 
         return NextResponse.json({ success: true });
     } catch (e) {
+        if (createdChildProductIds.length > 0) {
+            await cleanupCreatedProducts(createdChildProductIds);
+        }
         if (e instanceof RawMaterialClassificationError) {
             return NextResponse.json(
                 { error: e.message, code: e.code, ...e.details },
