@@ -33,9 +33,16 @@ interface Props {
         inventory_lot_id: number;
         lot_id: number;
         product_id: number;
-        physical_count: number;
+        is_draft?: boolean;
+        draft_batch_id?: number;
+        physical_count?: number | null;
         inventory_condition: string;
         remarks?: string;
+        batch_no?: string;
+        manufacturing_date?: string | null;
+        expiry_date?: string | null;
+        expiration_date?: string | null;
+        unit_cost?: number;
     }) => Promise<void>;
     onOpenCreateLotModal: () => void;
     onOpenCreateBatchModal: (lotId: number, productId: number) => void;
@@ -69,6 +76,22 @@ export default function PhysicalInventoryDetailModal({
     const [loadingBatches, setLoadingBatches] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    const [physicalCount, setPhysicalCount] = useState<string>("");
+    const [inventoryCondition, setInventoryCondition] = useState<string>("GOOD");
+    const [remarks, setRemarks] = useState<string>("");
+
+    useEffect(() => {
+        if (editingDetail) {
+            setPhysicalCount(editingDetail.physical_count !== null && editingDetail.physical_count !== undefined ? String(editingDetail.physical_count) : "");
+            setInventoryCondition(editingDetail.inventory_condition || "GOOD");
+            setRemarks(editingDetail.remarks || "");
+        } else {
+            setPhysicalCount("");
+            setInventoryCondition("GOOD");
+            setRemarks("");
+        }
+    }, [editingDetail, isOpen]);
 
     const extractLotBranchId = (lot?: MmLot | null): number => {
         if (!lot || !lot.branch_id) return 0;
@@ -126,12 +149,15 @@ export default function PhysicalInventoryDetailModal({
     // Handle new batch created dynamically
     useEffect(() => {
         if (lastCreatedBatch && isOpen) {
-            setBatches((prev) => {
-                const exists = prev.some((b) => b.inventory_lot_id === lastCreatedBatch.inventory_lot_id);
-                if (exists) return prev;
-                return [lastCreatedBatch, ...prev];
-            });
-            setSelectedBatchId(lastCreatedBatch.inventory_lot_id);
+            const bId = Number(lastCreatedBatch.inventory_lot_id || (lastCreatedBatch as { id?: number }).id || 0);
+            if (bId > 0) {
+                setBatches((prev) => {
+                    const exists = prev.some((b) => Number(b.inventory_lot_id || (b as { id?: number }).id) === bId);
+                    if (exists) return prev;
+                    return [{ ...lastCreatedBatch, inventory_lot_id: bId }, ...prev];
+                });
+                setSelectedBatchId(bId);
+            }
         }
     }, [lastCreatedBatch, isOpen]);
 
@@ -307,21 +333,27 @@ export default function PhysicalInventoryDetailModal({
 
     // Filter out batches that are ALREADY added to this Physical Inventory sheet
     const availableBatches = React.useMemo(() => {
-        if (!existingDetails || existingDetails.length === 0) return batches;
+        const normalizedBatches = batches.map((b) => ({
+            ...b,
+            inventory_lot_id: Number(b.inventory_lot_id || (b as { id?: number }).id || 0),
+        }));
+        if (!existingDetails || existingDetails.length === 0) return normalizedBatches;
         const addedBatchIds = new Set(
             existingDetails.map((d) => {
                 if (typeof d.inventory_lot_id === "object" && d.inventory_lot_id !== null) {
-                    return (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id || 0;
+                    return Number((d.inventory_lot_id as { inventory_lot_id?: number; id?: number }).inventory_lot_id || (d.inventory_lot_id as { id?: number }).id || 0);
                 }
                 return Number(d.inventory_lot_id || 0);
             })
         );
-        return batches.filter((b) => {
+        return normalizedBatches.filter((b) => {
             if (editingDetail) {
-                const editBId = typeof editingDetail.inventory_lot_id === "object" ? editingDetail.inventory_lot_id?.inventory_lot_id : editingDetail.inventory_lot_id;
-                if (Number(editBId) === Number(b.inventory_lot_id)) return true;
+                const editBId = typeof editingDetail.inventory_lot_id === "object"
+                    ? Number((editingDetail.inventory_lot_id as { inventory_lot_id?: number; id?: number })?.inventory_lot_id || (editingDetail.inventory_lot_id as { id?: number })?.id || 0)
+                    : Number(editingDetail.inventory_lot_id || 0);
+                if (editBId === b.inventory_lot_id) return true;
             }
-            return !addedBatchIds.has(Number(b.inventory_lot_id));
+            return !addedBatchIds.has(b.inventory_lot_id);
         });
     }, [batches, existingDetails, editingDetail]);
 
@@ -360,15 +392,43 @@ export default function PhysicalInventoryDetailModal({
                 return;
             }
         }
+        const selectedBatch = batches.find((b) => Number(b.inventory_lot_id || (b as { id?: number }).id) === selectedBatchId) || (lastCreatedBatch && Number(lastCreatedBatch.inventory_lot_id || (lastCreatedBatch as { id?: number }).id) === selectedBatchId ? lastCreatedBatch : null);
+        const selectedLot = lots.find((l) => Number(l.lot_id || (l as { id?: number }).id) === selectedLotId) || (lastCreatedLot && Number(lastCreatedLot.lot_id || (lastCreatedLot as { id?: number }).id) === selectedLotId ? lastCreatedLot : null);
+
+        const isDraftBatch = selectedBatchId < 0 || Boolean(selectedBatch?.status === "DRAFT" || (selectedBatch as { is_draft?: boolean })?.is_draft || (selectedBatch as { draft_batch_id?: number })?.draft_batch_id);
+        const isDraftLot = selectedLotId < 0 || Boolean(selectedLot?.isActive === 0);
+
+        const countVal = physicalCount.trim() === "" ? null : Number(physicalCount);
+        if (countVal !== null && (isNaN(countVal) || countVal < 0)) {
+            setError("Physical count cannot be negative.");
+            return;
+        }
+
         try {
             setSubmitting(true);
             await onSaveDetail({
                 inventory_lot_id: selectedBatchId,
                 lot_id: selectedLotId,
                 product_id: selectedProductId,
-                physical_count: editingDetail ? Number(editingDetail.physical_count || 0) : 0,
-                inventory_condition: editingDetail?.inventory_condition || "GOOD",
-                remarks: editingDetail?.remarks || "",
+                is_draft: isDraftBatch,
+                physical_count: countVal,
+                inventory_condition: inventoryCondition || "GOOD",
+                remarks: remarks.trim(),
+                ...(isDraftBatch && selectedBatch
+                    ? {
+                          batch_no: selectedBatch.batch_no,
+                          manufacturing_date: selectedBatch.manufacturing_date || null,
+                          expiry_date: selectedBatch.expiry_date || selectedBatch.expiration_date || null,
+                          expiration_date: selectedBatch.expiry_date || selectedBatch.expiration_date || null,
+                          unit_cost: selectedBatch.unit_cost !== undefined ? Number(selectedBatch.unit_cost) : undefined,
+                      }
+                    : {}),
+                ...(isDraftLot && selectedLot
+                    ? {
+                          lot_name: selectedLot.lot_name,
+                          max_batch_capacity: selectedLot.max_batch_capacity,
+                      }
+                    : {}),
             });
             onClose();
         } catch (err: unknown) {
@@ -512,11 +572,15 @@ export default function PhysicalInventoryDetailModal({
                                     </button>
                                 </div>
                                 <SearchableSelect
-                                    options={availableBatches.map((b) => ({
-                                        value: b.inventory_lot_id,
-                                        label: `Batch #${b.batch_no}`,
-                                        sublabel: `Cost: ₱${b.unit_cost}${b.expiry_date ? ` | Exp: ${b.expiry_date}` : ""}`,
-                                    }))}
+                                    options={availableBatches.map((b) => {
+                                        const bId = Number(b.inventory_lot_id || (b as { id?: number }).id || 0);
+                                        const exp = b.expiry_date || b.expiration_date;
+                                        return {
+                                            value: bId,
+                                            label: `Batch #${b.batch_no}`,
+                                            sublabel: `Cost: ₱${b.unit_cost}${exp ? ` | Exp: ${exp}` : ""}`,
+                                        };
+                                    })}
                                     value={selectedBatchId}
                                     onChange={(val) => setSelectedBatchId(Number(val))}
                                     placeholder="Select Existing Batch..."
@@ -529,6 +593,53 @@ export default function PhysicalInventoryDetailModal({
                                 )}
                             </div>
                         )}
+
+                        {/* Physical Count & Condition Inputs */}
+                        <div className="grid grid-cols-2 gap-3 pt-2 border-t">
+                            <div>
+                                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                    Physical Count Quantity
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={physicalCount}
+                                    onChange={(e) => setPhysicalCount(e.target.value)}
+                                    placeholder="Leave blank for —"
+                                    className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-mono"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                    Inventory Condition
+                                </label>
+                                <select
+                                    value={inventoryCondition}
+                                    onChange={(e) => setInventoryCondition(e.target.value)}
+                                    className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                >
+                                    <option value="GOOD">GOOD</option>
+                                    <option value="DAMAGED">DAMAGED</option>
+                                    <option value="QUARANTINED">QUARANTINED</option>
+                                    <option value="EXPIRED">EXPIRED</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                Line Item Remarks (Optional)
+                            </label>
+                            <input
+                                type="text"
+                                value={remarks}
+                                onChange={(e) => setRemarks(e.target.value)}
+                                placeholder="Enter variance explanation or remarks..."
+                                className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                            />
+                        </div>
                     </div>
 
                     {/* Modal Footer */}

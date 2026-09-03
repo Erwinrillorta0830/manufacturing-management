@@ -13,7 +13,7 @@ import {
 } from "../types";
 import SearchableSelect from "./SearchableSelect";
 import { formatQty, formatMoney } from "./PhysicalInventoryList";
-import { ArrowLeft, Plus, Save, Send, Trash2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2, GitCompare } from "lucide-react";
+import { ArrowLeft, Plus, Save, Send, Trash2, RotateCcw, AlertTriangle, Layers, LayoutGrid, List, Tag, Loader2, GitCompare, CheckCircle2 } from "lucide-react";
 
 interface Props {
     sheet?: MmPhysicalInventorySheet | null;
@@ -36,7 +36,8 @@ interface Props {
     onPopulateSheet?: (productTypeId?: number | null) => Promise<void>;
     onOpenAddDetailModal: (lotId?: number) => void;
     onRemoveDetail: (detail: MmPhysicalInventoryDetail) => void;
-    onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number) => Promise<void>;
+    onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number | null) => Promise<void>;
+    onSaveInlineRemark?: (detail: MmPhysicalInventoryDetail, remarks: string) => Promise<void>;
     onOpenOffsettingModal?: () => void;
     onSubmit: () => void;
     onReturnToDraft?: () => void;
@@ -56,6 +57,7 @@ export default function PhysicalInventoryForm({
     onOpenAddDetailModal,
     onRemoveDetail,
     onSaveInlineCount,
+    onSaveInlineRemark,
     onSubmit,
     onReturnToDraft,
 }: Props) {
@@ -64,8 +66,10 @@ export default function PhysicalInventoryForm({
     const isPendingReview = sheet?.status === "PENDING_REVIEW";
     const isReadOnly = !isDraft;
 
+    const [remarksMap, setRemarksMap] = useState<Record<number, string>>({});
+
     const [branchId, setBranchId] = useState<number>(() => {
-        if (!sheet?.branch_id) return branches[0]?.id || 0;
+        if (!sheet?.branch_id) return 0;
         return typeof sheet.branch_id === "object" ? sheet.branch_id.id || 0 : sheet.branch_id;
     });
 
@@ -154,6 +158,8 @@ export default function PhysicalInventoryForm({
     const [countsMap, setCountsMap] = useState<Record<number, string>>({});
     const [viewMode, setViewMode] = useState<"GROUPED" | "FLAT">("GROUPED");
     const [saving, setSaving] = useState(false);
+    const [savingDraft, setSavingDraft] = useState(false);
+    const [draftSavedToast, setDraftSavedToast] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -173,15 +179,12 @@ export default function PhysicalInventoryForm({
             if (sheet.cutoff_date) setCutoffDate(formatDateTimeInput(sheet.cutoff_date));
             setRemarks(sheet.remarks || "");
         } else {
-            if (!branchId && branches.length > 0) {
-                setBranchId((prev) => (prev > 0 ? prev : branches[0].id));
-            }
             if (priceTypes.length > 0) {
                 setPriceTypeId((prev) => (prev > 0 ? prev : priceTypes[0].price_type_id));
             }
             setStockType(branchHasCommittedOpening ? "REGULAR" : "OPENING");
         }
-    }, [sheet, branches, priceTypes, branchHasCommittedOpening, branchId]);
+    }, [sheet, priceTypes, branchHasCommittedOpening]);
 
     const handleHeaderSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -206,6 +209,53 @@ export default function PhysicalInventoryForm({
             setError(msg);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleSaveDraft = async () => {
+        setError(null);
+        setSavingDraft(true);
+        try {
+            if (sheet?.physical_inventory_id) {
+                await onSaveHeader({
+                    branch_id: branchId,
+                    product_type_id: productTypeId > 0 ? productTypeId : null,
+                    price_type_id: priceTypeId > 0 ? priceTypeId : null,
+                    stock_type: stockType,
+                    starting_date: startingDate,
+                    cutoff_date: cutoffDate,
+                    remarks: remarks,
+                });
+            }
+
+            const detailEntries = Object.entries(countsMap);
+            for (const [dIdStr, valStr] of detailEntries) {
+                const dId = Number(dIdStr);
+                const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
+                if (detailObj && onSaveInlineCount && valStr !== undefined && valStr !== "") {
+                    const valNum = Number(valStr);
+                    if (!isNaN(valNum) && valNum >= 0) {
+                        await onSaveInlineCount(detailObj, valNum);
+                    }
+                }
+            }
+
+            const remarkEntries = Object.entries(remarksMap);
+            for (const [dIdStr, remarkStr] of remarkEntries) {
+                const dId = Number(dIdStr);
+                const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
+                if (detailObj && onSaveInlineRemark && remarkStr !== undefined) {
+                    await onSaveInlineRemark(detailObj, remarkStr.trim());
+                }
+            }
+
+            setDraftSavedToast(true);
+            setTimeout(() => setDraftSavedToast(false), 4500);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to save draft progress.";
+            setError(msg);
+        } finally {
+            setSavingDraft(false);
         }
     };
 
@@ -269,6 +319,57 @@ export default function PhysicalInventoryForm({
         return baseUom;
     };
 
+    const summaryPieces = useMemo(() => {
+        let sysPcs = 0;
+        let physPcs = 0;
+        let sysUom = 0;
+        let physUom = 0;
+        let diffCostSum = 0;
+
+        for (const d of details) {
+            const prodObj = typeof d.product_id === "object" && d.product_id !== null ? (d.product_id as unknown as Record<string, unknown>) : null;
+            const uomCountRaw = prodObj ? Number(prodObj.unit_of_measurement_count || 0) : 0;
+            const uomCount = uomCountRaw > 0 ? uomCountRaw : 1;
+
+            const dId = d.physical_inventory_detail_id || d.id || 0;
+            const sys = Number(d.system_count || 0);
+            const origPhys = d.physical_count;
+            const rawInput = dId ? countsMap[dId] : undefined;
+            const hasInput = rawInput !== undefined && rawInput !== "";
+            const hasSavedCount = dId && countsMap[dId] !== undefined ? countsMap[dId] !== "" : (origPhys !== null && origPhys !== undefined);
+            const phys = hasInput ? Number(rawInput) : (hasSavedCount ? Number(origPhys || 0) : 0);
+
+            const sysItemPcs = sys * uomCount;
+            const physItemPcs = phys * uomCount;
+            const varItemUom = phys - sys;
+            const unitCost = Number(d.unit_cost || 0);
+
+            sysUom += sys;
+            physUom += phys;
+            sysPcs += sysItemPcs;
+            physPcs += physItemPcs;
+            diffCostSum += varItemUom * unitCost;
+        }
+
+        const varPcs = physPcs - sysPcs;
+        const varUom = physUom - sysUom;
+
+        const finalSysPcs = sysPcs > 0 ? sysPcs : (sheet?.total_system_quantity || 0);
+        const finalPhysPcs = physPcs > 0 ? physPcs : (sheet?.total_physical_quantity || 0);
+        const finalVarPcs = sysPcs > 0 ? varPcs : (sheet?.total_variance || 0);
+        const finalDiffCost = diffCostSum !== 0 ? diffCostSum : (sheet?.total_difference_cost || 0);
+
+        return {
+            totalSystemPieces: finalSysPcs,
+            totalPhysicalPieces: finalPhysPcs,
+            totalVariancePieces: finalVarPcs,
+            totalSystemUom: sysUom,
+            totalPhysicalUom: physUom,
+            totalVarianceUom: varUom,
+            totalDifferenceCost: finalDiffCost,
+        };
+    }, [details, countsMap, sheet?.total_system_quantity, sheet?.total_physical_quantity, sheet?.total_variance, sheet?.total_difference_cost]);
+
     return (
         <div className="space-y-6">
             {/* Top Navigation */}
@@ -294,15 +395,31 @@ export default function PhysicalInventoryForm({
 
                 <div className="flex items-center gap-2">
                     {isDraft && !isNew && (
-                        <button
-                            type="button"
-                            onClick={onSubmit}
-                            disabled={loading || details.length === 0}
-                            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs disabled:opacity-50"
-                        >
-                            <Send className="h-4 w-4" />
-                            Submit for Review
-                        </button>
+                        <>
+                            <button
+                                type="button"
+                                onClick={handleSaveDraft}
+                                disabled={loading || saving || savingDraft}
+                                className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-card hover:bg-accent border border-border rounded-lg transition-colors shadow-xs disabled:opacity-50"
+                                title="Save current progress as draft without submitting for review or posting stock adjustments"
+                            >
+                                {savingDraft ? (
+                                    <Loader2 className="h-4 w-4 animate-spin text-emerald-600 dark:text-emerald-400" />
+                                ) : (
+                                    <Save className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                                )}
+                                {savingDraft ? "Saving Draft..." : "Save Draft"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={onSubmit}
+                                disabled={loading || saving || savingDraft || details.length === 0}
+                                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs disabled:opacity-50"
+                            >
+                                <Send className="h-4 w-4" />
+                                Submit for Review
+                            </button>
+                        </>
                     )}
 
                     {isPendingReview && onReturnToDraft && (
@@ -328,6 +445,29 @@ export default function PhysicalInventoryForm({
                     )}
                 </div>
             </div>
+
+            {draftSavedToast && (
+                <div className="p-3.5 bg-emerald-50/90 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="flex items-center gap-2.5">
+                        <div className="p-1.5 bg-emerald-600 text-white rounded-md shrink-0">
+                            <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        <div>
+                            <div className="font-bold text-sm">Draft Progress Saved</div>
+                            <div className="text-emerald-700 dark:text-emerald-300 mt-0.5">
+                                All header details and physical count inputs have been staged in <strong>DRAFT</strong> status. No stock ledger postings or lot master modifications occurred.
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setDraftSavedToast(false)}
+                        className="text-emerald-700 hover:text-emerald-900 dark:text-emerald-300 text-base font-bold px-2 py-1"
+                    >
+                        &times;
+                    </button>
+                </div>
+            )}
 
             {isPendingReview && (
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs text-indigo-900 dark:text-indigo-200 shadow-xs">
@@ -518,33 +658,46 @@ export default function PhysicalInventoryForm({
                         <div className="bg-card border p-3.5 rounded-xl shadow-xs">
                             <div className="text-xs text-muted-foreground font-medium">Total System Count</div>
                             <div className="text-lg font-bold font-mono text-foreground mt-0.5">
-                                {formatQty(sheet?.total_system_quantity)}
+                                {formatQty(summaryPieces.totalSystemPieces)}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                                {formatQty(summaryPieces.totalSystemUom)} uom containers
                             </div>
                         </div>
                         <div className="bg-card border p-3.5 rounded-xl shadow-xs">
                             <div className="text-xs text-muted-foreground font-medium">Total Physical Count</div>
                             <div className="text-lg font-bold font-mono text-foreground mt-0.5">
-                                {formatQty(sheet?.total_physical_quantity)}
+                                {formatQty(summaryPieces.totalPhysicalPieces)}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                                {formatQty(summaryPieces.totalPhysicalUom)} uom containers
                             </div>
                         </div>
                         <div className="bg-card border p-3.5 rounded-xl shadow-xs">
                             <div className="text-xs text-muted-foreground font-medium">Total Variance</div>
                             <div
                                 className={`text-lg font-bold font-mono mt-0.5 ${
-                                    (sheet?.total_variance || 0) > 0
+                                    summaryPieces.totalVariancePieces > 0
                                         ? "text-emerald-600"
-                                        : (sheet?.total_variance || 0) < 0
+                                        : summaryPieces.totalVariancePieces < 0
                                         ? "text-rose-600"
                                         : "text-foreground"
                                 }`}
                             >
-                                {(sheet?.total_variance || 0) > 0 ? `+${formatQty(sheet?.total_variance)}` : formatQty(sheet?.total_variance)}
+                                {summaryPieces.totalVariancePieces > 0
+                                    ? `+${formatQty(summaryPieces.totalVariancePieces)}`
+                                    : formatQty(summaryPieces.totalVariancePieces)}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                                {summaryPieces.totalVarianceUom > 0
+                                    ? `+${formatQty(summaryPieces.totalVarianceUom)}`
+                                    : formatQty(summaryPieces.totalVarianceUom)} uom containers
                             </div>
                         </div>
                         <div className="bg-card border p-3.5 rounded-xl shadow-xs">
                             <div className="text-xs text-muted-foreground font-medium">Difference Cost</div>
                             <div className="text-lg font-bold font-mono text-foreground mt-0.5">
-                                {formatMoney(sheet?.total_difference_cost)}
+                                {formatMoney(summaryPieces.totalDifferenceCost)}
                             </div>
                         </div>
                     </div>
@@ -637,35 +790,81 @@ export default function PhysicalInventoryForm({
                             /* GROUPED BY LOT VIEW */
                             <div className="space-y-4">
                                 {groupedByLot.map((group) => {
-                                    let lotSys = 0;
-                                    let lotPhys = 0;
-                                    let lotVar = 0;
+                                    let lotSysUom = 0;
+                                    let lotPhysUom = 0;
+                                    let lotVarUom = 0;
+                                    let lotSysPcs = 0;
+                                    let lotPhysPcs = 0;
+                                    let lotVarPcs = 0;
                                     let lotDiffCost = 0;
 
-                                    group.items.forEach((d, idx) => {
-                                        const dId = d.physical_inventory_detail_id || d.id || idx;
+                                    group.items.forEach((d, index) => {
+                                        const prodObj = typeof d.product_id === "object" && d.product_id !== null ? (d.product_id as unknown as Record<string, unknown>) : null;
+                                        const uomCountRaw = prodObj ? Number(prodObj.unit_of_measurement_count || 0) : 0;
+                                        const uomCount = uomCountRaw > 0 ? uomCountRaw : 1;
+
+                                        const dId = d.physical_inventory_detail_id || d.id || index;
                                         const sys = d.system_count || 0;
-                                        const origPhys = d.physical_count || 0;
-                                        const rawInput = countsMap[dId];
-                                        const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
-                                        const varQty = phys - sys;
+                                        const origPhys = d.physical_count;
+                                        const rawInput = dId ? countsMap[dId] : undefined;
+                                        const hasInput = rawInput !== undefined && rawInput !== "";
+                                        const hasSavedCount = dId && countsMap[dId] !== undefined ? countsMap[dId] !== "" : (origPhys !== null && origPhys !== undefined);
+                                        const phys = hasInput ? Number(rawInput) : (hasSavedCount ? Number(origPhys || 0) : 0);
+                                        const varQty = (hasInput || hasSavedCount) ? phys - sys : 0 - sys;
                                         const unitCost = d.unit_cost || 0;
                                         const diffCost = varQty * unitCost;
 
-                                        lotSys += sys;
-                                        lotPhys += phys;
-                                        lotVar += varQty;
+                                        lotSysUom += sys;
+                                        lotPhysUom += phys;
+                                        lotVarUom += varQty;
+                                        lotSysPcs += sys * uomCount;
+                                        lotPhysPcs += phys * uomCount;
+                                        lotVarPcs += varQty * uomCount;
                                         lotDiffCost += diffCost;
                                     });
 
                                     const lotVarStyle =
-                                        lotVar > 0
+                                        lotVarPcs > 0
                                             ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                            : lotVar < 0
+                                            : lotVarPcs < 0
                                             ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300"
                                             : "bg-muted/60 text-muted-foreground border-border";
 
-                                    return (
+                                    const getGroupLotUom = (g: { lotObj: unknown; items: MmPhysicalInventoryDetail[] }) => {
+                                         if (typeof g.lotObj === "object" && g.lotObj !== null) {
+                                             const l = g.lotObj as Record<string, unknown>;
+                                             const u = l.unit_id;
+                                             if (typeof u === "object" && u !== null) {
+                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
+                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
+                                                 if (shortcut) return shortcut;
+                                             } else if (typeof u === "string" || typeof u === "number") {
+                                                 if (u) return String(u);
+                                             }
+                                             if (typeof l.unit_shortcut === "string" && l.unit_shortcut) return l.unit_shortcut;
+                                             if (typeof l.unit_name === "string" && l.unit_name) return l.unit_name;
+                                         }
+                                         if (g.items.length > 0) {
+                                             const first = g.items[0];
+                                             const u = first.unit_id;
+                                             if (typeof u === "object" && u !== null) {
+                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
+                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
+                                                 if (shortcut) return shortcut;
+                                             }
+                                             const p = first.product_id;
+                                             if (typeof p === "object" && p !== null) {
+                                                 const pObj = p as { unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } };
+                                                 const shortcut = pObj.unit_of_measurement?.unit_shortcut || pObj.unit_of_measurement?.unit_name || "";
+                                                 if (shortcut) return shortcut;
+                                             }
+                                         }
+                                         return "";
+                                     };
+
+                                     const lotUomName = getGroupLotUom(group) || "UOM";
+
+                                     return (
                                         <div key={group.lotName} className="bg-card border rounded-xl shadow-xs overflow-hidden transition-all hover:shadow-md">
                                             {/* Lot Section Header */}
                                             <div className="p-4 border-b bg-muted/40 flex flex-wrap items-center justify-between gap-3">
@@ -674,8 +873,13 @@ export default function PhysicalInventoryForm({
                                                         <Layers className="h-5 w-5" />
                                                     </div>
                                                     <div>
-                                                        <div className="flex items-center gap-2">
+                                                        <div className="flex items-center gap-2 flex-wrap">
                                                             <h4 className="text-sm font-bold text-foreground">{group.lotName}</h4>
+                                                             {lotUomName && lotUomName !== "UOM" && (
+                                                                 <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 tracking-wider">
+                                                                     UOM: {lotUomName}
+                                                                 </span>
+                                                             )}
                                                             <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-primary/15 text-primary">
                                                                 {group.items.length} {group.items.length === 1 ? "item" : "items"}
                                                             </span>
@@ -688,15 +892,18 @@ export default function PhysicalInventoryForm({
                                                 <div className="flex flex-wrap items-center gap-2.5 text-xs">
                                                     <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
                                                         <span className="text-muted-foreground text-[10px] uppercase font-semibold">System:</span>
-                                                        <span className="font-bold">{formatQty(lotSys)}</span>
+                                                        <span className="font-bold">{formatQty(lotSysPcs)} pcs</span>
+                                                        <span className="text-muted-foreground text-[10px] font-normal">({formatQty(lotSysUom)} {lotUomName.toLowerCase()})</span>
                                                     </div>
                                                     <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
                                                         <span className="text-muted-foreground text-[10px] uppercase font-semibold">Physical:</span>
-                                                        <span className="font-bold text-foreground">{formatQty(lotPhys)}</span>
+                                                        <span className="font-bold text-foreground">{formatQty(lotPhysPcs)} pcs</span>
+                                                        <span className="text-muted-foreground text-[10px] font-normal">({formatQty(lotPhysUom)} {lotUomName.toLowerCase()})</span>
                                                     </div>
                                                     <div className={`px-2.5 py-1 border rounded-md flex items-center gap-1.5 font-mono font-bold ${lotVarStyle}`}>
                                                         <span className="text-[10px] uppercase font-semibold">Variance:</span>
-                                                        <span>{lotVar > 0 ? `+${formatQty(lotVar)}` : formatQty(lotVar)}</span>
+                                                        <span>{lotVarPcs > 0 ? `+${formatQty(lotVarPcs)}` : formatQty(lotVarPcs)} pcs</span>
+                                                        <span className="font-normal text-[10px]">({lotVarUom > 0 ? `+${formatQty(lotVarUom)}` : formatQty(lotVarUom)} {lotUomName.toLowerCase()})</span>
                                                     </div>
                                                     <div className="px-2.5 py-1 bg-background border rounded-md flex items-center gap-1.5 font-mono">
                                                         <span className="text-muted-foreground text-[10px] uppercase font-semibold">Diff Cost:</span>
@@ -729,6 +936,7 @@ export default function PhysicalInventoryForm({
                                                             <th className="px-3 py-2">Batch #</th>
                                                             <th className="px-3 py-2">Mfg / Expiry</th>
                                                             <th className="px-3 py-2">UOM</th>
+                                                            <th className="px-3 py-2 text-right text-indigo-700 dark:text-indigo-300 font-bold">Total Pcs</th>
                                                             <th className="px-3 py-2">Condition</th>
                                                             <th className="px-3 py-2 text-right">System</th>
                                                             <th className="px-3 py-2 text-right">Physical</th>
@@ -743,10 +951,12 @@ export default function PhysicalInventoryForm({
                                                         {group.items.map((d, index) => {
                                                             const dId = d.physical_inventory_detail_id || d.id || index;
                                                             const sys = d.system_count || 0;
-                                                            const origPhys = d.physical_count || 0;
+                                                            const origPhys = d.physical_count;
                                                             const rawInput = countsMap[dId];
-                                                            const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
-                                                            const varQty = phys - sys;
+                                                            const hasInput = rawInput !== undefined && rawInput !== "";
+                                                            const hasSavedCount = countsMap[dId] !== undefined ? countsMap[dId] !== "" : (origPhys !== null && origPhys !== undefined);
+                                                            const phys = hasInput ? Number(rawInput) : (hasSavedCount ? Number(origPhys || 0) : 0);
+                                                            const varQty = (hasInput || hasSavedCount) ? phys - sys : 0 - sys;
                                                             const unitCost = d.unit_cost || 0;
                                                             const diffCost = varQty * unitCost;
 
@@ -767,6 +977,25 @@ export default function PhysicalInventoryForm({
                                                                         <div>Exp: {d.expiration_date || "—"}</div>
                                                                     </td>
                                                                     <td className="px-3 py-2.5 font-semibold text-muted-foreground">{getUnitShortcut(d.unit_id, d.product_id)}</td>
+                                                                    <td className="px-3 py-2.5 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                                                        {(() => {
+                                                                            const prodObj = typeof d.product_id === "object" && d.product_id !== null ? (d.product_id as unknown as Record<string, unknown>) : null;
+                                                                            const uomCountRaw = prodObj ? Number(prodObj.unit_of_measurement_count || 0) : 0;
+                                                                            const uomCount = uomCountRaw > 0 ? uomCountRaw : 1;
+                                                                            const sysItemPcs = sys * uomCount;
+                                                                            const physItemPcs = phys * uomCount;
+                                                                            return (
+                                                                                <div>
+                                                                                    <div>{sysItemPcs.toLocaleString()} pcs</div>
+                                                                                    {physItemPcs > 0 && physItemPcs !== sysItemPcs ? (
+                                                                                        <div className="text-[10px] text-muted-foreground font-normal">
+                                                                                            Counted: {physItemPcs.toLocaleString()} pcs
+                                                                                        </div>
+                                                                                    ) : null}
+                                                                                </div>
+                                                                            );
+                                                                        })()}
+                                                                    </td>
                                                                     <td className="px-3 py-2.5">
                                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border">
                                                                             {d.inventory_condition}
@@ -780,20 +1009,18 @@ export default function PhysicalInventoryForm({
                                                                                     type="number"
                                                                                     min="0"
                                                                                     step="1"
-                                                                                    value={rawInput !== undefined ? rawInput : String(Math.round(Number(origPhys || 0)))}
+                                                                                    value={rawInput !== undefined ? rawInput : (hasSavedCount ? String(Math.round(Number(origPhys))) : "")}
                                                                                     onChange={(e) => {
                                                                                         const val = e.target.value;
                                                                                         setCountsMap((prev) => ({ ...prev, [dId]: val }));
                                                                                     }}
-                                                                                    onBlur={async () => {
-                                                                                        const valStr = countsMap[dId];
-                                                                                        if (valStr !== undefined) {
-                                                                                            const num = Math.round(Number(valStr));
-                                                                                            if (!isNaN(num) && num >= 0 && num !== Math.round(Number(origPhys || 0))) {
-                                                                                                if (onSaveInlineCount) {
-                                                                                                    await onSaveInlineCount(d, num);
-                                                                                                }
-                                                                                            }
+                                                                                    onBlur={async (e) => {
+                                                                                        const valStr = e.target.value;
+                                                                                        const num = valStr.trim() === "" ? null : Math.round(Number(valStr));
+                                                                                        const curPhys = d.physical_count;
+                                                                                        const curNum = curPhys !== null && curPhys !== undefined ? Number(curPhys) : null;
+                                                                                        if (num !== curNum && (num === null || (!isNaN(num) && num >= 0)) && onSaveInlineCount) {
+                                                                                            await onSaveInlineCount(d, num);
                                                                                         }
                                                                                     }}
                                                                                     onKeyDown={(e) => {
@@ -802,11 +1029,11 @@ export default function PhysicalInventoryForm({
                                                                                         }
                                                                                     }}
                                                                                     className="w-24 px-2 py-1 text-right font-mono font-bold text-xs bg-background border border-primary/40 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 shadow-xs"
-                                                                                    placeholder="0"
+                                                                                    placeholder=""
                                                                                 />
                                                                             </div>
                                                                         ) : (
-                                                                            formatQty(phys)
+                                                                            hasInput || hasSavedCount ? formatQty(phys) : "—"
                                                                         )}
                                                                     </td>
                                                                     <td className={`px-3 py-2.5 text-right font-mono ${varStyle}`}>
@@ -814,19 +1041,66 @@ export default function PhysicalInventoryForm({
                                                                     </td>
                                                                     <td className="px-3 py-2.5 text-right font-mono">{formatMoney(unitCost)}</td>
                                                                     <td className="px-3 py-2.5 text-right font-mono font-semibold">{formatMoney(diffCost)}</td>
-                                                                    <td className="px-3 py-2.5 max-w-xs truncate text-muted-foreground">{d.remarks || "—"}</td>
+                                                                    <td className="px-3 py-2.5 min-w-[180px] max-w-xs">
+                                                             {isDraft ? (
+                                                                 <div className="space-y-0.5">
+                                                                     <input
+                                                                         type="text"
+                                                                         value={remarksMap[dId] !== undefined ? remarksMap[dId] : (d.remarks || "")}
+                                                                         onChange={(e) => {
+                                                                             const val = e.target.value;
+                                                                             setRemarksMap((prev) => ({ ...prev, [dId]: val }));
+                                                                         }}
+                                                                         onBlur={async (e) => {
+                                                                             const rVal = e.target.value;
+                                                                             const curRemark = d.remarks || "";
+                                                                             if (rVal.trim() !== curRemark.trim() && onSaveInlineRemark) {
+                                                                                 await onSaveInlineRemark(d, rVal.trim());
+                                                                             }
+                                                                         }}
+                                                                         onKeyDown={(e) => {
+                                                                             if (e.key === "Enter") {
+                                                                                 (e.target as HTMLInputElement).blur();
+                                                                             }
+                                                                         }}
+                                                                         placeholder={Math.abs(varQty) > 0.0001 ? "Reason required *" : "Remarks..."}
+                                                                         className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${
+                                                                             Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
+                                                                                 ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
+                                                                                 : "border-input focus:ring-primary/20"
+                                                                         }`}
+                                                                     />
+                                                                     {Math.abs(varQty) > 0.0001 && !d.remarks?.trim() && (
+                                                                         <p className="text-[10px] font-semibold text-rose-600">Variance reason required</p>
+                                                                     )}
+                                                                 </div>
+                                                             ) : (
+                                                                 <span className="truncate text-muted-foreground">{d.remarks || "—"}</span>
+                                                             )}
+                                                         </td>
                                                                     {isDraft && (
-                                                                        <td className="px-3 py-2.5 text-right">
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => onRemoveDetail(d)}
-                                                                                className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
-                                                                                title="Remove Detail"
-                                                                            >
-                                                                                <Trash2 className="h-3.5 w-3.5" />
-                                                                            </button>
-                                                                        </td>
-                                                                    )}
+                                                                         <td className="px-3 py-2.5 text-right">
+                                                                             {sys <= 0 && (!d.remarks || !String(d.remarks).toLowerCase().includes("auto-populated")) ? (
+                                                                                 <button
+                                                                                     type="button"
+                                                                                     onClick={() => onRemoveDetail(d)}
+                                                                                     className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
+                                                                                     title="Remove Detail"
+                                                                                 >
+                                                                                     <Trash2 className="h-3.5 w-3.5" />
+                                                                                 </button>
+                                                                             ) : (
+                                                                                 <button
+                                                                                     type="button"
+                                                                                     disabled
+                                                                                     className="p-1 text-muted-foreground/30 cursor-not-allowed rounded"
+                                                                                     title="Deletion restricted for system stock line items"
+                                                                                 >
+                                                                                     <Trash2 className="h-3.5 w-3.5" />
+                                                                                 </button>
+                                                                             )}
+                                                                         </td>
+                                                                     )}
                                                                 </tr>
                                                             );
                                                         })}
@@ -850,6 +1124,7 @@ export default function PhysicalInventoryForm({
                                                 <th className="px-3 py-2.5">Batch #</th>
                                                 <th className="px-3 py-2.5">Mfg / Expiry</th>
                                                 <th className="px-3 py-2.5">UOM</th>
+                                                <th className="px-3 py-2.5 text-right text-indigo-700 dark:text-indigo-300 font-bold">Total Pcs</th>
                                                 <th className="px-3 py-2.5">Condition</th>
                                                 <th className="px-3 py-2.5 text-right">System</th>
                                                 <th className="px-3 py-2.5 text-right">Physical</th>
@@ -864,10 +1139,12 @@ export default function PhysicalInventoryForm({
                                             {details.map((d, index) => {
                                                 const dId = d.physical_inventory_detail_id || d.id || index;
                                                 const sys = d.system_count || 0;
-                                                const origPhys = d.physical_count || 0;
+                                                const origPhys = d.physical_count;
                                                 const rawInput = countsMap[dId];
-                                                const phys = rawInput !== undefined && rawInput !== "" ? Number(rawInput) : origPhys;
-                                                const varQty = phys - sys;
+                                                const hasInput = rawInput !== undefined && rawInput !== "";
+                                                const hasSavedCount = countsMap[dId] !== undefined ? countsMap[dId] !== "" : (origPhys !== null && origPhys !== undefined && Number(origPhys) > 0);
+                                                const phys = hasInput ? Number(rawInput) : (hasSavedCount ? Number(origPhys || 0) : 0);
+                                                const varQty = (hasInput || hasSavedCount) ? phys - sys : 0 - sys;
                                                 const unitCost = d.unit_cost || 0;
                                                 const diffCost = varQty * unitCost;
 
@@ -889,6 +1166,25 @@ export default function PhysicalInventoryForm({
                                                             <div>Exp: {d.expiration_date || "—"}</div>
                                                         </td>
                                                         <td className="px-3 py-2.5 font-semibold text-muted-foreground">{getUnitShortcut(d.unit_id, d.product_id)}</td>
+                                                        <td className="px-3 py-2.5 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                                            {(() => {
+                                                                const prodObj = typeof d.product_id === "object" && d.product_id !== null ? (d.product_id as unknown as Record<string, unknown>) : null;
+                                                                const uomCountRaw = prodObj ? Number(prodObj.unit_of_measurement_count || 0) : 0;
+                                                                const uomCount = uomCountRaw > 0 ? uomCountRaw : 1;
+                                                                const sysItemPcs = sys * uomCount;
+                                                                const physItemPcs = phys * uomCount;
+                                                                return (
+                                                                    <div>
+                                                                        <div>{sysItemPcs.toLocaleString()} pcs</div>
+                                                                        {physItemPcs > 0 && physItemPcs !== sysItemPcs ? (
+                                                                            <div className="text-[10px] text-muted-foreground font-normal">
+                                                                                Counted: {physItemPcs.toLocaleString()} pcs
+                                                                            </div>
+                                                                        ) : null}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </td>
                                                         <td className="px-3 py-2.5">
                                                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border">
                                                                 {d.inventory_condition}
@@ -902,7 +1198,7 @@ export default function PhysicalInventoryForm({
                                                                         type="number"
                                                                         min="0"
                                                                         step="1"
-                                                                        value={rawInput !== undefined ? rawInput : String(Math.round(Number(origPhys || 0)))}
+                                                                        value={rawInput !== undefined ? rawInput : (hasSavedCount ? String(Math.round(Number(origPhys))) : "")}
                                                                         onChange={(e) => {
                                                                             const val = e.target.value;
                                                                             setCountsMap((prev) => ({ ...prev, [dId]: val }));
@@ -910,11 +1206,9 @@ export default function PhysicalInventoryForm({
                                                                         onBlur={async () => {
                                                                             const valStr = countsMap[dId];
                                                                             if (valStr !== undefined) {
-                                                                                const num = Math.round(Number(valStr));
-                                                                                if (!isNaN(num) && num >= 0 && num !== Math.round(Number(origPhys || 0))) {
-                                                                                    if (onSaveInlineCount) {
-                                                                                        await onSaveInlineCount(d, num);
-                                                                                    }
+                                                                                const num = valStr.trim() === "" ? 0 : Math.round(Number(valStr));
+                                                                                if (!isNaN(num) && num >= 0 && onSaveInlineCount) {
+                                                                                    await onSaveInlineCount(d, num);
                                                                                 }
                                                                             }
                                                                         }}
@@ -924,11 +1218,11 @@ export default function PhysicalInventoryForm({
                                                                             }
                                                                         }}
                                                                         className="w-24 px-2 py-1 text-right font-mono font-bold text-xs bg-background border border-primary/40 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 shadow-xs"
-                                                                        placeholder="0"
+                                                                        placeholder=""
                                                                     />
                                                                 </div>
                                                             ) : (
-                                                                formatQty(phys)
+                                                                hasInput || hasSavedCount ? formatQty(phys) : "—"
                                                             )}
                                                         </td>
                                                         <td className={`px-3 py-2.5 text-right font-mono ${varStyle}`}>
@@ -936,7 +1230,42 @@ export default function PhysicalInventoryForm({
                                                         </td>
                                                         <td className="px-3 py-2.5 text-right font-mono">{formatMoney(unitCost)}</td>
                                                         <td className="px-3 py-2.5 text-right font-mono font-semibold">{formatMoney(diffCost)}</td>
-                                                        <td className="px-3 py-2.5 max-w-xs truncate text-muted-foreground">{d.remarks || "—"}</td>
+                                                        <td className="px-3 py-2.5 min-w-[180px] max-w-xs">
+                                                            {isDraft ? (
+                                                                <div className="space-y-0.5">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={remarksMap[dId] !== undefined ? remarksMap[dId] : (d.remarks || "")}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            setRemarksMap((prev) => ({ ...prev, [dId]: val }));
+                                                                        }}
+                                                                        onBlur={async () => {
+                                                                            const rVal = remarksMap[dId];
+                                                                            if (rVal !== undefined && onSaveInlineRemark) {
+                                                                                await onSaveInlineRemark(d, rVal);
+                                                                            }
+                                                                        }}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === "Enter") {
+                                                                                (e.target as HTMLInputElement).blur();
+                                                                            }
+                                                                        }}
+                                                                        placeholder={Math.abs(varQty) > 0.0001 ? "Reason required *" : "Remarks..."}
+                                                                        className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${
+                                                                            Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
+                                                                                ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
+                                                                                : "border-input focus:ring-primary/20"
+                                                                        }`}
+                                                                    />
+                                                                    {Math.abs(varQty) > 0.0001 && !d.remarks?.trim() && (
+                                                                        <p className="text-[10px] font-semibold text-rose-600">Variance reason required</p>
+                                                                    )}
+                                                                </div>
+                                                            ) : (
+                                                                <span className="truncate text-muted-foreground">{d.remarks || "—"}</span>
+                                                            )}
+                                                        </td>
                                                         {isDraft && (
                                                             <td className="px-3 py-2.5 text-right">
                                                                 <button
