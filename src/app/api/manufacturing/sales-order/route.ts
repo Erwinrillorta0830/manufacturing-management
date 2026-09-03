@@ -455,7 +455,8 @@ export async function GET(request: Request) {
                 read("products", new URLSearchParams({
                     fields: "product_id,product_name,product_code,product_type,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count",
                     limit: "-1",
-                    sort: "product_name"
+                    sort: "product_name",
+                    "filter[isActive][_eq]": "1"
                 }))
             ]);
 
