@@ -30,7 +30,7 @@ export interface SearchableSelectProps {
   onValueChange: (value: string) => void;
   placeholder?: string;
   searchPlaceholder?: string;
-  emptyMessage?: string;
+  emptyMessage?: React.ReactNode;
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;

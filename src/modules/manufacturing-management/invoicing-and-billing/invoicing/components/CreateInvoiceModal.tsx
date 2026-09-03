@@ -1,9 +1,9 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Boxes, Building2, Calendar, CheckCircle2, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Boxes, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
-import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
+import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineAvailability, LineBatchAllocation, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
 import { generateInvoiceReceiptPdf } from "../utils/generateInvoiceReceiptPdf";
 import { DEFAULT_RECEIPT_TEMPLATE, normalizeReceiptTemplate } from "../receipt-template";
 import { ReceiptPreview } from "./ReceiptPreview";
@@ -63,6 +63,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [printingDirectly, setPrintingDirectly] = useState(false);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmationNotes, setConfirmationNotes] = useState("");
+    const [batchAllocQtys, setBatchAllocQtys] = useState<Record<string, number>>({});
     const pdfBlobRef = useRef<Blob | null>(null);
     const prevPreviewUrlRef = useRef("");
     const printingDirectlyRef = useRef(false);
@@ -71,6 +72,64 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         onCloseRef.current = onClose;
     }, [onClose]);
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
+
+    const getBatchKey = (productId: number, b: BatchItem, idx: number) => {
+        return `${productId}:${b.inventoryLotId || b.lotId || b.batchNo || idx}`;
+    };
+
+    const updateBatchAllocQty = (key: string, newQty: number, maxQty: number) => {
+        const validQty = Math.max(0, Math.min(Number(newQty) || 0, maxQty));
+        setBatchAllocQtys((prev) => ({
+            ...prev,
+            [key]: validQty,
+        }));
+    };
+
+    const lineTotals = useMemo(() => {
+        if (!availability) {
+            return {
+                subtotal: Number(candidate.net_amount || candidate.total_amount || 0),
+                discount: 0,
+                grandTotal: Number(candidate.net_amount || candidate.total_amount || 0),
+                lineQtyMap: new Map<number, number>(),
+            };
+        }
+
+        const lineQtyMap = new Map<number, number>();
+        let subtotal = 0;
+
+        for (const line of availability.lines) {
+            let lineTotalQty = 0;
+            if (line.batches && line.batches.length > 0) {
+                for (let i = 0; i < line.batches.length; i++) {
+                    const b = line.batches[i];
+                    const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
+                    const qty = batchAllocQtys[key] ?? Number(b.pickedQuantity || 0);
+                    lineTotalQty += qty;
+                }
+            } else {
+                lineTotalQty = Number(line.pickedQuantity ?? line.requiredQuantity);
+            }
+            lineQtyMap.set(line.productId, lineTotalQty);
+
+            const matchedDetail = candidate.details.find(d => {
+                const pId = typeof d.product_id === "object" ? d.product_id?.product_id : d.product_id;
+                return pId === line.productId;
+            });
+            const unitPrice = Number(matchedDetail?.unit_price || 0);
+            subtotal += lineTotalQty * unitPrice;
+        }
+
+        const discount = 0;
+        const grandTotal = Math.max(0, subtotal - discount);
+
+        return {
+            subtotal,
+            discount,
+            grandTotal,
+            lineQtyMap,
+        };
+    }, [availability, batchAllocQtys, candidate]);
 
     const downloadReceipt = async (invoice: PrintableInvoice) => {
         const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
@@ -112,7 +171,18 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             if (!cancelled) setLoadingAvailability(true);
         });
         void fetchSalesOrderAvailability(candidate.order_id).then(data => {
-            if (!cancelled) setAvailability(data);
+            if (!cancelled) {
+                setAvailability(data);
+                const initialMap: Record<string, number> = {};
+                for (const line of data?.lines || []) {
+                    for (let i = 0; i < (line.batches || []).length; i++) {
+                        const b = line.batches[i];
+                        const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
+                        initialMap[key] = Number(b.pickedQuantity || 0);
+                    }
+                }
+                setBatchAllocQtys(initialMap);
+            }
         }).finally(() => {
             if (!cancelled) setLoadingAvailability(false);
         });
@@ -131,6 +201,24 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     };
 
     const create = async (customRemarks?: string) => {
+        const lineAllocations: LineAllocationPayload[] = (availability?.lines || []).map((line) => {
+            const batchAllocations: LineBatchAllocation[] = (line.batches || []).map((b, i) => {
+                const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
+                return {
+                    inventoryLotId: b.inventoryLotId,
+                    lotId: b.lotId,
+                    batchNo: b.batchNo,
+                    quantity: batchAllocQtys[key] ?? Number(b.pickedQuantity || 0),
+                };
+            });
+            const totalLineQty = batchAllocations.reduce((sum, b) => sum + b.quantity, 0);
+            return {
+                productId: line.productId,
+                quantity: totalLineQty,
+                batchAllocations,
+            };
+        });
+
         const payload: CreateInvoicePayload = {
             salesOrderId: candidate.order_id,
             invoiceNo: invoiceNo.trim(),
@@ -138,6 +226,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             dueDate,
             remarks: customRemarks ?? remarks,
             invoiceTypeId,
+            lineAllocations,
         };
 
         const result = await onSubmit(payload);
@@ -478,14 +567,20 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                         })}
                                     </div>
                                     <div className="flex justify-between items-center border-t bg-muted/20 px-4 py-2.5 text-xs font-black">
-                                        <span className="text-muted-foreground uppercase text-[10px] font-extrabold">Subtotal</span>
-                                        <span className="text-sm font-black text-primary">
+                                        <span className="text-muted-foreground uppercase text-[10px] font-extrabold">Original Demand Subtotal</span>
+                                        <span className="text-xs font-bold text-muted-foreground font-mono">
                                             ₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center border-t border-primary/20 bg-primary/5 px-4 py-2.5 text-xs font-black">
+                                        <span className="text-primary uppercase text-[10px] font-extrabold">Billed Invoice Subtotal</span>
+                                        <span className="text-sm font-black text-primary font-mono">
+                                            ₱{lineTotals.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </span>
                                     </div>
                                 </div>
 
-                                {/* Picked Inventory & Batch Details Card */}
+                                {/* Active Picked Inventory & Batch Allocation Card */}
                                 {loadingAvailability ? (
                                     <div className="flex items-center justify-center rounded-xl border border-dashed py-8 bg-muted/5">
                                         <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -496,7 +591,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                         <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-[10px] font-extrabold uppercase text-emerald-700 dark:text-emerald-400">
                                             <div className="flex items-center gap-1.5">
                                                 <PackageCheck className="h-4 w-4 text-emerald-600" />
-                                                <span>Warehouse Picked Lots & Batches</span>
+                                                <span>Active Warehouse Batch Allocation</span>
                                             </div>
                                             {availability.consolidatorNo && (
                                                 <span className="rounded-md border border-emerald-500/30 bg-background px-2 py-0.5 font-mono text-[9px] font-bold text-emerald-700 dark:text-emerald-300">
@@ -504,7 +599,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="max-h-48 divide-y divide-emerald-500/10 overflow-y-auto">
+                                        <div className="divide-y divide-emerald-500/10">
                                             {availability.lines.map((line: LineAvailability) => {
                                                 const product = typeof candidate.details.find(d => {
                                                     const pId = typeof d.product_id === "object" ? d.product_id?.product_id : d.product_id;
@@ -516,46 +611,190 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                     })!.product_id as { uom?: string }
                                                     : null;
                                                 const uomStr = product?.uom || "PCS";
-                                                const pickedQty = line.pickedQuantity ?? line.requiredQuantity;
-                                                const primaryBatch = line.batches?.[0];
+                                                const lineAllocatedQty = lineTotals.lineQtyMap.get(line.productId) ?? 0;
+                                                const siblingOrders = line.siblingOrders || [];
+                                                const unInvoicedSiblings = siblingOrders.filter(s => !s.isInvoiced);
+                                                const siblingDemand = unInvoicedSiblings.reduce((sum, s) => sum + Number(s.orderedQuantity || 0), 0);
+                                                const totalConsolidatedPool = (line.batches || []).reduce((sum, b) => sum + Number(b.onhandQuantity || b.pickedQuantity || 0), 0);
+                                                const remainingForSiblings = Math.max(0, totalConsolidatedPool - lineAllocatedQty);
+                                                const siblingShortfall = Math.max(0, siblingDemand - remainingForSiblings);
+                                                const hasSiblingWarning = siblingDemand > 0 && siblingShortfall > 0;
 
                                                 return (
-                                                    <div key={line.productId} className="space-y-1.5 px-4 py-2.5 bg-background/50">
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <span className="truncate font-bold text-foreground">{line.productName}</span>
-                                                            <span className="shrink-0 font-bold text-emerald-600 dark:text-emerald-400">
-                                                                {pickedQty} {uomStr} (Picked)
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground">
-                                                            {primaryBatch ? (
-                                                                <span className="rounded-md border border-emerald-500/20 bg-background px-2 py-0.5 font-mono text-[9px] text-foreground">
-                                                                    {primaryBatch.lotName || `Lot #${primaryBatch.lotId}`}{primaryBatch.batchNo ? ` · ${primaryBatch.batchNo}` : ""}
+                                                    <div key={line.productId} className="space-y-2.5 p-4 bg-background/60">
+                                                        {/* Product Line Header */}
+                                                        <div className="flex items-center justify-between gap-3 text-xs">
+                                                            <div className="min-w-0">
+                                                                <span className="font-bold text-foreground block truncate">{line.productName}</span>
+                                                                <span className="text-[10px] text-muted-foreground font-mono">
+                                                                    Demand: {line.requiredQuantity} {uomStr} · Picked Pool: {totalConsolidatedPool} {uomStr}
                                                                 </span>
-                                                            ) : (
-                                                                <span className="rounded-md border border-emerald-500/20 bg-background px-2 py-0.5 font-mono text-[9px] text-foreground">
-                                                                    Verified Picked Lot
+                                                            </div>
+                                                            <div className="shrink-0 text-right">
+                                                                <span className="text-[10px] uppercase font-extrabold text-muted-foreground block">Allocated to Invoice</span>
+                                                                <span className={`font-mono text-sm font-black ${lineAllocatedQty < line.requiredQuantity ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                                    {lineAllocatedQty} / {line.requiredQuantity} {uomStr}
                                                                 </span>
-                                                            )}
-                                                            {primaryBatch?.expirationDate && (
-                                                                <span>Exp: {new Date(primaryBatch.expirationDate).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</span>
-                                                            )}
-                                                            <span className="ml-auto inline-flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
-                                                                <CheckCircle2 className="h-3 w-3" /> Fully Picked
-                                                            </span>
+                                                            </div>
                                                         </div>
-                                                        {line.batches.length > 1 && (
-                                                            <div className="mt-1 pt-0.5">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setSelectedBatchProduct(line)}
-                                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1 text-[10px] font-bold text-primary hover:bg-primary/10 transition-colors"
-                                                                >
-                                                                    <Boxes className="h-3 w-3" />
-                                                                    View All Picked Batches ({line.batches.length})
-                                                                </button>
+
+                                                        {/* Sibling Orders in Shared Batch */}
+                                                        {siblingOrders.length > 0 && (
+                                                            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-1.5 text-[10px]">
+                                                                <Users className="h-3 w-3 text-primary shrink-0" />
+                                                                <span className="font-bold text-muted-foreground">Linked Batch Orders:</span>
+                                                                {siblingOrders.map((sib) => (
+                                                                    <span
+                                                                        key={sib.orderId}
+                                                                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-primary/10 text-primary border border-primary/20"}`}
+                                                                    >
+                                                                        {sib.orderNo} ({sib.customerCode || "Client"}): {sib.orderedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
+                                                                    </span>
+                                                                ))}
                                                             </div>
                                                         )}
+
+                                                        {/* Consolidation Shortfall Warning Alert */}
+                                                        {hasSiblingWarning && (
+                                                            <motion.div
+                                                                initial={{ opacity: 0, y: -4 }}
+                                                                animate={{ opacity: 1, y: 0 }}
+                                                                className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200"
+                                                            >
+                                                                <div className="flex items-start gap-2">
+                                                                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                                                                    <div className="space-y-1">
+                                                                        <div className="font-bold flex items-center gap-1.5">
+                                                                            <span>Consolidation Shortfall Warning</span>
+                                                                            <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] text-amber-700 dark:text-amber-300">
+                                                                                -{siblingShortfall} {uomStr} Shortfall
+                                                                            </span>
+                                                                        </div>
+                                                                        <p className="text-[11px] leading-relaxed">
+                                                                            Allocating <strong>{lineAllocatedQty} units</strong> to this invoice leaves only <strong>{remainingForSiblings} units</strong> in the shared consolidation batch.
+                                                                            {remainingForSiblings === 0 ? (
+                                                                                <span className="block mt-0.5 font-bold text-amber-700 dark:text-amber-300">
+                                                                                    ⚠️ Other linked order(s) will have a 100% shortfall (0 units left)!
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="block mt-0.5 font-medium text-amber-700 dark:text-amber-300">
+                                                                                    ⚠️ Linked orders ({unInvoicedSiblings.map(s => `${s.orderNo}`).join(", ")}) requested {siblingDemand} units and will have an unfulfilled balance.
+                                                                                </span>
+                                                                            )}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                            </motion.div>
+                                                        )}
+
+                                                        {/* Interactive Batch Allocation Items */}
+                                                        <div className="space-y-2">
+                                                            <div className="flex items-center justify-between text-[9px] font-extrabold uppercase text-muted-foreground px-1">
+                                                                <span>Allocated Picked Lots for this Order</span>
+                                                                <span>Billed Allocation</span>
+                                                            </div>
+                                                            {line.batches.map((b: BatchItem, idx: number) => {
+                                                                const key = getBatchKey(line.productId, b, idx);
+                                                                const capacity = Number(b.totalBatchPickedPool ?? b.onhandQuantity ?? b.pickedQuantity ?? 0);
+                                                                const thisOrderReserved = Number(b.thisOrderReserved ?? b.pickedQuantity ?? capacity);
+                                                                const currentAlloc = batchAllocQtys[key] ?? 0;
+
+                                                                const batchSiblings = b.siblingOrders || [];
+                                                                const unInvoicedBatchSiblings = batchSiblings.filter(s => !s.isInvoiced);
+                                                                const siblingDemandInBatch = unInvoicedBatchSiblings.reduce((sum, s) => sum + Number(s.reservedQuantity || 0), 0);
+                                                                const remainingInBatch = Math.max(0, capacity - currentAlloc);
+                                                                const batchShortfall = Math.max(0, siblingDemandInBatch - remainingInBatch);
+                                                                const hasBatchWarning = siblingDemandInBatch > 0 && batchShortfall > 0;
+
+                                                                return (
+                                                                    <div
+                                                                        key={key}
+                                                                        className={`space-y-2 rounded-xl border p-3 transition-colors ${currentAlloc > 0 ? "border-emerald-500/30 bg-emerald-500/5" : "border-border/50 bg-background"}`}
+                                                                    >
+                                                                        <div className="flex items-center justify-between gap-3">
+                                                                            <div className="min-w-0 space-y-0.5">
+                                                                                <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-foreground truncate">
+                                                                                    <span>{b.lotName || `Lot #${b.lotId}`}</span>
+                                                                                    {b.batchNo && <span className="text-[10px] text-muted-foreground font-normal">({b.batchNo})</span>}
+                                                                                </div>
+                                                                                <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground font-mono">
+                                                                                    <span className="font-bold text-foreground">Picked in Batch: {capacity} {uomStr}</span>
+                                                                                    <span>·</span>
+                                                                                    <span>Planned for this Order: {thisOrderReserved} {uomStr}</span>
+                                                                                    {b.expirationDate && (
+                                                                                        <>
+                                                                                            <span>·</span>
+                                                                                            <span>Exp: {new Date(b.expirationDate).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</span>
+                                                                                        </>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {/* Interactive Stepper & Input Controls */}
+                                                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => updateBatchAllocQty(key, currentAlloc - 1, capacity)}
+                                                                                    disabled={currentAlloc <= 0}
+                                                                                    className="h-7 w-7 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                                >
+                                                                                    -
+                                                                                </button>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    min={0}
+                                                                                    max={capacity}
+                                                                                    value={currentAlloc}
+                                                                                    onChange={(e) => updateBatchAllocQty(key, Number(e.target.value), capacity)}
+                                                                                    className="h-7 w-14 rounded-lg border bg-background text-center font-mono text-xs font-black focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-2xs"
+                                                                                />
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => updateBatchAllocQty(key, currentAlloc + 1, capacity)}
+                                                                                    disabled={currentAlloc >= capacity}
+                                                                                    className="h-7 w-7 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                                >
+                                                                                    +
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => updateBatchAllocQty(key, Math.min(capacity, thisOrderReserved), capacity)}
+                                                                                    className="h-7 rounded-lg border bg-muted/40 px-2 text-[10px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                                                                >
+                                                                                    Fill
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Sibling Orders in this Specific Batch */}
+                                                                        {batchSiblings.length > 0 && (
+                                                                            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/30 bg-muted/20 px-2 py-1 text-[9px]">
+                                                                                <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                                                <span className="font-semibold text-muted-foreground">Shared with:</span>
+                                                                                {batchSiblings.map((sib) => (
+                                                                                    <span
+                                                                                        key={sib.orderId}
+                                                                                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.2 font-mono text-[9px] font-semibold ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-primary/10 text-primary"}`}
+                                                                                    >
+                                                                                        {sib.orderNo} ({sib.customerCode || "Client"}): {sib.reservedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+
+                                                                        {/* Per-Batch Shortfall Warning */}
+                                                                        {hasBatchWarning && (
+                                                                            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-900 dark:text-amber-200 flex items-start gap-1.5">
+                                                                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                                                                                <div>
+                                                                                    <strong>Batch Allocation Shortfall:</strong> Allocating {currentAlloc} units from &apos;{b.batchNo}&apos; leaves only {remainingInBatch} units for sibling order(s) ({unInvoicedBatchSiblings.map(s => s.orderNo).join(", ")}).
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     </div>
                                                 );
                                             })}
@@ -570,6 +809,43 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
                             {/* Right Column: Invoice Setup Parameters (span 5) */}
                             <div className="lg:col-span-5 space-y-4">
+                                {/* Real-time Billed Financial Summary Card */}
+                                <div className="rounded-xl border bg-card p-4 shadow-xs space-y-2.5">
+                                    <div className="flex items-center justify-between pb-1.5 border-b text-[10px] font-extrabold uppercase text-muted-foreground">
+                                        <div className="flex items-center gap-1.5">
+                                            <FileCheck2 className="h-3.5 w-3.5 text-primary" />
+                                            <span>Invoice Financial Summary</span>
+                                        </div>
+                                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold text-primary font-mono">
+                                            Allocated Billing
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1.5 text-xs">
+                                        <div className="flex justify-between text-muted-foreground">
+                                            <span>Original Demand:</span>
+                                            <span className="font-mono font-medium">
+                                                ₱{Number(candidate.net_amount || candidate.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between font-bold text-foreground">
+                                            <span>Allocated Billed Subtotal:</span>
+                                            <span className="font-mono text-primary">
+                                                ₱{lineTotals.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between text-muted-foreground">
+                                            <span>Discount:</span>
+                                            <span className="font-mono">₱0.00</span>
+                                        </div>
+                                        <div className="flex justify-between border-t pt-2 text-sm font-black text-foreground">
+                                            <span>Net Invoice Payable:</span>
+                                            <span className="font-mono text-primary">
+                                                ₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="space-y-3.5 rounded-xl border bg-muted/10 p-4 shadow-xs">
                                     <div className="flex items-center gap-1.5 pb-1 border-b text-[10px] font-extrabold uppercase text-muted-foreground">
                                         <FileText className="h-3.5 w-3.5 text-primary" />

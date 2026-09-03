@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,8 @@ import {
   AlertTriangle,
   Boxes,
   Tag,
-  Gauge 
+  Gauge,
+  ExternalLink
 } from 'lucide-react';
 import {
   MMLot,
@@ -210,6 +211,18 @@ export function LotBatchSelectionModal({
     },
     [lotStoredSummaryMap, currentItemClassification]
   );
+
+  // Check if there are any active compatible storage lots available for the current product
+  const hasAnyCompatibleLot = useMemo(() => {
+    if (!lots || lots.length === 0) return false;
+    return lots.some((l) => {
+      if (l.status && l.status !== 'ACTIVE') return false;
+      const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+      if (!isUomMatch) return false;
+      const lComp = checkLotCompatibility(Number(l.lot_id));
+      return lComp.isCompatible;
+    });
+  }, [lots, productUomId, checkLotCompatibility]);
 
   // Initialize clean state and load lots whenever modal opens or product changes
   useEffect(() => {
@@ -494,7 +507,7 @@ export function LotBatchSelectionModal({
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: (g.batches || []).map((b) => ({
                 ...b,
-                quantity: Number(b.quantity || 1),
+                quantity: Number(b.quantity ?? 0),
                 qa_status: b.qa_status || 'GOOD',
               })),
             };
@@ -514,7 +527,7 @@ export function LotBatchSelectionModal({
               max_batch_capacity: matchedLot?.max_batch_capacity || 10,
               unit_id: matchedLot?.unit_id ?? null,
               unit_name: matchedLot?.unit_name ?? null,
-              allocated_quantity: requestedQuantity,
+              allocated_quantity: 0,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: [
@@ -523,7 +536,7 @@ export function LotBatchSelectionModal({
                   batch_no: initialValues.batch_no || '',
                   manufacturing_date: initialValues.manufacturing_date || '',
                   expiry_date: initialValues.expiry_date || '',
-                  quantity: requestedQuantity,
+                  quantity: 0,
                   unit_cost: initialValues.unit_cost,
                   qa_status: initialValues.qa_status || 'GOOD',
                 },
@@ -574,7 +587,7 @@ export function LotBatchSelectionModal({
               max_batch_capacity: compatibleLot.max_batch_capacity || 10,
               unit_id: compatibleLot.unit_id ?? null,
               unit_name: compatibleLot.unit_name ?? null,
-              allocated_quantity: requestedQuantity,
+              allocated_quantity: 0,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: [
@@ -582,7 +595,7 @@ export function LotBatchSelectionModal({
                   batch_no: '',
                   manufacturing_date: '',
                   expiry_date: '',
-                  quantity: requestedQuantity,
+                  quantity: 0,
                   qa_status: defaultQA,
                 },
               ],
@@ -648,7 +661,6 @@ export function LotBatchSelectionModal({
 
     if (!nextLot) return;
 
-    const remainingQty = Math.max(1, quantityDifference);
     const lId = Number(nextLot.lot_id);
     const isNextLotBad = isBadStockLot(nextLot);
     const defaultQA: QAStatus = isNextLotBad ? 'DAMAGED' : 'GOOD';
@@ -659,7 +671,7 @@ export function LotBatchSelectionModal({
       max_batch_capacity: nextLot.max_batch_capacity || 10,
       unit_id: nextLot.unit_id ?? null,
       unit_name: nextLot.unit_name ?? null,
-      allocated_quantity: remainingQty,
+      allocated_quantity: 0,
       active_batch_count: lotBatchCountMap.get(lId) || 0,
       current_stock_quantity: lotStockQtyMap.get(lId) || 0,
       batches: [
@@ -667,7 +679,7 @@ export function LotBatchSelectionModal({
           batch_no: '',
           manufacturing_date: '',
           expiry_date: '',
-          quantity: remainingQty,
+          quantity: 0,
           qa_status: defaultQA,
         },
       ],
@@ -732,7 +744,7 @@ export function LotBatchSelectionModal({
             batch_no: '',
             manufacturing_date: '',
             expiry_date: '',
-            quantity: 1,
+            quantity: 0,
             qa_status: defaultQA,
           };
           return {
@@ -1032,6 +1044,35 @@ export function LotBatchSelectionModal({
                 </Button>
               </div>
 
+              {/* NO QUALIFIED STORAGE LOTS BANNER */}
+              {!hasAnyCompatibleLot && lots.length > 0 && (
+                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-300">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider">
+                        No Qualified Storage Lots Available
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        No active storage lots match <strong>{currentItemClassification.label}</strong> with UOM <strong>{productUomName}</strong>. You can register a new storage lot in the Lot Registry.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
+                    className="shrink-0 h-8 gap-1.5 text-xs font-bold bg-background border-amber-500/40 hover:bg-amber-500/10 text-amber-900 dark:text-amber-200 shadow-2xs"
+                  >
+                    <span>Go to Lot Registry</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+
               {/* LOT ALLOCATION GROUPS */}
               {lotGroups.map((group, gIdx) => {
                 const groupLot = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
@@ -1110,42 +1151,73 @@ export function LotBatchSelectionModal({
                               );
 
                               return (
-                                <SearchableSelect
-                                  options={optionsLots.map((l) => {
-                                    const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
-                                    const lComp = checkLotCompatibility(Number(l.lot_id));
-                                    const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                    const lotIsBad = isBadStockLot(l);
+                                <>
+                                  <SearchableSelect
+                                    options={optionsLots.map((l) => {
+                                      const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                                      const lComp = checkLotCompatibility(Number(l.lot_id));
+                                      const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                      const lotIsBad = isBadStockLot(l);
 
-                                    let statusTag = '';
-                                    if (!isUomMatch) {
-                                      statusTag = ' [UOM Mismatch]';
-                                    } else if (!lComp.isCompatible) {
-                                      statusTag = lStored?.is_draft_allocation
-                                        ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
-                                        : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
-                                    } else if (lotIsBad) {
-                                      statusTag = ' [Bad Stock / Quarantine]';
-                                    } else if (lStored && !lStored.is_empty) {
-                                      statusTag = lStored.is_draft_allocation
-                                        ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
-                                        : ` [Compatible: ${lStored.primary_classification_label}]`;
-                                    } else {
-                                      statusTag = ' [Empty Lot]';
+                                      let statusTag = '';
+                                      if (!isUomMatch) {
+                                        statusTag = ' [UOM Mismatch]';
+                                      } else if (!lComp.isCompatible) {
+                                        statusTag = lStored?.is_draft_allocation
+                                          ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
+                                          : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
+                                      } else if (lotIsBad) {
+                                        statusTag = ' [Bad Stock / Quarantine]';
+                                      } else if (lStored && !lStored.is_empty) {
+                                        statusTag = lStored.is_draft_allocation
+                                          ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
+                                          : ` [Compatible: ${lStored.primary_classification_label}]`;
+                                      } else {
+                                        statusTag = ' [Empty Lot]';
+                                      }
+
+                                      return {
+                                        value: String(l.lot_id),
+                                        label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
+                                      };
+                                    })}
+                                    value={String(group.lot_id)}
+                                    onValueChange={(val) => handleChangeLot(gIdx, val)}
+                                    placeholder="Select Storage Lot / Bay..."
+                                    searchPlaceholder="Search lot name..."
+                                    emptyMessage={
+                                      <div className="py-4 px-2 flex flex-col items-center justify-center gap-2 text-center">
+                                        <p className="text-xs text-muted-foreground">
+                                          No qualified storage lots found for this UOM and product type.
+                                        </p>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
+                                          className="h-7 text-[11px] gap-1 font-semibold"
+                                        >
+                                          <span>Go to Lot Registry</span>
+                                          <ExternalLink className="w-3 h-3" />
+                                        </Button>
+                                      </div>
                                     }
-
-                                    return {
-                                      value: String(l.lot_id),
-                                      label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
-                                    };
-                                  })}
-                                  value={String(group.lot_id)}
-                                  onValueChange={(val) => handleChangeLot(gIdx, val)}
-                                  placeholder="Select Storage Lot / Bay..."
-                                  searchPlaceholder="Search lot name..."
-                                  emptyMessage="No compatible storage lots found for this UOM and product type."
-                                  className="h-9 text-xs font-bold"
-                                />
+                                    className="h-9 text-xs font-bold"
+                                  />
+                                  {compatibleLots.length === 0 && (
+                                    <div className="mt-1 flex items-center justify-between text-[11px] text-amber-600 dark:text-amber-400">
+                                      <span>No qualified lots available</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
+                                        className="font-bold underline inline-flex items-center gap-0.5 hover:text-amber-700"
+                                      >
+                                        Register in Lot Registry
+                                        <ExternalLink className="w-2.5 h-2.5 inline" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
                               );
                             })()}
                           </div>
@@ -1382,6 +1454,20 @@ export function LotBatchSelectionModal({
                             <span>This lot is reserved for UOM {lotUomName || `#${lotUomId}`}. Please select a compatible lot ({productUomName}).</span>
                           </div>
                         )}
+                        {(!isTypeMatch || !isUomMatch) && (
+                          <div className="pt-1 flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open('/mm/inventory-warehousing/lot-registry', '_blank')}
+                              className="h-6 px-2 text-[11px] font-bold gap-1 bg-background hover:bg-muted text-foreground border-border shadow-2xs"
+                            >
+                              <span>Open Lot Registry</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
                         {isCapacityExceeded && (
                           <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-bold">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -1505,8 +1591,8 @@ export function LotBatchSelectionModal({
                                 </Label>
                                 <Input
                                   type="number"
-                                  min={1}
-                                  value={batch.quantity === 0 || batch.quantity === undefined ? '' : batch.quantity}
+                                  min={0}
+                                  value={batch.quantity === undefined || batch.quantity === null ? '' : batch.quantity}
                                   onChange={(e) => {
                                     const raw = e.target.value;
                                     if (raw === '') {
@@ -1518,8 +1604,8 @@ export function LotBatchSelectionModal({
                                   }}
                                   onBlur={(e) => {
                                     const val = parseInt(e.target.value, 10);
-                                    if (isNaN(val) || val < 1) {
-                                      handleUpdateBatchField(gIdx, bIdx, 'quantity', 1);
+                                    if (isNaN(val) || val < 0) {
+                                      handleUpdateBatchField(gIdx, bIdx, 'quantity', 0);
                                     }
                                   }}
                                   className="h-9 text-xs font-mono font-bold text-center"

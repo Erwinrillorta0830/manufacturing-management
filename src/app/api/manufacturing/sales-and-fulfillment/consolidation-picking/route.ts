@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
         const pickRes = await fetch(`${origin}/api/manufacturing/invoice-consolidation/pick`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Cookie: req.headers.get("cookie") || "" },
-            body: JSON.stringify({ batchId, action }),
+            body: JSON.stringify({ batchId, action, orderDistributions: body.orderDistributions }),
         });
         const pickData = await pickRes.json();
         return NextResponse.json(pickData, { status: pickRes.status });
