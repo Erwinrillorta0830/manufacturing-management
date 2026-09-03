@@ -71,6 +71,10 @@ export interface PackagingVariantFormState {
     maintainingQuantity: string;
     productImage: string | null;
     purchaseQa: PurchaseQaConfig;
+    /** UI-only snapshot of the approved suppliers linked to this family member. */
+    supplierIds: number[];
+    /** True when the variant supplier snapshot matches the current parent selection. */
+    suppliersInherited: boolean;
 }
 
 export interface RawMaterialValidationErrors {
