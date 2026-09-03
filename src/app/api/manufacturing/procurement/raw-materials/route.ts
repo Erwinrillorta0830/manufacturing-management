@@ -41,6 +41,7 @@ import {
     type DensityRequirement
 } from "@/modules/manufacturing-management/procurement/raw-materials/density-policy";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
+import { formatRawMaterialDescription } from "@/modules/manufacturing-management/procurement/raw-materials/description-format";
 
 function isPositiveNumber(value: unknown): boolean {
     if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
@@ -178,6 +179,8 @@ function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unkno
     return Object.fromEntries(Object.entries(value).filter(([key]) => ![
         "purchaseQa",
         "price_control",
+        "description",
+        "short_description",
         "created_at",
         "created_by",
         "updated_at",
@@ -461,6 +464,17 @@ export async function POST(request: Request) {
             `Variant ${index + 1} density`
         ));
 
+        const baseIdentity = await resolveProductIdentity({
+            productName: productDetails.product_name,
+            parentId: parentProductId,
+            unitId: primaryUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity);
+
         if (classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
@@ -514,6 +528,8 @@ export async function POST(request: Request) {
             barcode: normalizedProductBarcode,
             maintaining_quantity: normalizedSafetyStock,
             product_image: normalizedProductImage,
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -558,8 +574,8 @@ export async function POST(request: Request) {
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
                         density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
@@ -775,6 +791,21 @@ export async function PATCH(request: Request) {
             );
         });
 
+        const effectiveParentId = Object.prototype.hasOwnProperty.call(productDetails, "parent_id")
+            ? resolvePositiveInteger(productDetails.parent_id)
+            : parentProductId;
+        const baseIdentity = await resolveProductIdentity({
+            productId: numericProductId,
+            productName: productDetails.product_name,
+            parentId: effectiveParentId,
+            unitId: effectiveUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity, numericProductId);
+
         if (!isValidActiveFlag(productDetails.isActive) || classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
         })) {
@@ -829,6 +860,8 @@ export async function PATCH(request: Request) {
             ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
             ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
             ...(hasProductImageField ? { product_image: normalizedProductImage } : {}),
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -898,8 +931,8 @@ export async function PATCH(request: Request) {
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
                         density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,

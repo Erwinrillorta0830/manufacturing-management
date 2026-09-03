@@ -288,6 +288,7 @@ async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials")
             product_code: p.product_code || `SKU-${p.product_id}`,
             product_name: p.product_name,
             description: p.description || "",
+            short_description: p.short_description ?? null,
             barcode: p.barcode || "",
             product_image: p.product_image || null,
             maintaining_quantity: p.maintaining_quantity === null || p.maintaining_quantity === undefined

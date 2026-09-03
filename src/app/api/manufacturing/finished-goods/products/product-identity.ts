@@ -35,6 +35,7 @@ export interface ProductIdentity {
     productName: string;
     parentId: number | null;
     unitId: number;
+    unitLabel: string;
     descriptionKey: string;
 }
 
@@ -148,6 +149,7 @@ export async function resolveProductIdentity(input: ProductIdentityInput): Promi
         productName,
         parentId,
         unitId,
+        unitLabel,
         descriptionKey: parentId ? `${productName} - ${unitLabel}` : productName
     };
 }

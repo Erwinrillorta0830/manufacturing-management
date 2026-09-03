@@ -150,7 +150,8 @@ export interface RawMaterialItem {
     parent_name?: string | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     unit_of_measurement?: {
         unit_id: number;
