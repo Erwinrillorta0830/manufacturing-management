@@ -45,10 +45,9 @@ export function FilterToolbar() {
       if (!val || seen.has(val)) return;
       seen.add(val);
 
-      const codeStr = b.branch_code ? ` • ${b.branch_code}` : "";
       opts.push({
         value: val,
-        label: `${b.branch_name}${codeStr} (ID: ${b.id})`
+        label: b.branch_name || `Branch ${b.id}`
       });
     });
 
@@ -65,10 +64,9 @@ export function FilterToolbar() {
       if (!val || seen.has(val)) return;
       seen.add(val);
 
-      const codeStr = s.supplier_shortcut ? ` • ${s.supplier_shortcut}` : "";
       opts.push({
         value: val,
-        label: `${s.supplier_name}${codeStr} (ID: ${s.id})`
+        label: s.supplier_name || `Supplier ${s.id}`
       });
     });
 

@@ -9,6 +9,7 @@ import { ModuleSkeleton } from "@/components/shared/ModuleSkeleton";
 import ErrorPage from "@/components/shared/ErrorPage";
 import { Button } from "@/components/ui/button";
 import { BarChart3, RotateCcw } from "lucide-react";
+import { motion } from "framer-motion";
 
 function StockAdjustmentSummaryInner() {
   const { isLoading, error, refresh, rawData } = useStockAdjustmentSummaryContext();
@@ -29,7 +30,12 @@ function StockAdjustmentSummaryInner() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="flex flex-col gap-6"
+    >
       
       {/* Title Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/40 pb-4">
@@ -62,7 +68,7 @@ function StockAdjustmentSummaryInner() {
       {/* Recent Activity Log */}
       <RecentLog />
 
-    </div>
+    </motion.div>
   );
 }
 

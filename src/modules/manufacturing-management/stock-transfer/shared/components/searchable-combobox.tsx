@@ -73,7 +73,7 @@ export function SearchableCombobox({
         <ComboboxInput
           placeholder={placeholder}
           showTrigger
-          showClear={!!value && !disabled}
+          showClear={!!value && value !== "all" && !disabled}
           value={isOpen ? filterQuery : selectedLabel}
           // Use native onChange to update our state while overriding standard Base UI input value
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>

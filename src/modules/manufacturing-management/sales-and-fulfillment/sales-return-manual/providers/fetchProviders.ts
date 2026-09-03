@@ -21,8 +21,7 @@ import type {
   API_SalesReturnType,
   PriceTypeOption,
   ProductCatalog,
-  QuotationHeader,
-  QuotationSnapshot,
+  InvoiceLineItem,
 } from "../type";
 
 const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-manual";
@@ -125,19 +124,14 @@ export const SalesReturnProvider = {
     return handleResponse<InvoiceOption[]>(res);
   },
 
-  async getLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+  async getLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
     const res = await fetch(`${API_BASE}?action=lots`, { cache: "no-store" });
-    return handleResponse<{ lot_id: number; lot_name: string; }[]>(res);
+    return handleResponse<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]>(res);
   },
 
-  async getQuotations(): Promise<QuotationHeader[]> {
-    const res = await fetch(`${API_BASE}?action=quotations`, { cache: "no-store" });
-    return handleResponse<QuotationHeader[]>(res);
-  },
-
-  async getQuotationSnapshots(id: number | string): Promise<QuotationSnapshot[]> {
-    const res = await fetch(`${API_BASE}?action=quotation-snapshots&id=${id}`, { cache: "no-store" });
-    return handleResponse<QuotationSnapshot[]>(res);
+  async getInvoiceDetails(invoiceId: number | string): Promise<InvoiceLineItem[]> {
+    const res = await fetch(`${API_BASE}?action=invoice-items&id=${invoiceId}`, { cache: "no-store" });
+    return handleResponse<InvoiceLineItem[]>(res);
   },
 
   // --- 4. PRODUCT LOOKUP HELPERS ---

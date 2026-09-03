@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     Plus,
     FileText,
@@ -190,7 +191,6 @@ export function RegisterProductModal({
         };
     }, [registerImagePreview]);
 
-    if (!isOpen) return null;
 
     const updateRegisterField = (field: RegisterFormField, value: string) => {
         setRegisterForm(prev => ({ ...prev, [field]: value }));
@@ -215,8 +215,22 @@ export function RegisterProductModal({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm animate-in fade-in duration-200 p-3 sm:p-6">
-            <div className="bg-card border border-border/80 rounded-2xl shadow-2xl w-[95vw] max-w-5xl xl:max-w-6xl max-h-[92vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+        <AnimatePresence>
+            {isOpen && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.14 }}
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-3 sm:p-6"
+                >
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.96, y: -8 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                        transition={{ duration: 0.14, ease: "easeOut" }}
+                        className="bg-card border border-border/80 rounded-2xl shadow-2xl w-[95vw] max-w-5xl xl:max-w-6xl max-h-[92vh] overflow-hidden flex flex-col"
+                    >
                 {/* Header */}
                 <div className="flex flex-col gap-4 px-6 md:px-8 py-5 border-b shrink-0 bg-muted/20">
                     <div className="flex items-center justify-between">
@@ -839,7 +853,9 @@ export function RegisterProductModal({
                         </button>
                     </div>
                 </form>
-            </div>
-        </div>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }

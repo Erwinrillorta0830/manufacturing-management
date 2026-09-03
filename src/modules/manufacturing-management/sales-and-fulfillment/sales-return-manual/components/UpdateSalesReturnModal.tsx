@@ -64,9 +64,11 @@ import {
   InvoiceOption,
   API_LineDiscount,
   API_SalesReturnType,
-  QuotationHeader,
   PriceTypeOption,
   SalesmanOption,
+  InvoiceLineItem,
+  BranchOption,
+  LotOption,
 } from "../type";
 import { ProductLookupModal } from "./ProductLookupModal";
 import { SalesReturnPrintSlip } from "./SalesReturnPrintSlip";
@@ -268,12 +270,25 @@ export function UpdateSalesReturnModal({
   }, [prefillRemarks]);
 
   const [details, setDetails] = useState<SalesReturnItem[]>([]);
-  const [statusCardData, setStatusCardData] =
-    useState<SalesReturnStatusCard | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([]);
 
   // 🟢 Track the ID for the junction table link
   const [appliedInvoiceId, setAppliedInvoiceId] = useState<number | null>(null);
+
+  // 🟢 NEW: Effect to fetch invoice line items
+  useEffect(() => {
+    if (appliedInvoiceId) {
+      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
+        .then((data) => setInvoiceLineItems(data))
+        .catch((err) => console.error("Failed to load invoice items", err));
+    } else {
+      setInvoiceLineItems([]);
+    }
+  }, [appliedInvoiceId]);
+
+  const [statusCardData, setStatusCardData] =
+    useState<SalesReturnStatusCard | null>(null);
+  const [loading, setLoading] = useState(true);
   const [isInvoicePosted, setIsInvoicePosted] = useState<boolean>(false);
 
   const [discountOptions, setDiscountOptions] = useState<API_LineDiscount[]>(
@@ -283,8 +298,9 @@ export function UpdateSalesReturnModal({
     API_SalesReturnType[]
   >([]);
   const [salesmenOptions, setSalesmenOptions] = useState<SalesmanOption[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
   const [customerOptions, setCustomerOptions] = useState<{value: string | number; label: string}[]>([]);
-  const [lotOptions, setLotOptions] = useState<{ lot_id: number; lot_name: string; }[]>([]);
+  const [lotOptions, setLotOptions] = useState<LotOption[]>([]);
 
   const [isProductLookupOpen, setIsProductLookupOpen] = useState(false);
   const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
@@ -300,11 +316,7 @@ export function UpdateSalesReturnModal({
   const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
   const [invoiceSearch, setInvoiceSearch] = useState("");
 
-  const [quotationOptions, setQuotationOptions] = useState<QuotationHeader[]>([]);
-  const [selectedQuotationId, setSelectedQuotationId] = useState<number | null>(null);
   const [priceTypeOptions, setPriceTypeOptions] = useState<PriceTypeOption[]>([]);
-  const [quotationSearch, setQuotationSearch] = useState("");
-  const [isQuotationOpen, setIsQuotationOpen] = useState(false);
 
   // Order/Invoice Dropdown State
   const [isOrderDropdownOpen, setIsOrderDropdownOpen] = useState(false);
@@ -340,7 +352,7 @@ export function UpdateSalesReturnModal({
           customersData,
           lots,
           priceTypesData,
-          quotations,
+          branchesData,
         ] = await Promise.all([
           SalesReturnProvider.getProductsSummary(returnId, headerData.returnNo),
           SalesReturnProvider.getStatusCardData(returnId),
@@ -350,7 +362,7 @@ export function UpdateSalesReturnModal({
           SalesReturnProvider.getCustomersList(),
           SalesReturnProvider.getLots(),
           SalesReturnProvider.getPriceTypes(),
-          SalesReturnProvider.getQuotations(),
+          SalesReturnProvider.getFormBranches(),
         ]);
 
         setDetails(items);
@@ -364,10 +376,10 @@ export function UpdateSalesReturnModal({
         setDiscountOptions(discounts);
         setReturnTypeOptions(retTypes);
         setSalesmenOptions(salesmen);
+        setBranches(branchesData);
         setCustomerOptions(customersData || []);
         setLotOptions(lots);
         setPriceTypeOptions(priceTypesData);
-        setQuotationOptions(quotations);
 
         // Fetch invoices filtered by salesman and customer
         try {
@@ -396,8 +408,10 @@ export function UpdateSalesReturnModal({
     if (details.length > 0) {
       setDetails((prevDetails) =>
         prevDetails.map((item) => {
-          const key = `price${headerData.priceType}` as keyof SalesReturnItem;
-          const basePrice = Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0;
+          const resolvedPt = priceTypeOptions.find(p => String(p.price_type_id) === String(headerData.priceType) || String(p.price_type_name) === String(headerData.priceType))?.price_type_name || headerData.priceType;
+          const key = `price${resolvedPt}` as keyof SalesReturnItem;
+          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === Number(item.productId));
+          const basePrice = invoiceItem ? Number(invoiceItem.unit_price) : (Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0);
 
           const newUnitPrice = basePrice;
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
@@ -429,7 +443,7 @@ export function UpdateSalesReturnModal({
         })
       );
     }
-  }, [headerData.priceType, discountOptions, details.length]);
+  }, [headerData.priceType, discountOptions, invoiceLineItems, details.length, priceTypeOptions]);
 
   // Click outside handler for order/invoice dropdowns
   useEffect(() => {
@@ -457,9 +471,20 @@ export function UpdateSalesReturnModal({
     );
     return found ? found.code : "N/A";
   };
-  const getSalesmanBranch = (id: string | number) =>
-    salesmenOptions.find((opt) => String(opt.id) === String(id))?.branchName ||
-    "N/A";
+  const getSalesmanBranch = (id?: string | number) => {
+    if (!id) return "N/A";
+    const s = salesmenOptions.find((opt) => String(opt.id) === String(id));
+    if (!s) return "N/A";
+    const branch = branches.find((b) => String(b.id) === String(s.branchId));
+    return branch ? branch.name : "N/A";
+  };
+  
+  const getResolvedPriceType = (ptId?: string | number) => {
+    if (!ptId) return "N/A";
+    const pt = priceTypeOptions.find(p => String(p.price_type_id) === String(ptId) || String(p.price_type_name) === String(ptId));
+    return pt ? pt.price_type_name : String(ptId);
+  };
+
   const getCustomerName = (code: string | number) =>
     customerOptions.find((opt) => String(opt.value) === String(code))?.label ||
     String(code) ||
@@ -547,7 +572,8 @@ export function UpdateSalesReturnModal({
           }
           updated[existingIndex] = existing;
         } else {
-          const price = Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100;
+          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === productId);
+          const price = invoiceItem ? Number(invoiceItem.unit_price) : (Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100);
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : price;
           const gross = Math.round(agPrice * qty * 100) / 100;
           const incomingDiscountType = item.discountType || "";
@@ -564,6 +590,7 @@ export function UpdateSalesReturnModal({
           }
 
           const variance = Math.round((price - agPrice) * qty * 100) / 100;
+          const resultRecord = item as Record<string, unknown>;
 
           updated.push({
             id: `added-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`,
@@ -571,6 +598,7 @@ export function UpdateSalesReturnModal({
             code: item.code || "N/A",
             description: item.description || item.product_name || "Unknown Item",
             unit: item.unit || "Pcs",
+            unit_id: resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined,
             quantity: qty,
             unitPrice: price,
             agreedPrice: agPrice,
@@ -579,48 +607,18 @@ export function UpdateSalesReturnModal({
             discountType: incomingDiscountType || null,
             discountAmount: initialDiscountAmt,
             totalAmount: Math.round((gross - initialDiscountAmt) * 100) / 100,
-            reason: item.reason || "",
-            returnType: "", // 🟢 Force empty string to trigger validation for new items
+            lot_id: null,
+            batch: "",
+            manufacturing_date: "",
+            expiry_date: "",
+            reason: "",
+            returnType: "",
           });
         }
       });
       return updated;
     });
     setIsProductLookupOpen(false);
-  };
-
-  const handleSelectQuotation = async (id: number, quoteNumber: string) => {
-    setSelectedQuotationId(id);
-    setQuotationSearch(quoteNumber);
-    setIsQuotationOpen(false);
-
-    try {
-      const snapshots = await SalesReturnProvider.getQuotationSnapshots(id);
-
-      if (snapshots && snapshots.length > 0) {
-        setDetails(prev => prev.map(item => {
-          const snapshot = snapshots.find(s => Number(s.product_id) === Number(item.productId));
-          if (snapshot) {
-            const agPrice = Number(snapshot.agreed_price) || 0;
-            const newVariance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
-            const newGross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
-            const newTotal = Math.round((newGross - (Number(item.discountAmount) || 0)) * 100) / 100;
-
-            return {
-              ...item,
-              agreedPrice: agPrice,
-              priceVariance: newVariance,
-              grossAmount: newGross,
-              totalAmount: newTotal
-            };
-          }
-          return item;
-        }));
-      }
-    } catch (error) {
-      console.error("Failed to load quotation snapshots", error);
-      toast.error("Failed to load quotation details.");
-    }
   };
 
   // --- HANDLERS: UPDATE ---
@@ -691,7 +689,11 @@ export function UpdateSalesReturnModal({
       const payload = {
         returnId: headerData.id,
         returnNo: headerData.returnNo,
-        items: details,
+        items: details.map(item => ({
+          ...item,
+          manufacturing_date: item.manufacturing_date || null,
+          expiry_date: item.expiry_date || null,
+        })),
         remarks: headerData.remarks || "",
         invoiceNo: headerData.invoiceNo,
         orderNo: headerData.orderNo,
@@ -728,7 +730,11 @@ export function UpdateSalesReturnModal({
       const savePayload = {
         returnId: headerData.id,
         returnNo: headerData.returnNo,
-        items: details,
+        items: details.map(item => ({
+          ...item,
+          manufacturing_date: item.manufacturing_date || null,
+          expiry_date: item.expiry_date || null,
+        })),
         remarks: headerData.remarks || "",
         invoiceNo: headerData.invoiceNo,
         orderNo: headerData.orderNo,
@@ -882,64 +888,7 @@ export function UpdateSalesReturnModal({
             <ReadOnlyField label="Branch" value={getSalesmanBranch(headerData.salesmanId)} isLoading={loading} />
             <ReadOnlyField label="Return Date" value={headerData.returnDate} />
             <ReadOnlyField label="Received Date" value={headerData.status === "Received" && headerData.receivedAt ? headerData.receivedAt : "-"} />
-            <ReadOnlyField label="Price Type" value={headerData.priceType} />
-
-            <div className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground block">
-                Quotation Reference
-              </Label>
-              <Popover open={isQuotationOpen} onOpenChange={setIsQuotationOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    disabled={!canEditAll}
-                    aria-expanded={isQuotationOpen}
-                    className="w-full justify-between h-9 px-3 text-sm font-medium border-border shadow-sm truncate"
-                  >
-                    <span className="truncate">
-                      {selectedQuotationId
-                        ? quotationOptions.find((q) => q.id === selectedQuotationId)?.quote_number
-                        : "Select quote..."}
-                    </span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-0" align="start">
-                  <Command>
-                    <CommandInput
-                      placeholder="Search quote..."
-                      value={quotationSearch}
-                      onValueChange={setQuotationSearch}
-                    />
-                    <CommandList>
-                      <CommandEmpty>No quotation found.</CommandEmpty>
-                      <CommandGroup>
-                        {quotationOptions
-                          .filter((q) =>
-                            q.quote_number.toLowerCase().includes(quotationSearch.toLowerCase()),
-                          )
-                          .map((quote) => (
-                            <CommandItem
-                              key={quote.id}
-                              value={quote.quote_number}
-                              onSelect={() => handleSelectQuotation(quote.id, quote.quote_number)}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  selectedQuotationId === quote.id ? "opacity-100" : "opacity-0",
-                                )}
-                              />
-                              {quote.quote_number}
-                            </CommandItem>
-                          ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
+            <ReadOnlyField label="Price Type" value={getResolvedPriceType(headerData.priceType)} />
 
             <div className="flex items-center space-x-2 pt-2 col-span-2 lg:col-span-4">
               <Checkbox
@@ -1031,6 +980,12 @@ export function UpdateSalesReturnModal({
                       </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Batch
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
+                        Mfg Date
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
+                        Exp Date
                       </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
                         Reason
@@ -1194,7 +1149,12 @@ export function UpdateSalesReturnModal({
                                   <LocalSearchableSelect
                                     value={item.lot_id ? item.lot_id.toString() : ""}
                                     onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
-                                    options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                    options={lotOptions
+                                      .filter(l => {
+                                        const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
+                                        return s && l.branch_id === s.branchId && l.unit_id === item.unit_id;
+                                      })
+                                      .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                     placeholder="Select lot"
                                     className="h-9 text-xs"
                                   />
@@ -1213,6 +1173,32 @@ export function UpdateSalesReturnModal({
                                   />
                                 ) : (
                                   <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
+                                )}
+                              </TableCell>
+                              {/* MFG Date */}
+                              <TableCell className="align-middle p-2">
+                                {canEditAll ? (
+                                  <Input
+                                    type="date"
+                                    className="h-9 w-full text-sm border-border px-2"
+                                    value={item.manufacturing_date || ""}
+                                    onChange={(e) => handleDetailChange(idx, "manufacturing_date", e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
+                                )}
+                              </TableCell>
+                              {/* EXP Date */}
+                              <TableCell className="align-middle p-2">
+                                {canEditAll ? (
+                                  <Input
+                                    type="date"
+                                    className="h-9 w-full text-sm border-border px-2"
+                                    value={item.expiry_date || ""}
+                                    onChange={(e) => handleDetailChange(idx, "expiry_date", e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
                                 )}
                               </TableCell>
                               {/* Reason */}
@@ -1509,7 +1495,12 @@ export function UpdateSalesReturnModal({
                                     <LocalSearchableSelect
                                       value={item.lot_id ? item.lot_id.toString() : ""}
                                       onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
-                                      options={lotOptions.map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
+                                      options={lotOptions
+                                        .filter(l => {
+                                          const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
+                                          return s && l.branch_id === s.branchId && l.unit_id === item.unit_id;
+                                        })
+                                        .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                       placeholder="Select lot"
                                       className="h-9 text-xs"
                                     />
