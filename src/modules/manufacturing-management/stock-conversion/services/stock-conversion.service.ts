@@ -51,7 +51,7 @@ export const stockConversionService = {
       return { data: [], totalCount: 0, options: allOptions };
     }
 
-    const finalFilters: string[] = [];
+    const andClauses: Record<string, unknown>[] = [];
 
     let filterProductIds: number[] | null = null;
 
@@ -59,19 +59,26 @@ export const stockConversionService = {
       const f = extraFilters as Record<string, string>;
       if (f.productBrand) {
         const found = allOptions.brands.find((b: { id: number; name: string }) => b.name === f.productBrand);
-        if (found?.id) finalFilters.push(`filter[product_brand][_eq]=${found.id}`);
+        if (found?.id) andClauses.push({ product_brand: { _eq: found.id } });
       }
       if (f.productCategory) {
         const found = allOptions.categories.find((c: { id: number; name: string }) => c.name === f.productCategory);
-        if (found?.id) finalFilters.push(`filter[product_category][_eq]=${found.id}`);
+        if (found?.id) andClauses.push({ product_category: { _eq: found.id } });
       }
       if (f.unitName) {
         const found = allOptions.units.find((u: { id: number; name: string }) => u.name === f.unitName);
-        if (found?.id) finalFilters.push(`filter[unit_of_measurement][_eq]=${found.id}`);
+        if (found?.id) andClauses.push({ unit_of_measurement: { _eq: found.id } });
       }
-      if (f.search) {
-        const s = encodeURIComponent(f.search);
-        finalFilters.push(`filter[_or][0][product_name][_icontains]=${s}&filter[_or][1][product_code][_icontains]=${s}`);
+      if (f.search && f.search.trim()) {
+        const s = f.search.trim();
+        andClauses.push({
+          _or: [
+            { product_name: { _icontains: s } },
+            { product_code: { _icontains: s } },
+            { description: { _icontains: s } },
+            { barcode: { _icontains: s } },
+          ],
+        });
       }
       if (f.supplierShortcut) {
         const res = await fetch(`${DIRECTUS_API}/items/product_per_supplier?filter[supplier_id][supplier_shortcut][_eq]=${encodeURIComponent(f.supplierShortcut)}&fields=product_id&limit=-1`, {
@@ -139,10 +146,17 @@ export const stockConversionService = {
     if (filterProductIds !== null && filterProductIds.length > 0) {
       // Chunk to prevent massive URLs (capped at ~500 IDs)
       const chunkedIds = filterProductIds.slice(0, 500);
-      finalFilters.push(`filter[product_id][_in]=${chunkedIds.join(",")}`);
+      andClauses.push({
+        product_id: { _in: chunkedIds }
+      });
     }
 
-    const filterString = finalFilters.join("&");
+    let filterString = "";
+    if (andClauses.length === 1) {
+      filterString = `filter=${encodeURIComponent(JSON.stringify(andClauses[0]))}`;
+    } else if (andClauses.length > 1) {
+      filterString = `filter=${encodeURIComponent(JSON.stringify({ _and: andClauses }))}`;
+    }
 
     const t2 = Date.now();
     const fetchLimit = hasStock ? -1 : limit;
@@ -321,8 +335,12 @@ export const stockConversionService = {
       const finalQuantity = rawQuantity;
 
 
+      const isParent = !parentId || parentIds.has(pId);
+
       return {
         productId: pId,
+        parentId: parentId || null,
+        isParent,
         supplierName: finalSupplierName,
         supplierShortcut: finalSupplierShortcut,
         brand: brandMap.get(brandId) || "Unknown",
@@ -348,13 +366,20 @@ export const stockConversionService = {
       finalResult = result.filter(p => p.quantity > 0 && (p.availableUnits?.length ?? 0) > 0);
     }
 
-    // 8. Sort by: 1. Product Family (Grouped), 2. Unit Size (Descending: Box > Tie > Piece)
+    // 8. Sort by:
+    // 1. Product Family (Grouped)
+    // 2. Root Parent Product first (isParent === true)
+    // 3. Smallest to biggest unit/conversionFactor (TIE > IB > BAG > BOX)
     finalResult.sort((a, b) => {
       const familyCompare = (a.family || "").localeCompare(b.family || "");
       if (familyCompare !== 0) return familyCompare;
       
-      // Keep units in a logical order (larger units first)
-      return (b.conversionFactor || 0) - (a.conversionFactor || 0);
+      // Root parent product ALWAYS comes first in the family
+      if (a.isParent && !b.isParent) return -1;
+      if (!a.isParent && b.isParent) return 1;
+
+      // Smallest to biggest unit (TIE > IB > BAG > BOX)
+      return (a.conversionFactor || 0) - (b.conversionFactor || 0);
     });
 
     // 9. Manual pagination when hasStock is ON (since we fetched all products above)

@@ -9,6 +9,8 @@ import type { StockConversionProduct, RFIDTag, UnitTarget, StockConversionPayloa
 import { ModuleSkeleton } from "@/components/shared/ModuleSkeleton";
 import ErrorPage from "@/components/shared/ErrorPage";
 
+import { motion } from "framer-motion";
+
 const MemoizedStockConversionTable = memo(StockConversionTable);
 
 interface StockConversionModuleProps {
@@ -150,7 +152,12 @@ export default function StockConversionModule({
   }
 
   return (
-    <div className="h-full flex flex-col space-y-4">
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="h-full flex flex-col space-y-4"
+    >
       <MemoizedStockConversionTable
         data={data}
         totalCount={totalCount}
@@ -177,6 +184,6 @@ export default function StockConversionModule({
         onClose={() => setIsUnitModalOpen(false)}
         onConfirm={handleUnitModalConfirm}
       />
-    </div>
+    </motion.div>
   );
 }

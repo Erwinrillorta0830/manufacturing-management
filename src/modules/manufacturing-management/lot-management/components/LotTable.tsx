@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
+import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus, Building2 } from "lucide-react";
 import { Lot } from "../types";
 import {
     Table,
@@ -24,6 +24,7 @@ interface LotTableProps {
     loading: boolean;
     searchQuery: string;
     onSearchChange: (value: string) => void;
+    onViewBatches?: (lot: Lot) => void;
     onEdit?: (lot: Lot) => void;
     onRefresh?: () => void;
     onAddClick?: () => void;
@@ -34,6 +35,7 @@ export default function LotTable({
     loading,
     searchQuery,
     onSearchChange,
+    onViewBatches,
     onEdit,
     onAddClick
 }: LotTableProps) {
@@ -96,6 +98,7 @@ export default function LotTable({
                             <TableRow>
                                 <TableHead className="w-[80px]">No.</TableHead>
                                 <TableHead>Storage Location</TableHead>
+                                <TableHead>Branch Location</TableHead>
                                 <TableHead>UOM</TableHead>
                                 <TableHead>Max Capacity</TableHead>
                                 <TableHead>Created By</TableHead>
@@ -106,10 +109,25 @@ export default function LotTable({
                             {paginatedLots.map((lot) => {
                                 const unitLabel = lot.uomShortcut || lot.uomName || "";
                                 return (
-                                    <TableRow key={lot.lotId}>
+                                    <TableRow
+                                        key={lot.lotId}
+                                        onClick={() => onViewBatches?.(lot)}
+                                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                                    >
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
-                                        <TableCell className="font-semibold text-foreground">
+                                        <TableCell className="font-semibold text-foreground" title={lot.lotName}>
                                              {lot.lotName}
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-foreground border border-border">
+                                                <Building2 className="h-3 w-3 text-primary shrink-0" />
+                                                <span>{lot.branchName || `Branch #${lot.branchId}`}</span>
+                                                {lot.branchCode && (
+                                                    <span className="text-[10px] font-mono text-muted-foreground font-bold">
+                                                        ({lot.branchCode})
+                                                    </span>
+                                                )}
+                                            </span>
                                         </TableCell>
                                         <TableCell>
                                             {unitLabel ? (
@@ -135,7 +153,7 @@ export default function LotTable({
                                         </TableCell>
                                         {onEdit && (
                                             <TableCell className="text-right">
-                                                <div className="flex justify-end gap-1">
+                                                <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"

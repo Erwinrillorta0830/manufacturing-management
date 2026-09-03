@@ -31,6 +31,8 @@ export interface StockConversionProduct {
   pricePerUnit: number;
   inventoryLoaded?: boolean;
   inventoryError?: boolean;
+  parentId?: number | null;
+  isParent?: boolean;
   availableUnits?: UnitTarget[];
 }
 
