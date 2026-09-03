@@ -12,6 +12,7 @@ export interface SalesReturnItem {
   code: string;
   description: string;
   unit: string;
+  unit_id?: number;
   quantity: number;
   unitPrice: number;
   grossAmount: number;
@@ -19,7 +20,10 @@ export interface SalesReturnItem {
   discountAmount: number;
   totalAmount: number;
   lot_id?: number | null;
+  inventory_lot_id?: number | null;
   batch?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
   reason?: string;
   returnType?: string;
   rfidTags?: string[];
@@ -173,8 +177,10 @@ export interface API_SalesReturnDetail {
   discount_amount: string;
   total_amount: string;
   lot_id: number | null;
-  batch: string | null;
-  reason: string | null;
+  batch?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  reason?: string | null;
   sales_return_type_id: number;
 }
 
@@ -232,19 +238,13 @@ export interface InvoiceOption {
 export interface LotOption {
   lot_id: number;
   lot_name: string;
+  branch_id: number;
+  unit_id: number;
 }
 
-// --- QUOTATION DATA ---
-export interface QuotationHeader {
-  id: number;
-  quote_number: string;
-  customer_id: number;
-}
-
-export interface QuotationSnapshot {
-  snapshot_id: number;
-  quotation_id: number;
+export interface InvoiceLineItem {
+  detail_id: number;
   product_id: number;
   unit_price: number;
-  agreed_price: number;
+  quantity: number;
 }

@@ -16,6 +16,7 @@ import {
   updateReturn,
   updateStatus,
   fetchLots,
+  fetchInvoiceDetails,
 } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return-service";
 /**
  * Decodes the base64url payload of a JWT without verifying the signature.
@@ -118,6 +119,15 @@ export async function GET(req: NextRequest) {
         const salesmanId = url.searchParams.get("salesmanId") || undefined;
         const customerCode = url.searchParams.get("customerCode") || undefined;
         const data = await fetchInvoices(salesmanId, customerCode);
+        return json({ data });
+      }
+
+      case "invoice-items": {
+        const id = url.searchParams.get("id");
+        if (!id) {
+          return json({ error: "id is required" }, 400);
+        }
+        const data = await fetchInvoiceDetails(Number(id));
         return json({ data });
       }
 

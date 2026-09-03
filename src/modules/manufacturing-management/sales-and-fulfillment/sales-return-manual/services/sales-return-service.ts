@@ -95,6 +95,52 @@ async function buildDiscountPercentMap(): Promise<Map<number, number>> {
   return discountMap;
 }
 
+/**
+ * Synchronizes an inventory lot based on unique keys.
+ * Finds existing or creates a new one.
+ */
+async function syncInventoryLot(
+  lotId: number,
+  productId: number,
+  branchId: number,
+  batchNo: string,
+  returnNo: string,
+  userId: number,
+  mfgDate: string | null,
+  expDate: string | null
+): Promise<number | null> {
+  try {
+    const existing = await repo.getInventoryLotByUniqueKeys(lotId, productId, batchNo);
+    const data = existing.data || [];
+    if (data.length > 0 && data[0].inventory_lot_id) {
+      return Number(data[0].inventory_lot_id);
+    }
+
+    const payload = {
+      lot_id: lotId,
+      product_id: productId,
+      branch_id: branchId,
+      batch_no: batchNo,
+      manufacturing_date: mfgDate,
+      expiry_date: expDate,
+      unit_cost: 0,
+      qa_status: "GOOD",
+      status: "ACTIVE",
+      source_type: "Sales Return",
+      source_reference: returnNo,
+      created_by: userId,
+      created_at: nowPH(),
+      updated_at: nowPH(),
+    };
+
+    const created = await repo.createInventoryLot(payload);
+    return created.data ? Number(created.data.inventory_lot_id) : null;
+  } catch (e) {
+    console.error("Failed to sync inventory lot:", e);
+    return null;
+  }
+}
+
 // =============================================================================
 // PUBLIC SERVICE METHODS
 // =============================================================================
@@ -183,6 +229,7 @@ export async function fetchReturnDetails(
       description:
         product.product_name || product.description || "Unknown Item",
       unit: unit ? unit.unit_shortcut : "Pcs",
+      unit_id: unitId ? Number(unitId) : undefined,
       quantity: Number(detail.quantity),
       unitPrice: Number(detail.unit_price),
       agreedPrice: detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : Number(detail.unit_price),
@@ -209,6 +256,8 @@ export async function fetchReturnDetails(
       })(),
       lot_id: detail.lot_id ? Number(detail.lot_id) : null,
       batch: detail.batch || null,
+      manufacturing_date: detail.manufacturing_date ? String(detail.manufacturing_date).substring(0, 10) : null,
+      expiry_date: detail.expiry_date ? String(detail.expiry_date).substring(0, 10) : null,
       reason: detail.reason || "",
       sales_return_type_id: detail.sales_return_type_id
         ? Number(detail.sales_return_type_id)
@@ -318,9 +367,9 @@ export async function fetchReferences(): Promise<{
 /**
  * Fetches all lots.
  */
-export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
   const result = await repo.getRawLots();
-  return (result.data || []) as { lot_id: number; lot_name: string; }[];
+  return (result.data || []) as { lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[];
 }
 
 /**
@@ -420,21 +469,13 @@ export async function fetchInvoices(
   return Array.from(uniqueInvoices.values());
 }
 
-/**
- * Fetches all quotations for Quotation Reference dropdown.
- */
-export async function fetchQuotations() {
-  const result = await repo.getRawQuotations();
+export async function fetchInvoiceDetails(invoiceId: number): Promise<any[]> {
+  const result = await repo.getRawInvoiceDetails(invoiceId);
   return (result.data || []) as any[];
 }
 
-/**
- * Fetches snapshots for a specific quotation.
- */
-export async function fetchQuotationSnapshots(quotationId: number) {
-  const result = await repo.getRawQuotationSnapshots(quotationId);
-  return (result.data || []) as any[];
-}
+
+
 
 /**
  * Fetches the status card data for a return.
@@ -587,6 +628,20 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
     const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
+    let finalInventoryLotId = null;
+    if (item.batch && item.lot_id) {
+      finalInventoryLotId = await syncInventoryLot(
+        Number(item.lot_id),
+        Number(item.productId || item.product_id || item.id),
+        payload.branchId ? Number(payload.branchId) : 0,
+        item.batch,
+        finalReturnNo,
+        userId,
+        item.manufacturing_date || null,
+        item.expiry_date || null
+      );
+    }
+
     const detailPayload = {
       return_no: finalReturnNo,
       product_id: Number(item.productId || item.product_id || item.id),
@@ -602,6 +657,10 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       lot_id: item.lot_id ? Number(item.lot_id) : null,
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
+      inventory_lot_id: finalInventoryLotId,
+      unit_id: item.unit_id ? Number(item.unit_id) : null,
+      manufacturing_date: item.manufacturing_date || null,
+      expiry_date: item.expiry_date || null,
       created_at: nowPH(),
       status: "Draft",
     };
@@ -772,6 +831,29 @@ export async function updateReturn(
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
     const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
 
+    let finalInventoryLotId = null;
+    if (item.batch && item.lot_id) {
+      if (typeof item.id === "number") {
+        const currentDbItem = currentItems.find((d: any) => d.id === item.id);
+        if (currentDbItem && currentDbItem.batch !== item.batch) {
+          if (currentDbItem.inventory_lot_id) {
+            await repo.updateInventoryLotStatus(Number(currentDbItem.inventory_lot_id), "INACTIVE");
+          }
+        }
+      }
+
+      finalInventoryLotId = await syncInventoryLot(
+        Number(item.lot_id),
+        Number(item.productId || item.product_id),
+        payload.branchId ? Number(payload.branchId) : 0,
+        item.batch,
+        payload.returnNo,
+        userId,
+        item.manufacturing_date || null,
+        item.expiry_date || null
+      );
+    }
+
     const detailPayload = {
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
@@ -785,6 +867,10 @@ export async function updateReturn(
       lot_id: item.lot_id ? Number(item.lot_id) : null,
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
+      inventory_lot_id: finalInventoryLotId,
+      unit_id: item.unit_id ? Number(item.unit_id) : null,
+      manufacturing_date: item.manufacturing_date || null,
+      expiry_date: item.expiry_date || null,
       updated_at: nowPH(),
     };
 
