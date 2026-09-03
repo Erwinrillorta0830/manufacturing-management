@@ -34,6 +34,7 @@ export interface RawMemoOrReturn {
     amount?: number;
     appliedAmount?: number;
     memoNumber?: string;
+    memo_number?: string;
     customerCode?: string;
     customerName?: string;
     isApplied?: boolean;
@@ -284,7 +285,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                     const remainingMemoAmount = (m.amount || 0) - (m.appliedAmount || 0);
                     const id = `memo-${m.id}`;
                     if (remainingMemoAmount > 0 && !newCredits.some(c => c.id === id)) {
-                        newCredits.push({id, dbId: m.id, type: "MEMO", label: `Memo: ${m.memoNumber}`, originalAmount: remainingMemoAmount, customerCode: m.customerCode, customerName: m.customerName});
+                        newCredits.push({id, dbId: m.id, type: "MEMO", label: `Memo: ${m.memo_number || m.memoNumber}`, originalAmount: remainingMemoAmount, customerCode: m.customerCode, customerName: m.customerName});
                     }
                 });
                 returnItems.forEach(r => {
@@ -376,7 +377,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                     if (type === "MEMO") {
                         const remaining = (data.amount || 0) - (data.appliedAmount || 0);
                         if (remaining > 0) {
-                        newCredits.unshift({ id, dbId: data.id, type: "MEMO", label: `Memo: ${data.memoNumber}`, originalAmount: remaining, customerCode: data.customerCode, customerName: data.customerName });
+                        newCredits.unshift({ id, dbId: data.id, type: "MEMO", label: `Memo: ${data.memo_number || data.memoNumber}`, originalAmount: remaining, customerCode: data.customerCode, customerName: data.customerName });
                         }
                     } else {
                         const availableReturnAmount = getAvailableReturnAmount(data);

@@ -135,23 +135,7 @@ export async function getRawLinkedInvoice(returnId: number) {
   );
 }
 
-/**
- * Fetches all quotations for the Quotation Reference dropdown.
- */
-export async function getRawQuotations() {
-  const fields = "id,quote_number,customer_id";
-  const searchUrl = `/items/quotation_header?fields=${fields}&limit=-1&filter[status][_neq]=Draft`;
-  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
-}
 
-/**
- * Fetches quotation snapshots given a quotation ID.
- */
-export async function getRawQuotationSnapshots(quotationId: number) {
-  const fields = "snapshot_id,quotation_id,product_id,unit_price";
-  const searchUrl = `/items/quotation_snapshot?fields=${fields}&limit=-1&filter[quotation_id][_eq]=${quotationId}`;
-  return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
-}
 
 /**
  * Fetches all reference data needed for dropdowns and forms.
@@ -181,7 +165,7 @@ export async function getRawReferences() {
  */
 export async function getRawLots() {
   return directusGet<{ data: Record<string, unknown>[] }>(
-    "/items/mm_lots?limit=-1&fields=lot_id,lot_name,status&filter[status][_eq]=ACTIVE"
+    "/items/mm_lots?limit=-1&fields=lot_id,lot_name,branch_id,unit_id,status&filter[status][_eq]=ACTIVE"
   );
 }
 
@@ -250,7 +234,7 @@ export async function getRawInvoices(
   customerCode?: string,
 ) {
   let url =
-    "/items/sales_invoice?limit=-1&fields=invoice_id,invoice_no,customer_code,order_id,salesman_id,isPosted,total_amount";
+    "/items/sales_invoice?limit=-1&fields=invoice_id,invoice_no,customer_code,order_id,salesman_id,isPosted,total_amount&filter[payment_status][_eq]=Unpaid";
 
   if (customerCode) {
     url += `&filter[customer_code][_eq]=${encodeURIComponent(customerCode)}`;
@@ -259,6 +243,11 @@ export async function getRawInvoices(
     url += `&filter[salesman_id][_eq]=${salesmanId}`;
   }
 
+  return directusGet<{ data: Record<string, unknown>[] }>(url);
+}
+
+export async function getRawInvoiceDetails(invoiceId: number) {
+  const url = `/items/sales_invoice_details?limit=-1&fields=detail_id,product_id,unit_price,quantity&filter[invoice_no][_eq]=${invoiceId}`;
   return directusGet<{ data: Record<string, unknown>[] }>(url);
 }
 
@@ -411,6 +400,45 @@ export async function deleteJunctionLink(linkId: number) {
 export async function getInvoiceStatus(invoiceId: number) {
   return directusGet<{ data: Record<string, unknown> }>(
     `/items/sales_invoice/${invoiceId}?fields=isPosted`,
+  );
+}
+
+/**
+ * Searches for an existing mm_inventory_lots record based on unique keys.
+ */
+export async function getInventoryLotByUniqueKeys(
+  lotId: number,
+  productId: number,
+  batchNo: string
+) {
+  const filter = `filter[lot_id][_eq]=${lotId}&filter[product_id][_eq]=${productId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}`;
+  return directusGet<{ data: Record<string, unknown>[] }>(
+    `/items/mm_inventory_lots?${filter}&limit=1`,
+  );
+}
+
+/**
+ * Creates a new mm_inventory_lots record.
+ */
+export async function createInventoryLot(payload: Record<string, unknown>) {
+  return directusMutate<{ data: Record<string, unknown> }>(
+    `/items/mm_inventory_lots`,
+    "POST",
+    payload,
+  );
+}
+
+/**
+ * Updates an existing mm_inventory_lots status.
+ */
+export async function updateInventoryLotStatus(
+  inventoryLotId: number,
+  status: string
+) {
+  return directusMutate<{ data: Record<string, unknown> }>(
+    `/items/mm_inventory_lots/${inventoryLotId}`,
+    "PATCH",
+    { status },
   );
 }
 
