@@ -103,7 +103,13 @@ export async function POST(request: NextRequest) {
             throw new Error(`Directus failed to create lot: ${errText}`);
         }
 
-        const created = (await res.json()).data;
+        const rawCreated = (await res.json()).data;
+        const lId = extractId(rawCreated.lot_id || rawCreated.id);
+        const created = {
+            ...rawCreated,
+            lot_id: lId,
+            id: lId,
+        };
         return NextResponse.json({ success: true, data: created }, { status: 201 });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";

@@ -88,16 +88,17 @@ export function extractId(value: unknown, defaultKey = "id"): number {
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
         const raw =
-            record[defaultKey] ??
-            record.id ??
+            (defaultKey && defaultKey !== "id" ? record[defaultKey] : undefined) ??
+            record.lot_id ??
+            record.inventory_lot_id ??
+            record.draft_batch_id ??
+            record.product_id ??
+            record.unit_id ??
+            record.branch_id ??
             record.price_type_id ??
             record.product_type_id ??
             record.type_id ??
-            record.product_id ??
-            record.lot_id ??
-            record.inventory_lot_id ??
-            record.unit_id ??
-            record.branch_id;
+            record.id;
         const parsed = Number(raw);
         return Number.isFinite(parsed) ? parsed : 0;
     }
@@ -149,7 +150,7 @@ export async function recalculateHeaderTotals(sheetId: number): Promise<{
     total_variance: number;
     total_difference_cost: number;
 }> {
-    const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1`;
+    const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&fields=*,product_id.*,product_id.unit_of_measurement.*&limit=-1`;
     const res = await fetch(detailsUrl, { headers, cache: "no-store" });
     if (!res.ok) {
         return { total_system_quantity: 0, total_physical_quantity: 0, total_variance: 0, total_difference_cost: 0 };
@@ -157,27 +158,35 @@ export async function recalculateHeaderTotals(sheetId: number): Promise<{
     const json = await res.json();
     const details: MmPhysicalInventoryDetail[] = json.data || [];
 
-    let totalSys = 0;
-    let totalPhys = 0;
-    let totalVar = 0;
+    let totalSysPcs = 0;
+    let totalPhysPcs = 0;
+    let totalVarPcs = 0;
     let totalDiffCost = 0;
 
     for (const d of details) {
-        const sys = roundQty(d.system_count);
-        const phys = roundQty(d.physical_count);
-        const variance = roundQty(phys - sys);
-        const cost = roundMoney(d.unit_cost);
-        const diffCost = roundMoney(variance * cost);
+        const prodObj = typeof d.product_id === "object" && d.product_id !== null ? (d.product_id as Record<string, unknown>) : null;
+        const uomCountRaw = prodObj ? Number(prodObj.unit_of_measurement_count || 0) : 0;
+        const uomCount = uomCountRaw > 0 ? uomCountRaw : 1;
 
-        totalSys += sys;
-        totalPhys += phys;
-        totalVar += variance;
+        const sysUom = roundQty(d.system_count);
+        const physUom = roundQty(d.physical_count);
+        const varianceUom = roundQty(physUom - sysUom);
+        const cost = roundMoney(d.unit_cost);
+        const diffCost = roundMoney(varianceUom * cost);
+
+        const sysPcs = roundQty(sysUom * uomCount);
+        const physPcs = roundQty(physUom * uomCount);
+        const varPcs = roundQty(physPcs - sysPcs);
+
+        totalSysPcs += sysPcs;
+        totalPhysPcs += physPcs;
+        totalVarPcs += varPcs;
         totalDiffCost += diffCost;
     }
 
-    totalSys = roundQty(totalSys);
-    totalPhys = roundQty(totalPhys);
-    totalVar = roundQty(totalVar);
+    totalSysPcs = roundQty(totalSysPcs);
+    totalPhysPcs = roundQty(totalPhysPcs);
+    totalVarPcs = roundQty(totalVarPcs);
     totalDiffCost = roundMoney(totalDiffCost);
 
     const updateUrl = `${DIRECTUS_URL}/items/mm_physical_inventory/${sheetId}`;
@@ -185,17 +194,17 @@ export async function recalculateHeaderTotals(sheetId: number): Promise<{
         method: "PATCH",
         headers,
         body: JSON.stringify({
-            total_system_quantity: totalSys,
-            total_physical_quantity: totalPhys,
-            total_variance: totalVar,
+            total_system_quantity: totalSysPcs,
+            total_physical_quantity: totalPhysPcs,
+            total_variance: totalVarPcs,
             total_difference_cost: totalDiffCost,
         }),
     });
 
     return {
-        total_system_quantity: totalSys,
-        total_physical_quantity: totalPhys,
-        total_variance: totalVar,
+        total_system_quantity: totalSysPcs,
+        total_physical_quantity: totalPhysPcs,
+        total_variance: totalVarPcs,
         total_difference_cost: totalDiffCost,
     };
 }

@@ -82,9 +82,16 @@ export async function addPhysicalInventoryDetail(
         inventory_lot_id: number;
         lot_id: number;
         product_id: number;
-        physical_count: number;
+        is_draft?: boolean;
+        draft_batch_id?: number;
+        physical_count?: number | null;
         inventory_condition: string;
         remarks?: string;
+        batch_no?: string;
+        manufacturing_date?: string | null;
+        expiry_date?: string | null;
+        expiration_date?: string | null;
+        unit_cost?: number;
     }
 ): Promise<MmPhysicalInventoryDetail> {
     const res = await fetch(`${API_BASE}/${sheetId}/details`, {
@@ -102,7 +109,7 @@ export async function addPhysicalInventoryDetail(
 export async function updatePhysicalInventoryDetail(
     sheetId: number,
     detailId: number,
-    payload: { physical_count?: number; inventory_condition?: string; remarks?: string }
+    payload: { physical_count?: number | null; inventory_condition?: string; remarks?: string }
 ): Promise<MmPhysicalInventoryDetail> {
     const res = await fetch(`${API_BASE}/${sheetId}/details`, {
         method: "PATCH",
@@ -214,6 +221,29 @@ export async function fetchBatchesByLotAndProduct(lotId: number, productId: numb
         throw new Error(json.error || "Failed to fetch batches");
     }
     return json.data || [];
+}
+
+export async function createMmDraftBatch(payload: {
+    physical_inventory_id?: number;
+    lot_id: number;
+    branch_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date?: string;
+    expiry_date?: string;
+    unit_cost?: number;
+    source_reference?: string;
+}): Promise<MmInventoryLot> {
+    const res = await fetch(`${API_BASE}/batches/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to create draft batch");
+    }
+    return json.data;
 }
 
 export async function createMmBatch(payload: {
