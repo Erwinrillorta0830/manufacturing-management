@@ -119,8 +119,23 @@ export async function POST(request: Request) {
             })) as Row[];
             const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
 
+            const lineAllocMap = new Map<number, import("@/modules/manufacturing-management/invoicing-and-billing/invoicing/types").LineAllocationPayload>();
+            if (body && Array.isArray((body as any).lineAllocations)) {
+                for (const la of (body as any).lineAllocations) {
+                    if (la && Number(la.productId)) {
+                        lineAllocMap.set(Number(la.productId), la);
+                    }
+                }
+            }
+
             const discount = Number(order.discount_amount || 0);
-            const gross = details.reduce((sum, detail) => sum + Number(detail.unit_price) * Number(detail.ordered_quantity), 0);
+            const gross = details.reduce((sum, detail) => {
+                const pId = Number(detail.product_id);
+                const customAlloc = lineAllocMap.get(pId);
+                const qty = customAlloc ? Number(customAlloc.quantity || 0) : Number(detail.ordered_quantity || 0);
+                return sum + Number(detail.unit_price) * qty;
+            }, 0);
+
             if (!Number.isFinite(gross) || gross <= 0 || !Number.isFinite(discount) || discount < 0 || discount > gross) {
                 throw new ApiError(409, "Sales order has invalid invoice amounts.");
             }
@@ -153,7 +168,7 @@ export async function POST(request: Request) {
                         gross_amount: gross,
                         discount_amount: discount,
                         vat_amount: 0,
-                        net_amount: gross - discount,
+                        net_amount: Math.max(0, gross - discount),
                         created_by: userId,
                         modified_by: userId,
                         modified_date: nowIso,
@@ -173,7 +188,11 @@ export async function POST(request: Request) {
                 if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) throw new Error("Invoice header returned no valid ID");
 
                 for (const detail of details) {
-                    const quantity = Number(detail.ordered_quantity);
+                    const pId = Number(detail.product_id);
+                    const customAlloc = lineAllocMap.get(pId);
+                    const quantity = customAlloc ? Number(customAlloc.quantity || 0) : Number(detail.ordered_quantity);
+                    if (quantity <= 0) continue;
+
                     const unitPrice = Number(detail.unit_price);
                     const unitId = Number((productMap.get(Number(detail.product_id))?.unit_of_measurement as Row | undefined)?.unit_id || 1);
                     const detailResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice_details`, {
@@ -199,6 +218,57 @@ export async function POST(request: Request) {
                     const detailId = Number((await detailResponse.json()).data?.detail_id);
                     if (!Number.isSafeInteger(detailId) || detailId < 1) throw new Error("Invoice detail returned no valid ID");
                     detailIds.push(detailId);
+
+                    // Insert sales_invoice_batches for batch lot trace (multiple rows per allocated batch)
+                    if (customAlloc?.batchAllocations && customAlloc.batchAllocations.length > 0) {
+                        for (const b of customAlloc.batchAllocations) {
+                            const bQty = Number(b.quantity || 0);
+                            const rawInvId = Number(b.inventoryLotId || 0);
+                            if (bQty > 0 && rawInvId > 0) {
+                                await fetch(`${DIRECTUS_URL}/items/sales_invoice_batches`, {
+                                    method: "POST",
+                                    headers: directusHeaders,
+                                    body: JSON.stringify({
+                                        invoice_id: invoiceId,
+                                        invoice_detail_id: detailId,
+                                        product_id: pId,
+                                        inventory_lot_id: rawInvId,
+                                        lot_id: b.lotId || null,
+                                        batch_no: b.batchNo || null,
+                                        quantity: bQty,
+                                        created_at: nowIso,
+                                        created_by: userId,
+                                    }),
+                                }).catch((err) => {
+                                    console.warn("[Invoicing] Warning inserting sales_invoice_batches:", err);
+                                });
+
+                                // Reconcile sales_order_reservation to Consumed
+                                if (detail.detail_id) {
+                                    const soResRes = await fetch(
+                                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_eq]=${detail.detail_id}&filter[inventory_lot_id][_eq]=${rawInvId}&limit=1`,
+                                        { headers: directusHeaders, cache: "no-store" }
+                                    ).catch(() => null);
+                                    if (soResRes && soResRes.ok) {
+                                        const soResList = (await soResRes.json()).data || [];
+                                        if (soResList.length > 0) {
+                                            const rId = soResList[0].reservation_id || soResList[0].id;
+                                            await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                method: "PATCH",
+                                                headers: directusHeaders,
+                                                body: JSON.stringify({
+                                                    picked_quantity: bQty,
+                                                    status: "Consumed",
+                                                    modified_date: nowIso,
+                                                    modified_by: userId,
+                                                }),
+                                            }).catch(() => null);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Transition sales order to "Dispatched"
