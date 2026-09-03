@@ -90,7 +90,7 @@ export function mapRawPouchToSettlementPrintableData(
         if (isCash) type = "CASH";
         else if (tempId.startsWith("chk") || bucket.paymentMethodId === 2) type = "CHECK";
         else if (tempId.startsWith("ewt") || bucket.paymentMethodId === 10 || bucket.coaId === 11) type = "EWT";
-        else if (bucket.paymentMethodId == null && bucket.coaId != null) type = "ADJUSTMENT";
+        else if (bucket.findingId != null || (bucket.paymentMethodId == null && bucket.coaId != null)) type = "ADJUSTMENT";
         else type = "CHECK";
 
         let id = bucket.tempId || `${type.toLowerCase()}-fallback-${index}`;

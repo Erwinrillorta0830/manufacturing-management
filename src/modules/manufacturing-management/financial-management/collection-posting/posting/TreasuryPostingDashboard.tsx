@@ -279,7 +279,36 @@ export default function TreasuryPostingDashboard({}: TreasuryPostingDashboardPro
                         <ChevronsLeft size={14}/>
                         <span className="sr-only">Previous page</span>
                     </Button>
-                    <span className="min-w-24 text-center font-semibold">Page {currentPage} of {Math.max(totalPages, 1)}</span>
+                    <span className="flex items-center gap-1.5 font-semibold">
+                        Page
+                        <Input
+                            key={`page-input-${currentPage}`}
+                            type="number"
+                            min={1}
+                            max={Math.max(totalPages, 1)}
+                            defaultValue={currentPage}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                    const val = parseInt((e.target as HTMLInputElement).value);
+                                    if (!isNaN(val) && val >= 1 && val <= Math.max(totalPages, 1)) {
+                                        updateQuery({ page: val });
+                                    } else {
+                                        (e.target as HTMLInputElement).value = currentPage.toString();
+                                    }
+                                }
+                            }}
+                            onBlur={(e) => {
+                                const val = parseInt((e.target as HTMLInputElement).value);
+                                if (!isNaN(val) && val >= 1 && val <= Math.max(totalPages, 1)) {
+                                    if (val !== currentPage) updateQuery({ page: val });
+                                } else {
+                                    (e.target as HTMLInputElement).value = currentPage.toString();
+                                }
+                            }}
+                            className="w-16 h-8 px-2 py-1 text-center font-mono text-xs bg-background"
+                        />
+                        of {Math.max(totalPages, 1)}
+                    </span>
                     <Button type="button" variant="outline" size="sm" disabled={totalPages === 0 || currentPage >= totalPages || isFetching} onClick={() => updateQuery({page: currentPage + 1})}>
                         <ChevronsRight size={14}/>
                         <span className="sr-only">Next page</span>
