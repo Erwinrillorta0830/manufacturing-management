@@ -199,7 +199,7 @@ export interface SupplierItem {
     supplier_shortcut?: string;
     phone_number?: string;
     email_address?: string;
-    isActive?: number;
+    isActive?: number | boolean;
 }
 
 export interface BatchItem {

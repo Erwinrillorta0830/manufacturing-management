@@ -126,8 +126,17 @@ export async function createCategoryOnTheFly(name: string): Promise<SelectOption
 
 export async function fetchLinkedSuppliers(productId: number): Promise<number[]> {
     const res = await fetch(`/api/manufacturing/procurement/raw-materials?productId=${productId}`);
-    if (!res.ok) return [];
-    return res.json();
+    const body = await res.json().catch(() => null) as { error?: unknown } | unknown;
+    if (!res.ok) {
+        const message = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
+            ? (body as { error: string }).error
+            : "Failed to load linked suppliers.";
+        throw new Error(message);
+    }
+    if (!Array.isArray(body) || body.some(id => !Number.isSafeInteger(Number(id)) || Number(id) <= 0)) {
+        throw new Error("Linked suppliers returned an invalid response.");
+    }
+    return [...new Set(body.map(id => Number(id)))];
 }
 
 export async function fetchPurchaseQaParameters(): Promise<PurchaseQaParameter[]> {

@@ -14,6 +14,7 @@ import {
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
 import { PurchaseQaEditor } from "./PurchaseQaEditor";
+import { SupplierMultiSelect } from "./SupplierMultiSelect";
 import { isPackagingMaterialProductType } from "../../packaging-weight";
 
 interface RawMaterialModalProps {
@@ -86,8 +87,6 @@ interface RawMaterialModalProps {
     setFormUomCount: (v: string) => void;
     selectedSupplierIds: number[];
     handleToggleSupplier: (id: number) => void;
-    supplierSearch: string;
-    setSupplierSearch: (v: string) => void;
     packagingVariants: PackagingVariantFormState[];
     handleAddVariant: () => void;
     handleAddPresetVariant?: (presetType: "bag25" | "sack50" | "drum200" | "ibc1000" | "fibc1000" | "case12") => void;
@@ -177,8 +176,6 @@ export function RawMaterialModal({
     setFormUomCount,
     selectedSupplierIds,
     handleToggleSupplier,
-    supplierSearch,
-    setSupplierSearch,
     packagingVariants,
     handleAddVariant,
     handleAddPresetVariant,
@@ -200,10 +197,6 @@ export function RawMaterialModal({
 }: RawMaterialModalProps) {
     if (!isOpen) return null;
 
-    const filteredSuppliers = suppliers.filter(s =>
-        s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-        s.supplier_shortcut?.toLowerCase().includes(supplierSearch.toLowerCase())
-    );
     const isPackagingMaterial = isPackagingMaterialProductType(formProductType);
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
@@ -719,33 +712,12 @@ export function RawMaterialModal({
 
                         {/* Right Column: Approved Suppliers Picker */}
                         <div className="space-y-1 bg-muted/10 p-2.5 rounded-xl border flex flex-col justify-between">
-                            <div className="flex items-center justify-between">
-                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Linked Approved Suppliers ({selectedSupplierIds.length})</label>
-                                <input
-                                    type="text"
-                                    placeholder="Filter suppliers..."
-                                    value={supplierSearch}
-                                    onChange={e => setSupplierSearch(e.target.value)}
-                                    className="p-1 px-2 border rounded-md text-[10px] bg-background outline-none w-36"
-                                />
-                            </div>
-                            <div className="max-h-24 overflow-y-auto border rounded-lg p-1.5 bg-card space-y-0.5 mt-1">
-                                {filteredSuppliers.map(s => {
-                                    const isChecked = selectedSupplierIds.includes(s.id);
-                                    return (
-                                        <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted/40 rounded cursor-pointer text-[10px]">
-                                            <input
-                                                type="checkbox"
-                                                checked={isChecked}
-                                                onChange={() => handleToggleSupplier(s.id)}
-                                                className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
-                                            />
-                                            <span className="font-bold text-foreground truncate">{s.supplier_name}</span>
-                                            {s.supplier_shortcut && <span className="text-muted-foreground font-mono">({s.supplier_shortcut})</span>}
-                                        </label>
-                                    );
-                                })}
-                            </div>
+                            <SupplierMultiSelect
+                                suppliers={suppliers}
+                                selectedSupplierIds={selectedSupplierIds}
+                                onToggleSupplier={handleToggleSupplier}
+                                disabled={Boolean(formParentId)}
+                            />
                         </div>
                     </div>
 
