@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Boxes, Building2, Calendar, CheckCircle, CheckCircle2, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
+import { Boxes, Building2, Calendar, CheckCircle2, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
 import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
@@ -108,7 +108,9 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
     useEffect(() => {
         let cancelled = false;
-        setLoadingAvailability(true);
+        queueMicrotask(() => {
+            if (!cancelled) setLoadingAvailability(true);
+        });
         void fetchSalesOrderAvailability(candidate.order_id).then(data => {
             if (!cancelled) setAvailability(data);
         }).finally(() => {

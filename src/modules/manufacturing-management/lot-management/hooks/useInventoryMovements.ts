@@ -25,11 +25,15 @@ export function useInventoryMovements(
     const [customProductFilter, setCustomProductFilter] = useState<number | "ALL" | null>(null);
 
     useEffect(() => {
-        setCustomProductFilter(null);
+        queueMicrotask(() => {
+            setCustomProductFilter(null);
+        });
     }, [selectedProductId]);
 
     useEffect(() => {
-        setCustomLotFilter(null);
+        queueMicrotask(() => {
+            setCustomLotFilter(null);
+        });
     }, [selectedLotId]);
 
     const productFilter = customProductFilter !== null ? customProductFilter : selectedProductId;
@@ -57,7 +61,9 @@ export function useInventoryMovements(
 
     useEffect(() => {
         let isMounted = true;
-        setMovementError(null);
+        queueMicrotask(() => {
+            if (isMounted) setMovementError(null);
+        });
         fetchInventoryMovements()
             .then((list) => {
                 if (isMounted) {
@@ -177,7 +183,10 @@ export function useInventoryMovements(
         transactionTypeFilter,
         lotFilter,
         productFilter,
-        selectedBatchId
+        selectedBatchId,
+        selectedBranchId,
+        selectedProductType,
+        selectedUomId
     ]);
 
     // Aggregate summary stats
