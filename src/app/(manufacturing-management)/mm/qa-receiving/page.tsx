@@ -69,10 +69,17 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     };
 }
 
-export default async function QAReceivingPage() {
+export default async function QAReceivingPage({
+    searchParams
+}: {
+    searchParams?: Promise<{ poId?: string | string[] }>;
+}) {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
     const headerUser = buildHeaderUserFromToken(token);
+    const query = await searchParams;
+    const requestedPoId = Array.isArray(query?.poId) ? query.poId[0] : query?.poId;
+    const initialShipmentId = Number(requestedPoId);
 
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -104,7 +111,7 @@ export default async function QAReceivingPage() {
 
             {/* Scrollable Content */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
-                <QAReceivingModule />
+                <QAReceivingModule initialShipmentId={Number.isSafeInteger(initialShipmentId) && initialShipmentId > 0 ? initialShipmentId : undefined} />
             </main>
         </div>
     );

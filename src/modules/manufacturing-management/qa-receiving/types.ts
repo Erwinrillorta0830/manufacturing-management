@@ -149,6 +149,9 @@ export interface ShipmentLineItem {
     qa_status?: string;
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
+    rfid_tagged_count?: number;
+    rfid_tags?: string[];
+    rfid_receiving_record_id?: number | null;
 }
 
 export interface InspectionRow {
