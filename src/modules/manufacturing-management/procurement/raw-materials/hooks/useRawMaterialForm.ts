@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { 
     RawMaterialItem, 
@@ -17,7 +17,7 @@ import {
 } from "../types/raw-materials.types";
 import { 
     fetchRawMaterialMetadata, 
-    fetchLinkedSuppliers, 
+    fetchProductSupplierLinks,
     createBrandOnTheFly, 
     createCategoryOnTheFly,
     fetchProductPurchaseQa,
@@ -46,6 +46,12 @@ function normalizeUomId(value: unknown): number | null {
 
 function rawMaterialUomId(item: RawMaterialItem | null | undefined): number | null {
     return normalizeUomId(item?.unit_of_measurement);
+}
+
+function haveSameSupplierIds(left: number[], right: number[]): boolean {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every(id => rightSet.has(id));
 }
 
 function getSelectedDensityRequirement(
@@ -298,6 +304,24 @@ export function useRawMaterialForm(
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
     const [packagingVariants, setPackagingVariants] = useState<PackagingVariantFormState[]>([]);
+    const supplierLinkRequestId = useRef(0);
+
+    const syncVariantSupplierSnapshots = useCallback((supplierIds: number[]) => {
+        setPackagingVariants(previous => previous.map(variant => {
+            if (variant.isExisting) {
+                return {
+                    ...variant,
+                    suppliersInherited: haveSameSupplierIds(variant.supplierIds, supplierIds)
+                };
+            }
+
+            return {
+                ...variant,
+                supplierIds: [...supplierIds],
+                suppliersInherited: true
+            };
+        }));
+    }, []);
 
     const selectedParent = useMemo(
         () => formParentId
@@ -606,7 +630,9 @@ export function useRawMaterialForm(
             barcode: "",
             maintainingQuantity: "0",
             productImage: null,
-            purchaseQa: emptyPurchaseQaConfig()
+            purchaseQa: emptyPurchaseQaConfig(),
+            supplierIds: [...selectedSupplierIds],
+            suppliersInherited: true
         }]);
     };
 
@@ -677,7 +703,9 @@ export function useRawMaterialForm(
             barcode: "",
             maintainingQuantity: "0",
             productImage: null,
-            purchaseQa: emptyPurchaseQaConfig()
+            purchaseQa: emptyPurchaseQaConfig(),
+            supplierIds: [...selectedSupplierIds],
+            suppliersInherited: true
         }]);
         toast.info(`Added preset variant "${codeSuffix}"`);
     };
@@ -749,6 +777,7 @@ export function useRawMaterialForm(
 
     // Populate / Reset form when editingItem changes or modal opens
     const resetForm = useCallback(() => {
+        supplierLinkRequestId.current += 1;
         setFormName("");
         setFormCode("");
         setFormDesc("");
@@ -869,8 +898,9 @@ export function useRawMaterialForm(
         setFormParentId(item.parent_id ? String(item.parent_id) : "");
         setFormUomCount(item.unit_of_measurement_count ? String(item.unit_of_measurement_count) : "1");
 
-        // Load existing child variants of this family item
+        // Load existing child variants of this family item.
         const existingChildren = rawMaterials.filter(rm => Number(rm.parent_id) === Number(item.product_id));
+        const familyRootId = item.parent_id ? Number(item.parent_id) : item.product_id;
         if (existingChildren.length > 0) {
             setPackagingVariants(existingChildren.map(c => {
                 const parentCodeNorm = (item.product_code || "").trim().toUpperCase();
@@ -901,7 +931,9 @@ export function useRawMaterialForm(
                     barcode: c.barcode || "",
                     maintainingQuantity: String(c.maintaining_quantity ?? 0),
                     productImage: c.product_image || null,
-                    purchaseQa: emptyPurchaseQaConfig()
+                    purchaseQa: emptyPurchaseQaConfig(),
+                    supplierIds: [],
+                    suppliersInherited: false
                 };
             }));
         } else {
@@ -911,9 +943,30 @@ export function useRawMaterialForm(
         void loadPurchaseQaForFamily(item.product_id, existingChildren.map(child => child.product_id));
 
         setSelectedSupplierIds([]);
-        fetchLinkedSuppliers(item.parent_id ? Number(item.parent_id) : item.product_id)
-            .then(supplierIds => setSelectedSupplierIds(supplierIds))
+        const supplierRequestId = ++supplierLinkRequestId.current;
+        const familySupplierProductIds = [...new Set([
+            familyRootId,
+            item.product_id,
+            ...existingChildren.map(child => child.product_id)
+        ])];
+        fetchProductSupplierLinks(familySupplierProductIds)
+            .then(linksByProduct => {
+                if (supplierRequestId !== supplierLinkRequestId.current) return;
+                const parentSupplierIds = linksByProduct.get(familyRootId) || [];
+                setSelectedSupplierIds(parentSupplierIds);
+                setPackagingVariants(previous => previous.map(variant => {
+                    const variantSupplierIds = variant.productId
+                        ? linksByProduct.get(variant.productId) || []
+                        : parentSupplierIds;
+                    return {
+                        ...variant,
+                        supplierIds: [...variantSupplierIds],
+                        suppliersInherited: haveSameSupplierIds(variantSupplierIds, parentSupplierIds)
+                    };
+                }));
+            })
             .catch(error => {
+                if (supplierRequestId !== supplierLinkRequestId.current) return;
                 const message = error instanceof Error ? error.message : "Failed to load linked suppliers.";
                 toast.error(message);
             });
@@ -954,9 +1007,16 @@ export function useRawMaterialForm(
             applyParentSharedAttributes(parentItem);
             resetChildSpecificFields();
             setSelectedSupplierIds([]);
-            fetchLinkedSuppliers(parentItem.product_id)
-                .then(supplierIds => setSelectedSupplierIds(supplierIds))
+            const supplierRequestId = ++supplierLinkRequestId.current;
+            fetchProductSupplierLinks([parentItem.product_id])
+                .then(linksByProduct => {
+                    if (supplierRequestId !== supplierLinkRequestId.current) return;
+                    const supplierIds = linksByProduct.get(parentItem.product_id) || [];
+                    setSelectedSupplierIds(supplierIds);
+                    syncVariantSupplierSnapshots(supplierIds);
+                })
                 .catch(error => {
+                    if (supplierRequestId !== supplierLinkRequestId.current) return;
                     const message = error instanceof Error ? error.message : "Failed to load inherited suppliers.";
                     toast.error(message);
                 });
@@ -973,6 +1033,7 @@ export function useRawMaterialForm(
             setFormPriceControl(null);
             resetChildSpecificFields();
             setSelectedSupplierIds([]);
+            supplierLinkRequestId.current += 1;
         }
         if (val && !editingItem) {
             if (parentItem && parentItem.product_code) {
@@ -998,6 +1059,7 @@ export function useRawMaterialForm(
         setFormPriceControl(null);
         resetChildSpecificFields();
         setSelectedSupplierIds([]);
+        supplierLinkRequestId.current += 1;
         setSubmitError(null);
     };
 
@@ -1026,16 +1088,16 @@ export function useRawMaterialForm(
     };
 
     const handleToggleSupplier = useCallback((supplierId: number) => {
-        setSelectedSupplierIds(currentIds => {
-            const nextIds = new Set(currentIds);
-            if (nextIds.has(supplierId)) {
-                nextIds.delete(supplierId);
-            } else {
-                nextIds.add(supplierId);
-            }
-            return [...nextIds];
-        });
-    }, []);
+        const nextIds = new Set(selectedSupplierIds);
+        if (nextIds.has(supplierId)) {
+            nextIds.delete(supplierId);
+        } else {
+            nextIds.add(supplierId);
+        }
+        const nextSupplierIds = [...nextIds];
+        setSelectedSupplierIds(nextSupplierIds);
+        syncVariantSupplierSnapshots(nextSupplierIds);
+    }, [selectedSupplierIds, syncVariantSupplierSnapshots]);
 
     const attemptSave = async () => {
         if (saving) return;

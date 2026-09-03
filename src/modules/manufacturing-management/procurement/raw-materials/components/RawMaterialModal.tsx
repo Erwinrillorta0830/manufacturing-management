@@ -107,6 +107,20 @@ interface RawMaterialModalProps {
     onSaveClick: () => void;
 }
 
+function haveSameSupplierIds(left: number[], right: number[]): boolean {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every(id => rightSet.has(id));
+}
+
+function supplierLabel(suppliers: SupplierItem[], supplierId: number): string {
+    const supplier = suppliers.find(item => Number(item.id) === supplierId);
+    if (!supplier) return `Supplier #${supplierId}`;
+    return supplier.supplier_shortcut
+        ? `${supplier.supplier_name} (${supplier.supplier_shortcut})`
+        : supplier.supplier_name;
+}
+
 export function RawMaterialModal({
     isOpen,
     onClose,
@@ -842,6 +856,14 @@ export function RawMaterialModal({
                                             ? (Number(v.netWeight) + Number(v.outerCartonWeight) + Number(v.palletWeight)).toFixed(3)
                                             : null;
                                         const weightUnitName = weightUnitOptions.find(w => w.value === String(v.weightUnitId))?.label.split("(")[0]?.trim() || "";
+                                        const variantSupplierIds = Array.isArray(v.supplierIds) ? v.supplierIds : [];
+                                        const suppliersInherited = v.suppliersInherited && haveSameSupplierIds(variantSupplierIds, selectedSupplierIds);
+                                        const variantSupplierNames = variantSupplierIds.map(supplierId => supplierLabel(suppliers, supplierId));
+                                        const supplierStatus = variantSupplierIds.length === 0
+                                            ? "empty"
+                                            : suppliersInherited
+                                                ? "inherited"
+                                                : "mismatch";
 
                                         return (
                                             <div key={vIdx} className="p-3 rounded-xl border border-border bg-background space-y-2 shadow-2xs">
@@ -873,6 +895,31 @@ export function RawMaterialModal({
                                                         />
                                                         {v.isActive ? "Active SKU" : "Inactive SKU"}
                                                     </label>
+                                                </div>
+
+                                                <div
+                                                    className={`rounded-lg border px-2.5 py-2 text-[10px] ${supplierStatus === "inherited" ? "border-emerald-500/25 bg-emerald-500/5" : "border-amber-500/35 bg-amber-500/10"}`}
+                                                    data-testid={`raw-material-variant-suppliers-${vIdx}`}
+                                                >
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-bold uppercase tracking-wider text-muted-foreground">Approved suppliers</span>
+                                                        <span className={`rounded px-1.5 py-0.5 font-bold ${supplierStatus === "inherited" ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>
+                                                            {supplierStatus === "inherited"
+                                                                ? "Inherited from Parent"
+                                                                : supplierStatus === "empty"
+                                                                    ? "No suppliers linked"
+                                                                    : "Review supplier mismatch"}
+                                                        </span>
+                                                    </div>
+                                                    {variantSupplierNames.length > 0 ? (
+                                                        <p className="mt-1 font-semibold text-foreground">
+                                                            {variantSupplierNames.join(", ")}
+                                                        </p>
+                                                    ) : (
+                                                        <p className="mt-1 font-medium text-amber-700">
+                                                            No approved suppliers are linked to the parent material.
+                                                        </p>
+                                                    )}
                                                 </div>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">

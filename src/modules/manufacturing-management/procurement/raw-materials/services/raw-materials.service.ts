@@ -125,18 +125,66 @@ export async function createCategoryOnTheFly(name: string): Promise<SelectOption
 }
 
 export async function fetchLinkedSuppliers(productId: number): Promise<number[]> {
-    const res = await fetch(`/api/manufacturing/procurement/raw-materials?productId=${productId}`);
+    const linksByProduct = await fetchProductSupplierLinks([productId]);
+    return linksByProduct.get(productId) || [];
+}
+
+export interface ProductSupplierLink {
+    product_id: number;
+    supplier_id: number;
+}
+
+function positiveId(value: unknown): number | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return positiveId(record.id ?? record.product_id ?? record.supplier_id);
+    }
+
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export async function fetchProductSupplierLinks(productIds: number[]): Promise<Map<number, number[]>> {
+    const uniqueProductIds = [...new Set(productIds)];
+    if (uniqueProductIds.some(productId => !Number.isSafeInteger(productId) || productId <= 0)) {
+        throw new Error("Product supplier lookup requires positive product IDs.");
+    }
+
+    const linksByProduct = new Map(uniqueProductIds.map(productId => [productId, [] as number[]]));
+    if (uniqueProductIds.length === 0) return linksByProduct;
+
+    const res = await fetch(
+        `/api/manufacturing/procurement/product-per-supplier?productIds=${uniqueProductIds.join(",")}`,
+        { cache: "no-store" }
+    );
     const body = await res.json().catch(() => null) as { error?: unknown } | unknown;
     if (!res.ok) {
         const message = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string"
             ? (body as { error: string }).error
-            : "Failed to load linked suppliers.";
+            : "Failed to load product supplier links.";
         throw new Error(message);
     }
-    if (!Array.isArray(body) || body.some(id => !Number.isSafeInteger(Number(id)) || Number(id) <= 0)) {
-        throw new Error("Linked suppliers returned an invalid response.");
+    if (!Array.isArray(body)) {
+        throw new Error("Product supplier links returned an invalid response.");
     }
-    return [...new Set(body.map(id => Number(id)))];
+
+    for (const rawLink of body) {
+        if (!rawLink || typeof rawLink !== "object") {
+            throw new Error("Product supplier links returned an invalid relationship.");
+        }
+        const link = rawLink as Partial<ProductSupplierLink>;
+        const productId = positiveId(link.product_id);
+        const supplierId = positiveId(link.supplier_id);
+        if (productId === null || supplierId === null || !linksByProduct.has(productId)) {
+            throw new Error("Product supplier links returned an invalid relationship.");
+        }
+
+        const supplierIds = linksByProduct.get(productId) || [];
+        if (!supplierIds.includes(supplierId)) supplierIds.push(supplierId);
+        linksByProduct.set(productId, supplierIds);
+    }
+
+    return linksByProduct;
 }
 
 export async function fetchPurchaseQaParameters(): Promise<PurchaseQaParameter[]> {
