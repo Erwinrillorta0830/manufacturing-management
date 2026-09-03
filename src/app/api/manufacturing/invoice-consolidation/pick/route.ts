@@ -83,6 +83,10 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ message: "Only Picking or For Picking batches can be completed" }, { status: 400 });
             }
 
+            // Optional explicit order-level distributions from manual override modal:
+            // orderDistributions: Array<{ orderId: number; invoiceId?: number; productId: number; pickedQuantity: number }>
+            const manualOrderDistributions = Array.isArray(body.orderDistributions) ? body.orderDistributions : null;
+
             // --- Load details ---
             const detailRes = await fetch(
                 `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${batchId}&limit=-1`,
@@ -95,19 +99,6 @@ export async function POST(req: NextRequest) {
 
             if (details.length === 0) {
                 return NextResponse.json({ message: "Batch has no details" }, { status: 400 });
-            }
-
-            // Require every product to be fully picked before completing.
-            const shortProductIds: number[] = [];
-            for (const d of details) {
-                if (Number(d.picked_quantity || 0) < Number(d.ordered_quantity || 0)) {
-                    shortProductIds.push(d.product_id);
-                }
-            }
-            if (shortProductIds.length > 0) {
-                return NextResponse.json({
-                    message: `Cannot complete picking: products ${shortProductIds.join(", ")} are not fully picked`,
-                }, { status: 422 });
             }
 
             const phNow = getPhTimestamp();
@@ -124,66 +115,162 @@ export async function POST(req: NextRequest) {
                     .filter(Boolean);
             }
 
-            const orderItemDetails: { detail_id: number; product_id: number }[] = [];
+            // Fetch candidate sales orders for FIFS sorting and status updates
+            const salesOrdersMap = new Map<number, { order_id: number; order_date?: string; created_date?: string }>();
+            if (invoiceIds.length > 0) {
+                const soListRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${invoiceIds.join(",")}&fields=order_id,order_date,created_date&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (soListRes.ok) {
+                    const soList = (await soListRes.json()).data || [];
+                    for (const so of soList) {
+                        salesOrdersMap.set(Number(so.order_id), so);
+                    }
+                }
+            }
+
+            const orderItemDetails: { detail_id: number; order_id: number; product_id: number; ordered_quantity?: number }[] = [];
             if (invoiceIds.length > 0) {
                 const [sodRes, sidRes] = await Promise.all([
                     fetch(
-                        `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id,ordered_quantity&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     ),
                     fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id,invoice_no,product_id,quantity&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     ),
                 ]);
-                if (sodRes.ok) orderItemDetails.push(...((await sodRes.json()).data || []));
-                if (sidRes.ok) orderItemDetails.push(...((await sidRes.json()).data || []));
+                if (sodRes.ok) {
+                    const sodData = (await sodRes.json()).data || [];
+                    orderItemDetails.push(...sodData.map((d: { detail_id: number; order_id: number; product_id: number; ordered_quantity?: number }) => ({
+                        detail_id: Number(d.detail_id),
+                        order_id: Number(d.order_id),
+                        product_id: Number(d.product_id),
+                        ordered_quantity: Number(d.ordered_quantity || 0),
+                    })));
+                }
+                if (sidRes.ok) {
+                    const sidData = (await sidRes.json()).data || [];
+                    orderItemDetails.push(...sidData.map((d: { detail_id: number; invoice_no: number; product_id: number; quantity?: number }) => ({
+                        detail_id: Number(d.detail_id),
+                        order_id: Number(d.invoice_no),
+                        product_id: Number(d.product_id),
+                        ordered_quantity: Number(d.quantity || 0),
+                    })));
+                }
+            }
+
+            // Calculate Order-Level Pick Distribution (Auto FIFS or Manual Override)
+            const orderProductPickedMap = new Map<string, number>(); // `${orderId}:${productId}` -> pickedQty
+
+            if (manualOrderDistributions && manualOrderDistributions.length > 0) {
+                for (const dist of manualOrderDistributions) {
+                    const targetOrdId = Number(dist.orderId || dist.invoiceId);
+                    const prodId = Number(dist.productId);
+                    const qty = Math.max(0, Number(dist.pickedQuantity) || 0);
+                    if (targetOrdId && prodId) {
+                        orderProductPickedMap.set(`${targetOrdId}:${prodId}`, qty);
+                    }
+                }
+            } else {
+                // Default: Auto-Distribute via First-In, First-Served (FIFS) by order_date
+                for (const d of details) {
+                    const prodId = Number(d.product_id);
+                    let remainingBudget = Number(d.picked_quantity ?? d.ordered_quantity ?? 0);
+
+                    // Find all order lines for this product
+                    const matchingLines = orderItemDetails.filter((item) => item.product_id === prodId);
+
+                    // Sort matching order lines by sales order date ASC, then order_id ASC (FIFS)
+                    matchingLines.sort((a, b) => {
+                        const soA = salesOrdersMap.get(a.order_id);
+                        const soB = salesOrdersMap.get(b.order_id);
+                        const dateA = new Date(soA?.order_date || soA?.created_date || 0).getTime();
+                        const dateB = new Date(soB?.order_date || soB?.created_date || 0).getTime();
+                        if (dateA !== dateB) return dateA - dateB;
+                        return a.order_id - b.order_id;
+                    });
+
+                    for (const line of matchingLines) {
+                        const lineReq = Number(line.ordered_quantity || 0);
+                        const alloc = Math.min(remainingBudget, lineReq);
+                        orderProductPickedMap.set(`${line.order_id}:${prodId}`, alloc);
+                        remainingBudget = Math.max(0, remainingBudget - alloc);
+                    }
+                }
             }
 
             const invoiceDetailIds: number[] = orderItemDetails
                 .map((row) => Number(row.detail_id))
                 .filter(Boolean);
 
-            // 1. Mark all reservations as Picked
-            if (invoiceDetailIds.length > 0) {
-                const [soRes, siRes] = await Promise.all([
-                    fetch(
-                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=reservation_id,status`,
-                        { headers: directusHeaders, cache: "no-store" }
-                    ),
-                    fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=id,status`,
-                        { headers: directusHeaders, cache: "no-store" }
-                    ),
-                ]);
+            // 1. Maintain lot pick statuses (only update if explicit picked list provided)
+            const postPickedResIds = Array.isArray(body.pickedReservationIds) ? body.pickedReservationIds : null;
+            const postPickedLotIds = Array.isArray(body.pickedLotIds) ? body.pickedLotIds : null;
 
-                if (soRes.ok) {
-                    const soData = (await soRes.json()).data || [];
-                    for (const r of soData) {
-                        await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${r.reservation_id}`, {
-                            method: "PATCH",
-                            headers: directusHeaders,
-                            body: JSON.stringify({
-                                status: "Picked",
-                                updated_by: userId,
-                                updated_at: phNow,
-                            }),
-                        }).catch(() => null);
+            if (postPickedResIds || postPickedLotIds) {
+                if (invoiceDetailIds.length > 0) {
+                    const [soRes, siRes] = await Promise.all([
+                        fetch(
+                            `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=reservation_id,id,inventory_lot_id,status`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        ),
+                        fetch(
+                            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=id,inventory_lot_id,status`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        ),
+                    ]);
+
+                    if (soRes.ok) {
+                        const soData = (await soRes.json()).data || [];
+                        for (const r of soData) {
+                            const rId = Number(r.reservation_id || r.id);
+                            const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                                ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                                : r.inventory_lot_id;
+                            const invId = Number(rawInv || 0);
+                            const isPicked = (postPickedResIds && postPickedResIds.includes(rId)) || (postPickedLotIds && postPickedLotIds.includes(invId));
+
+                            const nextStatus = isPicked ? "Picked" : "Reserved";
+                            if (r.status !== nextStatus) {
+                                await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                    method: "PATCH",
+                                    headers: directusHeaders,
+                                    body: JSON.stringify({
+                                        status: nextStatus,
+                                        updated_by: userId,
+                                        updated_at: phNow,
+                                    }),
+                                }).catch(() => null);
+                            }
+                        }
                     }
-                }
 
-                if (siRes.ok) {
-                    const siData = (await siRes.json()).data || [];
-                    for (const r of siData) {
-                        await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${r.id}`, {
-                            method: "PATCH",
-                            headers: directusHeaders,
-                            body: JSON.stringify({
-                                status: "Picked",
-                                updated_by: userId,
-                                updated_at: phNow,
-                            }),
-                        }).catch(() => null);
+                    if (siRes.ok) {
+                        const siData = (await siRes.json()).data || [];
+                        for (const r of siData) {
+                            const rId = Number(r.id);
+                            const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                                ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                                : r.inventory_lot_id;
+                            const invId = Number(rawInv || 0);
+                            const isPicked = (postPickedResIds && postPickedResIds.includes(rId)) || (postPickedLotIds && postPickedLotIds.includes(invId));
+
+                            const nextStatus = isPicked ? "Picked" : "Reserved";
+                            if (r.status !== nextStatus) {
+                                await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${rId}`, {
+                                    method: "PATCH",
+                                    headers: directusHeaders,
+                                    body: JSON.stringify({
+                                        status: nextStatus,
+                                        updated_by: userId,
+                                        updated_at: phNow,
+                                    }),
+                                }).catch(() => null);
+                            }
+                        }
                     }
                 }
             }
@@ -194,7 +281,7 @@ export async function POST(req: NextRequest) {
                     method: "PATCH",
                     headers: directusHeaders,
                     body: JSON.stringify({
-                        picked_quantity: Number(d.picked_quantity || d.ordered_quantity || 0),
+                        picked_quantity: Number(d.picked_quantity ?? d.ordered_quantity ?? 0),
                         picked_by: userId,
                         picked_at: phNow,
                     }),
@@ -347,40 +434,90 @@ export async function PATCH(req: NextRequest) {
                                     const reservations: Array<{
                                         id?: number;
                                         reservation_id?: number;
+                                        sales_order_detail_id?: number;
+                                        product_id?: number;
                                         inventory_lot_id?: unknown;
+                                        reserved_quantity?: number;
+                                        quantity?: number;
                                         status?: string;
                                     }> = (await soRes.json()).data || [];
 
-                                    for (const r of reservations) {
-                                        const rId = Number(r.id || r.reservation_id);
-                                        const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
-                                            ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
-                                            : r.inventory_lot_id;
-                                        const invId = Number(rawInv || 0);
+                                    const lotPickedItems = Array.isArray(body.lotPickedItems) ? body.lotPickedItems : null;
 
-                                        const isPicked = (pickedReservationIds && pickedReservationIds.includes(rId)) ||
-                                            (pickedLotIds && pickedLotIds.includes(invId));
+                                    if (lotPickedItems && lotPickedItems.length > 0) {
+                                        // Precise per-lot item processing
+                                        for (const item of lotPickedItems) {
+                                            let budget = Number(item.pickedQuantity || 0);
+                                            const itemResIds = (item.reservationIds || []).map(Number);
 
-                                        if (isPicked && r.status !== "Picked") {
-                                            await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
-                                                method: "PATCH",
-                                                headers: directusHeaders,
-                                                body: JSON.stringify({
-                                                    status: "Picked",
-                                                    modified_date: phNow,
-                                                    modified_by: userId,
-                                                }),
-                                            }).catch(() => null);
-                                        } else if (!isPicked && r.status === "Picked") {
-                                            await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
-                                                method: "PATCH",
-                                                headers: directusHeaders,
-                                                body: JSON.stringify({
-                                                    status: "Reserved",
-                                                    modified_date: phNow,
-                                                    modified_by: userId,
-                                                }),
-                                            }).catch(() => null);
+                                            for (const rId of itemResIds) {
+                                                const r = reservations.find((x) => Number(x.id || x.reservation_id) === rId);
+                                                if (!r) continue;
+
+                                                const resQty = Number(r.reserved_quantity ?? r.quantity ?? 0);
+                                                const pickedPart = Math.min(budget, resQty);
+                                                budget = Math.max(0, budget - pickedPart);
+
+                                                const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                    method: "PATCH",
+                                                    headers: directusHeaders,
+                                                    body: JSON.stringify({
+                                                        picked_quantity: pickedPart,
+                                                        status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
+                                                        modified_date: phNow,
+                                                        modified_by: userId,
+                                                    }),
+                                                }).catch(() => null);
+
+                                                if (patchRes && !patchRes.ok) {
+                                                    await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                        method: "PATCH",
+                                                        headers: directusHeaders,
+                                                        body: JSON.stringify({
+                                                            status: pickedPart >= resQty && resQty > 0 ? "Picked" : "Reserved",
+                                                            modified_date: phNow,
+                                                            modified_by: userId,
+                                                        }),
+                                                    }).catch(() => null);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Binary fallback
+                                        for (const r of reservations) {
+                                            const rId = Number(r.id || r.reservation_id);
+                                            const rawInv = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                                                ? (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).id || (r.inventory_lot_id as { id?: number; inventory_lot_id?: number }).inventory_lot_id
+                                                : r.inventory_lot_id;
+                                            const invId = Number(rawInv || 0);
+
+                                            const isPicked = (pickedReservationIds && pickedReservationIds.includes(rId)) ||
+                                                (pickedLotIds && pickedLotIds.includes(invId));
+
+                                            const resQty = Number(r.reserved_quantity ?? r.quantity ?? 0);
+                                            if (isPicked && r.status !== "Picked") {
+                                                await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                    method: "PATCH",
+                                                    headers: directusHeaders,
+                                                    body: JSON.stringify({
+                                                        picked_quantity: resQty,
+                                                        status: "Picked",
+                                                        modified_date: phNow,
+                                                        modified_by: userId,
+                                                    }),
+                                                }).catch(() => null);
+                                            } else if (!isPicked && r.status === "Picked") {
+                                                await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${rId}`, {
+                                                    method: "PATCH",
+                                                    headers: directusHeaders,
+                                                    body: JSON.stringify({
+                                                        picked_quantity: 0,
+                                                        status: "Reserved",
+                                                        modified_date: phNow,
+                                                        modified_by: userId,
+                                                    }),
+                                                }).catch(() => null);
+                                            }
                                         }
                                     }
                                 }

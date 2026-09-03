@@ -135,11 +135,35 @@ export interface AuditPayload {
     batchId: number;
 }
 
+export interface LotPickedItem {
+    productId: number;
+    lotId?: number;
+    batchNo: string;
+    expiryDate?: string | null;
+    pickedQuantity: number;
+    capacity: number;
+    reservationIds?: number[];
+    inventoryLotId?: number;
+}
+
 export interface PickingSavePayload {
     batchId: number;
     quantities: { detailId: number; pickedQuantity: number }[];
     pickedReservationIds?: number[];
     pickedLotIds?: number[];
+    lotPickedItems?: LotPickedItem[];
+}
+
+export interface OrderDistributionItem {
+    orderId: number;
+    invoiceId?: number;
+    productId: number;
+    pickedQuantity: number;
+}
+
+export interface CompletePickingPayload {
+    batchId: number;
+    orderDistributions?: OrderDistributionItem[];
 }
 
 export interface Branch {

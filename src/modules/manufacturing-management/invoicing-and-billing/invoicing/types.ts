@@ -24,6 +24,19 @@ export interface InvoicingLine {
     bom_version_name?: string;
 }
 
+export interface LineBatchAllocation {
+    inventoryLotId?: number;
+    lotId?: number;
+    batchNo?: string;
+    quantity: number;
+}
+
+export interface LineAllocationPayload {
+    productId: number;
+    quantity: number;
+    batchAllocations?: LineBatchAllocation[];
+}
+
 export interface CreateInvoicePayload {
     salesOrderId: number;
     invoiceNo: string;
@@ -31,6 +44,7 @@ export interface CreateInvoicePayload {
     invoiceDate: string;
     dueDate: string;
     remarks?: string;
+    lineAllocations?: LineAllocationPayload[];
 }
 
 export interface ReceiptType {
@@ -138,6 +152,16 @@ export interface InvoicingFilters {
     dateTo: string;
 }
 
+export interface BatchSiblingOrder {
+    orderId: number;
+    orderNo: string;
+    customerCode?: string;
+    customerName?: string;
+    reservedQuantity: number;
+    pickedQuantity?: number;
+    isInvoiced?: boolean;
+}
+
 export interface BatchItem {
     inventoryLotId?: number;
     lotId: number;
@@ -148,6 +172,18 @@ export interface BatchItem {
     expirationDate?: string | null;
     onhandQuantity: number;
     pickedQuantity?: number;
+    totalBatchPickedPool?: number;
+    thisOrderReserved?: number;
+    siblingOrders?: BatchSiblingOrder[];
+}
+
+export interface SiblingConsolidatedOrder {
+    orderId: number;
+    orderNo: string;
+    customerCode?: string;
+    customerName?: string;
+    orderedQuantity: number;
+    isInvoiced?: boolean;
 }
 
 export interface LineAvailability {
@@ -158,18 +194,22 @@ export interface LineAvailability {
     requiredQuantity: number;
     onhandQuantity: number;
     pickedQuantity?: number;
+    totalPoolQuantity?: number;
     isAvailable: boolean;
     isPicked?: boolean;
     batches: BatchItem[];
+    siblingOrders?: SiblingConsolidatedOrder[];
 }
 
 export interface SalesOrderAvailability {
     salesOrderId: number;
     branchId: number;
     consolidatorNo?: string;
+    consolidatorId?: number;
     isFullyAvailable: boolean;
     isFullyPicked?: boolean;
     lines: LineAvailability[];
+    siblingOrders?: SiblingConsolidatedOrder[];
 }
 
 export type StockStatus = "Available" | "Partial" | "Unavailable";
