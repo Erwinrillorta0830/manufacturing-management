@@ -162,7 +162,11 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
 
             setDocNo(pouch.docNo || pouchId.toString());
             setIsPosted(pouch.isPosted === true);
-            setCollectedBy(pouch.collectedBy || null);
+            
+            const currentCollectedBy = typeof pouch.collectedBy === "object" && pouch.collectedBy !== null
+                ? (pouch.collectedBy as { id?: number; user_id?: number }).id || (pouch.collectedBy as { id?: number; user_id?: number }).user_id
+                : pouch.collectedBy || null;
+            setCollectedBy(currentCollectedBy as number | null);
             setCrNo(pouch.crNo || "");
 
             if (pouch.collectionDate) {
@@ -171,15 +175,17 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 setDispatchDate(cDate);
             }
 
-            const currentSalesmanId = pouch.salesmanId || null;
-            setSalesmanId(currentSalesmanId);
+            const currentSalesmanId = typeof pouch.salesmanId === "object" && pouch.salesmanId !== null
+                ? (pouch.salesmanId as { id?: number; salesman_id?: number }).id || (pouch.salesmanId as { id?: number; salesman_id?: number }).salesman_id
+                : pouch.salesmanId || null;
+            setSalesmanId(currentSalesmanId as number | null);
             setSalesmanName(salesmen?.find(s => s.id === currentSalesmanId)?.salesmanName || `Owner ID: ${currentSalesmanId}`);
             setCompanyProfile(profileResult.profile);
             setFindings(fetchedFindings || []);
 
             // 🚀 Strictly typing the user iteration
-            if (pouch.collectedBy && fetchedUsers) {
-                const u = fetchedUsers.find((user: UserDto) => user.id === pouch.collectedBy);
+            if (currentCollectedBy && fetchedUsers) {
+                const u = fetchedUsers.find((user: UserDto) => user.id === currentCollectedBy || (user as UserDto & { user_id?: number }).user_id === currentCollectedBy);
                 if (u) setCollectedByName(`${u.firstName || ''} ${u.lastName || ''}`.trim());
             }
 
@@ -229,15 +235,30 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         [activeInvoiceId, cartInvoices]
     );
 
-    const creditCustomerCodes = useMemo(
-        () => activeInvoice?.customerCode ? [activeInvoice.customerCode.trim().toUpperCase()] : [],
-        [activeInvoice]
-    );
+    const creditCustomerCodes = useMemo(() => {
+        if (activeInvoice?.customerCode) {
+            return [activeInvoice.customerCode.trim().toUpperCase()];
+        }
+        if (cartInvoices.length > 0) {
+            const codes = cartInvoices.map(inv => inv.customerCode?.trim().toUpperCase()).filter(Boolean);
+            return Array.from(new Set(codes)) as string[];
+        }
+        return [];
+    }, [activeInvoice, cartInvoices]);
 
-    const creditCustomerNames = useMemo(
-        () => !activeInvoice?.customerCode && activeInvoice?.customerName ? [activeInvoice.customerName] : [],
-        [activeInvoice]
-    );
+    const creditCustomerNames = useMemo(() => {
+        if (activeInvoice?.customerName && !activeInvoice.customerCode) {
+            return [activeInvoice.customerName.trim().toUpperCase()];
+        }
+        if (cartInvoices.length > 0) {
+            const names = cartInvoices
+                .filter(inv => !inv.customerCode && inv.customerName)
+                .map(inv => inv.customerName?.trim().toUpperCase())
+                .filter(Boolean);
+            return Array.from(new Set(names)) as string[];
+        }
+        return [];
+    }, [activeInvoice, cartInvoices]);
 
     const loadCreditsPage = useCallback(async (page: number, append: boolean) => {
         creditRequestController.current?.abort();

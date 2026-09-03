@@ -17,6 +17,8 @@ type DirectusReceiving = {
     isPosted?: unknown;
     is_posted_amounts?: unknown;
     is_reverted?: unknown;
+    product_id?: { product_id?: unknown; id?: unknown } | number | string | null;
+    purchase_order_product_id?: { purchase_order_product_id?: unknown; id?: unknown } | number | string | null;
 };
 
 type DirectusDisbursement = {

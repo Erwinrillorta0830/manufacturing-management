@@ -110,7 +110,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const receivingsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&filter=${encodeURIComponent(
             JSON.stringify({ purchase_order_id: { _in: poIds } })
-        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted,product_id.product_type`;
+        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted,purchase_order_product_id,product_id`;
 
         const receivingsRes = await fetch(receivingsUrl, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
@@ -120,6 +120,61 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         if (!receivingsRes.ok) throw new Error(await receivingsRes.text());
 
         const receivingsData = (await receivingsRes.json()).data || [];
+
+        const productIds = new Set<number>();
+        const popIds = new Set<number>();
+
+        for (const r of receivingsData) {
+            const pId = typeof r.product_id === 'object' ? Number(r.product_id?.product_id || r.product_id?.id) : Number(r.product_id);
+            if (!Number.isNaN(pId) && pId > 0) productIds.add(pId);
+            
+            const popId = typeof r.purchase_order_product_id === 'object' ? Number(r.purchase_order_product_id?.purchase_order_product_id || r.purchase_order_product_id?.id) : Number(r.purchase_order_product_id);
+            if (!Number.isNaN(popId) && popId > 0) popIds.add(popId);
+        }
+
+        const popToProductMap = new Map<number, number>();
+
+        if (popIds.size > 0) {
+            const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?limit=-1&filter=${encodeURIComponent(
+                JSON.stringify({ purchase_order_product_id: { _in: Array.from(popIds) } })
+            )}&fields=purchase_order_product_id,product_id`;
+            
+            const popRes = await fetch(popUrl, {
+                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
+                cache: "no-store"
+            });
+            if (popRes.ok) {
+                const popData = (await popRes.json()).data || [];
+                for (const pop of popData) {
+                    const pId = typeof pop.product_id === 'object' ? Number(pop.product_id?.product_id || pop.product_id?.id) : Number(pop.product_id);
+                    if (!Number.isNaN(pId) && pId > 0) {
+                        popToProductMap.set(Number(pop.purchase_order_product_id), pId);
+                        productIds.add(pId);
+                    }
+                }
+            }
+        }
+
+        const productTypeMap = new Map<number, number>();
+        if (productIds.size > 0) {
+            const productsUrl = `${DIRECTUS_URL}/items/products?limit=-1&filter=${encodeURIComponent(
+                JSON.stringify({ product_id: { _in: Array.from(productIds) } })
+            )}&fields=product_id,product_type`;
+            
+            const productsRes = await fetch(productsUrl, {
+                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
+                cache: "no-store"
+            });
+            if (productsRes.ok) {
+                const productsData = (await productsRes.json()).data || [];
+                for (const p of productsData) {
+                    const pType = typeof p.product_type === 'object' ? p.product_type?.id : p.product_type;
+                    if (pType !== undefined && pType !== null) {
+                        productTypeMap.set(Number(p.product_id), Number(pType));
+                    }
+                }
+            }
+        }
 
         const activeReceivingsByPoId = activeReceivingRowsByPurchaseOrder(receivingsData);
         const postedReceivingsByPoId = postedReceivingRowsByPurchaseOrder(receivingsData);
@@ -187,9 +242,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 grouped[rNo].totalLiability += actualAmt;
                 
                 let productType: number | null = null;
-                if (por.product_id && typeof por.product_id === 'object' && 'product_type' in por.product_id) {
-                    productType = Number((por.product_id as any).product_type);
-                    if (Number.isNaN(productType)) productType = null;
+                const rPId = typeof por.product_id === 'object' ? Number(por.product_id?.product_id || por.product_id?.id) : Number(por.product_id);
+                const popId = typeof por.purchase_order_product_id === 'object' ? Number(por.purchase_order_product_id?.purchase_order_product_id || por.purchase_order_product_id?.id) : Number(por.purchase_order_product_id);
+                
+                let resolvedProductId = null;
+                if (!Number.isNaN(rPId) && rPId > 0) {
+                    resolvedProductId = rPId;
+                } else if (!Number.isNaN(popId) && popId > 0) {
+                    resolvedProductId = popToProductMap.get(popId);
+                }
+
+                if (resolvedProductId) {
+                    productType = productTypeMap.get(resolvedProductId) || null;
                 }
 
                 const key = productType !== null ? String(productType) : "null";
